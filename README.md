@@ -54,7 +54,7 @@ prevents the public Worker from becoming an SSRF or arbitrary RPC proxy.
 Set allowlisted per-chain RPC URLs as an encrypted Worker secret:
 
 ```sh
-wrangler secret put RPC_URLS_JSON
+bunx wrangler secret put RPC_URLS_JSON
 ```
 
 The value is a JSON object such as:
@@ -66,6 +66,11 @@ The value is a JSON object such as:
 Without a configured RPC, `ekubo_prepare_swap` still returns unsigned calldata
 but sets `confirmation_ready` to false. Agents must not present such a plan for
 submission until it has been simulated successfully.
+
+These deployment-controlled RPCs are used only for read-only quote-block
+simulation. RPC URLs and wallet credentials are not MCP tool inputs. The client
+must use the user's own RPC and wallet/signature tooling for current-state
+revalidation, signing, submission, and receipt confirmation.
 
 Cloudflare routing protects the default `workers.dev` hostname and any custom
 domain. Set optional comma-separated `ALLOWED_HOSTNAMES` and `ALLOWED_ORIGINS`
@@ -98,8 +103,8 @@ RPC simulation, and deploy:
 
 ```sh
 bun install --frozen-lockfile
-wrangler login
-wrangler secret put RPC_URLS_JSON
+bunx wrangler login
+bunx wrangler secret put RPC_URLS_JSON
 bun run deploy
 ```
 
