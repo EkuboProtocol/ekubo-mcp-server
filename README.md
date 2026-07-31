@@ -117,8 +117,12 @@ Smoke-test the deployed origin before adding the custom domain:
 ```sh
 curl https://ekubo-mcp.<account-subdomain>.workers.dev/health
 curl https://ekubo-mcp.<account-subdomain>.workers.dev/tools
+MCP_ORIGIN=https://ekubo-mcp.<account-subdomain>.workers.dev bun run smoke
 npx @modelcontextprotocol/inspector@latest
 ```
+
+`bun run smoke` checks health, root discovery, OpenAPI, the HTTP tool catalog,
+MCP initialization, and protocol-native `tools/list`.
 
 Connect MCP Inspector to
 `https://ekubo-mcp.<account-subdomain>.workers.dev/mcp`, initialize the

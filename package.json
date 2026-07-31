@@ -8,6 +8,7 @@
     "check": "wrangler deploy --dry-run",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "smoke": "node script/smoke.mjs",
     "test": "bun test"
   },
   "dependencies": {
