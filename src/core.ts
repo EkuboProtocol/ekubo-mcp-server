@@ -1,12 +1,7 @@
-import { YUL_ROUTER_ABI } from "@ekubo/yul-router-sdk";
 import {
   type Address,
-  decodeAbiParameters,
-  decodeFunctionResult,
   getAddress,
-  type Hex,
   keccak256,
-  numberToHex,
   stringToHex,
 } from "viem";
 import {
@@ -14,7 +9,6 @@ import {
   type EvmQuoterQuote,
   type EvmQuoterQuoteType,
   prepareSwapFromQuote,
-  type PreparedSwap,
 } from "./yul-router.js";
 
 export interface Env {
@@ -22,7 +16,6 @@ export interface Env {
   EKUBO_QUOTER_URL: string;
   ALLOWED_HOSTNAMES?: string;
   ALLOWED_ORIGINS?: string;
-  RPC_URLS_JSON?: string;
   RATE_LIMITER?: RateLimit;
 }
 
@@ -38,7 +31,6 @@ export interface PrepareSwapIntent extends QuoteIntent {
   slippageBps: number;
   recipient?: Address;
   sender?: Address;
-  simulate: boolean;
 }
 
 export class ServiceError extends Error {
@@ -119,13 +111,6 @@ export async function prepareSwap(
     slippageBps: intent.slippageBps,
     recipient: intent.recipient,
   });
-  const simulation = intent.simulate
-    ? await simulatePreparedSwap(env, intent.chainId, prepared, intent.sender, fetcher)
-    : {
-        status: "not_requested" as const,
-        message: "Simulation was explicitly disabled by the caller",
-      };
-  const confirmationReady = simulation.status === "success";
   const identity = {
     chain_id: intent.chainId,
     block_number: prepared.block.number.toString(),
@@ -142,7 +127,8 @@ export async function prepareSwap(
     action: "ekubo_swap",
     plan_id: keccak256(stringToHex(JSON.stringify(identity))),
     requires_user_confirmation: true,
-    confirmation_ready: confirmationReady,
+    confirmation_ready: true,
+    wallet_validation_required: true,
     request: quoted.request,
     quote_source_url: quoted.source_url,
     quote: {
@@ -177,17 +163,16 @@ export async function prepareSwap(
               value: prepared.approval.transaction.value.toString(),
             },
           },
-    simulation,
     confirmation: {
-      instruction: confirmationReady
-        ? "Ask the user to confirm this exact plan_id and slippage tolerance before submitting. Re-prepare after any change."
-        : "Do not ask the user to submit this plan until it has been simulated successfully.",
+      instruction:
+        "Ask the user to confirm this exact plan_id and slippage tolerance before signing. Re-prepare after any change or stale quote.",
       recipient: prepared.recipient ?? intent.sender ?? "transaction_sender",
       sender: intent.sender ?? null,
     },
     client_execution: {
       wallet: "Use the user's wallet or signature tooling; never send credentials to this MCP server",
-      rpc: "Use the user's configured RPC to re-simulate, estimate gas, submit, and confirm receipts",
+      provider:
+        "Use the user's connected provider to validate the transaction, estimate gas, submit, and confirm receipts",
       must_revalidate_before_signing: true,
       steps: [
         ...(prepared.approval === null
@@ -195,243 +180,12 @@ export async function prepareSwap(
           : [
               "Check current allowance and ask for confirmation before signing the approval transaction if it is required",
             ]),
-        "Re-simulate the exact swap transaction against current state through the user's RPC",
+        "Validate the exact swap transaction against current state through the user's connected wallet or provider",
         "Ask the user to confirm the exact plan ID, slippage bound, recipient, value, and calldata",
         "Have the user's wallet sign and submit; this MCP server must not receive a private key or seed phrase",
       ],
     },
   };
-}
-
-async function simulatePreparedSwap(
-  env: Env,
-  chainId: string,
-  prepared: PreparedSwap,
-  sender: Address | undefined,
-  fetcher: Fetcher,
-) {
-  const rpcUrl = rpcUrlForChain(env, chainId);
-  if (rpcUrl === undefined) {
-    return {
-      status: "not_configured" as const,
-      message: `No allowlisted RPC is configured for chain ${chainId}`,
-    };
-  }
-
-  try {
-    const blockNumber = numberToHex(prepared.block.number);
-    const block = await rpc<{ hash?: Hex | null }>(
-      rpcUrl,
-      "eth_getBlockByNumber",
-      [blockNumber, false],
-      fetcher,
-    );
-    if (block.hash == null || BigInt(block.hash) !== BigInt(prepared.block.hash)) {
-      throw new ServiceError(
-        "quote_block_mismatch",
-        "The configured RPC returned a different hash for the quote block",
-        { expected: prepared.block.hash, actual: block.hash ?? null },
-      );
-    }
-
-    const routeCall = await rpc<Hex>(
-      rpcUrl,
-      "eth_call",
-      [
-        {
-          to: prepared.transaction.to,
-          data: prepared.quoteCalldata,
-        },
-        blockNumber,
-      ],
-      fetcher,
-    );
-    const [specifiedToken, calculatedToken, specifiedAmount, calculatedAmount] =
-      decodeFunctionResult({
-        abi: YUL_ROUTER_ABI,
-        functionName: "quote",
-        data: routeCall,
-      });
-    validateSimulation(
-      prepared,
-      specifiedToken,
-      calculatedToken,
-      specifiedAmount,
-      calculatedAmount,
-    );
-
-    const routeResult = {
-      specified_token: specifiedToken,
-      calculated_token: calculatedToken,
-      specified_amount: specifiedAmount.toString(),
-      calculated_amount: calculatedAmount.toString(),
-    };
-    if (sender === undefined) {
-      return {
-        status: "success" as const,
-        mode: "route_only" as const,
-        block_number: prepared.block.number.toString(),
-        block_hash: prepared.block.hash,
-        result: routeResult,
-        warning:
-          "Route simulation does not prove that a particular sender has sufficient balance or allowance",
-      };
-    }
-
-    const exactCall = await rpc<Hex>(
-      rpcUrl,
-      "eth_call",
-      [
-        {
-          from: getAddress(sender),
-          to: prepared.transaction.to,
-          data: prepared.transaction.data,
-          value: numberToHex(prepared.transaction.value),
-        },
-        blockNumber,
-      ],
-      fetcher,
-    );
-    const [actualSpecifiedToken, actualCalculatedToken, actualSpecifiedAmount, actualCalculatedAmount] =
-      decodeAbiParameters(
-        [
-          { type: "address" },
-          { type: "address" },
-          { type: "int256" },
-          { type: "int256" },
-        ],
-        exactCall,
-      );
-    validateSimulation(
-      prepared,
-      actualSpecifiedToken,
-      actualCalculatedToken,
-      actualSpecifiedAmount,
-      actualCalculatedAmount,
-    );
-    return {
-      status: "success" as const,
-      mode: "exact_sender" as const,
-      block_number: prepared.block.number.toString(),
-      block_hash: prepared.block.hash,
-      result: {
-        ...routeResult,
-        actual_specified_token: actualSpecifiedToken,
-        actual_calculated_token: actualCalculatedToken,
-        actual_specified_amount: actualSpecifiedAmount.toString(),
-        actual_calculated_amount: actualCalculatedAmount.toString(),
-      },
-    };
-  } catch (error) {
-    const details = error instanceof ServiceError ? error.details : undefined;
-    return {
-      status: "failed" as const,
-      code: error instanceof ServiceError ? error.code : "simulation_failed",
-      message: error instanceof Error ? error.message : String(error),
-      ...(details === undefined ? {} : { details }),
-    };
-  }
-}
-
-function validateSimulation(
-  prepared: PreparedSwap,
-  specifiedToken: Address,
-  calculatedToken: Address,
-  specifiedAmount: bigint,
-  calculatedAmount: bigint,
-) {
-  const exactOutput = prepared.quoteType === "exact_output";
-  const expectedSpecifiedToken = exactOutput
-    ? prepared.tokenOut
-    : prepared.tokenIn;
-  const expectedCalculatedToken = exactOutput
-    ? prepared.tokenIn
-    : prepared.tokenOut;
-  const expectedSpecifiedAmount = exactOutput
-    ? -prepared.amountOut
-    : prepared.amountIn;
-  if (
-    getAddress(specifiedToken) !== expectedSpecifiedToken ||
-    getAddress(calculatedToken) !== expectedCalculatedToken ||
-    specifiedAmount !== expectedSpecifiedAmount ||
-    calculatedAmount < prepared.calculatedAmountThreshold
-  ) {
-    throw new ServiceError(
-      "simulation_mismatch",
-      "Router simulation returned an unexpected or unprotected result",
-      {
-        expected: {
-          specified_token: expectedSpecifiedToken,
-          calculated_token: expectedCalculatedToken,
-          specified_amount: expectedSpecifiedAmount.toString(),
-          calculated_amount_at_least:
-            prepared.calculatedAmountThreshold.toString(),
-        },
-        actual: {
-          specified_token: specifiedToken,
-          calculated_token: calculatedToken,
-          specified_amount: specifiedAmount.toString(),
-          calculated_amount: calculatedAmount.toString(),
-        },
-      },
-    );
-  }
-}
-
-function rpcUrlForChain(env: Env, chainId: string): string | undefined {
-  if (env.RPC_URLS_JSON === undefined || env.RPC_URLS_JSON.length === 0) {
-    return undefined;
-  }
-  let urls: unknown;
-  try {
-    urls = JSON.parse(env.RPC_URLS_JSON);
-  } catch {
-    throw new ServiceError(
-      "invalid_server_configuration",
-      "RPC_URLS_JSON is not valid JSON",
-    );
-  }
-  if (urls === null || typeof urls !== "object" || Array.isArray(urls)) {
-    throw new ServiceError(
-      "invalid_server_configuration",
-      "RPC_URLS_JSON must be an object keyed by decimal chain ID",
-    );
-  }
-  const candidate = (urls as Record<string, unknown>)[chainId];
-  if (candidate === undefined) return undefined;
-  if (typeof candidate !== "string" || !candidate.startsWith("https://")) {
-    throw new ServiceError(
-      "invalid_server_configuration",
-      `The RPC URL configured for chain ${chainId} must use HTTPS`,
-    );
-  }
-  return candidate;
-}
-
-async function rpc<T>(
-  url: string,
-  method: string,
-  params: unknown[],
-  fetcher: Fetcher,
-): Promise<T> {
-  const response = await fetcher(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    signal: AbortSignal.timeout(20_000),
-  });
-  const body = (await response.json()) as {
-    result?: T;
-    error?: { code: number; message: string; data?: unknown };
-  };
-  if (!response.ok || body.error !== undefined || body.result == null) {
-    throw new ServiceError(
-      "rpc_error",
-      body.error?.message ?? `${response.status} ${response.statusText}`,
-      body.error,
-    );
-  }
-  return body.result;
 }
 
 async function fetchJson<T>(url: string, fetcher: Fetcher): Promise<T> {

@@ -28,18 +28,25 @@ OpenAPI clients, and humans find the same capabilities.
 - `ekubo_get_quote` — translate explicit EVM intent to the canonical signed
   quoter URL and return its block-pinned route
 - `ekubo_prepare_swap` — quote, generate slippage-protected unsigned Yul
-  router calldata, and simulate when an allowlisted RPC is configured
+  router calldata, and return the wallet-validation requirements
 
 Every current tool is read-only and idempotent. The Worker has no wallet, key
 material, signing function, or broadcast function. It returns an exact unsigned
 transaction plan for the agent to present to the user. After confirmation, the
 user's wallet or signature tooling is responsible for approvals, current-state
-validation, signing, and submission through the user's RPC provider.
+validation, signing, and submission through the user's connected provider.
 
-`confirmation_ready` means the server successfully simulated the plan at the
-quote block. It is not authorization to sign or submit it. ERC20 plans include
-an unsigned approval transaction in addition to the unsigned swap transaction;
-the client should check current allowance before asking the user to sign it.
+`confirmation_ready` means the quote, slippage bounds, and unsigned calldata
+are complete enough to present to the user. It does not mean the transaction
+was validated or authorized. ERC20 plans include an unsigned approval
+transaction in addition to the unsigned swap transaction; the client should
+check current allowance before asking the user to sign it.
+`wallet_validation_required` remains true for every prepared plan.
+
+The boundary mirrors the Ekubo interface: the public services provide token
+data and route quotes, transaction construction applies the user's slippage,
+and the user's connected wallet or provider handles balances, allowances,
+current-state validation, gas estimation, signing, submission, and receipts.
 
 ## Configuration
 
@@ -49,28 +56,8 @@ the client should check current allowance before asking the user to sign it.
 - `EKUBO_QUOTER_URL=https://prod-api-quoter.ekubo.org`
 
 Never make either URL a tool argument. Keeping upstreams operator-controlled
-prevents the public Worker from becoming an SSRF or arbitrary RPC proxy.
-
-Set allowlisted per-chain RPC URLs as an encrypted Worker secret:
-
-```sh
-bunx wrangler secret put RPC_URLS_JSON
-```
-
-The value is a JSON object such as:
-
-```json
-{"1":"https://...","8453":"https://..."}
-```
-
-Without a configured RPC, `ekubo_prepare_swap` still returns unsigned calldata
-but sets `confirmation_ready` to false. Agents must not present such a plan for
-submission until it has been simulated successfully.
-
-These deployment-controlled RPCs are used only for read-only quote-block
-simulation. RPC URLs and wallet credentials are not MCP tool inputs. The client
-must use the user's own RPC and wallet/signature tooling for current-state
-revalidation, signing, submission, and receipt confirmation.
+limits outbound requests to Ekubo-operated services. The Worker requires no
+runtime secrets or wallet credentials.
 
 Cloudflare routing protects the default `workers.dev` hostname and any custom
 domain. Set optional comma-separated `ALLOWED_HOSTNAMES` and `ALLOWED_ORIGINS`
@@ -98,13 +85,11 @@ Connect MCP Inspector to `http://localhost:8787/mcp`.
 
 ## Deployment
 
-Authenticate Wrangler, install the locked dependencies, optionally configure
-RPC simulation, and deploy:
+Authenticate Wrangler, install the locked dependencies, and deploy:
 
 ```sh
 bun install --frozen-lockfile
 bunx wrangler login
-bunx wrangler secret put RPC_URLS_JSON
 bun run deploy
 ```
 
@@ -131,8 +116,9 @@ MCP initialization, and protocol-native `tools/list`.
 
 Connect MCP Inspector to
 `https://ekubo-mcp.<account-subdomain>.workers.dev/mcp`, initialize the
-server, list tools, search tokens, and request a quote. Full swap preparation
-requires an `RPC_URLS_JSON` entry for the selected chain.
+server, list tools, search tokens, request a quote, and prepare an unsigned swap
+plan. Validate the plan through the user's connected wallet or provider before
+signing.
 
 The implementation uses the recommended stateless `createMcpHandler` path and
 does not require Durable Objects. Authorization is intentionally omitted

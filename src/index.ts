@@ -45,7 +45,7 @@ export default {
           {
             name: "Ekubo Protocol MCP",
             description:
-              "Public, unauthenticated, read-only agent tools for token discovery, route quotes, calldata preparation, and simulation",
+              "Public, unauthenticated, read-only agent tools for token discovery, route quotes, and unsigned calldata preparation",
             version: "0.1.0",
             mcp_endpoint: `${url.origin}/mcp`,
             mcp_transport: "streamable-http",
@@ -60,6 +60,7 @@ export default {
             safety: {
               signs_transactions: false,
               submits_transactions: false,
+              requires_wallet_validation: true,
               requires_user_confirmation: true,
             },
           },
@@ -192,7 +193,7 @@ Safe swap sequence:
 4. Choose slippage before generating calldata.
 5. Only treat a plan as ready when confirmation_ready is true.
 6. Show the exact plan ID, bounds, approval transaction, recipient, and swap transaction to the user.
-7. Re-simulate through the user's RPC and require explicit confirmation.
+7. Validate balances, allowances, and the exact transaction through the user's connected wallet or provider, and require explicit confirmation.
 8. Use the user's wallet or signature tooling to sign and submit. Never send credentials to this server.
 `;
 }
