@@ -62,11 +62,9 @@ export const prepareSwapSchema = getQuoteSchema.extend({
     .describe("Optional recipient; defaults to the transaction sender"),
   sender: address
     .optional()
-    .describe("Optional sender used for exact account-aware simulation"),
-  simulate: z
-    .boolean()
-    .default(true)
-    .describe("Simulate at the quote block using the server's allowlisted RPC"),
+    .describe(
+      "Optional sender included in the plan for recipient and wallet-validation context",
+    ),
 });
 
 const annotations = {
@@ -100,9 +98,9 @@ export const publicToolCatalog = [
   },
   {
     name: "ekubo_prepare_swap",
-    title: "Prepare and simulate an Ekubo swap",
+    title: "Prepare an Ekubo swap",
     description:
-      "Fetch a quote, generate slippage-protected unsigned Yul router and ERC20 approval calldata, and simulate it when an allowlisted RPC is configured. The client uses its own wallet and RPC to revalidate, sign, and submit. Never send wallet credentials to this server.",
+      "Fetch a quote and generate slippage-protected unsigned Yul router and ERC20 approval calldata. The client uses the user's connected wallet or provider to validate, sign, and submit. Never send wallet credentials to this server.",
     inputSchema: z.toJSONSchema(prepareSwapSchema),
   },
 ] as const;
@@ -189,7 +187,6 @@ export function createEkuboServer(env: Env) {
           slippageBps: input.slippage_bps,
           recipient: input.recipient as Address | undefined,
           sender: input.sender as Address | undefined,
-          simulate: input.simulate,
         }),
       ),
   );
@@ -200,7 +197,7 @@ export function createEkuboServer(env: Env) {
     {
       title: "Safe Ekubo swap workflow",
       description:
-        "Canonical token lookup, quote, preparation, simulation, and confirmation sequence",
+        "Canonical token lookup, quote, preparation, wallet validation, and confirmation sequence",
       mimeType: "text/markdown",
     },
     async (uri) => ({
@@ -310,11 +307,11 @@ const AGENT_WORKFLOW = `# Safe Ekubo swap workflow
 2. Convert the user amount to base units without floating-point arithmetic.
 3. Request a block-pinned route quote with explicit input/output direction.
 4. Prepare Yul router calldata with the user's chosen slippage tolerance.
-5. Simulate at the quote block. Use a sender for balance/allowance-aware simulation when possible.
-6. Present the exact plan ID, token amounts, slippage bound, recipient, approval transaction, and unsigned swap transaction.
-7. Re-simulate current state through the user's RPC and require explicit user confirmation.
+5. Present the exact plan ID, token amounts, slippage bound, recipient, approval transaction, and unsigned swap transaction.
+6. Validate balances, allowances, and the exact transaction through the user's connected wallet or provider.
+7. Require explicit user confirmation before signing.
 8. Ask the user's wallet or signature tooling to sign and submit. Never send credentials to this server.
-9. Re-quote and re-simulate after any change or stale block.
+9. Re-quote and revalidate after any change or stale block.
 `;
 
 const QUOTER_API = `# Ekubo quoter HTTP contract

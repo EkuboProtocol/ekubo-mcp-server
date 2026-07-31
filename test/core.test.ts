@@ -1,6 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { YUL_ROUTER_ABI } from "@ekubo/yul-router-sdk";
-import { encodeFunctionResult } from "viem";
 import { type Env, getQuote, prepareSwap } from "../src/core.js";
 
 const token0 = "0x0000000000000000000000000000000000000000";
@@ -34,7 +32,6 @@ const quote = {
 const env: Env = {
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
-  RPC_URLS_JSON: JSON.stringify({ 1: "https://rpc.test" }),
 };
 
 describe("MCP service core", () => {
@@ -71,30 +68,13 @@ describe("MCP service core", () => {
     );
   });
 
-  it("returns confirmation-gated calldata after block-pinned simulation", async () => {
-    const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
+  it("returns confirmation-gated calldata for wallet-side validation", async () => {
+    const requested: string[] = [];
+    const fetcher = async (input: RequestInfo | URL) => {
       const url = input.toString();
+      requested.push(url);
       if (url.startsWith("https://quoter.test/")) {
         return Response.json(quote);
-      }
-      if (url === "https://rpc.test") {
-        const body = JSON.parse(String(init?.body)) as {
-          method: string;
-        };
-        if (body.method === "eth_getBlockByNumber") {
-          return Response.json({ jsonrpc: "2.0", id: 1, result: { hash: "0x01" } });
-        }
-        if (body.method === "eth_call") {
-          return Response.json({
-            jsonrpc: "2.0",
-            id: 1,
-            result: encodeFunctionResult({
-              abi: YUL_ROUTER_ABI,
-              functionName: "quote",
-              result: [token0, token1, 1000n, 900n],
-            }),
-          });
-        }
       }
       return new Response("not found", { status: 404 });
     };
@@ -108,16 +88,19 @@ describe("MCP service core", () => {
         quoteType: "exact_input",
         amount: "1000",
         slippageBps: 25,
-        simulate: true,
       },
       fetcher as typeof fetch,
     );
 
     expect(result.requires_user_confirmation).toBe(true);
     expect(result.confirmation_ready).toBe(true);
-    expect(result.simulation.status).toBe("success");
+    expect(result.wallet_validation_required).toBe(true);
+    expect(result.client_execution.must_revalidate_before_signing).toBe(true);
     expect(result.transaction.data).toStartWith("0x");
     expect(result.plan_id).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(requested).toEqual([
+      `https://quoter.test/1/1000/${token0}/${token1}`,
+    ]);
   });
 
   it("constructs an unsigned ERC20 approval for client-side execution", async () => {
@@ -147,7 +130,6 @@ describe("MCP service core", () => {
         quoteType: "exact_output",
         amount: "100",
         slippageBps: 50,
-        simulate: false,
       },
       fetcher as typeof fetch,
     );

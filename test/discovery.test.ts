@@ -19,9 +19,13 @@ describe("Worker discovery", () => {
     const metadata = (await root.json()) as {
       mcp_endpoint: string;
       authentication: string;
+      safety: {
+        requires_wallet_validation: boolean;
+      };
     };
     expect(metadata.mcp_endpoint).toBe("https://mcp.ekubo.org/mcp");
     expect(metadata.authentication).toBe("none");
+    expect(metadata.safety.requires_wallet_validation).toBe(true);
 
     const tools = await worker.fetch(
       new Request("https://mcp.ekubo.org/tools"),
@@ -35,6 +39,10 @@ describe("Worker discovery", () => {
       "ekubo_get_quote",
       "ekubo_prepare_swap",
     ]);
+    const prepareSwap = catalog.tools.find(
+      (tool) => tool.name === "ekubo_prepare_swap",
+    );
+    expect(prepareSwap?.description).toContain("connected wallet or provider");
 
     const spec = await worker.fetch(
       new Request("https://mcp.ekubo.org/openapi.json"),
