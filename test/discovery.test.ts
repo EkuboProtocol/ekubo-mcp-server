@@ -5,7 +5,6 @@ import { publicToolCatalog } from "../src/server.js";
 const env = {
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
-  ALLOWED_HOSTNAMES: "mcp.ekubo.org",
   ALLOWED_ORIGINS: "https://mcp.ekubo.org",
 };
 const context = {} as unknown as ExecutionContext;
@@ -101,6 +100,50 @@ describe("Worker discovery", () => {
     };
     expect(listResult.result.tools.map((tool) => tool.name)).toEqual(
       publicToolCatalog.map((tool) => tool.name),
+    );
+
+    const resources = await worker.fetch(
+      new Request("https://mcp.ekubo.org/mcp", {
+        method: "POST",
+        headers: { ...headers, "mcp-protocol-version": "2025-11-25" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 3,
+          method: "resources/list",
+          params: {},
+        }),
+      }),
+      env,
+      context,
+    );
+    expect(resources.status).toBe(200);
+    const resourceResult = (await mcpJson(resources)) as {
+      result: { resources: { uri: string }[] };
+    };
+    expect(resourceResult.result.resources.map((resource) => resource.uri)).toContain(
+      "ekubo://docs/quoter-api",
+    );
+
+    const quoterContract = await worker.fetch(
+      new Request("https://mcp.ekubo.org/mcp", {
+        method: "POST",
+        headers: { ...headers, "mcp-protocol-version": "2025-11-25" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 4,
+          method: "resources/read",
+          params: { uri: "ekubo://docs/quoter-api" },
+        }),
+      }),
+      env,
+      context,
+    );
+    expect(quoterContract.status).toBe(200);
+    const contractResult = (await mcpJson(quoterContract)) as {
+      result: { contents: { text: string }[] };
+    };
+    expect(contractResult.result.contents[0]?.text).toContain(
+      "GET /{chainId}/{signedAmount}/{specifiedToken}/{otherToken}",
     );
   });
 

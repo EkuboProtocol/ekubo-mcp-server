@@ -11,8 +11,8 @@
   },
   "servers": [
     {
-      "url": "https://mcp.ekubo.org",
-      "description": "Production"
+      "url": "/",
+      "description": "Current deployment origin"
     }
   ],
   "externalDocs": {

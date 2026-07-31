@@ -119,4 +119,42 @@ describe("MCP service core", () => {
     expect(result.transaction.data).toStartWith("0x");
     expect(result.plan_id).toMatch(/^0x[0-9a-f]{64}$/);
   });
+
+  it("constructs an unsigned ERC20 approval for client-side execution", async () => {
+    const fetcher = async (input: RequestInfo | URL) => {
+      if (input.toString().startsWith("https://quoter.test/")) {
+        return Response.json({
+          ...quote,
+          total_calculated: "-201",
+          splits: [
+            {
+              ...quote.splits[0],
+              amount_specified: "-100",
+              amount_calculated: "-201",
+            },
+          ],
+        });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const result = await prepareSwap(
+      env,
+      {
+        chainId: "1",
+        tokenIn: token1,
+        tokenOut: token0,
+        quoteType: "exact_output",
+        amount: "100",
+        slippageBps: 50,
+        simulate: false,
+      },
+      fetcher as typeof fetch,
+    );
+
+    expect(result.approval?.transaction.chain_id).toBe("1");
+    expect(result.approval?.transaction.to).toBe(token1);
+    expect(result.approval?.transaction.data).toStartWith("0x095ea7b3");
+    expect(result.client_execution.must_revalidate_before_signing).toBe(true);
+  });
 });

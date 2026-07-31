@@ -1,11 +1,4 @@
-import {
-  buildQuoterQuoteUrl,
-  type EvmQuoterQuote,
-  type EvmQuoterQuoteType,
-  prepareSwapFromQuote,
-  type PreparedSwap,
-  YUL_ROUTER_ABI,
-} from "@ekubo/yul-router-sdk";
+import { YUL_ROUTER_ABI } from "@ekubo/yul-router-sdk";
 import {
   type Address,
   decodeAbiParameters,
@@ -16,6 +9,13 @@ import {
   numberToHex,
   stringToHex,
 } from "viem";
+import {
+  buildQuoterQuoteUrl,
+  type EvmQuoterQuote,
+  type EvmQuoterQuoteType,
+  prepareSwapFromQuote,
+  type PreparedSwap,
+} from "./yul-router.js";
 
 export interface Env {
   EKUBO_API_URL: string;
@@ -158,6 +158,7 @@ export async function prepareSwap(
       raw: quoted.quote,
     },
     transaction: {
+      chain_id: intent.chainId,
       to: prepared.transaction.to,
       data: prepared.transaction.data,
       value: prepared.transaction.value.toString(),
@@ -169,6 +170,12 @@ export async function prepareSwap(
             token: prepared.approval.token,
             spender: prepared.approval.spender,
             amount: prepared.approval.amount.toString(),
+            transaction: {
+              chain_id: intent.chainId,
+              to: prepared.approval.transaction.to,
+              data: prepared.approval.transaction.data,
+              value: prepared.approval.transaction.value.toString(),
+            },
           },
     simulation,
     confirmation: {
@@ -177,6 +184,21 @@ export async function prepareSwap(
         : "Do not ask the user to submit this plan until it has been simulated successfully.",
       recipient: prepared.recipient ?? intent.sender ?? "transaction_sender",
       sender: intent.sender ?? null,
+    },
+    client_execution: {
+      wallet: "Use the user's wallet or signature tooling; never send credentials to this MCP server",
+      rpc: "Use the user's configured RPC to re-simulate, estimate gas, submit, and confirm receipts",
+      must_revalidate_before_signing: true,
+      steps: [
+        ...(prepared.approval === null
+          ? []
+          : [
+              "Check current allowance and ask for confirmation before signing the approval transaction if it is required",
+            ]),
+        "Re-simulate the exact swap transaction against current state through the user's RPC",
+        "Ask the user to confirm the exact plan ID, slippage bound, recipient, value, and calldata",
+        "Have the user's wallet sign and submit; this MCP server must not receive a private key or seed phrase",
+      ],
     },
   };
 }

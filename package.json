@@ -11,7 +11,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@ekubo/yul-router-sdk": "file:../sdk",
+    "@ekubo/yul-router-sdk": "0.6.0",
     "@modelcontextprotocol/server": "2.0.0",
     "agents": "0.20.1",
     "viem": "^2.31.7",

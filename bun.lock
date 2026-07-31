@@ -5,7 +5,7 @@
     "": {
       "name": "@ekubo/mcp-worker",
       "dependencies": {
-        "@ekubo/yul-router-sdk": "file:../sdk",
+        "@ekubo/yul-router-sdk": "0.6.0",
         "@modelcontextprotocol/server": "2.0.0",
         "agents": "0.20.1",
         "viem": "^2.31.7",
@@ -92,7 +92,7 @@
 
     "@cspotcode/source-map-support": ["@cspotcode/source-map-support@0.8.1", "", { "dependencies": { "@jridgewell/trace-mapping": "0.3.9" } }, "sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw=="],
 
-    "@ekubo/yul-router-sdk": ["@ekubo/yul-router-sdk@file:../sdk", { "devDependencies": { "@types/node": "^26.1.2", "typescript": "^5.8.3", "viem": "^2.31.7" }, "peerDependencies": { "viem": "^2.31.7" }, "bin": { "ekubo-swap": "./dist/cli.js" } }],
+    "@ekubo/yul-router-sdk": ["@ekubo/yul-router-sdk@0.6.0", "", { "peerDependencies": { "viem": "^2.31.7" } }, "sha512-cDtCJ4eVkxYDu2PfEE0d6aUq4q6svfCAADiuIqX1NvjlWWvMmqzHrJ8pJnh9mhIc9lo42+gDvop8VAdwcT/jKA=="],
 
     "@emnapi/core": ["@emnapi/core@2.0.0-alpha.3", "", { "dependencies": { "@emnapi/wasi-threads": "2.0.1", "tslib": "^2.4.0" } }, "sha512-AZypUeJ/yByuxyS7BlSNRDOMLMlROYtjYdIAuBmJssVz1UJDSeYxLrdizhXCFYhedC5bqd/ASy8EuNXbVVXp9g=="],
 

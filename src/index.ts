@@ -14,18 +14,19 @@ export default {
       const requestOrigin = request.headers.get("origin");
       const handler = createMcpHandler(() => createEkuboServer(env), {
         route: "/mcp",
-        allowedHostnames: commaSeparatedHostnames(
-          env.ALLOWED_HOSTNAMES ?? "mcp.ekubo.org,localhost,127.0.0.1",
-        ),
+        allowedHostnames:
+          env.ALLOWED_HOSTNAMES === undefined
+            ? undefined
+            : commaSeparatedHostnames(env.ALLOWED_HOSTNAMES),
         corsOptions: {
-          origin: requestOrigin ?? "https://mcp.ekubo.org",
+          origin: requestOrigin ?? url.origin,
           methods: "GET, POST, OPTIONS",
           headers:
             "content-type, accept, mcp-protocol-version, mcp-session-id, last-event-id",
           exposeHeaders: "mcp-session-id, mcp-protocol-version",
           maxAge: 86400,
         },
-        allowedOriginHostnames: allowedOriginHostnames(env),
+        allowedOriginHostnames: allowedOriginHostnames(env, url.hostname),
       });
       return withSecurityHeaders(await handler(request, env, ctx));
     }
@@ -54,8 +55,8 @@ export default {
             llms_txt_url: `${url.origin}/llms.txt`,
             upstream_openapi: {
               data_api: "https://prod-api.ekubo.org/openapi.json",
-              quoter: "https://prod-api-quoter.ekubo.org/openapi.json",
             },
+            quoter_contract_resource: "ekubo://docs/quoter-api",
             safety: {
               signs_transactions: false,
               submits_transactions: false,
@@ -117,11 +118,12 @@ async function rateLimit(request: Request, env: Env): Promise<Response | null> {
       );
 }
 
-function allowedOriginHostnames(env: Env): string[] {
-  return commaSeparatedHostnames(
-    env.ALLOWED_ORIGINS ?? "https://mcp.ekubo.org",
-    true,
-  );
+function allowedOriginHostnames(env: Env, requestHostname: string): string[] {
+  const configured =
+    env.ALLOWED_ORIGINS === undefined
+      ? []
+      : commaSeparatedHostnames(env.ALLOWED_ORIGINS, true);
+  return [...new Set([requestHostname, ...configured])];
 }
 
 function commaSeparatedHostnames(value: string, parseOrigins = false): string[] {
@@ -181,7 +183,7 @@ Authentication: none
 Tool catalog: ${origin}/tools
 OpenAPI: ${origin}/openapi.json
 Canonical data API OpenAPI: https://prod-api.ekubo.org/openapi.json
-Canonical quoter OpenAPI: https://prod-api-quoter.ekubo.org/openapi.json
+Quoter contract resource: ekubo://docs/quoter-api
 
 Safe swap sequence:
 1. Use ekubo_search_tokens and reject ambiguous symbols.
@@ -189,7 +191,8 @@ Safe swap sequence:
 3. Use ekubo_get_quote or ekubo_prepare_swap with explicit input/output intent.
 4. Choose slippage before generating calldata.
 5. Only treat a plan as ready when confirmation_ready is true.
-6. Show the exact plan ID, bounds, approval, recipient, and transaction to the user.
-7. Require explicit confirmation. This server never signs or submits.
+6. Show the exact plan ID, bounds, approval transaction, recipient, and swap transaction to the user.
+7. Re-simulate through the user's RPC and require explicit confirmation.
+8. Use the user's wallet or signature tooling to sign and submit. Never send credentials to this server.
 `;
 }

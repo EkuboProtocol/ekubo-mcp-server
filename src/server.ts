@@ -102,7 +102,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_swap",
     title: "Prepare and simulate an Ekubo swap",
     description:
-      "Fetch a quote, generate slippage-protected unsigned Yul router calldata, and simulate it when an allowlisted RPC is configured. Never signs or submits. Only confirmation_ready plans should be presented for execution.",
+      "Fetch a quote, generate slippage-protected unsigned Yul router and ERC20 approval calldata, and simulate it when an allowlisted RPC is configured. The client uses its own wallet and RPC to revalidate, sign, and submit. Never send wallet credentials to this server.",
     inputSchema: z.toJSONSchema(prepareSwapSchema),
   },
 ] as const;
@@ -215,19 +215,19 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerResource(
-    "ekubo-quoter-openapi",
-    "https://prod-api-quoter.ekubo.org/openapi.json",
+    "ekubo-quoter-contract",
+    "ekubo://docs/quoter-api",
     {
-      title: "Ekubo quoter OpenAPI",
-      description: "Canonical public quoter HTTP contract",
-      mimeType: "application/json",
+      title: "Ekubo quoter HTTP contract",
+      description: "Canonical signed-path quote semantics used by MCP tools",
+      mimeType: "text/markdown",
     },
     async (uri) => ({
       contents: [
         {
           uri: uri.href,
-          mimeType: "application/json",
-          text: await fetchDocumentation(uri.href),
+          mimeType: "text/markdown",
+          text: QUOTER_API,
         },
       ],
     }),
@@ -311,7 +311,25 @@ const AGENT_WORKFLOW = `# Safe Ekubo swap workflow
 3. Request a block-pinned route quote with explicit input/output direction.
 4. Prepare Yul router calldata with the user's chosen slippage tolerance.
 5. Simulate at the quote block. Use a sender for balance/allowance-aware simulation when possible.
-6. Present the exact plan ID, token amounts, slippage bound, recipient, approval, and unsigned transaction.
-7. Require explicit user confirmation. Never sign or submit from this server.
-8. Re-quote and re-simulate after any change or stale block.
+6. Present the exact plan ID, token amounts, slippage bound, recipient, approval transaction, and unsigned swap transaction.
+7. Re-simulate current state through the user's RPC and require explicit user confirmation.
+8. Ask the user's wallet or signature tooling to sign and submit. Never send credentials to this server.
+9. Re-quote and re-simulate after any change or stale block.
+`;
+
+const QUOTER_API = `# Ekubo quoter HTTP contract
+
+Base URL: https://prod-api-quoter.ekubo.org
+
+Canonical route:
+
+GET /{chainId}/{signedAmount}/{specifiedToken}/{otherToken}
+
+- Exact input X to Y for positive amount A: /{chainId}/{A}/{X}/{Y}
+- Exact output X to Y for positive amount B: /{chainId}/-{B}/{Y}/{X}
+- Amounts are integer token base units.
+- The response contains block_number, block_hash, total_calculated,
+  estimated_gas_cost, price_impact, and signed executable route splits.
+- MCP callers should use ekubo_get_quote or ekubo_prepare_swap instead of
+  constructing this signed URL themselves.
 `;
