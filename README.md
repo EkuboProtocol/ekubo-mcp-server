@@ -99,7 +99,8 @@ The deployment also uses three Worker secrets:
 
 They are declared as required runtime secrets in `wrangler.jsonc`, so a deploy
 fails rather than silently publishing disabled provider tools when a binding is
-missing.
+missing. Bind them to the production `mcp` Worker under **Settings > Variables
+& Secrets**; Cloudflare build variables are not available at runtime.
 
 0x requests use Swap API v2's AllowanceHolder endpoints. Across requests use
 `GET /swap/approval` with bearer authentication and the configured integrator
@@ -142,7 +143,7 @@ bun run deploy
 
 `wrangler.jsonc` intentionally enables `workers.dev` without declaring a
 custom domain. The first deployment therefore produces a testable
-`https://ekubo-mcp.<account-subdomain>.workers.dev` URL. Add
+`https://mcp.<account-subdomain>.workers.dev` URL. Add
 `mcp.ekubo.org` as a Worker custom domain after that deployment; no code or
 configuration change is required.
 
@@ -152,9 +153,9 @@ For CI or non-interactive deployment, provide `CLOUDFLARE_API_TOKEN` and
 Smoke-test the deployed origin before adding the custom domain:
 
 ```sh
-curl https://ekubo-mcp.<account-subdomain>.workers.dev/health
-curl https://ekubo-mcp.<account-subdomain>.workers.dev/tools
-MCP_ORIGIN=https://ekubo-mcp.<account-subdomain>.workers.dev bun run smoke
+curl https://mcp.<account-subdomain>.workers.dev/health
+curl https://mcp.<account-subdomain>.workers.dev/tools
+MCP_ORIGIN=https://mcp.<account-subdomain>.workers.dev bun run smoke
 npx @modelcontextprotocol/inspector@latest
 ```
 
@@ -162,7 +163,7 @@ npx @modelcontextprotocol/inspector@latest
 MCP initialization, and protocol-native `tools/list`.
 
 Connect MCP Inspector to
-`https://ekubo-mcp.<account-subdomain>.workers.dev/mcp`, initialize the server,
+`https://mcp.<account-subdomain>.workers.dev/mcp`, initialize the server,
 list tools, search tokens, request same-chain and cross-chain quotes, and
 prepare unsigned execution plans. Validate every plan through the user's
 connected wallet or provider before signing.

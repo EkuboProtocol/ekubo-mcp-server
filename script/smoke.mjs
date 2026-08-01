@@ -2,7 +2,7 @@ const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
 
 if (origin === undefined) {
   throw new Error(
-    "Pass the deployed origin as an argument or set MCP_ORIGIN, for example: bun run smoke https://ekubo-mcp.example.workers.dev",
+    "Pass the deployed origin as an argument or set MCP_ORIGIN, for example: bun run smoke https://mcp.example.workers.dev",
   );
 }
 
