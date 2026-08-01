@@ -342,10 +342,19 @@ export const prepareVe33ReallocationSchema = z.object({
       }),
     )
     .min(1)
-    .max(100),
+    .max(25)
+    .describe(
+      "At most 25 targets. compact_max_lock creates one final voting VeToken per target; preserve_existing_locks may require multiple NFTs per target to keep expiry-cohort decay proportional.",
+    ),
   salt_nonce: bytes32.describe(
     "User-selected nonce for deterministic child VeToken IDs created by required splits",
   ),
+  strategy: z
+    .enum(["preserve_existing_locks", "compact_max_lock"])
+    .optional()
+    .describe(
+      "Defaults to preserve_existing_locks. compact_max_lock explicitly claims fees, consolidates active stake into one surviving NFT, extends it to four years, then creates exactly one voting NFT per target; redundant source NFT IDs are burned.",
+    ),
 });
 
 export const prepareVe33ReinvestSchema = z
@@ -524,7 +533,7 @@ export const publicToolCatalog = [
     name: "ekubo_get_stonx_allocation_recommendation",
     title: "Get suggested STONX allocations",
     description:
-      "Return the current provider-neutral STONX allocation recommendation and an exactly 10,000-bps executable target list resolved only to initialized canonical Robinhood Ve33 pools. The tool constructs no transaction; use the fee-first reallocation workflow to apply it.",
+      "Return the current provider-neutral STONX allocation recommendation and an exactly 10,000-bps executable target list capped at 25 initialized canonical Robinhood Ve33 pools. The tool constructs no transaction; use compact_max_lock for one final voting NFT per target.",
     inputSchema: z.toJSONSchema(getStonxAllocationRecommendationSchema),
     _meta: toolCatalogMetadata,
   },
@@ -532,7 +541,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_ve33_reallocation",
     title: "Prepare atomic ve(3,3) reallocation",
     description:
-      "Compile a reviewed current allocation into target pool-weight shares using one VeToken multicall: reject state drift or invalid targets, unconditionally claim every active source first, split only when required, then apply all target votes atomically.",
+      "Compile a reviewed current allocation into at most 25 target pool-weight shares using one VeToken multicall. The optional compact_max_lock strategy fee-safely consolidates active NFTs, extends the survivor to four years, then creates exactly one voting NFT per target; it explicitly discloses burned source IDs and lock extension.",
     inputSchema: z.toJSONSchema(prepareVe33ReallocationSchema),
     _meta: toolCatalogMetadata,
   },
@@ -934,6 +943,7 @@ export function createEkuboServer(env: Env) {
             weightBps: target.weight_bps,
           })),
           saltNonce: input.salt_nonce as `0x${string}`,
+          strategy: input.strategy,
         }),
       ),
   );
@@ -1205,13 +1215,13 @@ For exact token metadata, call ekubo_get_token for one known chain/address pair 
 
 For VeToken vote reorganization, first call ekubo_get_ve33_allocations and show the owner, state_id, total applied vote weight, every pool allocation, and contributing ve_ids. Pass that exact state_id to ekubo_prepare_ve33_reallocation. Never construct raw vote, clearVote, extendStake, mergeStakes, withdrawStake, or burn calldata from the ABI resource when a first-class safe workflow exists.
 
-For "update my STONX allocations to the suggested allocations", call ekubo_get_stonx_allocation_recommendation, require execution_ready=true and an exact 10,000-bps target total, then call ekubo_get_ve33_allocations for the connected wallet. Validate its onchain request and pass its exact state_id plus the recommendation targets to ekubo_prepare_ve33_reallocation. The preparation must claim all active voter fees first and must contain no ownership or NFT transfer function.
+For "update my STONX allocations to the suggested allocations", call ekubo_get_stonx_allocation_recommendation, require execution_ready=true, at most 25 targets, and an exact 10,000-bps target total, then call ekubo_get_ve33_allocations for the connected wallet. Validate its onchain request and pass its exact state_id, recommendation targets, and strategy=compact_max_lock to ekubo_prepare_ve33_reallocation. Before confirmation, show the surviving NFT, every source NFT burned by a compound merge, the maximum four-year extension, exactly one final voting NFT per target, and every decoded call.
 
 For "reinvest my fees", call ekubo_prepare_ve33_reinvest with phase=claim and omit claims so it discovers and claims every active allocation. Take the supplied pre-claim balance snapshots, then use phase=swap with only the exact claimed deltas so it prepares one exact-input swap per non-stake token. After receipts confirm, refresh allocations and use phase=stake_all with its exact state_id and the measured STONX output. Never swap a wallet's pre-existing balance.
 
 For a new stake, use ekubo_prepare_ve33_stake; max duration is the default when no duration is supplied. Extending an existing stake is destructive to its vote, so use ekubo_prepare_ve33_extend only with the current pool key; its compound call claims fees first, and max_duration=true must be an explicit choice.
 
-Every active source vote must be claimed unconditionally before any split or vote mutation, even when claimable fees are currently zero. Claims, splits, and votes must remain in the single returned VeToken multicall and in that order. Execute and decode onchain_validation.eth_call immediately before signing, simulate the exact transaction from sender, and discard the plan after any state change or failed expectation.`;
+Every active source vote must be claimed unconditionally before that vote is cleared or moved, even when claimable fees are currently zero. Preserve the returned compact claim-and-extend, claim-and-merge, split, and vote order in one VeToken multicall. Execute and decode onchain_validation.eth_call immediately before signing, simulate the exact transaction from sender, and discard the plan after any state change or failed expectation.`;
 
 const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 
@@ -1264,14 +1274,15 @@ const VE33_WORKFLOW = `# Ekubo ve(3,3) call workflow
 - For "my Ekubo STONX allocations" on Robinhood Chain, call ekubo_get_ve33_allocations with only the connected wallet address as owner. The production Ve33 deployment is for STONX, so it selects chain 4663 and the canonical VeToken automatically. If the client does not expose a connected address, ask the user; never infer ownership from a local keystore or environment.
 - The VeToken ERC721 owns the canonical Ve33 stake. The wallet must own or be approved for each ve_id.
 - splitStake must move a positive amount smaller than the source stake. The source keeps its vote with reduced weight; the new child starts unvoted.
-- Replacing or clearing a vote discards pending fee accounting unless fees are claimed first. Both vote compilers claim every active source unconditionally before splits or vote changes, including when claimable fees are zero.
+- Replacing or clearing a vote discards pending fee accounting unless fees are claimed first. Every compiler claims each active source unconditionally before that source vote is cleared or moved, including when claimable fees are zero.
 - Extending moves the stake to a new end time and clears its vote. The extension tool requires current_pool_key and exposes only compound claim-and-extend methods.
 - Pool keys may use an exact bytes32 config or data-API fields: fee, tick_spacing, extension, and optional stableswap_params.
 - For claim-all, use ekubo_prepare_ve33_claim_all_fees to discover the owner's indexed active votes and obtain one VeToken multicall plus ownerOf/voteState validation calldata. Revalidate those calls through the user's provider before signing.
 - For any vote reorganization, first use ekubo_get_ve33_allocations and show the complete allocation plus state_id. Pass that exact state_id and target weight_bps values totaling 10,000 to ekubo_prepare_ve33_reallocation.
-- For a suggested STONX update, first call ekubo_get_stonx_allocation_recommendation. Use its executable targets only when execution_ready is true and target_total_weight_bps is exactly 10,000, then follow the normal state lookup and reallocation workflow.
-- The reallocation compiler claims every active source first even when claimable fees are zero, then performs only required splits and target votes in one atomic VeToken multicall. Never detach or reorder those calls.
-- Unvoted NFTs are intentionally outside the reallocation scope. The compiler never merges, extends, withdraws, or burns.
+- preserve_existing_locks allocates every distinct expiry cohort proportionally across every target so pool weights decay together; it may require more voting NFTs than target pools and does not guarantee a 25-NFT portfolio.
+- For a suggested STONX update, first call ekubo_get_stonx_allocation_recommendation. Use its at-most-25 executable targets only when execution_ready is true and target_total_weight_bps is exactly 10,000, then pass strategy=compact_max_lock to the normal state-validated reallocation workflow.
+- compact_max_lock selects one surviving active NFT, claims its fees and extends it to the maximum four-year duration, then fee-safely claims and merges every other active NFT into it, splits once per additional target, and applies exactly one NFT vote per target. Never detach or reorder those calls.
+- Compound merges burn their source NFT IDs after moving the stake. Show every burned ID, the survivor, the lock extension, final NFT count, and decoded calls before requesting confirmation. Unvoted NFTs remain outside the reallocation scope; withdrawals and direct burn calldata remain forbidden.
 - Raw VeToken vote, clearVote, extendStake*, and full-source mergeStakes calls can discard pending voter fees. Prefer the fee-preserving tools or compound claim methods. Never call burn on a stake-bearing NFT; it can orphan the underlying stake. Withdraw only an expired stake, claim its active-pool fees first, and verify the recipient.
 - Reinvestment takes three confirmations: snapshot balances and automatically claim all active allocations, swap each complete post-claim delta exact-input into the stake token, then refresh portfolio state and use stake_all to apportion the complete output across every existing active allocation without replacing its vote.
 - New stakes default to stakeMaxDuration and affect no existing NFT. Existing lock extension is intentionally explicit because it clears the vote; the extension tool uses a compound fee claim before either max-duration or custom-duration extension.

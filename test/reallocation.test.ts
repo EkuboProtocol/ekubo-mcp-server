@@ -337,6 +337,111 @@ describe("safe VeToken allocation workflows", () => {
     ]);
   });
 
+  it("compacts active NFTs, extends the survivor to max, and creates one NFT per target", async () => {
+    const tokens = [
+      tokenFixture({ veId: 1n, amount: "600", end: endA, weight: "590" }),
+      tokenFixture({
+        veId: 2n,
+        amount: "300",
+        end: endB,
+        pool: poolB,
+        poolKeyId: "2",
+        weight: "290",
+        swapFee: "20",
+      }),
+    ];
+    const fetcher = fixtureFetcher(tokens);
+    const current = await getVe33Allocations(
+      env,
+      { chainId, veToken, owner },
+      fetcher,
+      now,
+    );
+    const plan = await prepareVe33Reallocation(
+      env,
+      {
+        chainId,
+        veToken,
+        sender: owner,
+        currentStateId: current.state_id,
+        targets: [
+          { poolKeyId: "1", swapFee: "10", weightBps: 5_000 },
+          { poolKeyId: "2", swapFee: "20", weightBps: 5_000 },
+        ],
+        saltNonce,
+        strategy: "compact_max_lock",
+      },
+      fetcher,
+      now,
+    );
+
+    expect(plan.schema_version).toBe("3");
+    expect(plan.strategy).toBe("compact_max_lock");
+    expect(plan.calls.map((call) => call.type)).toEqual([
+      "claim_fees_and_extend_max",
+      "claim_fees_and_merge_stake",
+      "split_stake",
+      "vote",
+      "vote",
+    ]);
+    expect(plan.operation_counts).toEqual({
+      fee_claim_and_extensions: 1,
+      fee_claim_and_merges: 1,
+      fee_claims: 2,
+      lock_extensions: 1,
+      merges: 1,
+      source_nft_burns: 1,
+      splits: 1,
+      votes: 2,
+      total_calls: 5,
+    });
+    expect("compact_portfolio" in plan).toBe(true);
+    if (!("compact_portfolio" in plan)) {
+      throw new Error("expected compact reallocation plan");
+    }
+    expect(plan.compact_portfolio).toMatchObject({
+      maximum_voting_nfts: 25,
+      final_voting_nft_count: 2,
+      surviving_ve_id: "1",
+      burned_source_ve_ids: ["2"],
+    });
+    expect(plan.target_allocation).toHaveLength(2);
+    expect(
+      plan.target_allocation.every((target) => target.ve_tokens.length === 1),
+    ).toBe(true);
+    expect(plan.safety).toMatchObject({
+      every_vote_is_claimed_before_it_is_cleared: true,
+      final_one_voting_nft_per_target_pool: true,
+      final_voting_nft_count_at_most_25: true,
+      burns_redundant_source_nfts: true,
+      max_lock_extension_is_explicit: true,
+    });
+
+    const outer = decodeFunctionData({
+      abi: parseAbi([
+        "function multicall(bytes[] data) payable returns (bytes[] results)",
+      ]),
+      data: plan.transaction?.data ?? "0x",
+    });
+    const allowed = parseAbi([
+      "function claimPoolFeesAndExtendStakeToSelfMaxDuration(uint256 veId,(address token0,address token1,bytes32 config) poolKey) payable returns (uint128,uint128)",
+      "function claimPoolFeesAndMergeStakesToSelf(uint256 fromVeId,uint256 toVeId,(address token0,address token1,bytes32 config) poolKey) payable returns (uint128,uint128,uint128)",
+      "function splitStake(uint256 veId,uint128 amount,bytes32 salt) payable returns (uint256)",
+      "function vote(uint256 veId,(address token0,address token1,bytes32 config) poolKey,uint64 swapFee) payable",
+    ]);
+    expect(
+      outer.args[0].map(
+        (data) => decodeFunctionData({ abi: allowed, data }).functionName,
+      ),
+    ).toEqual([
+      "claimPoolFeesAndExtendStakeToSelfMaxDuration",
+      "claimPoolFeesAndMergeStakesToSelf",
+      "splitStake",
+      "vote",
+      "vote",
+    ]);
+  });
+
   it("apportions every lock-end cohort independently so target weight shares decay together", async () => {
     const tokens = [
       tokenFixture({ veId: 1n, amount: "1000", end: endA }),
@@ -555,8 +660,8 @@ describe("safe VeToken allocation workflows", () => {
     expect(plan.transaction?.data).toStartWith("0xac9650d8");
   });
 
-  it("compiles an exact fee-first allocation plan across 100 pools", async () => {
-    const generated = Array.from({ length: 100 }, (_, index) => {
+  it("compiles an exact fee-first allocation plan across the 25-pool limit", async () => {
+    const generated = Array.from({ length: 25 }, (_, index) => {
       const pool: PoolFixture = {
         token0,
         token1: numberToHex(BigInt(index + 1), { size: 20 }),
@@ -598,7 +703,7 @@ describe("safe VeToken allocation workflows", () => {
         targets: generated.map(({ catalog }, index) => ({
           poolKeyId: catalog.pool_key_id,
           swapFee: String(index),
-          weightBps: 100,
+          weightBps: 400,
         })),
         saltNonce,
       },
@@ -606,12 +711,12 @@ describe("safe VeToken allocation workflows", () => {
       now,
     );
 
-    expect(plan.target_allocation).toHaveLength(100);
+    expect(plan.target_allocation).toHaveLength(25);
     expect(plan.operation_counts).toEqual({
       fee_claims: 1,
-      splits: 99,
-      votes: 100,
-      total_calls: 200,
+      splits: 24,
+      votes: 25,
+      total_calls: 50,
     });
     expect(
       plan.target_allocation.reduce(

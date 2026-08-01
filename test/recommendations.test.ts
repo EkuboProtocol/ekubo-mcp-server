@@ -81,7 +81,7 @@ describe("STONX allocation recommendations", () => {
       execution_status: "pool_not_initialized",
     });
     expect(result.safe_execution_workflow).toMatchObject({
-      all_current_voter_fees_are_claimed_first: true,
+      every_current_vote_is_claimed_before_it_is_cleared_or_moved: true,
       ownership_or_nft_transfer_calls_are_forbidden: true,
       recommendation_tool_constructs_no_transaction: true,
     });
@@ -111,6 +111,45 @@ describe("STONX allocation recommendations", () => {
       "allocation_recommendations_unavailable",
     );
     expect(JSON.stringify(unavailable)).not.toMatch(/dune|8187907|api\.dune/i);
+  });
+
+  it("caps executable recommendations at 25 pools and redistributes cutoff weight", async () => {
+    const rows = Array.from({ length: 27 }, (_, index) =>
+      recommendationRow({
+        pair: `ETH/T${index + 1}`,
+        token1: numberToHex(BigInt(index + 1), { size: 20 }),
+        symbol1: `T${index + 1}`,
+        weight: index < 25 ? 380 : 250,
+        cap: index < 25 ? 400 : 250,
+        priority: index + 1,
+      }),
+    );
+    const poolRows = rows.map((row, index) =>
+      poolRow(
+        String(index + 1),
+        row.asset1_address as `0x${string}`,
+        1_024,
+      ),
+    );
+    const result = await getStonxAllocationRecommendation(
+      env,
+      { chainId, veToken, ve33 },
+      recommendationFetcher(200, rows, poolRows),
+    );
+
+    expect(result.execution_ready).toBe(true);
+    expect(result.target_limit).toBe(25);
+    expect(result.executable_target_count).toBe(25);
+    expect(result.target_limit_excluded_weight_bps).toBe(500);
+    expect(result.target_limit_excluded_recommendations).toHaveLength(2);
+    expect(result.redistributed_weight_bps).toBe(500);
+    expect(result.target_total_weight_bps).toBe(10_000);
+    expect(result.targets.every(({ weight_bps }) => weight_bps === 400)).toBe(
+      true,
+    );
+    expect(result.recommendations.slice(25).every(
+      ({ execution_status }) => execution_status === "target_limit",
+    )).toBe(true);
   });
 });
 
@@ -168,7 +207,11 @@ function poolRow(poolKeyId: string, asset1: `0x${string}`, tickSpacing: number) 
   };
 }
 
-function recommendationFetcher(status = 200) {
+function recommendationFetcher(
+  status = 200,
+  rows: Record<string, unknown>[] = recommendationRows,
+  poolRows: Record<string, unknown>[] = pools,
+) {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(input.toString());
     if (url.hostname === "api.dune.com") {
@@ -186,19 +229,19 @@ function recommendationFetcher(status = 200) {
         state: "QUERY_STATE_COMPLETED",
         submitted_at: "2026-08-01T19:42:40.766983Z",
         result: {
-          metadata: { total_row_count: recommendationRows.length },
-          rows: recommendationRows,
+          metadata: { total_row_count: rows.length },
+          rows,
         },
       });
     }
     return Response.json({
-      data: pools,
+      data: poolRows,
       total_vote_weight: "1000",
       pagination: {
         page: 1,
         pageSize: 200,
         totalPages: 1,
-        totalItems: pools.length,
+        totalItems: poolRows.length,
       },
     });
   }) as typeof fetch;

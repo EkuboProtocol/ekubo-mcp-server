@@ -60,10 +60,12 @@ schemas after a Git-triggered deployment.
   another deployment such as testnet.
 - `ekubo_get_stonx_allocation_recommendation` — return the current
   provider-neutral recommendation plus an exact 10,000-bps executable target
-  list resolved only to initialized canonical Ve33 pools
+  list capped at 25 initialized canonical Ve33 pools
 - `ekubo_prepare_ve33_reallocation` — resolve target `pool_key_id` values and
-  compile basis-point target weights into one fee-first atomic VeToken
-  multicall using only claims, splits, and votes; accepts up to 100 targets
+  compile up to 25 basis-point targets into one fee-preserving atomic VeToken
+  multicall. `preserve_existing_locks` apportions each expiry cohort across
+  every target; `compact_max_lock` consolidates and extends stake before
+  creating exactly one voting NFT per target.
 
 ## Resources
 
@@ -137,21 +139,28 @@ and execute `onchain_validation.eth_call` through the user's provider.
 Then pass that exact state ID and target `weight_bps` values to
 `ekubo_prepare_ve33_reallocation`. The target shares must total 10,000. The
 server resolves each `pool_key_id` from the canonical Ve33 pool directory,
-apportions every lock-end cohort independently, and emits one VeToken
-multicall ordered as all current-pool claims, required splits, then all target
-votes. Every active source is claimed even when its current claimable amounts
-are zero. Unvoted NFTs are left untouched; the compiler never merges, extends,
-withdraws, or burns a VeToken.
+and supports two explicit strategies. `preserve_existing_locks` apportions
+every lock-end cohort independently so every target has the same expiry mix;
+its final NFT count may exceed the target count. `compact_max_lock` claims and
+max-extends one survivor, fee-safely merges every other active NFT into it,
+then splits exactly one voting NFT per target. Compound merges burn their
+source NFT IDs, which the plan discloses. Every active vote is claimed before
+it is cleared or moved, even when its current claimable amounts are zero.
+Unvoted NFTs are left untouched and direct burn or withdrawal calls remain
+forbidden.
 
 “Update my STONX allocations to the suggested allocations” is a three-tool
 workflow. First call `ekubo_get_stonx_allocation_recommendation` and require
-`execution_ready=true` plus `target_total_weight_bps=10000`. Then fetch and
+`execution_ready=true`, at most 25 targets, and
+`target_total_weight_bps=10000`. Then fetch and
 validate the wallet's complete current allocation as above. Finally pass its
-exact `state_id` and the recommendation's `targets` to
+exact `state_id`, the recommendation's `targets`, and
+`strategy=compact_max_lock` to
 `ekubo_prepare_ve33_reallocation`. Recommendation rows that do not yet have an
 initialized canonical pool are reported separately; their weight is
-redistributed among initialized recommendations without exceeding any row's
-allocation cap. The recommendation tool constructs no transaction.
+redistributed along with weight below the 25-target priority cutoff without
+exceeding any selected row's allocation cap. The recommendation tool
+constructs no transaction.
 
 The first-phase claims are also atomic stale-state guards: if an indexed active
 vote now points at another pool or is no longer owned by the sender, its claim

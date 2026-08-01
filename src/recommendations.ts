@@ -11,6 +11,7 @@ import { type Env, getVe33Pools, ServiceError } from "./core.js";
 const RECOMMENDATION_RESULT_URL =
   "https://api.dune.com/api/v1/query/8187907/results";
 const MAX_RECOMMENDATION_POOLS = 100;
+const MAX_EXECUTABLE_RECOMMENDATION_TARGETS = 25;
 const BPS_TOTAL = 10_000;
 const PREFERRED_VE33_TICK_SPACING = 1_024;
 const UINT64_MAX = (1n << 64n) - 1n;
@@ -85,7 +86,22 @@ export async function getStonxAllocationRecommendation(
       getAddress(intent.ve33),
     ),
   );
-  const executable = redistributeUnavailableWeight(resolved);
+  const executableCandidates = resolved
+    .filter(
+      (recommendation): recommendation is ResolvedRecommendation & {
+        pool: ResolvedPool;
+      } => recommendation.pool !== null,
+    )
+    .sort((left, right) =>
+      left.row.priorityRank !== right.row.priorityRank
+        ? left.row.priorityRank - right.row.priorityRank
+        : left.row.index - right.row.index,
+    )
+    .slice(0, MAX_EXECUTABLE_RECOMMENDATION_TARGETS);
+  const candidateIndexes = new Set(
+    executableCandidates.map(({ row }) => row.index),
+  );
+  const executable = redistributeUnavailableWeight(executableCandidates);
   const executableByIndex = new Map(
     (executable ?? []).map((target) => [target.recommendation.row.index, target]),
   );
@@ -94,6 +110,14 @@ export async function getStonxAllocationRecommendation(
     (sum, { row }) => sum + row.targetWeightBps,
     0,
   );
+  const excludedByTargetCap = resolved.filter(
+    ({ row, pool }) => pool !== null && !candidateIndexes.has(row.index),
+  );
+  const excludedWeight = excludedByTargetCap.reduce(
+    (sum, { row }) => sum + row.targetWeightBps,
+    0,
+  );
+  const redistributedWeight = unavailableWeight + excludedWeight;
   const targets =
     executable?.map(({ recommendation, weightBps }) => ({
       pool_key_id: (recommendation.pool as ResolvedPool).poolKeyId,
@@ -132,7 +156,7 @@ export async function getStonxAllocationRecommendation(
     execution_ready: executable !== null,
     original_total_weight_bps: BPS_TOTAL,
     unavailable_weight_bps: unavailableWeight,
-    redistributed_weight_bps: executable === null ? 0 : unavailableWeight,
+    redistributed_weight_bps: executable === null ? 0 : redistributedWeight,
     recommendation_count: resolved.length,
     executable_target_count: targets.length,
     recommendations: resolved.map(({ row, pool, unavailableReason }) => {
@@ -158,7 +182,12 @@ export async function getStonxAllocationRecommendation(
                 pool_id: pool.poolId,
                 tick_spacing: pool.tickSpacing,
               },
-        execution_status: pool === null ? unavailableReason : "ready",
+        execution_status:
+          pool === null
+            ? unavailableReason
+            : adjusted === undefined
+              ? "target_limit"
+              : "ready",
         evidence: {
           confidence: row.confidence,
           momentum: row.momentum,
@@ -176,6 +205,15 @@ export async function getStonxAllocationRecommendation(
       recommended_weight_bps: row.targetWeightBps,
       reason: unavailableReason,
     })),
+    target_limit: MAX_EXECUTABLE_RECOMMENDATION_TARGETS,
+    target_limit_excluded_weight_bps: excludedWeight,
+    target_limit_excluded_recommendations: excludedByTargetCap.map(({ row }) => ({
+      pair: row.pair,
+      token0: row.token0,
+      token1: row.token1,
+      recommended_weight_bps: row.targetWeightBps,
+      reason: "target_limit",
+    })),
     targets,
     target_total_weight_bps: targets.reduce(
       (sum, target) => sum + target.weight_bps,
@@ -185,16 +223,19 @@ export async function getStonxAllocationRecommendation(
       policy:
         "Use the unique initialized Ve33 pool for each pair; when several exist, use the unique initialized 1024-tick pool. Never guess among remaining ambiguities.",
       unavailable_weight_is_redistributed:
-        "Unavailable weight is redistributed proportionally among initialized recommendations without exceeding any allocation cap.",
+        "Unavailable weight and weight below the 25-target priority cutoff are redistributed proportionally among selected initialized recommendations without exceeding any allocation cap.",
     },
     safe_execution_workflow: {
       instructions: [
         "Call ekubo_get_ve33_allocations with the connected wallet and show its complete state.",
         "Execute and decode that tool's onchain_validation.eth_call through the connected provider.",
-        "Pass the exact returned state_id plus this result's targets to ekubo_prepare_ve33_reallocation.",
-        "Keep the returned fee claims, splits, and votes in their atomic order; simulate and obtain explicit confirmation before signing.",
+        "Pass the exact returned state_id plus this result's targets and strategy=compact_max_lock to ekubo_prepare_ve33_reallocation.",
+        "Show the max-lock extension, surviving NFT, burned source NFT IDs, final NFT count, and every decoded call; simulate and obtain explicit confirmation before signing.",
       ],
-      all_current_voter_fees_are_claimed_first: true,
+      every_current_vote_is_claimed_before_it_is_cleared_or_moved: true,
+      compact_max_lock_strategy: true,
+      maximum_final_voting_nfts: MAX_EXECUTABLE_RECOMMENDATION_TARGETS,
+      one_voting_nft_per_target_pool: true,
       ownership_or_nft_transfer_calls_are_forbidden: true,
       recommendation_tool_constructs_no_transaction: true,
     },

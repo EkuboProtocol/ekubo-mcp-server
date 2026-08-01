@@ -32,6 +32,7 @@ const VE_TOKEN_ABI = parseAbi([
   "function clearVote(uint256 veId) payable",
   "function vote(uint256 veId, (address token0,address token1,bytes32 config) poolKey, uint64 swapFee) payable",
   "function splitStake(uint256 veId, uint128 amount, bytes32 salt) payable returns (uint256 splitVeId)",
+  "function claimPoolFeesAndMergeStakesToSelf(uint256 fromVeId, uint256 toVeId, (address token0,address token1,bytes32 config) poolKey) payable returns (uint128 amount0,uint128 amount1,uint128 nextAmount)",
   "function claimPoolFeesAndExtendStakeToSelfForDuration(uint256 veId, uint32 duration, (address token0,address token1,bytes32 config) poolKey) payable returns (uint128 amount0,uint128 amount1)",
   "function claimPoolFeesAndExtendStakeToSelfMaxDuration(uint256 veId, (address token0,address token1,bytes32 config) poolKey) payable returns (uint128 amount0,uint128 amount1)",
   "function increaseStakeAmount(uint256 veId, uint128 amount) payable",
@@ -46,6 +47,7 @@ const UINT256_MAX = (1n << 256n) - 1n;
 const PERMILLE_TOTAL = 1_000;
 const BPS_TOTAL = 10_000;
 const MAX_ALLOCATION_TARGETS = 100;
+const MAX_REALLOCATION_TARGETS = 25;
 const VE33_MAX_STAKE_DURATION = 4n * 365n * 24n * 60n * 60n;
 
 export interface Ve33PoolKeyInput {
@@ -156,6 +158,7 @@ export interface PrepareVe33ReallocationIntent {
     weightBps: number;
   }[];
   saltNonce: Hex;
+  strategy?: "preserve_existing_locks" | "compact_max_lock";
 }
 
 interface IndexedVe33Vote {
@@ -822,8 +825,10 @@ export async function prepareVe33Reallocation(
   if (intent.targets.length === 0) {
     throw invalid("at least one target allocation is required");
   }
-  if (intent.targets.length > MAX_ALLOCATION_TARGETS) {
-    throw invalid(`at most ${MAX_ALLOCATION_TARGETS} target allocations are supported`);
+  if (intent.targets.length > MAX_REALLOCATION_TARGETS) {
+    throw invalid(
+      `at most ${MAX_REALLOCATION_TARGETS} target allocations are supported`,
+    );
   }
   const totalBps = intent.targets.reduce(
     (sum, target) => sum + target.weightBps,
@@ -899,6 +904,18 @@ export async function prepareVe33Reallocation(
       throw invalid("target pool and swap_fee combinations must be unique");
     }
     targetKeys.add(key);
+  }
+
+  if (intent.strategy === "compact_max_lock") {
+    return compactMaxLockReallocationPlan({
+      intent,
+      portfolio,
+      active,
+      targets,
+      poolCatalogSourceUrl: targetPoolCatalog.sourceUrl,
+      now,
+      nowSeconds,
+    });
   }
 
   const claims: Ve33Call[] = active.map((token) => ({
@@ -1070,9 +1087,12 @@ export async function prepareVe33Reallocation(
     calls,
     details: {
       current_state_id: portfolio.stateId,
+      strategy: "preserve_existing_locks",
       pool_catalog_source_url: targetPoolCatalog.sourceUrl,
       source_active_ve_tokens: active.length,
       untouched_unvoted_ve_tokens: portfolio.tokens.length - active.length,
+      expiry_cohort_count: cohorts.length,
+      final_voting_nft_count: finalPieces.length,
       target_allocation: targetAllocation,
       operation_counts: {
         fee_claims: claims.length,
@@ -1094,6 +1114,8 @@ export async function prepareVe33Reallocation(
         no_burns: true,
         no_explicit_clear_vote_calls: true,
         unvoted_ve_tokens_are_untouched: true,
+        preserves_each_expiry_cohort_across_every_target: true,
+        final_voting_nft_count_may_exceed_target_count: true,
         fee_recipient: portfolio.owner,
         remaining_client_preconditions: [
           "Execute and decode onchain_validation.eth_call immediately before signing.",
@@ -1106,6 +1128,262 @@ export async function prepareVe33Reallocation(
         total_projected_vote_weight: totalProjectedTargetWeight.toString(),
         note:
           "Each end-time cohort is apportioned independently, so target voting-power proportions remain stable as locks decay, subject only to integer rounding.",
+      },
+    },
+  });
+}
+
+function compactMaxLockReallocationPlan({
+  intent,
+  portfolio,
+  active,
+  targets,
+  poolCatalogSourceUrl,
+  now,
+  nowSeconds,
+}: {
+  intent: PrepareVe33ReallocationIntent;
+  portfolio: Ve33Portfolio;
+  active: (IndexedVeTokenState & { vote: IndexedVe33Vote })[];
+  targets: ResolvedReallocationTarget[];
+  poolCatalogSourceUrl: string;
+  now: bigint;
+  nowSeconds: number;
+}) {
+  const destination = [...active].sort((left, right) =>
+    left.amount > right.amount
+      ? -1
+      : left.amount < right.amount
+        ? 1
+        : left.veId < right.veId
+          ? -1
+          : 1,
+  )[0];
+  const sources = active
+    .filter(({ veId }) => veId !== destination.veId)
+    .sort((left, right) =>
+      left.veId < right.veId ? -1 : left.veId > right.veId ? 1 : 0,
+    );
+  const totalAmount = active.reduce((sum, token) => sum + token.amount, 0n);
+  const projectedEnd = now + VE33_MAX_STAKE_DURATION;
+  const amounts = apportionAmounts(totalAmount, targets);
+  const retainedTargetIndex = targets.reduce(
+    (largest, target) =>
+      amounts[target.index] > amounts[largest.index] ? target : largest,
+    targets[0],
+  ).index;
+
+  const consolidationCalls: Ve33Call[] = [
+    {
+      type: "claim_fees_and_extend_max",
+      phase: "preserve_fees_and_prepare_destination",
+      ve_id: destination.veId.toString(),
+      pool_key_id: destination.vote.poolKeyId,
+      expected_pool_id: destination.vote.poolId,
+      recipient: portfolio.owner,
+      previous_end_time: destination.endTime.toString(),
+      projected_end_time: projectedEnd.toString(),
+      data: encodeFunctionData({
+        abi: VE_TOKEN_ABI,
+        functionName: "claimPoolFeesAndExtendStakeToSelfMaxDuration",
+        args: [destination.veId, destination.vote.poolKey],
+      }),
+    },
+    ...sources.map(
+      (source): Ve33Call => ({
+        type: "claim_fees_and_merge_stake",
+        phase: "preserve_fees_and_consolidate",
+        from_ve_id: source.veId.toString(),
+        to_ve_id: destination.veId.toString(),
+        pool_key_id: source.vote.poolKeyId,
+        expected_pool_id: source.vote.poolId,
+        recipient: portfolio.owner,
+        burns_source_nft: true,
+        data: encodeFunctionData({
+          abi: VE_TOKEN_ABI,
+          functionName: "claimPoolFeesAndMergeStakesToSelf",
+          args: [source.veId, destination.veId, source.vote.poolKey],
+        }),
+      }),
+    ),
+  ];
+
+  const splits: Ve33Call[] = [];
+  const finalPieces: {
+    veId: bigint;
+    amount: bigint;
+    target: ResolvedReallocationTarget;
+    isNew: boolean;
+    salt: Hex | null;
+  }[] = [];
+  let saltIndex = 0;
+  for (const target of targets) {
+    const amount = amounts[target.index];
+    if (target.index === retainedTargetIndex) {
+      finalPieces.push({
+        veId: destination.veId,
+        amount,
+        target,
+        isNew: false,
+        salt: null,
+      });
+      continue;
+    }
+    const salt = deriveSalt(intent.saltNonce, saltIndex++);
+    const childVeId = saltToId(
+      portfolio.owner,
+      salt,
+      BigInt(intent.chainId),
+      portfolio.veToken,
+    );
+    splits.push({
+      type: "split_stake",
+      phase: "split_one_nft_per_target_pool",
+      source_ve_id: destination.veId.toString(),
+      ve_id: childVeId.toString(),
+      amount: amount.toString(),
+      salt,
+      data: encodeFunctionData({
+        abi: VE_TOKEN_ABI,
+        functionName: "splitStake",
+        args: [destination.veId, amount, salt],
+      }),
+    });
+    finalPieces.push({ veId: childVeId, amount, target, isNew: true, salt });
+  }
+
+  const votes: Ve33Call[] = finalPieces.map((piece) => ({
+    type: "vote",
+    phase: "apply_one_vote_per_target_pool",
+    ve_id: piece.veId.toString(),
+    source_ve_id: destination.veId.toString(),
+    pool_key_id: piece.target.poolKeyId,
+    pool_id: piece.target.poolId,
+    swap_fee: piece.target.swapFee.toString(),
+    stake_amount: piece.amount.toString(),
+    data: encodeFunctionData({
+      abi: VE_TOKEN_ABI,
+      functionName: "vote",
+      args: [piece.veId, piece.target.poolKey, piece.target.swapFee],
+    }),
+  }));
+  const calls = [...consolidationCalls, ...splits, ...votes];
+  if (calls.length > 512) {
+    throw new ServiceError(
+      "ve33_reallocation_too_large",
+      "The atomic compact reallocation would require more than 512 VeToken calls",
+      { total: calls.length },
+    );
+  }
+
+  const targetAllocation = targets.map((target) => {
+    const piece = finalPieces.find(
+      ({ target: pieceTarget }) => pieceTarget.index === target.index,
+    );
+    if (piece === undefined) {
+      throw new Error("internal compact reallocation error: missing target piece");
+    }
+    return {
+      pool_key_id: target.poolKeyId,
+      pool_id: target.poolId,
+      pool_key: target.poolKey,
+      swap_fee: target.swapFee.toString(),
+      target_weight_bps: target.weightBps,
+      stake_amount: piece.amount.toString(),
+      projected_vote_weight: piece.amount.toString(),
+      projected_weight_bps_rounded: Number(
+        (piece.amount * BigInt(BPS_TOTAL) + totalAmount / 2n) / totalAmount,
+      ),
+      projected_weight_bps_difference:
+        Number(
+          (piece.amount * BigInt(BPS_TOTAL) + totalAmount / 2n) / totalAmount,
+        ) - target.weightBps,
+      ve_tokens: [
+        {
+          ve_id: piece.veId.toString(),
+          source_ve_id: destination.veId.toString(),
+          stake_amount: piece.amount.toString(),
+          end_time: projectedEnd.toString(),
+          projected_end_time: projectedEnd.toString(),
+          end_time_formula: `execution_block_timestamp + ${VE33_MAX_STAKE_DURATION}`,
+          is_new: piece.isNew,
+          salt: piece.salt,
+        },
+      ],
+    };
+  });
+
+  return ve33Plan({
+    schemaVersion: "3",
+    action: "ve33_reallocate_votes",
+    chainId: intent.chainId,
+    veToken: portfolio.veToken,
+    sender: portfolio.owner,
+    calls,
+    details: {
+      current_state_id: portfolio.stateId,
+      strategy: "compact_max_lock",
+      pool_catalog_source_url: poolCatalogSourceUrl,
+      source_active_ve_tokens: active.length,
+      untouched_unvoted_ve_tokens: portfolio.tokens.length - active.length,
+      target_allocation: targetAllocation,
+      compact_portfolio: {
+        maximum_voting_nfts: MAX_REALLOCATION_TARGETS,
+        final_voting_nft_count: targets.length,
+        surviving_ve_id: destination.veId.toString(),
+        burned_source_ve_ids: sources.map(({ veId }) => veId.toString()),
+        source_voting_nft_count: active.length,
+        max_lock_duration_seconds: VE33_MAX_STAKE_DURATION.toString(),
+        projected_new_end_time: projectedEnd.toString(),
+        new_end_time_formula: `execution_block_timestamp + ${VE33_MAX_STAKE_DURATION}`,
+      },
+      operation_counts: {
+        fee_claim_and_extensions: 1,
+        fee_claim_and_merges: sources.length,
+        fee_claims: active.length,
+        lock_extensions: 1,
+        merges: sources.length,
+        source_nft_burns: sources.length,
+        splits: splits.length,
+        votes: votes.length,
+        total_calls: calls.length,
+      },
+      onchain_validation: portfolioOnchainValidation(portfolio),
+      safety: {
+        one_atomic_vetoken_multicall: true,
+        every_vote_is_claimed_before_it_is_cleared: true,
+        claims_are_unconditional_even_when_claimable_is_zero: true,
+        destination_is_extended_before_merges: true,
+        source_merges_are_fee_preserving_compound_calls: true,
+        target_pools_are_initialized_and_key_verified: true,
+        final_one_voting_nft_per_target_pool: true,
+        final_voting_nft_count_at_most_25: true,
+        max_lock_extension_is_explicit: true,
+        burns_redundant_source_nfts: true,
+        no_withdrawals: true,
+        no_explicit_clear_vote_calls: true,
+        unvoted_ve_tokens_are_untouched: true,
+        fee_recipient: portfolio.owner,
+        irreversible_effects: [
+          `Extends VeToken ${destination.veId} to the maximum four-year duration from the execution block timestamp.`,
+          ...(sources.length === 0
+            ? []
+            : [
+                `Burns source VeToken IDs ${sources.map(({ veId }) => veId).join(", ")} after merging their stake into VeToken ${destination.veId}.`,
+              ]),
+        ],
+        remaining_client_preconditions: [
+          "Execute and decode onchain_validation.eth_call immediately before signing.",
+          "Confirm balanceOf(owner), every ownerOf, stakes amount/end, and voteState match the indexed state.",
+          "Show the surviving ID, every burned source ID, the maximum lock extension, final NFT count, and exact decoded calls before confirmation.",
+          "Simulate the exact transaction from sender; any claim, extension, merge, split, salt collision, or target-pool failure reverts the entire multicall.",
+        ],
+      },
+      projection: {
+        timestamp: nowSeconds.toString(),
+        total_projected_vote_weight: totalAmount.toString(),
+        note:
+          "The max-duration extension makes voting power equal to stake amount at the execution block; one equally dated VeToken is assigned to each target, subject only to integer apportionment rounding.",
       },
     },
   });
@@ -2406,6 +2684,9 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
       only_allowlisted_vetoken_functions: true,
       ownership_or_nft_transfer_calls: 0,
       ownership_or_nft_transfer_calls_are_forbidden: true,
+      source_nft_burns_inside_compound_merges: calls.filter(
+        ({ type }) => type === "claim_fees_and_merge_stake",
+      ).length,
       signs_transactions: false,
       submits_transactions: false,
     },
@@ -2423,6 +2704,7 @@ const SAFE_VE_TOKEN_FUNCTIONS = new Set([
   "clearVote",
   "vote",
   "splitStake",
+  "claimPoolFeesAndMergeStakesToSelf",
   "claimPoolFeesAndExtendStakeToSelfForDuration",
   "claimPoolFeesAndExtendStakeToSelfMaxDuration",
   "increaseStakeAmount",

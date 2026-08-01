@@ -181,10 +181,10 @@ describe("Worker discovery", () => {
         salt: `0x${"12".repeat(32)}`,
       }).success,
     ).toBe(true);
-    const hundredTargets = Array.from({ length: 100 }, (_, index) => ({
+    const twentyFiveTargets = Array.from({ length: 25 }, (_, index) => ({
       pool_key_id: String(index + 1),
       swap_fee: String(index),
-      weight_bps: 100,
+      weight_bps: 400,
     }));
     const reallocationBase = {
       chain_id: "4663",
@@ -196,13 +196,13 @@ describe("Worker discovery", () => {
     expect(
       prepareVe33ReallocationSchema.safeParse({
         ...reallocationBase,
-        targets: hundredTargets,
+        targets: twentyFiveTargets,
       }).success,
     ).toBe(true);
     expect(
       prepareVe33ReallocationSchema.safeParse({
         ...reallocationBase,
-        targets: [...hundredTargets, hundredTargets[0]],
+        targets: [...twentyFiveTargets, twentyFiveTargets[0]],
       }).success,
     ).toBe(false);
 
@@ -263,7 +263,10 @@ describe("Worker discovery", () => {
       "Never infer the user's wallet",
     );
     expect(initializeResult.result.instructions).toContain(
-      "unconditionally before any split or vote mutation",
+      "unconditionally before that vote is cleared or moved",
+    );
+    expect(initializeResult.result.instructions).toContain(
+      "strategy=compact_max_lock",
     );
     expect(initializeResult.result.instructions).toContain(
       "update my STONX allocations to the suggested allocations",

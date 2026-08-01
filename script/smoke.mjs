@@ -1,6 +1,6 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
 const expectedServerVersion = "0.8.0";
-const expectedCatalogRevision = "2026-08-01.stonx-recommendations";
+const expectedCatalogRevision = "2026-08-01.compact-stonx-votes";
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
 
 if (origin === undefined) {
@@ -151,8 +151,13 @@ assert(
 );
 assert(
   recommendation?.safe_execution_workflow
-    ?.all_current_voter_fees_are_claimed_first === true,
-  "recommendation is missing the fee-first execution invariant",
+    ?.every_current_vote_is_claimed_before_it_is_cleared_or_moved === true,
+  "recommendation is missing the fee-preservation invariant",
+);
+assert(
+  recommendation?.targets?.length <= 25 &&
+    recommendation?.safe_execution_workflow?.compact_max_lock_strategy === true,
+  "recommendation is missing the compact 25-NFT strategy",
 );
 assert(
   !privateRecommendationSourcePattern.test(JSON.stringify(recommendationCall)),
