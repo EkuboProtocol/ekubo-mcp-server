@@ -163,7 +163,9 @@ console.log(`Ekubo MCP deployment smoke checks passed at ${origin}/mcp`);
 console.log(`Discovered tools: ${expectedTools.join(", ")}`);
 
 async function getJson(path) {
-  const response = await fetch(`${origin}${path}`, {
+  const url = new URL(path, origin);
+  url.searchParams.set("smoke_catalog_revision", expectedCatalogRevision);
+  const response = await fetch(url, {
     headers: { accept: "application/json" },
   });
   if (!response.ok) {
