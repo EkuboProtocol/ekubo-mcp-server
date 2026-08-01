@@ -45,8 +45,8 @@ export default {
           {
             name: "Ekubo Protocol MCP",
             description:
-              "Public, unauthenticated, read-only agent tools for token discovery, route quotes, and unsigned calldata preparation",
-            version: "0.1.0",
+              "Public, unauthenticated, read-only agent tools for token discovery, same-chain swaps, Across bridges, and ve(3,3) calldata preparation",
+            version: "0.2.0",
             mcp_endpoint: `${url.origin}/mcp`,
             mcp_transport: "streamable-http",
             authentication: "none",
@@ -55,8 +55,11 @@ export default {
             llms_txt_url: `${url.origin}/llms.txt`,
             upstream_openapi: {
               data_api: "https://prod-api.ekubo.org/openapi.json",
+              zero_x: "https://docs.0x.org",
+              across: "https://docs.across.to/api-reference",
             },
             quoter_contract_resource: "ekubo://docs/quoter-api",
+            ve33_workflow_resource: "ekubo://docs/ve33-workflow",
             safety: {
               signs_transactions: false,
               submits_transactions: false,
@@ -184,16 +187,19 @@ Authentication: none
 Tool catalog: ${origin}/tools
 OpenAPI: ${origin}/openapi.json
 Canonical data API OpenAPI: https://prod-api.ekubo.org/openapi.json
-Quoter contract resource: ekubo://docs/quoter-api
+Aggregated quote resource: ekubo://docs/quoter-api
+ve(3,3) workflow resource: ekubo://docs/ve33-workflow
 
-Safe swap sequence:
-1. Use ekubo_search_tokens and reject ambiguous symbols.
+Safe swap and bridge sequence:
+1. Use ekubo_search_tokens; results prioritize visibility_priority. Show the selected chain and address.
 2. Convert the amount to base units using token decimals.
-3. Use ekubo_get_quote or ekubo_prepare_swap with explicit input/output intent.
+3. Use ekubo_get_quote or ekubo_prepare_swap with exact input/output intent and destination_chain_id.
 4. Choose slippage before generating calldata.
 5. Only treat a plan as ready when confirmation_ready is true.
-6. Show the exact plan ID, bounds, approval transaction, recipient, and swap transaction to the user.
+6. Show the source, exact plan ID, chains, bounds, approvals, recipient, execution transaction, and any allowance reset.
 7. Validate balances, allowances, and the exact transaction through the user's connected wallet or provider, and require explicit confirmation.
 8. Use the user's wallet or signature tooling to sign and submit. Never send credentials to this server.
+
+ve(3,3): use the dedicated prepare tools for vote allocation/splitting, extension, fee claims, and phased reinvestment. Read ekubo://docs/ve33-workflow before constructing a plan.
 `;
 }

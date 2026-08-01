@@ -21,6 +21,11 @@ const expectedTools = [
   "ekubo_get_token",
   "ekubo_get_quote",
   "ekubo_prepare_swap",
+  "ekubo_prepare_ve33_vote",
+  "ekubo_prepare_ve33_extend",
+  "ekubo_prepare_ve33_split",
+  "ekubo_prepare_ve33_claim_fees",
+  "ekubo_prepare_ve33_reinvest",
 ];
 assert(
   JSON.stringify(catalog.tools?.map((tool) => tool.name)) ===

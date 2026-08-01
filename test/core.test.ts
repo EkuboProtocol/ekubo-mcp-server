@@ -3,6 +3,7 @@ import { type Env, getQuote, prepareSwap } from "../src/core.js";
 
 const token0 = "0x0000000000000000000000000000000000000000";
 const token1 = "0x1111111111111111111111111111111111111111";
+const sender = "0x2222222222222222222222222222222222222222";
 const config = `0x${"00".repeat(32)}`;
 
 const quote = {
@@ -88,6 +89,7 @@ describe("MCP service core", () => {
         quoteType: "exact_input",
         amount: "1000",
         slippageBps: 25,
+        sender,
       },
       fetcher as typeof fetch,
     );
@@ -130,6 +132,7 @@ describe("MCP service core", () => {
         quoteType: "exact_output",
         amount: "100",
         slippageBps: 50,
+        sender,
       },
       fetcher as typeof fetch,
     );

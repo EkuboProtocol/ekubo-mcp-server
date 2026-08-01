@@ -1,14 +1,23 @@
 import { McpServer } from "@modelcontextprotocol/server";
-import type { Address } from "viem";
+import { type Address, getAddress, numberToHex } from "viem";
 import { z } from "zod";
 import {
   type Env,
   getQuote,
   getToken,
   prepareSwap,
+  type QuoteSource,
   searchTokens,
   ServiceError,
 } from "./core.js";
+import {
+  prepareVe33Claim,
+  prepareVe33Extend,
+  prepareVe33Reinvest,
+  prepareVe33Split,
+  prepareVe33Vote,
+  type Ve33PoolKeyInput,
+} from "./ve33.js";
 
 const chainId = z
   .string()
@@ -18,7 +27,30 @@ const address = z
   .string()
   .regex(/^0x[0-9a-fA-F]{40}$/, "must be a 20-byte EVM address")
   .describe("20-byte EVM token address; use all-zeroes for the native token");
+const tokenIdentifier = z
+  .string()
+  .regex(
+    /^(?:0x[0-9a-fA-F]{1,40}|eip155:[0-9]+:0x[0-9a-fA-F]{1,40})$/,
+    "must be an EVM address or eip155:<chain_id>:<address>",
+  )
+  .describe(
+    "Raw EVM address or CAIP-10 eip155:<chain_id>:<address>; all-zeroes denotes the native token",
+  );
+const uintString = z
+  .string()
+  .regex(/^(?:0|[1-9][0-9]*)$/, "must be an unsigned decimal integer");
+const uintLikeString = z
+  .string()
+  .regex(
+    /^(?:(?:0|[1-9][0-9]*)|0x[0-9a-fA-F]+)$/,
+    "must be an unsigned decimal or hexadecimal integer",
+  );
+const bytes32 = z
+  .string()
+  .regex(/^0x[0-9a-fA-F]{64}$/, "must be exactly 32 bytes")
+  .describe("0x-prefixed bytes32");
 const quoteType = z.enum(["exact_input", "exact_output"]);
+const quoteSource = z.enum(["auto", "ekubo", "0x", "across"]);
 const amount = z
   .string()
   .regex(/^[0-9]*[1-9][0-9]*$/, "amount must be a positive base-unit integer")
@@ -44,10 +76,21 @@ export const getTokenSchema = z.object({
 
 export const getQuoteSchema = z.object({
   chain_id: chainId,
-  token_in: address,
-  token_out: address,
+  destination_chain_id: chainId
+    .optional()
+    .describe("Destination chain; defaults to chain_id for a same-chain swap"),
+  token_in: tokenIdentifier,
+  token_out: tokenIdentifier,
   quote_type: quoteType,
   amount,
+  source: quoteSource.default("auto"),
+  slippage_bps: z.number().int().min(0).max(10_000).default(50),
+  sender: address
+    .optional()
+    .describe("Optional taker/depositor; makes 0x or Across quotes firm"),
+  recipient: address
+    .optional()
+    .describe("Optional output recipient; defaults to sender when preparing"),
 });
 
 export const prepareSwapSchema = getQuoteSchema.extend({
@@ -57,15 +100,155 @@ export const prepareSwapSchema = getQuoteSchema.extend({
     .min(0)
     .max(10_000)
     .describe("User-selected slippage tolerance in basis points"),
-  recipient: address
-    .optional()
-    .describe("Optional recipient; defaults to the transaction sender"),
-  sender: address
-    .optional()
-    .describe(
-      "Optional sender included in the plan for recipient and wallet-validation context",
-    ),
+  sender: address.describe(
+    "Transaction sender/taker/depositor used for firm quotes and validation",
+  ),
 });
+
+const stableswapParamsSchema = z.object({
+  center_tick: z.number().int(),
+  amplification: z.number().int().min(0).max(127),
+});
+
+const poolAddress = z
+  .string()
+  .regex(/^0x[0-9a-fA-F]{1,40}$/, "must fit in a 20-byte EVM address");
+
+const poolKeySchema = z
+  .object({
+    token0: poolAddress,
+    token1: poolAddress,
+    config: bytes32.optional(),
+    fee: uintLikeString.optional(),
+    tick_spacing: z
+      .union([z.number().int().min(0), uintLikeString])
+      .nullable()
+      .optional(),
+    extension: poolAddress.optional(),
+    stableswap_params: stableswapParamsSchema.nullable().optional(),
+  })
+  .refine(
+    (poolKey) =>
+      poolKey.config !== undefined ||
+      (poolKey.fee !== undefined && poolKey.extension !== undefined),
+    "provide config, or provide fee, tick_spacing, and extension",
+  );
+
+const claimSchema = z.object({
+  ve_id: uintString,
+  pool_key: poolKeySchema,
+});
+
+export const prepareVe33VoteSchema = z.object({
+  chain_id: chainId,
+  ve_token: address,
+  sender: address,
+  source_ve_id: uintString,
+  source_amount: amount,
+  current_vote: z
+    .object({
+      pool_key_id: z.string().min(1),
+      pool_key: poolKeySchema,
+      swap_fee: uintString.optional(),
+    })
+    .nullable()
+    .describe("Current indexed vote, or null only after verifying the token is unvoted"),
+  allocations: z
+    .array(
+      z.object({
+        pool_key_id: z.string().min(1),
+        pool_key: poolKeySchema,
+        swap_fee: uintString,
+        permille: z.number().int().min(1).max(1_000),
+      }),
+    )
+    .min(1)
+    .max(10),
+  unallocated_permille: z.number().int().min(0).max(1_000),
+  salt_nonce: bytes32.describe(
+    "User-selected nonce used to derive deterministic, replay-detectable split salts",
+  ),
+});
+
+export const prepareVe33ExtendSchema = z
+  .object({
+    chain_id: chainId,
+    ve_token: address,
+    sender: address,
+    ve_id: uintString,
+    duration_seconds: z.number().int().min(1).max(0xffff_ffff).optional(),
+    max_duration: z.boolean().default(false),
+    current_pool_key: poolKeySchema
+      .nullable()
+      .describe(
+        "Active pool key so fees are claimed before extension, or null only after verifying the token is unvoted",
+      ),
+  })
+  .refine(
+    (input) => input.max_duration !== (input.duration_seconds !== undefined),
+    "choose max_duration=true or provide duration_seconds",
+  );
+
+export const prepareVe33SplitSchema = z.object({
+  chain_id: chainId,
+  ve_token: address,
+  sender: address,
+  ve_id: uintString,
+  amount,
+  salt: bytes32,
+});
+
+export const prepareVe33ClaimSchema = z.object({
+  chain_id: chainId,
+  ve_token: address,
+  sender: address,
+  recipient: address.optional(),
+  claims: z.array(claimSchema).min(1).max(100),
+});
+
+export const prepareVe33ReinvestSchema = z
+  .object({
+    phase: z.enum(["claim", "swap", "stake"]),
+    chain_id: chainId,
+    ve_token: address,
+    sender: address,
+    claims: z.array(claimSchema).min(1).max(100).optional(),
+    stake_token: address.optional(),
+    fee_balances: z
+      .array(z.object({ token: address, amount: uintString }))
+      .min(1)
+      .max(20)
+      .optional(),
+    slippage_bps: z.number().int().min(0).max(10_000).default(50),
+    source: quoteSource.default("auto"),
+    ve_id: uintString.optional(),
+    amount: uintString.optional(),
+  })
+  .superRefine((input, context) => {
+    if (input.phase === "claim" && input.claims === undefined) {
+      context.addIssue({ code: "custom", message: "claim phase requires claims" });
+    }
+    if (
+      input.phase === "swap" &&
+      (input.stake_token === undefined || input.fee_balances === undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "swap phase requires stake_token and fee_balances",
+      });
+    }
+    if (
+      input.phase === "stake" &&
+      (input.stake_token === undefined ||
+        input.ve_id === undefined ||
+        input.amount === undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "stake phase requires stake_token, ve_id, and amount",
+      });
+    }
+  });
 
 const annotations = {
   readOnlyHint: true,
@@ -79,7 +262,7 @@ export const publicToolCatalog = [
     name: "ekubo_search_tokens",
     title: "Search Ekubo tokens",
     description:
-      "Search the canonical Ekubo token list. Resolve symbols to a unique address and decimals before requesting a quote.",
+      "Search the canonical Ekubo token list, ordered by descending visibility_priority so the preferred token wins ambiguous symbol matches.",
     inputSchema: z.toJSONSchema(searchTokensSchema),
   },
   {
@@ -91,17 +274,52 @@ export const publicToolCatalog = [
   },
   {
     name: "ekubo_get_quote",
-    title: "Get an Ekubo route quote",
+    title: "Get a swap or bridge quote",
     description:
-      "Get a block-pinned EVM route quote using explicit input/output intent. This tool translates to the canonical signed-amount quoter URL.",
+      "Compare Ekubo and 0x for same-chain swaps or use Across for cross-chain swaps. Supports exact input/output and EIP-155 token identifiers.",
     inputSchema: z.toJSONSchema(getQuoteSchema),
   },
   {
     name: "ekubo_prepare_swap",
-    title: "Prepare an Ekubo swap",
+    title: "Prepare a swap or bridge",
     description:
-      "Fetch a quote and generate slippage-protected unsigned Yul router and ERC20 approval calldata. The client uses the user's connected wallet or provider to validate, sign, and submit. Never send wallet credentials to this server.",
+      "Fetch a firm Ekubo, 0x, or Across quote and generate unsigned approval plus execution calldata. The client uses the user's connected wallet or provider to validate, sign, and submit.",
     inputSchema: z.toJSONSchema(prepareSwapSchema),
+  },
+  {
+    name: "ekubo_prepare_ve33_vote",
+    title: "Prepare ve(3,3) vote changes",
+    description:
+      "Compile one ve-token into multiple vote allocations. Claims fees before destructive vote changes, splits deterministic child NFTs, and votes each piece in one VeToken multicall.",
+    inputSchema: z.toJSONSchema(prepareVe33VoteSchema),
+  },
+  {
+    name: "ekubo_prepare_ve33_extend",
+    title: "Prepare a ve-token extension",
+    description:
+      "Generate an unsigned VeToken extension call, atomically claiming active-pool fees first when current_pool_key is supplied.",
+    inputSchema: z.toJSONSchema(prepareVe33ExtendSchema),
+  },
+  {
+    name: "ekubo_prepare_ve33_split",
+    title: "Prepare a ve-token split",
+    description:
+      "Split a source ve-token with an explicit salt and return the deterministic child token ID; the source vote is preserved and the child starts unvoted.",
+    inputSchema: z.toJSONSchema(prepareVe33SplitSchema),
+  },
+  {
+    name: "ekubo_prepare_ve33_claim_fees",
+    title: "Prepare ve-token fee claims",
+    description:
+      "Generate one call or a VeToken multicall that claims voter fees from one or more ve-tokens.",
+    inputSchema: z.toJSONSchema(prepareVe33ClaimSchema),
+  },
+  {
+    name: "ekubo_prepare_ve33_reinvest",
+    title: "Prepare ve-token fee reinvestment",
+    description:
+      "Build the safe three-phase claim, full-balance exact-input swap, and stake workflow needed to reinvest every claimed fee token into the ve-token's stake token.",
+    inputSchema: z.toJSONSchema(prepareVe33ReinvestSchema),
   },
 ] as const;
 
@@ -109,7 +327,7 @@ export function createEkuboServer(env: Env) {
   const server = new McpServer({
     name: "ekubo",
     title: "Ekubo Protocol",
-    version: "0.1.0",
+    version: "0.2.0",
     websiteUrl: "https://mcp.ekubo.org",
   });
 
@@ -157,15 +375,25 @@ export function createEkuboServer(env: Env) {
       annotations,
     },
     async (input) =>
-      toolResult(() =>
-        getQuote(env, {
+      toolResult(() => {
+        const destinationChainId = input.destination_chain_id ?? input.chain_id;
+        return getQuote(env, {
           chainId: input.chain_id,
-          tokenIn: input.token_in as Address,
-          tokenOut: input.token_out as Address,
+          destinationChainId,
+          tokenIn: tokenAddress(input.token_in, input.chain_id, "token_in"),
+          tokenOut: tokenAddress(
+            input.token_out,
+            destinationChainId,
+            "token_out",
+          ),
           quoteType: input.quote_type,
           amount: input.amount,
-        }),
-      ),
+          source: input.source,
+          slippageBps: input.slippage_bps,
+          sender: input.sender as Address | undefined,
+          recipient: input.recipient as Address | undefined,
+        });
+      }),
   );
 
   server.registerTool(
@@ -177,25 +405,183 @@ export function createEkuboServer(env: Env) {
       annotations,
     },
     async (input) =>
-      toolResult(() =>
-        prepareSwap(env, {
+      toolResult(() => {
+        const destinationChainId = input.destination_chain_id ?? input.chain_id;
+        return prepareSwap(env, {
           chainId: input.chain_id,
-          tokenIn: input.token_in as Address,
-          tokenOut: input.token_out as Address,
+          destinationChainId,
+          tokenIn: tokenAddress(input.token_in, input.chain_id, "token_in"),
+          tokenOut: tokenAddress(
+            input.token_out,
+            destinationChainId,
+            "token_out",
+          ),
           quoteType: input.quote_type,
           amount: input.amount,
+          source: input.source,
           slippageBps: input.slippage_bps,
           recipient: input.recipient as Address | undefined,
-          sender: input.sender as Address | undefined,
+          sender: input.sender as Address,
+        });
+      }),
+  );
+
+  server.registerTool(
+    publicToolCatalog[4].name,
+    {
+      title: publicToolCatalog[4].title,
+      description: publicToolCatalog[4].description,
+      inputSchema: prepareVe33VoteSchema,
+      annotations,
+    },
+    async (input) =>
+      toolResult(() =>
+        prepareVe33Vote({
+          chainId: input.chain_id,
+          veToken: input.ve_token as Address,
+          sender: input.sender as Address,
+          sourceVeId: input.source_ve_id,
+          sourceAmount: input.source_amount,
+          currentVote: input.current_vote
+            ? {
+                poolKeyId: input.current_vote.pool_key_id,
+                poolKey: mapPoolKey(input.current_vote.pool_key),
+                swapFee: input.current_vote.swap_fee,
+              }
+            : undefined,
+          allocations: input.allocations.map((allocation) => ({
+            poolKeyId: allocation.pool_key_id,
+            poolKey: mapPoolKey(allocation.pool_key),
+            swapFee: allocation.swap_fee,
+            permille: allocation.permille,
+          })),
+          unallocatedPermille: input.unallocated_permille,
+          saltNonce: input.salt_nonce as `0x${string}`,
         }),
       ),
+  );
+
+  server.registerTool(
+    publicToolCatalog[5].name,
+    {
+      title: publicToolCatalog[5].title,
+      description: publicToolCatalog[5].description,
+      inputSchema: prepareVe33ExtendSchema,
+      annotations,
+    },
+    async (input) =>
+      toolResult(() =>
+        prepareVe33Extend({
+          chainId: input.chain_id,
+          veToken: input.ve_token as Address,
+          sender: input.sender as Address,
+          veId: input.ve_id,
+          durationSeconds: input.duration_seconds,
+          maxDuration: input.max_duration,
+          currentPoolKey: input.current_pool_key
+            ? mapPoolKey(input.current_pool_key)
+            : undefined,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    publicToolCatalog[6].name,
+    {
+      title: publicToolCatalog[6].title,
+      description: publicToolCatalog[6].description,
+      inputSchema: prepareVe33SplitSchema,
+      annotations,
+    },
+    async (input) =>
+      toolResult(() =>
+        prepareVe33Split({
+          chainId: input.chain_id,
+          veToken: input.ve_token as Address,
+          sender: input.sender as Address,
+          veId: input.ve_id,
+          amount: input.amount,
+          salt: input.salt as `0x${string}`,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    publicToolCatalog[7].name,
+    {
+      title: publicToolCatalog[7].title,
+      description: publicToolCatalog[7].description,
+      inputSchema: prepareVe33ClaimSchema,
+      annotations,
+    },
+    async (input) =>
+      toolResult(() =>
+        prepareVe33Claim({
+          chainId: input.chain_id,
+          veToken: input.ve_token as Address,
+          sender: input.sender as Address,
+          recipient: input.recipient as Address | undefined,
+          claims: input.claims.map((claim) => ({
+            veId: claim.ve_id,
+            poolKey: mapPoolKey(claim.pool_key),
+          })),
+        }),
+      ),
+  );
+
+  server.registerTool(
+    publicToolCatalog[8].name,
+    {
+      title: publicToolCatalog[8].title,
+      description: publicToolCatalog[8].description,
+      inputSchema: prepareVe33ReinvestSchema,
+      annotations,
+    },
+    async (input) =>
+      toolResult(() => {
+        const common = {
+          chainId: input.chain_id,
+          veToken: input.ve_token as Address,
+          sender: input.sender as Address,
+        };
+        if (input.phase === "claim") {
+          return prepareVe33Reinvest(env, {
+            phase: "claim",
+            ...common,
+            claims: (input.claims ?? []).map((claim) => ({
+              veId: claim.ve_id,
+              poolKey: mapPoolKey(claim.pool_key),
+            })),
+          });
+        }
+        if (input.phase === "swap") {
+          return prepareVe33Reinvest(env, {
+            phase: "swap",
+            ...common,
+            stakeToken: input.stake_token as Address,
+            feeBalances: (input.fee_balances ?? []).map((balance) => ({
+              token: balance.token as Address,
+              amount: balance.amount,
+            })),
+            slippageBps: input.slippage_bps,
+            source: input.source as QuoteSource,
+          });
+        }
+        return prepareVe33Reinvest(env, {
+          phase: "stake",
+          ...common,
+          stakeToken: input.stake_token as Address,
+          veId: input.ve_id as string,
+          amount: input.amount as string,
+        });
+      }),
   );
 
   server.registerResource(
     "ekubo-agent-workflow",
     "ekubo://docs/agent-workflow",
     {
-      title: "Safe Ekubo swap workflow",
+      title: "Safe Ekubo swap and bridge workflow",
       description:
         "Canonical token lookup, quote, preparation, wallet validation, and confirmation sequence",
       mimeType: "text/markdown",
@@ -215,8 +601,8 @@ export function createEkuboServer(env: Env) {
     "ekubo-quoter-contract",
     "ekubo://docs/quoter-api",
     {
-      title: "Ekubo quoter HTTP contract",
-      description: "Canonical signed-path quote semantics used by MCP tools",
+      title: "Ekubo aggregated quote contract",
+      description: "Ekubo, 0x, and Across quote semantics used by MCP tools",
       mimeType: "text/markdown",
     },
     async (uri) => ({
@@ -244,6 +630,26 @@ export function createEkuboServer(env: Env) {
           uri: uri.href,
           mimeType: "application/json",
           text: await fetchDocumentation(uri.href),
+        },
+      ],
+    }),
+  );
+
+  server.registerResource(
+    "ekubo-ve33-workflow",
+    "ekubo://docs/ve33-workflow",
+    {
+      title: "Ekubo ve(3,3) call workflow",
+      description:
+        "Fee-preserving vote changes, VeToken splits, extensions, claims, and reinvestment",
+      mimeType: "text/markdown",
+    },
+    async (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "text/markdown",
+          text: VE33_WORKFLOW,
         },
       ],
     }),
@@ -287,6 +693,56 @@ function asRecord(value: unknown): Record<string, unknown> {
     : { result: value };
 }
 
+function tokenAddress(
+  identifier: string,
+  expectedChainId: string,
+  label: string,
+): Address {
+  if (identifier.startsWith("eip155:")) {
+    const [, chainId, rawAddress] = identifier.split(":");
+    if (chainId !== expectedChainId) {
+      throw new ServiceError(
+        "chain_mismatch",
+        `${label} identifies eip155:${chainId}, expected eip155:${expectedChainId}`,
+      );
+    }
+    return normalizeAddress(rawAddress);
+  }
+  return normalizeAddress(identifier);
+}
+
+function normalizeAddress(value: string): Address {
+  return getAddress(numberToHex(BigInt(value), { size: 20 }));
+}
+
+function mapPoolKey(poolKey: {
+  token0: string;
+  token1: string;
+  config?: string;
+  fee?: string;
+  tick_spacing?: number | string | null;
+  extension?: string;
+  stableswap_params?: { center_tick: number; amplification: number } | null;
+}): Ve33PoolKeyInput {
+  return {
+    token0: poolKey.token0 as Address,
+    token1: poolKey.token1 as Address,
+    config: poolKey.config as `0x${string}` | undefined,
+    fee: poolKey.fee,
+    tickSpacing:
+      typeof poolKey.tick_spacing === "string"
+        ? Number(BigInt(poolKey.tick_spacing))
+        : poolKey.tick_spacing,
+    extension: poolKey.extension as Address | undefined,
+    stableswapParams: poolKey.stableswap_params
+      ? {
+          centerTick: poolKey.stableswap_params.center_tick,
+          amplification: poolKey.stableswap_params.amplification,
+        }
+      : poolKey.stableswap_params,
+  };
+}
+
 async function fetchDocumentation(url: string): Promise<string> {
   const response = await fetch(url, {
     headers: { accept: "application/json" },
@@ -301,24 +757,29 @@ async function fetchDocumentation(url: string): Promise<string> {
   return response.text();
 }
 
-const AGENT_WORKFLOW = `# Safe Ekubo swap workflow
+const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 
-1. Search the token list and resolve each symbol to one unambiguous address and decimals.
+1. Search the token list. Results are ordered by descending visibility_priority; show the chosen chain and address to the user.
 2. Convert the user amount to base units without floating-point arithmetic.
-3. Request a block-pinned route quote with explicit input/output direction.
-4. Prepare Yul router calldata with the user's chosen slippage tolerance.
-5. Present the exact plan ID, token amounts, slippage bound, recipient, approval transaction, and unsigned swap transaction.
-6. Validate balances, allowances, and the exact transaction through the user's connected wallet or provider.
-7. Require explicit user confirmation before signing.
-8. Ask the user's wallet or signature tooling to sign and submit. Never send credentials to this server.
-9. Re-quote and revalidate after any change or stale block.
+3. Set destination_chain_id explicitly for a bridge. Raw addresses and eip155:<chain>:<address> token IDs are accepted.
+4. Request an exact-input or exact-output quote. source=auto compares Ekubo and 0x on one chain and selects Across across chains.
+5. Prepare executable calldata with the user's chosen slippage tolerance and sender.
+6. Present the provider, exact plan ID, token amounts, chains, slippage bound, recipient, approvals, execution transaction, and any allowance reset.
+7. Validate balances, allowances, contract targets, and the exact transaction through the user's connected wallet or provider.
+8. Require explicit user confirmation before signing.
+9. Ask the user's wallet or signature tooling to sign and submit. Never send credentials to this server.
+10. Re-quote and revalidate after any change, expiry, or stale block.
 `;
 
-const QUOTER_API = `# Ekubo quoter HTTP contract
+const QUOTER_API = `# Ekubo aggregated quote contract
 
-Base URL: https://prod-api-quoter.ekubo.org
+Same-chain source=auto requests compare the Ekubo quoter and 0x Swap API v2.
+Cross-chain requests use Across Swap API /swap/approval. Provider API keys are
+server-side and are never accepted as tool arguments.
 
-Canonical route:
+Ekubo base URL: https://prod-api-quoter.ekubo.org
+
+Canonical Ekubo route:
 
 GET /{chainId}/{signedAmount}/{specifiedToken}/{otherToken}
 
@@ -327,6 +788,28 @@ GET /{chainId}/{signedAmount}/{specifiedToken}/{otherToken}
 - Amounts are integer token base units.
 - The response contains block_number, block_hash, total_calculated,
   estimated_gas_cost, price_impact, and signed executable route splits.
-- MCP callers should use ekubo_get_quote or ekubo_prepare_swap instead of
-  constructing this signed URL themselves.
+
+0x:
+- Uses /swap/allowance-holder/price for indicative requests and /quote when a sender is supplied.
+- exact_input maps to sellAmount; exact_output maps to buyAmount.
+- Exact-output approval uses maxSellAmount; when the plan creates an allowance, it clears the leftover after execution.
+
+Across:
+- Requires different origin and destination chain IDs.
+- exact_input maps to tradeType=exactInput; exact_output maps to tradeType=exactOutput.
+- Returned approvalTxns and swapTx are preserved as unsigned transactions.
+
+MCP callers should use ekubo_get_quote or ekubo_prepare_swap instead of
+constructing provider URLs themselves.
+`;
+
+const VE33_WORKFLOW = `# Ekubo ve(3,3) call workflow
+
+- The VeToken ERC721 owns the canonical Ve33 stake. The wallet must own or be approved for each ve_id.
+- splitStake must move a positive amount smaller than the source stake. The source keeps its vote with reduced weight; the new child starts unvoted.
+- Replacing or clearing a vote discards pending fee accounting unless fees are claimed first. The vote compiler orders claims before splits and vote changes.
+- Extending moves the stake to a new end time and clears its vote. Supply current_pool_key so the compound claim-and-extend method preserves pending fees.
+- Pool keys may use an exact bytes32 config or data-API fields: fee, tick_spacing, extension, and optional stableswap_params.
+- Reinvestment takes three confirmations: snapshot balances and claim, swap the complete post-claim deltas exact-input into the stake token, then measure and stake the complete output.
+- Re-read ownership, stake amount, active vote, fee balances, allowances, and contract code before signing every plan.
 `;

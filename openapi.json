@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Ekubo Protocol MCP Gateway",
-    "version": "0.1.0",
-    "description": "Discovery contract for the public, unauthenticated Ekubo MCP server. MCP clients discover typed tool schemas through tools/list; GET /tools provides the same catalog to ordinary HTTP clients.",
+    "version": "0.2.0",
+    "description": "Discovery contract for the public, unauthenticated Ekubo MCP server, including token discovery, Ekubo/0x/Across quotes, and unsigned ve(3,3) call construction. MCP clients discover typed tool schemas through tools/list; GET /tools provides the same catalog to ordinary HTTP clients.",
     "contact": {
       "url": "https://ekubo.org",
       "email": "eng@ekubo.org"

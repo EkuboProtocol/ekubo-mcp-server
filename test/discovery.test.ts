@@ -38,6 +38,11 @@ describe("Worker discovery", () => {
       "ekubo_get_token",
       "ekubo_get_quote",
       "ekubo_prepare_swap",
+      "ekubo_prepare_ve33_vote",
+      "ekubo_prepare_ve33_extend",
+      "ekubo_prepare_ve33_split",
+      "ekubo_prepare_ve33_claim_fees",
+      "ekubo_prepare_ve33_reinvest",
     ]);
     const prepareSwap = catalog.tools.find(
       (tool) => tool.name === "ekubo_prepare_swap",
@@ -131,6 +136,9 @@ describe("Worker discovery", () => {
     expect(resourceResult.result.resources.map((resource) => resource.uri)).toContain(
       "ekubo://docs/quoter-api",
     );
+    expect(resourceResult.result.resources.map((resource) => resource.uri)).toContain(
+      "ekubo://docs/ve33-workflow",
+    );
 
     const quoterContract = await worker.fetch(
       new Request("https://mcp.ekubo.org/mcp", {
@@ -152,6 +160,83 @@ describe("Worker discovery", () => {
     };
     expect(contractResult.result.contents[0]?.text).toContain(
       "GET /{chainId}/{signedAmount}/{specifiedToken}/{otherToken}",
+    );
+
+    const splitPlan = await worker.fetch(
+      new Request("https://mcp.ekubo.org/mcp", {
+        method: "POST",
+        headers: { ...headers, "mcp-protocol-version": "2025-11-25" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 5,
+          method: "tools/call",
+          params: {
+            name: "ekubo_prepare_ve33_split",
+            arguments: {
+              chain_id: "4663",
+              ve_token: "0x9d7008E169D040B6c0140eb92E7cA82B12643497",
+              sender: "0x1111111111111111111111111111111111111111",
+              ve_id: "123",
+              amount: "1",
+              salt: `0x${"12".repeat(32)}`,
+            },
+          },
+        }),
+      }),
+      env,
+      context,
+    );
+    expect(splitPlan.status).toBe(200);
+    const splitResult = (await mcpJson(splitPlan)) as {
+      result: {
+        structuredContent: {
+          action: string;
+          transaction: { chain_id: string; data: string };
+        };
+      };
+    };
+    expect(splitResult.result.structuredContent.action).toBe("ve33_split");
+    expect(splitResult.result.structuredContent.transaction.chain_id).toBe(
+      "4663",
+    );
+    expect(splitResult.result.structuredContent.transaction.data).toStartWith(
+      "0x",
+    );
+
+    const mismatchedCaip = await worker.fetch(
+      new Request("https://mcp.ekubo.org/mcp", {
+        method: "POST",
+        headers: { ...headers, "mcp-protocol-version": "2025-11-25" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 6,
+          method: "tools/call",
+          params: {
+            name: "ekubo_get_quote",
+            arguments: {
+              chain_id: "1",
+              token_in:
+                "eip155:4663:0x1111111111111111111111111111111111111111",
+              token_out: "0x2222222222222222222222222222222222222222",
+              quote_type: "exact_input",
+              amount: "1",
+              source: "ekubo",
+            },
+          },
+        }),
+      }),
+      env,
+      context,
+    );
+    const mismatchResult = (await mcpJson(mismatchedCaip)) as {
+      result: {
+        isError: boolean;
+        structuredContent: { error: { code: string } };
+      };
+    };
+    expect(mismatchResult.result.isError).toBe(true);
+    expect(mismatchResult.result.structuredContent.error.code).toBe(
+      "chain_mismatch",
     );
   });
 
