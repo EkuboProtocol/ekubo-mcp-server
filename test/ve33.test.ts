@@ -151,10 +151,13 @@ describe("ve(3,3) call generation", () => {
     ]);
     expect(result.resulting_nfts[0].pool_key_id).toBe("pool-a");
     expect(result.resulting_nfts[1].pool_key_id).toBe("pool-b");
+    expect(
+      result.safety.current_pool_fees_are_claimed_unconditionally_first,
+    ).toBe(true);
     expect(result.transaction?.data).toStartWith("0x");
   });
 
-  it("keeps an unchanged source vote while splitting a second allocation", () => {
+  it("claims even when keeping the source vote unchanged before splitting", () => {
     const result = prepareVe33Vote({
       chainId: "4663",
       veToken,
@@ -185,6 +188,7 @@ describe("ve(3,3) call generation", () => {
     });
 
     expect(result.calls.map((call) => call.type)).toEqual([
+      "claim_pool_fees",
       "split_stake",
       "vote",
     ]);

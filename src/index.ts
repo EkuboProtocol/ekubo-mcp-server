@@ -46,7 +46,7 @@ export default {
             name: "Ekubo Protocol MCP",
             description:
               "Public, unauthenticated, read-only agent tools for token discovery, same-chain swaps, Across bridges, and ve(3,3) calldata preparation",
-            version: "0.3.0",
+            version: "0.4.0",
             mcp_endpoint: `${url.origin}/mcp`,
             mcp_transport: "streamable-http",
             authentication: "none",
@@ -200,7 +200,7 @@ Safe swap and bridge sequence:
 7. Validate balances, allowances, and the exact transaction through the user's connected wallet or provider, and require explicit confirmation.
 8. Use the user's wallet or signature tooling to sign and submit. Never send credentials to this server.
 
-ve(3,3): use the dedicated prepare tools for vote allocation/splitting, extension, explicit or automatically discovered fee claims, and phased reinvestment. Read ekubo://docs/ve33-workflow before constructing a plan.
+ve(3,3): call ekubo_get_ve33_allocations before reorganizing votes, show the complete allocation and state_id, validate its read-only multicall, then pass that state_id and target weight_bps values to ekubo_prepare_ve33_reallocation. Keep its fee claims, splits, and votes in the returned atomic order. Use the other dedicated tools for extension, explicit or automatically discovered fee claims, and phased reinvestment. Read ekubo://docs/ve33-workflow before constructing a plan.
 Unsupported contract actions: only after checking tools/list, read ekubo://contracts/evm/{chain_id}, then ekubo://contracts/evm/{chain_id}/{address} for the exact ABI. Verify deployed code and simulate through the user's provider before requesting a signature.
 `;
 }

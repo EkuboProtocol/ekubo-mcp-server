@@ -130,6 +130,46 @@ export function contractAddressResource(chainId: string, address: string) {
     abi: contract.abi,
     safety:
       "Before signing, use the user's RPC/provider to verify deployed code and permissions and simulate the exact transaction. The MCP server never signs or submits it.",
+    ...(contract.name === "VeToken"
+      ? {
+          vetoken_safety: {
+            preferred_tools: [
+              "ekubo_get_ve33_allocations",
+              "ekubo_prepare_ve33_reallocation",
+              "ekubo_prepare_ve33_vote",
+              "ekubo_prepare_ve33_extend",
+              "ekubo_prepare_ve33_claim_all_fees",
+            ],
+            claim_current_pool_fees_before: [
+              "vote",
+              "clearVote",
+              "extendStake",
+              "extendStakeForDuration",
+              "extendStakeMaxDuration",
+              "mergeStakes (claim the full source NFT)",
+              "withdrawStake",
+              "withdrawStakeToSelf",
+            ],
+            fee_preserving_compound_functions: [
+              "claimPoolFeesAndExtendStake",
+              "claimPoolFeesAndExtendStakeForDuration",
+              "claimPoolFeesAndExtendStakeMaxDuration",
+              "claimPoolFeesAndExtendStakeToSelf",
+              "claimPoolFeesAndExtendStakeToSelfForDuration",
+              "claimPoolFeesAndExtendStakeToSelfMaxDuration",
+              "claimPoolFeesAndMergeStakes",
+              "claimPoolFeesAndMergeStakesToSelf",
+            ],
+            notes: [
+              "vote replaces the old vote even when the pool and swap fee appear unchanged, so claim first even when claimable amounts are zero.",
+              "splitStake preserves a nonzero source stake and its fee accounting; the child NFT starts unvoted.",
+              "increaseStakeAmount adjusts a nonzero vote without fully clearing it and does not require a pre-claim.",
+              "withdrawStake requires expiry; claim any active-pool fees first and verify the recipient.",
+              "Never call burn on a stake-bearing NFT: it burns the representation without withdrawing the underlying Ve33 stake.",
+            ],
+          },
+        }
+      : {}),
   };
 }
 

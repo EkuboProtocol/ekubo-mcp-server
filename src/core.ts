@@ -227,7 +227,7 @@ export async function getOwnedVe33Tokens(
   if (totalItems > 100 || totalPages > 1) {
     throw new ServiceError(
       "too_many_ve_tokens",
-      "claim-all supports at most 100 owned VeTokens in one atomic multicall; use explicit claim batches",
+      "VeToken portfolio workflows currently support at most 100 owned NFTs",
       { total_items: totalItems, maximum: 100 },
     );
   }
@@ -242,6 +242,69 @@ export async function getOwnedVe33Tokens(
     sourceUrl: url.toString(),
     tokens: response.data as Record<string, unknown>[],
     totalItems,
+  };
+}
+
+export async function getVe33Pools(
+  env: Env,
+  input: { chainId: string; ve33: Address },
+  fetcher: Fetcher = fetch,
+) {
+  const url = new URL(
+    `/ve33/${encodeURIComponent(input.ve33)}/pools`,
+    normalizedBase(env.EKUBO_API_URL),
+  );
+  url.searchParams.set("chainId", input.chainId);
+  url.searchParams.set("pageSize", "200");
+  url.searchParams.set("page", "1");
+  const response = await fetchJson<{
+    data?: unknown;
+    total_vote_weight?: unknown;
+    pagination?: {
+      totalPages?: unknown;
+      totalItems?: unknown;
+    };
+  }>(url.toString(), fetcher);
+  if (!Array.isArray(response.data)) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      "Ve33 pool response is missing its data array",
+    );
+  }
+  const totalItems = response.pagination?.totalItems;
+  const totalPages = response.pagination?.totalPages;
+  if (
+    typeof totalItems !== "number" ||
+    !Number.isInteger(totalItems) ||
+    totalItems < 0 ||
+    typeof totalPages !== "number" ||
+    !Number.isInteger(totalPages) ||
+    totalPages < 0
+  ) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      "Ve33 pool response has invalid pagination",
+    );
+  }
+  if (totalItems > 200 || totalPages > 1) {
+    throw new ServiceError(
+      "too_many_ve33_pools",
+      "Ve33 target resolution currently supports at most 200 pools",
+      { total_items: totalItems, maximum: 200 },
+    );
+  }
+  if (response.data.length !== totalItems) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      "Ve33 pool page does not contain every indexed item",
+      { returned_items: response.data.length, total_items: totalItems },
+    );
+  }
+  return {
+    sourceUrl: url.toString(),
+    pools: response.data as Record<string, unknown>[],
+    totalItems,
+    totalVoteWeight: response.total_vote_weight,
   };
 }
 

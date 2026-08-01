@@ -25,7 +25,9 @@ import {
   ServiceError,
 } from "./core.js";
 import {
+  getVe33Allocations,
   prepareAllVe33FeeClaims,
+  prepareVe33Reallocation,
   prepareVe33Claim,
   prepareVe33Extend,
   prepareVe33Reinvest,
@@ -166,8 +168,9 @@ export const prepareVe33VoteSchema = z.object({
       pool_key: poolKeySchema,
       swap_fee: uintString.optional(),
     })
-    .nullable()
-    .describe("Current indexed vote, or null only after verifying the token is unvoted"),
+    .describe(
+      "Required active indexed vote; its pool is claimed unconditionally before any split, clear, or replacement vote",
+    ),
   allocations: z
     .array(
       z.object({
@@ -193,11 +196,9 @@ export const prepareVe33ExtendSchema = z
     ve_id: uintString,
     duration_seconds: z.number().int().min(1).max(0xffff_ffff).optional(),
     max_duration: z.boolean().default(false),
-    current_pool_key: poolKeySchema
-      .nullable()
-      .describe(
-        "Active pool key so fees are claimed before extension, or null only after verifying the token is unvoted",
-      ),
+    current_pool_key: poolKeySchema.describe(
+      "Required active pool key; extension is available only through the atomic claim-and-extend methods",
+    ),
   })
   .refine(
     (input) => input.max_duration !== (input.duration_seconds !== undefined),
@@ -230,6 +231,41 @@ export const prepareAllVe33FeeClaimsSchema = z.object({
   recipient: address
     .optional()
     .describe("Fee recipient; defaults to sender for claimPoolFeesToSelf"),
+});
+
+export const getVe33AllocationsSchema = z.object({
+  chain_id: chainId,
+  ve_token: address,
+  owner: address.describe("Wallet whose complete VeToken allocation should be shown"),
+});
+
+export const prepareVe33ReallocationSchema = z.object({
+  chain_id: chainId,
+  ve_token: address,
+  sender: address.describe("VeToken owner that will execute the atomic multicall"),
+  current_state_id: bytes32.describe(
+    "Exact state_id returned by ekubo_get_ve33_allocations; preparation fails if indexed state changed",
+  ),
+  targets: z
+    .array(
+      z.object({
+        pool_key_id: uintString.describe(
+          "Canonical Ekubo Ve33 pool key ID; the server resolves and verifies the full pool key",
+        ),
+        swap_fee: uintString.describe("Selected uint64 swap fee vote"),
+        weight_bps: z
+          .number()
+          .int()
+          .min(1)
+          .max(10_000)
+          .describe("Target share of allocated voting power in basis points"),
+      }),
+    )
+    .min(1)
+    .max(10),
+  salt_nonce: bytes32.describe(
+    "User-selected nonce for deterministic child VeToken IDs created by required splits",
+  ),
 });
 
 export const prepareVe33ReinvestSchema = z
@@ -314,16 +350,16 @@ export const publicToolCatalog = [
   },
   {
     name: "ekubo_prepare_ve33_vote",
-    title: "Prepare ve(3,3) vote changes",
+    title: "Prepare one ve(3,3) NFT vote change",
     description:
-      "Compile one ve-token into multiple vote allocations. Claims fees before destructive vote changes, splits deterministic child NFTs, and votes each piece in one VeToken multicall.",
+      "Compile one actively voted ve-token into multiple allocations. Unconditionally claims its current pool first, then splits and changes votes in one VeToken multicall. Prefer the portfolio reallocation workflow for complete state validation.",
     inputSchema: z.toJSONSchema(prepareVe33VoteSchema),
   },
   {
     name: "ekubo_prepare_ve33_extend",
     title: "Prepare a ve-token extension",
     description:
-      "Generate an unsigned VeToken extension call, atomically claiming active-pool fees first when current_pool_key is supplied.",
+      "Generate only a compound claim-and-extend VeToken call. An active current_pool_key is required so extension cannot discard pending voter fees.",
     inputSchema: z.toJSONSchema(prepareVe33ExtendSchema),
   },
   {
@@ -354,15 +390,32 @@ export const publicToolCatalog = [
       "Discover every active vote on VeTokens owned by the sender and generate one native VeToken multicall claiming all indexed pool fees, with ownerOf and voteState validation calldata.",
     inputSchema: z.toJSONSchema(prepareAllVe33FeeClaimsSchema),
   },
+  {
+    name: "ekubo_get_ve33_allocations",
+    title: "Show current ve(3,3) allocations",
+    description:
+      "Show a wallet's complete VeToken allocation by pool, selected swap fee, NFT, applied vote weight, and total weight, with one provider-validation multicall and a state commitment.",
+    inputSchema: z.toJSONSchema(getVe33AllocationsSchema),
+  },
+  {
+    name: "ekubo_prepare_ve33_reallocation",
+    title: "Prepare atomic ve(3,3) reallocation",
+    description:
+      "Compile a reviewed current allocation into target pool-weight shares using one VeToken multicall: reject state drift or invalid targets, unconditionally claim every active source first, split only when required, then apply all target votes atomically.",
+    inputSchema: z.toJSONSchema(prepareVe33ReallocationSchema),
+  },
 ] as const;
 
 export function createEkuboServer(env: Env) {
-  const server = new McpServer({
-    name: "ekubo",
-    title: "Ekubo Protocol",
-    version: "0.3.0",
-    websiteUrl: "https://mcp.ekubo.org",
-  });
+  const server = new McpServer(
+    {
+      name: "ekubo",
+      title: "Ekubo Protocol",
+      version: "0.4.0",
+      websiteUrl: "https://mcp.ekubo.org",
+    },
+    { instructions: SERVER_INSTRUCTIONS },
+  );
 
   server.registerTool(
     publicToolCatalog[0].name,
@@ -475,13 +528,11 @@ export function createEkuboServer(env: Env) {
           sender: input.sender as Address,
           sourceVeId: input.source_ve_id,
           sourceAmount: input.source_amount,
-          currentVote: input.current_vote
-            ? {
-                poolKeyId: input.current_vote.pool_key_id,
-                poolKey: mapPoolKey(input.current_vote.pool_key),
-                swapFee: input.current_vote.swap_fee,
-              }
-            : undefined,
+          currentVote: {
+            poolKeyId: input.current_vote.pool_key_id,
+            poolKey: mapPoolKey(input.current_vote.pool_key),
+            swapFee: input.current_vote.swap_fee,
+          },
           allocations: input.allocations.map((allocation) => ({
             poolKeyId: allocation.pool_key_id,
             poolKey: mapPoolKey(allocation.pool_key),
@@ -511,9 +562,7 @@ export function createEkuboServer(env: Env) {
           veId: input.ve_id,
           durationSeconds: input.duration_seconds,
           maxDuration: input.max_duration,
-          currentPoolKey: input.current_pool_key
-            ? mapPoolKey(input.current_pool_key)
-            : undefined,
+          currentPoolKey: mapPoolKey(input.current_pool_key),
         }),
       ),
   );
@@ -625,6 +674,49 @@ export function createEkuboServer(env: Env) {
           veToken: input.ve_token as Address,
           sender: input.sender as Address,
           recipient: input.recipient as Address | undefined,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    publicToolCatalog[10].name,
+    {
+      title: publicToolCatalog[10].title,
+      description: publicToolCatalog[10].description,
+      inputSchema: getVe33AllocationsSchema,
+      annotations,
+    },
+    async (input) =>
+      toolResult(() =>
+        getVe33Allocations(env, {
+          chainId: input.chain_id,
+          veToken: input.ve_token as Address,
+          owner: input.owner as Address,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    publicToolCatalog[11].name,
+    {
+      title: publicToolCatalog[11].title,
+      description: publicToolCatalog[11].description,
+      inputSchema: prepareVe33ReallocationSchema,
+      annotations,
+    },
+    async (input) =>
+      toolResult(() =>
+        prepareVe33Reallocation(env, {
+          chainId: input.chain_id,
+          veToken: input.ve_token as Address,
+          sender: input.sender as Address,
+          currentStateId: input.current_state_id as `0x${string}`,
+          targets: input.targets.map((target) => ({
+            poolKeyId: target.pool_key_id,
+            swapFee: target.swap_fee,
+            weightBps: target.weight_bps,
+          })),
+          saltNonce: input.salt_nonce as `0x${string}`,
         }),
       ),
   );
@@ -755,7 +847,7 @@ export function createEkuboServer(env: Env) {
     {
       title: "Ekubo EVM contract ABI",
       description:
-        "Deployment metadata and ABI for one exact chain and contract address",
+        "Deployment metadata and ABI for one exact chain and contract address, including VeToken destructive-action guidance",
       mimeType: "application/json",
     },
     async (uri, variables) => {
@@ -888,6 +980,12 @@ async function fetchDocumentation(url: string): Promise<string> {
   return response.text();
 }
 
+const SERVER_INSTRUCTIONS = `Use Ekubo preparation tools only to construct unsigned plans. Never sign or submit without showing the exact plan_id and receiving explicit user confirmation.
+
+For VeToken vote reorganization, first call ekubo_get_ve33_allocations and show the owner, state_id, total applied vote weight, every pool allocation, and contributing ve_ids. Pass that exact state_id to ekubo_prepare_ve33_reallocation. Never construct raw vote, clearVote, extendStake, mergeStakes, withdrawStake, or burn calldata from the ABI resource when a first-class safe workflow exists.
+
+Every active source vote must be claimed unconditionally before any split or vote mutation, even when claimable fees are currently zero. Claims, splits, and votes must remain in the single returned VeToken multicall and in that order. Execute and decode provider_validation immediately before signing, simulate the exact transaction from sender, and discard the plan after any state change or failed expectation.`;
+
 const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 
 1. Search the token list. Results are ordered by descending visibility_priority; show the chosen chain and address to the user.
@@ -938,10 +1036,14 @@ const VE33_WORKFLOW = `# Ekubo ve(3,3) call workflow
 
 - The VeToken ERC721 owns the canonical Ve33 stake. The wallet must own or be approved for each ve_id.
 - splitStake must move a positive amount smaller than the source stake. The source keeps its vote with reduced weight; the new child starts unvoted.
-- Replacing or clearing a vote discards pending fee accounting unless fees are claimed first. The vote compiler orders claims before splits and vote changes.
-- Extending moves the stake to a new end time and clears its vote. Supply current_pool_key so the compound claim-and-extend method preserves pending fees.
+- Replacing or clearing a vote discards pending fee accounting unless fees are claimed first. Both vote compilers claim every active source unconditionally before splits or vote changes, including when claimable fees are zero.
+- Extending moves the stake to a new end time and clears its vote. The extension tool requires current_pool_key and exposes only compound claim-and-extend methods.
 - Pool keys may use an exact bytes32 config or data-API fields: fee, tick_spacing, extension, and optional stableswap_params.
 - For claim-all, use ekubo_prepare_ve33_claim_all_fees to discover the owner's indexed active votes and obtain one VeToken multicall plus ownerOf/voteState validation calldata. Revalidate those calls through the user's provider before signing.
+- For any vote reorganization, first use ekubo_get_ve33_allocations and show the complete allocation plus state_id. Pass that exact state_id and target weight_bps values totaling 10,000 to ekubo_prepare_ve33_reallocation.
+- The reallocation compiler claims every active source first even when claimable fees are zero, then performs only required splits and target votes in one atomic VeToken multicall. Never detach or reorder those calls.
+- Unvoted NFTs are intentionally outside the reallocation scope. The compiler never merges, extends, withdraws, or burns.
+- Raw VeToken vote, clearVote, extendStake*, and full-source mergeStakes calls can discard pending voter fees. Prefer the fee-preserving tools or compound claim methods. Never call burn on a stake-bearing NFT; it can orphan the underlying stake. Withdraw only an expired stake, claim its active-pool fees first, and verify the recipient.
 - Reinvestment takes three confirmations: snapshot balances and claim, swap the complete post-claim deltas exact-input into the stake token, then measure and stake the complete output.
 - Re-read ownership, stake amount, active vote, fee balances, allowances, and contract code before signing every plan.
 `;

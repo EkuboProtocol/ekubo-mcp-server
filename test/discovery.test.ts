@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import worker from "../src/index.js";
-import { publicToolCatalog } from "../src/server.js";
+import {
+  prepareVe33ExtendSchema,
+  prepareVe33VoteSchema,
+  publicToolCatalog,
+} from "../src/server.js";
 
 const env = {
   EKUBO_API_URL: "https://api.test",
@@ -62,11 +66,19 @@ describe("Worker discovery", () => {
       "ekubo_prepare_ve33_claim_fees",
       "ekubo_prepare_ve33_reinvest",
       "ekubo_prepare_ve33_claim_all_fees",
+      "ekubo_get_ve33_allocations",
+      "ekubo_prepare_ve33_reallocation",
     ]);
     const prepareSwap = catalog.tools.find(
       (tool) => tool.name === "ekubo_prepare_swap",
     );
     expect(prepareSwap?.description).toContain("connected wallet or provider");
+    expect(prepareVe33VoteSchema.shape.current_vote.safeParse(null).success).toBe(
+      false,
+    );
+    expect(
+      prepareVe33ExtendSchema.shape.current_pool_key.safeParse(null).success,
+    ).toBe(false);
 
     const spec = await worker.fetch(
       new Request("https://mcp.ekubo.org/openapi.json"),
@@ -109,9 +121,15 @@ describe("Worker discovery", () => {
     );
     expect(initialized.status).toBe(200);
     const initializeResult = (await mcpJson(initialized)) as {
-      result: { capabilities: { tools?: unknown } };
+      result: { capabilities: { tools?: unknown }; instructions?: string };
     };
     expect(initializeResult.result.capabilities.tools).toBeDefined();
+    expect(initializeResult.result.instructions).toContain(
+      "ekubo_get_ve33_allocations",
+    );
+    expect(initializeResult.result.instructions).toContain(
+      "unconditionally before any split or vote mutation",
+    );
 
     const listed = await worker.fetch(
       new Request("https://mcp.ekubo.org/mcp", {
@@ -250,6 +268,10 @@ describe("Worker discovery", () => {
       name: string;
       address: string;
       abi: { type: string; name?: string }[];
+      vetoken_safety: {
+        claim_current_pool_fees_before: string[];
+        notes: string[];
+      };
     };
     expect(veToken.name).toBe("VeToken");
     expect(veToken.address).toBe(
@@ -260,6 +282,15 @@ describe("Worker discovery", () => {
         type: "function",
         name: "claimPoolFeesToSelf",
       }),
+    );
+    expect(veToken.vetoken_safety.claim_current_pool_fees_before).toContain(
+      "vote",
+    );
+    expect(veToken.vetoken_safety.claim_current_pool_fees_before).toContain(
+      "mergeStakes (claim the full source NFT)",
+    );
+    expect(veToken.vetoken_safety.notes.join(" ")).toContain(
+      "Never call burn",
     );
 
     const quoterContract = await worker.fetch(

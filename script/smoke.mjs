@@ -24,6 +24,8 @@ const expectedTools = [
   "ekubo_prepare_ve33_claim_fees",
   "ekubo_prepare_ve33_reinvest",
   "ekubo_prepare_ve33_claim_all_fees",
+  "ekubo_get_ve33_allocations",
+  "ekubo_prepare_ve33_reallocation",
 ];
 assert(
   JSON.stringify(catalog.tools?.map((tool) => tool.name)) ===
@@ -37,6 +39,10 @@ const initialized = await mcpRequest(1, "initialize", {
   clientInfo: { name: "ekubo-deployment-smoke", version: "1.0.0" },
 });
 assert(initialized.result?.capabilities?.tools, "MCP tools capability is missing");
+assert(
+  initialized.result?.instructions?.includes("ekubo_get_ve33_allocations"),
+  "MCP VeToken safety instructions are missing",
+);
 
 const listed = await mcpRequest(2, "tools/list", {});
 assert(

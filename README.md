@@ -31,10 +31,11 @@ capabilities.
   exact-output swaps, or use Across when `destination_chain_id` differs
 - `ekubo_prepare_swap` — return firm unsigned Ekubo, 0x, or Across approval
   and execution calldata
-- `ekubo_prepare_ve33_vote` — compile vote changes and deterministic VeToken
-  splits into one fee-preserving multicall
-- `ekubo_prepare_ve33_extend` — claim active-pool fees when necessary and
-  extend a VeToken lock
+- `ekubo_prepare_ve33_vote` — compile one active NFT's vote changes and
+  deterministic splits into one multicall that always claims its current pool
+  first; prefer the portfolio workflow below for complete state validation
+- `ekubo_prepare_ve33_extend` — require the active pool key and use only a
+  compound claim-and-extend call
 - `ekubo_prepare_ve33_split` — construct a split and predict the child token ID
 - `ekubo_prepare_ve33_claim_fees` — claim one or many VeToken voter-fee balances
 - `ekubo_prepare_ve33_reinvest` — construct the safe claim, full-balance swap,
@@ -42,6 +43,12 @@ capabilities.
 - `ekubo_prepare_ve33_claim_all_fees` — discover every active vote owned by a
   sender and prepare one native VeToken claim multicall, including `ownerOf`
   and `voteState` validation calldata
+- `ekubo_get_ve33_allocations` — aggregate the complete owned VeToken portfolio
+  by pool, selected swap fee, NFT, applied weight, and total weight; returns a
+  state commitment and one read-only provider-validation multicall
+- `ekubo_prepare_ve33_reallocation` — resolve target `pool_key_id` values and
+  compile basis-point target weights into one fee-first atomic VeToken
+  multicall using only claims, splits, and votes
 
 ## Resources
 
@@ -55,6 +62,9 @@ first-class MCP tool. Agents should check `tools/list` first. If an action is
 unsupported, they can read the chain map and then the address-specific ABI to
 construct a `cast` call. The client must still verify deployed code and
 permissions and simulate the exact calldata before requesting a signature.
+VeToken address resources include function-level warnings for operations that
+fully clear a vote, the fee-preserving compound alternatives, and the
+stake-orphaning risk of `burn`.
 
 The checked-in snapshot is generated from `../evm-contracts` Foundry
 broadcasts and artifacts. The Yul router address and public quote ABI come from
@@ -93,9 +103,30 @@ current-state validation, gas estimation, signing, submission, and receipts.
 
 VeToken splitting follows the deployed contract invariants: the source token
 must retain a nonzero stake, its active vote remains with reduced weight, and
-the child token starts unvoted. Vote compilation claims pending fees before a
-vote is replaced or cleared. Extending a voted token uses the compound
+the child token starts unvoted. Vote compilation claims pending fees
+unconditionally before a vote is replaced or cleared, including when the
+claimable amounts are zero. The extension tool exposes only compound
 claim-and-extend methods because extension clears its vote.
+
+Safe vote reorganization is a two-tool workflow. First call
+`ekubo_get_ve33_allocations`, present its complete allocation and `state_id`,
+and execute its read-only validation multicall through the user's provider.
+Then pass that exact state ID and target `weight_bps` values to
+`ekubo_prepare_ve33_reallocation`. The target shares must total 10,000. The
+server resolves each `pool_key_id` from the canonical Ve33 pool directory,
+apportions every lock-end cohort independently, and emits one VeToken
+multicall ordered as all current-pool claims, required splits, then all target
+votes. Every active source is claimed even when its current claimable amounts
+are zero. Unvoted NFTs are left untouched; the compiler never merges, extends,
+withdraws, or burns a VeToken.
+
+The first-phase claims are also atomic stale-state guards: if an indexed active
+vote now points at another pool or is no longer owned by the sender, its claim
+reverts before any split or vote runs. The client must still verify the returned
+`balanceOf`, `ownerOf`, `stakes`, and `voteState` expectations and simulate the
+exact multicall immediately before signing, because the existing VeToken
+interface has no general on-chain assertion for an exact aggregate stake
+amount.
 
 Fee reinvestment is intentionally phased. A static transaction cannot know the
 exact output of an exact-input swap and therefore cannot safely call

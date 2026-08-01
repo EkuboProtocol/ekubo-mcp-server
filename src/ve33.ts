@@ -13,6 +13,7 @@ import {
 import {
   type Env,
   getOwnedVe33Tokens,
+  getVe33Pools,
   prepareSwap,
   type QuoteSource,
   ServiceError,
@@ -20,15 +21,16 @@ import {
 
 const VE_TOKEN_ABI = parseAbi([
   "function multicall(bytes[] data) payable returns (bytes[] results)",
+  "function balanceOf(address owner) view returns (uint256 result)",
   "function ownerOf(uint256 id) view returns (address result)",
+  "function stakes(uint256 id) view returns (uint128 amount,uint64 endTime)",
+  "function votingPower(uint256 veId) view returns (uint256 result)",
   "function voteState(uint256 veId) view returns (bytes32 poolId,uint128 weight,uint64 votedSwapFee,uint128 claimable0,uint128 claimable1)",
   "function claimPoolFees(uint256 veId, (address token0,address token1,bytes32 config) poolKey, address recipient) payable returns (uint128 amount0,uint128 amount1)",
   "function claimPoolFeesToSelf(uint256 veId, (address token0,address token1,bytes32 config) poolKey) payable returns (uint128 amount0,uint128 amount1)",
   "function clearVote(uint256 veId) payable",
   "function vote(uint256 veId, (address token0,address token1,bytes32 config) poolKey, uint64 swapFee) payable",
   "function splitStake(uint256 veId, uint128 amount, bytes32 salt) payable returns (uint256 splitVeId)",
-  "function extendStakeForDuration(uint256 veId, uint32 duration) payable",
-  "function extendStakeMaxDuration(uint256 veId) payable",
   "function claimPoolFeesAndExtendStakeToSelfForDuration(uint256 veId, uint32 duration, (address token0,address token1,bytes32 config) poolKey) payable returns (uint128 amount0,uint128 amount1)",
   "function claimPoolFeesAndExtendStakeToSelfMaxDuration(uint256 veId, (address token0,address token1,bytes32 config) poolKey) payable returns (uint128 amount0,uint128 amount1)",
   "function increaseStakeAmount(uint256 veId, uint128 amount) payable",
@@ -39,6 +41,8 @@ const UINT128_MAX = (1n << 128n) - 1n;
 const UINT192_MASK = (1n << 192n) - 1n;
 const UINT256_MAX = (1n << 256n) - 1n;
 const PERMILLE_TOTAL = 1_000;
+const BPS_TOTAL = 10_000;
+const VE33_MAX_STAKE_DURATION = 4n * 365n * 24n * 60n * 60n;
 
 export interface Ve33PoolKeyInput {
   token0: Address;
@@ -71,7 +75,7 @@ export interface PrepareVe33VoteIntent {
   sender: Address;
   sourceVeId: string;
   sourceAmount: string;
-  currentVote?: {
+  currentVote: {
     poolKeyId: string;
     poolKey: Ve33PoolKeyInput;
     swapFee?: string;
@@ -93,7 +97,7 @@ export interface PrepareVe33ExtendIntent {
   veId: string;
   durationSeconds?: number;
   maxDuration: boolean;
-  currentPoolKey?: Ve33PoolKeyInput;
+  currentPoolKey: Ve33PoolKeyInput;
 }
 
 export interface PrepareVe33SplitIntent {
@@ -118,6 +122,70 @@ export interface PrepareAllVe33FeeClaimsIntent {
   veToken: Address;
   sender: Address;
   recipient?: Address;
+}
+
+export interface GetVe33AllocationsIntent {
+  chainId: string;
+  veToken: Address;
+  owner: Address;
+}
+
+export interface PrepareVe33ReallocationIntent {
+  chainId: string;
+  veToken: Address;
+  sender: Address;
+  currentStateId: Hex;
+  targets: {
+    poolKeyId: string;
+    swapFee: string;
+    weightBps: number;
+  }[];
+  saltNonce: Hex;
+}
+
+interface IndexedVe33Vote {
+  poolKeyId: string;
+  poolId: Hex;
+  poolKeyInput: Ve33PoolKeyInput;
+  poolKey: Ve33PoolKeyArgument;
+  swapFee: bigint;
+  appliedWeight: bigint;
+  poolTotalWeight: bigint;
+}
+
+interface IndexedVeTokenState {
+  veId: bigint;
+  amount: bigint;
+  endTime: bigint;
+  stakeId: Hex;
+  vote: IndexedVe33Vote | null;
+  lastStakeChangedEventId: string;
+  lastTransferEventId: string;
+}
+
+interface Ve33Portfolio {
+  chainId: string;
+  owner: Address;
+  veToken: Address;
+  ve33: Address | null;
+  sourceUrl: string;
+  totalItems: number;
+  stateId: Hex;
+  tokens: IndexedVeTokenState[];
+}
+
+interface ResolvedReallocationTarget {
+  index: number;
+  poolKeyId: string;
+  poolId: Hex;
+  poolKey: Ve33PoolKeyArgument;
+  swapFee: bigint;
+  weightBps: number;
+}
+
+interface TargetChunk {
+  target: ResolvedReallocationTarget;
+  amount: bigint;
 }
 
 export type PrepareVe33ReinvestIntent =
@@ -196,11 +264,9 @@ export function prepareVe33Vote(intent: PrepareVe33VoteIntent) {
     permille: intent.unallocatedPermille,
   };
   const buckets = [...targets, unallocated];
-  const currentBucket = intent.currentVote
-    ? (targets.find(
-        ({ poolKeyId }) => poolKeyId === intent.currentVote?.poolKeyId,
-      ) ?? null)
-    : null;
+  const currentBucket =
+    targets.find(({ poolKeyId }) => poolKeyId === intent.currentVote.poolKeyId) ??
+    null;
   const keptBucket =
     currentBucket ??
     buckets.reduce((largest, bucket) =>
@@ -212,41 +278,36 @@ export function prepareVe33Vote(intent: PrepareVe33VoteIntent) {
   const poolKeys = new Map<string, Ve33PoolKeyArgument>(
     targets.map(({ poolKeyId, poolKey }) => [poolKeyId, poolKey]),
   );
-  if (intent.currentVote) {
-    poolKeys.set(
-      intent.currentVote.poolKeyId,
-      toPoolKeyArgument(intent.currentVote.poolKey),
-    );
-  }
+  poolKeys.set(
+    intent.currentVote.poolKeyId,
+    toPoolKeyArgument(intent.currentVote.poolKey),
+  );
 
   const claimCalls: Ve33Call[] = [];
   const splitCalls: Ve33Call[] = [];
   const voteCalls: Ve33Call[] = [];
   const keptTarget = keptBucket.poolKeyId === null ? null : keptBucket;
-  const currentFee = intent.currentVote?.swapFee
+  const currentFee = intent.currentVote.swapFee
     ? unsigned(intent.currentVote.swapFee, 64, "current_swap_fee")
     : undefined;
   const keepsVoteUntouched = Boolean(
-    intent.currentVote &&
-      keptTarget &&
+    keptTarget &&
       keptTarget.poolKeyId === intent.currentVote.poolKeyId &&
       currentFee !== undefined &&
       currentFee === keptTarget.swapFee,
   );
-  if (intent.currentVote && !keepsVoteUntouched) {
-    const poolKey = poolKeys.get(intent.currentVote.poolKeyId);
-    if (!poolKey) throw invalid("current vote is missing its pool key");
-    claimCalls.push({
-      type: "claim_pool_fees",
-      ve_id: sourceVeId.toString(),
-      pool_key_id: intent.currentVote.poolKeyId,
-      data: encodeFunctionData({
-        abi: VE_TOKEN_ABI,
-        functionName: "claimPoolFeesToSelf",
-        args: [sourceVeId, poolKey],
-      }),
-    });
-  }
+  const currentPoolKey = poolKeys.get(intent.currentVote.poolKeyId);
+  if (!currentPoolKey) throw invalid("current vote is missing its pool key");
+  claimCalls.push({
+    type: "claim_pool_fees",
+    ve_id: sourceVeId.toString(),
+    pool_key_id: intent.currentVote.poolKeyId,
+    data: encodeFunctionData({
+      abi: VE_TOKEN_ABI,
+      functionName: "claimPoolFeesToSelf",
+      args: [sourceVeId, currentPoolKey],
+    }),
+  });
 
   const resultingNfts: {
     ve_id: string;
@@ -276,7 +337,7 @@ export function prepareVe33Vote(intent: PrepareVe33VoteIntent) {
         args: [sourceVeId, keptTarget.poolKey, keptTarget.swapFee as bigint],
       }),
     });
-  } else if (!keptTarget && intent.currentVote) {
+  } else if (!keptTarget) {
     voteCalls.push({
       type: "clear_vote",
       ve_id: sourceVeId.toString(),
@@ -340,7 +401,18 @@ export function prepareVe33Vote(intent: PrepareVe33VoteIntent) {
     veToken: intent.veToken,
     sender: intent.sender,
     calls,
-    details: { resulting_nfts: resultingNfts },
+    details: {
+      resulting_nfts: resultingNfts,
+      safety: {
+        current_vote_is_required: true,
+        current_pool_fees_are_claimed_unconditionally_first: true,
+        caller_supplied_source_amount_requires_provider_validation: true,
+        preferred_complete_portfolio_workflow: [
+          "ekubo_get_ve33_allocations",
+          "ekubo_prepare_ve33_reallocation",
+        ],
+      },
+    },
   });
 }
 
@@ -359,38 +431,22 @@ export function prepareVe33Extend(intent: PrepareVe33ExtendIntent) {
   ) {
     throw invalid("duration_seconds must be a positive uint32");
   }
-  const poolKey = intent.currentPoolKey
-    ? toPoolKeyArgument(intent.currentPoolKey)
-    : null;
+  const poolKey = toPoolKeyArgument(intent.currentPoolKey);
   let data: Hex;
   let type: string;
-  if (poolKey && intent.maxDuration) {
+  if (intent.maxDuration) {
     type = "claim_fees_and_extend_max_duration";
     data = encodeFunctionData({
       abi: VE_TOKEN_ABI,
       functionName: "claimPoolFeesAndExtendStakeToSelfMaxDuration",
       args: [veId, poolKey],
     });
-  } else if (poolKey) {
+  } else {
     type = "claim_fees_and_extend_for_duration";
     data = encodeFunctionData({
       abi: VE_TOKEN_ABI,
       functionName: "claimPoolFeesAndExtendStakeToSelfForDuration",
       args: [veId, intent.durationSeconds as number, poolKey],
-    });
-  } else if (intent.maxDuration) {
-    type = "extend_max_duration";
-    data = encodeFunctionData({
-      abi: VE_TOKEN_ABI,
-      functionName: "extendStakeMaxDuration",
-      args: [veId],
-    });
-  } else {
-    type = "extend_for_duration";
-    data = encodeFunctionData({
-      abi: VE_TOKEN_ABI,
-      functionName: "extendStakeForDuration",
-      args: [veId, intent.durationSeconds as number],
     });
   }
   return ve33Plan({
@@ -400,7 +456,7 @@ export function prepareVe33Extend(intent: PrepareVe33ExtendIntent) {
     sender: intent.sender,
     calls: [{ type, ve_id: veId.toString(), data }],
     details: {
-      claims_current_pool_fees_first: poolKey !== null,
+      claims_current_pool_fees_first: true,
       clears_current_vote: true,
     },
   });
@@ -475,6 +531,478 @@ export function prepareVe33Claim(intent: PrepareVe33ClaimIntent) {
     sender: intent.sender,
     calls,
     details: { recipient },
+  });
+}
+
+export async function getVe33Allocations(
+  env: Env,
+  intent: GetVe33AllocationsIntent,
+  fetcher: typeof fetch = fetch,
+  nowSeconds = Math.floor(Date.now() / 1_000),
+) {
+  const portfolio = await loadVe33Portfolio(env, intent, fetcher);
+  const pools = new Map<
+    string,
+    {
+      poolKeyId: string;
+      poolId: Hex;
+      poolKey: Ve33PoolKeyArgument;
+      accountStakeAmount: bigint;
+      accountAppliedWeight: bigint;
+      projectedCurrentWeight: bigint;
+      indexedPoolTotalWeight: bigint;
+      veTokens: Record<string, unknown>[];
+      feeSelections: Map<
+        string,
+        {
+          swapFee: string;
+          appliedWeight: bigint;
+          projectedWeight: bigint;
+          veIds: string[];
+        }
+      >;
+    }
+  >();
+  const unvoted: Record<string, unknown>[] = [];
+  let totalStakeAmount = 0n;
+  let totalAppliedWeight = 0n;
+  let totalProjectedWeight = 0n;
+  let unvotedStakeAmount = 0n;
+
+  for (const token of portfolio.tokens) {
+    const projectedWeight = projectVotingPower(
+      token.amount,
+      token.endTime,
+      BigInt(nowSeconds),
+    );
+    totalStakeAmount += token.amount;
+    if (token.vote === null) {
+      unvotedStakeAmount += token.amount;
+      unvoted.push({
+        ve_id: token.veId.toString(),
+        stake_amount: token.amount.toString(),
+        end_time: token.endTime.toString(),
+        projected_current_voting_power: projectedWeight.toString(),
+      });
+      continue;
+    }
+
+    totalAppliedWeight += token.vote.appliedWeight;
+    totalProjectedWeight += projectedWeight;
+    const existing = pools.get(token.vote.poolId);
+    const pool =
+      existing ??
+      {
+        poolKeyId: token.vote.poolKeyId,
+        poolId: token.vote.poolId,
+        poolKey: token.vote.poolKey,
+        accountStakeAmount: 0n,
+        accountAppliedWeight: 0n,
+        projectedCurrentWeight: 0n,
+        indexedPoolTotalWeight: token.vote.poolTotalWeight,
+        veTokens: [],
+        feeSelections: new Map<
+          string,
+          {
+            swapFee: string;
+            appliedWeight: bigint;
+            projectedWeight: bigint;
+            veIds: string[];
+          }
+        >(),
+      };
+    if (
+      pool.poolKeyId !== token.vote.poolKeyId ||
+      JSON.stringify(pool.poolKey) !== JSON.stringify(token.vote.poolKey)
+    ) {
+      throw invalidUpstream("one pool ID resolves to conflicting indexed pool keys", {
+        pool_id: token.vote.poolId,
+      });
+    }
+    if (
+      existing !== undefined &&
+      pool.indexedPoolTotalWeight !== token.vote.poolTotalWeight
+    ) {
+      throw invalidUpstream(
+        "one pool has conflicting indexed total vote weights",
+        { pool_id: token.vote.poolId },
+      );
+    }
+    pool.accountStakeAmount += token.amount;
+    pool.accountAppliedWeight += token.vote.appliedWeight;
+    pool.projectedCurrentWeight += projectedWeight;
+    pool.veTokens.push({
+      ve_id: token.veId.toString(),
+      stake_amount: token.amount.toString(),
+      end_time: token.endTime.toString(),
+      applied_vote_weight: token.vote.appliedWeight.toString(),
+      projected_current_voting_power: projectedWeight.toString(),
+      selected_swap_fee: token.vote.swapFee.toString(),
+    });
+    const feeKey = token.vote.swapFee.toString();
+    const feeSelection = pool.feeSelections.get(feeKey) ?? {
+      swapFee: feeKey,
+      appliedWeight: 0n,
+      projectedWeight: 0n,
+      veIds: [],
+    };
+    feeSelection.appliedWeight += token.vote.appliedWeight;
+    feeSelection.projectedWeight += projectedWeight;
+    feeSelection.veIds.push(token.veId.toString());
+    pool.feeSelections.set(feeKey, feeSelection);
+    pools.set(token.vote.poolId, pool);
+  }
+
+  return {
+    schema_version: "1",
+    chain_id: portfolio.chainId,
+    owner: portfolio.owner,
+    ve_token: portfolio.veToken,
+    ve33: portfolio.ve33,
+    state_id: portfolio.stateId,
+    snapshot: {
+      indexed_source_url: portfolio.sourceUrl,
+      projected_at_timestamp: nowSeconds.toString(),
+      indexed_owned_ve_tokens: portfolio.totalItems,
+      active_vote_ve_tokens: portfolio.tokens.length - unvoted.length,
+      unvoted_ve_tokens: unvoted.length,
+    },
+    totals: {
+      stake_amount: totalStakeAmount.toString(),
+      allocated_stake_amount: (totalStakeAmount - unvotedStakeAmount).toString(),
+      unvoted_stake_amount: unvotedStakeAmount.toString(),
+      applied_vote_weight: totalAppliedWeight.toString(),
+      projected_current_voting_power: totalProjectedWeight.toString(),
+    },
+    allocations: [...pools.values()]
+      .sort((left, right) =>
+        left.poolId < right.poolId ? -1 : left.poolId > right.poolId ? 1 : 0,
+      )
+      .map((pool) => ({
+        pool_key_id: pool.poolKeyId,
+        pool_id: pool.poolId,
+        pool_key: pool.poolKey,
+        account_stake_amount: pool.accountStakeAmount.toString(),
+        account_applied_vote_weight: pool.accountAppliedWeight.toString(),
+        account_projected_current_voting_power:
+          pool.projectedCurrentWeight.toString(),
+        indexed_pool_total_vote_weight: pool.indexedPoolTotalWeight.toString(),
+        selected_swap_fees: [...pool.feeSelections.values()]
+          .sort((left, right) =>
+            BigInt(left.swapFee) < BigInt(right.swapFee) ? -1 : 1,
+          )
+          .map((selection) => ({
+            swap_fee: selection.swapFee,
+            applied_vote_weight: selection.appliedWeight.toString(),
+            projected_current_voting_power:
+              selection.projectedWeight.toString(),
+            ve_ids: selection.veIds,
+          })),
+        ve_tokens: pool.veTokens,
+      })),
+    unvoted,
+    provider_validation: portfolioValidation(portfolio),
+    safety: {
+      indexed_state_is_not_wallet_validation: true,
+      state_id_scope:
+        "Owned VeToken IDs, amounts, ends, active pool keys, selected swap fees, applied weights, and ownership/stake event cursors; pool-wide totals are informational and intentionally excluded.",
+      instruction:
+        "Execute the returned read-only VeToken multicall through the user's provider and compare every decoded result before preparing or signing a reallocation.",
+    },
+  };
+}
+
+export async function prepareVe33Reallocation(
+  env: Env,
+  intent: PrepareVe33ReallocationIntent,
+  fetcher: typeof fetch = fetch,
+  nowSeconds = Math.floor(Date.now() / 1_000),
+) {
+  if (intent.targets.length === 0) {
+    throw invalid("at least one target allocation is required");
+  }
+  const totalBps = intent.targets.reduce(
+    (sum, target) => sum + target.weightBps,
+    0,
+  );
+  if (totalBps !== BPS_TOTAL) {
+    throw invalid(`target weight_bps sum to ${totalBps}, expected ${BPS_TOTAL}`);
+  }
+  if (
+    intent.targets.some(
+      ({ weightBps }) =>
+        !Number.isInteger(weightBps) || weightBps <= 0 || weightBps > BPS_TOTAL,
+    )
+  ) {
+    throw invalid("every target weight_bps must be a positive integer");
+  }
+
+  const portfolio = await loadVe33Portfolio(
+    env,
+    { chainId: intent.chainId, veToken: intent.veToken, owner: intent.sender },
+    fetcher,
+  );
+  if (portfolio.stateId.toLowerCase() !== intent.currentStateId.toLowerCase()) {
+    throw new ServiceError(
+      "ve33_state_changed",
+      "The indexed VeToken allocation changed after it was reviewed; fetch the current allocation again",
+      { expected_state_id: intent.currentStateId, actual_state_id: portfolio.stateId },
+    );
+  }
+  if (portfolio.ve33 === null) {
+    throw new ServiceError(
+      "no_ve33_tokens",
+      "The owner has no indexed VeTokens to reorganize",
+    );
+  }
+  const active = portfolio.tokens.filter(
+    (token): token is IndexedVeTokenState & { vote: IndexedVe33Vote } =>
+      token.vote !== null,
+  );
+  if (active.length === 0) {
+    throw new ServiceError(
+      "no_active_ve33_votes",
+      "The owner has no active votes to reorganize",
+    );
+  }
+  const now = BigInt(nowSeconds);
+  const expired = active.filter(
+    (token) => projectVotingPower(token.amount, token.endTime, now) === 0n,
+  );
+  if (expired.length !== 0) {
+    throw new ServiceError(
+      "expired_ve33_votes",
+      "Expired VeTokens cannot be safely split or re-voted",
+      { ve_ids: expired.map(({ veId }) => veId.toString()) },
+    );
+  }
+
+  const targetPoolCatalog = await getVe33Pools(
+    env,
+    { chainId: intent.chainId, ve33: portfolio.ve33 },
+    fetcher,
+  );
+  const targets = resolveReallocationTargets(
+    intent.targets,
+    targetPoolCatalog.pools,
+    portfolio.ve33,
+    intent.chainId,
+  );
+  const targetKeys = new Set<string>();
+  for (const target of targets) {
+    const key = `${target.poolId}:${target.swapFee}`;
+    if (targetKeys.has(key)) {
+      throw invalid("target pool and swap_fee combinations must be unique");
+    }
+    targetKeys.add(key);
+  }
+
+  const claims: Ve33Call[] = active.map((token) => ({
+    type: "claim_pool_fees",
+    phase: "claim_all_current_pool_fees",
+    ve_id: token.veId.toString(),
+    pool_key_id: token.vote.poolKeyId,
+    expected_pool_id: token.vote.poolId,
+    recipient: portfolio.owner,
+    data: encodeFunctionData({
+      abi: VE_TOKEN_ABI,
+      functionName: "claimPoolFeesToSelf",
+      args: [token.veId, token.vote.poolKey],
+    }),
+  }));
+  const splits: Ve33Call[] = [];
+  const votes: Ve33Call[] = [];
+  const finalPieces: {
+    veId: bigint;
+    sourceVeId: bigint;
+    amount: bigint;
+    endTime: bigint;
+    target: ResolvedReallocationTarget;
+    isNew: boolean;
+    salt: Hex | null;
+  }[] = [];
+  let saltIndex = 0;
+  const cohorts = groupByEndTime(active);
+  for (const cohort of cohorts) {
+    const assignments = allocateCohort(cohort, targets);
+    for (const source of cohort) {
+      const chunks = assignments.get(source.veId.toString());
+      if (chunks === undefined || chunks.length === 0) {
+        throw new Error("internal reallocation error: source has no target chunks");
+      }
+      const retainedIndex = retainedChunkIndex(source, chunks);
+      chunks.forEach((chunk, index) => {
+        if (index === retainedIndex) {
+          finalPieces.push({
+            veId: source.veId,
+            sourceVeId: source.veId,
+            amount: chunk.amount,
+            endTime: source.endTime,
+            target: chunk.target,
+            isNew: false,
+            salt: null,
+          });
+          return;
+        }
+        const salt = deriveSalt(intent.saltNonce, saltIndex++);
+        const childVeId = saltToId(
+          portfolio.owner,
+          salt,
+          BigInt(intent.chainId),
+          portfolio.veToken,
+        );
+        splits.push({
+          type: "split_stake",
+          phase: "repartition_stakes",
+          source_ve_id: source.veId.toString(),
+          ve_id: childVeId.toString(),
+          amount: chunk.amount.toString(),
+          salt,
+          data: encodeFunctionData({
+            abi: VE_TOKEN_ABI,
+            functionName: "splitStake",
+            args: [source.veId, chunk.amount, salt],
+          }),
+        });
+        finalPieces.push({
+          veId: childVeId,
+          sourceVeId: source.veId,
+          amount: chunk.amount,
+          endTime: source.endTime,
+          target: chunk.target,
+          isNew: true,
+          salt,
+        });
+      });
+    }
+  }
+  for (const piece of finalPieces) {
+    votes.push({
+      type: "vote",
+      phase: "apply_target_votes",
+      ve_id: piece.veId.toString(),
+      source_ve_id: piece.sourceVeId.toString(),
+      pool_key_id: piece.target.poolKeyId,
+      pool_id: piece.target.poolId,
+      swap_fee: piece.target.swapFee.toString(),
+      stake_amount: piece.amount.toString(),
+      data: encodeFunctionData({
+        abi: VE_TOKEN_ABI,
+        functionName: "vote",
+        args: [piece.veId, piece.target.poolKey, piece.target.swapFee],
+      }),
+    });
+  }
+  const calls = [...claims, ...splits, ...votes];
+  if (calls.length > 512) {
+    throw new ServiceError(
+      "ve33_reallocation_too_large",
+      "The atomic reallocation would require more than 512 VeToken calls",
+      {
+        claims: claims.length,
+        splits: splits.length,
+        votes: votes.length,
+        total: calls.length,
+      },
+    );
+  }
+
+  const targetAllocationBase = targets.map((target) => {
+    const pieces = finalPieces.filter(({ target: pieceTarget }) =>
+      pieceTarget.index === target.index,
+    );
+    const stakeAmount = pieces.reduce((sum, piece) => sum + piece.amount, 0n);
+    const projectedWeight = pieces.reduce(
+      (sum, piece) =>
+        sum + projectVotingPower(piece.amount, piece.endTime, now),
+      0n,
+    );
+    return {
+      pool_key_id: target.poolKeyId,
+      pool_id: target.poolId,
+      pool_key: target.poolKey,
+      swap_fee: target.swapFee.toString(),
+      target_weight_bps: target.weightBps,
+      stake_amount: stakeAmount.toString(),
+      projected_vote_weight: projectedWeight.toString(),
+      ve_tokens: pieces.map((piece) => ({
+        ve_id: piece.veId.toString(),
+        source_ve_id: piece.sourceVeId.toString(),
+        stake_amount: piece.amount.toString(),
+        end_time: piece.endTime.toString(),
+        is_new: piece.isNew,
+        salt: piece.salt,
+      })),
+    };
+  });
+  const totalProjectedTargetWeight = targetAllocationBase.reduce(
+    (sum, target) => sum + BigInt(target.projected_vote_weight),
+    0n,
+  );
+  const targetAllocation = targetAllocationBase.map((target) => {
+    const projectedWeight = BigInt(target.projected_vote_weight);
+    const projectedWeightBps =
+      totalProjectedTargetWeight === 0n
+        ? 0
+        : Number(
+            (projectedWeight * BigInt(BPS_TOTAL) +
+              totalProjectedTargetWeight / 2n) /
+              totalProjectedTargetWeight,
+          );
+    return {
+      ...target,
+      projected_weight_bps_rounded: projectedWeightBps,
+      projected_weight_bps_difference:
+        projectedWeightBps - target.target_weight_bps,
+    };
+  });
+
+  return ve33Plan({
+    action: "ve33_reallocate_votes",
+    chainId: intent.chainId,
+    veToken: portfolio.veToken,
+    sender: portfolio.owner,
+    calls,
+    details: {
+      current_state_id: portfolio.stateId,
+      pool_catalog_source_url: targetPoolCatalog.sourceUrl,
+      source_active_ve_tokens: active.length,
+      untouched_unvoted_ve_tokens: portfolio.tokens.length - active.length,
+      target_allocation: targetAllocation,
+      operation_counts: {
+        fee_claims: claims.length,
+        splits: splits.length,
+        votes: votes.length,
+        total_calls: calls.length,
+      },
+      provider_validation: portfolioValidation(portfolio),
+      safety: {
+        one_atomic_vetoken_multicall: true,
+        all_current_fee_claims_are_first: true,
+        claims_are_unconditional_even_when_claimable_is_zero: true,
+        stale_active_pool_reverts_before_any_split_or_vote: true,
+        target_pools_are_initialized_and_key_verified: true,
+        only_claim_split_and_vote_calls: true,
+        no_merges: true,
+        no_lock_extensions: true,
+        no_withdrawals: true,
+        no_burns: true,
+        no_explicit_clear_vote_calls: true,
+        unvoted_ve_tokens_are_untouched: true,
+        fee_recipient: portfolio.owner,
+        remaining_client_preconditions: [
+          "Decode and verify the provider_validation multicall immediately before signing.",
+          "Confirm balanceOf(owner), every ownerOf, stakes amount/end, and voteState match the indexed state.",
+          "Simulate the exact transaction from sender; any claim, split, salt collision, or target-pool failure reverts the entire multicall.",
+        ],
+      },
+      projection: {
+        timestamp: nowSeconds.toString(),
+        total_projected_vote_weight: totalProjectedTargetWeight.toString(),
+        note:
+          "Each end-time cohort is apportioned independently, so target voting-power proportions remain stable as locks decay, subject only to integer rounding.",
+      },
+    },
   });
 }
 
@@ -757,6 +1285,588 @@ export async function prepareVe33Reinvest(
   return { phase: "stake" as const, plan, next_phase: null };
 }
 
+async function loadVe33Portfolio(
+  env: Env,
+  intent: GetVe33AllocationsIntent,
+  fetcher: typeof fetch,
+): Promise<Ve33Portfolio> {
+  const owner = normalizeAddress(intent.owner);
+  const veToken = normalizeAddress(intent.veToken);
+  const indexed = await getOwnedVe33Tokens(
+    env,
+    { chainId: intent.chainId, veToken, owner },
+    fetcher,
+  );
+  const tokens: IndexedVeTokenState[] = [];
+  const seenVeIds = new Set<string>();
+  let ve33: Address | null = null;
+
+  for (const rawToken of indexed.tokens) {
+    const indexedChainId = indexedUint(rawToken, "chain_id");
+    const indexedOwner = indexedAddress(rawToken, "owner");
+    const indexedVeToken = indexedAddress(rawToken, "ve_token_address");
+    const indexedVe33 = indexedAddress(rawToken, "ve33_address");
+    if (indexedChainId !== BigInt(intent.chainId)) {
+      throw invalidUpstream("indexed VeToken has the wrong chain_id", {
+        expected: intent.chainId,
+        actual: indexedChainId.toString(),
+      });
+    }
+    if (indexedOwner !== owner || indexedVeToken !== veToken) {
+      throw invalidUpstream("indexed VeToken ownership does not match the request", {
+        expected_owner: owner,
+        actual_owner: indexedOwner,
+        expected_ve_token: veToken,
+        actual_ve_token: indexedVeToken,
+      });
+    }
+    if (ve33 !== null && ve33 !== indexedVe33) {
+      throw invalidUpstream("one VeToken portfolio references multiple Ve33 contracts");
+    }
+    ve33 = indexedVe33;
+
+    const veId = indexedUint(rawToken, "token_id");
+    if (veId > UINT192_MASK) {
+      throw invalidUpstream("token_id does not fit the VeToken uint192 salt", {
+        ve_id: veId.toString(),
+      });
+    }
+    const veIdKey = veId.toString();
+    if (seenVeIds.has(veIdKey)) {
+      throw invalidUpstream("duplicate VeToken ID in ownership response", {
+        ve_id: veIdKey,
+      });
+    }
+    seenVeIds.add(veIdKey);
+    const amount = indexedUint(rawToken, "amount");
+    if (amount > UINT128_MAX) {
+      throw invalidUpstream("amount does not fit uint128", { ve_id: veIdKey });
+    }
+    const endTime = indexedTimestamp(rawToken, "end_time");
+    if (endTime > UINT64_MAX) {
+      throw invalidUpstream("end_time does not fit uint64", { ve_id: veIdKey });
+    }
+    const stakeId = indexedBytes32(rawToken, "stake_id");
+    const expectedStakeId = numberToHex((veId << 64n) | endTime, { size: 32 });
+    if (stakeId !== expectedStakeId) {
+      throw invalidUpstream("stake_id does not match token_id and end_time", {
+        ve_id: veIdKey,
+        expected_stake_id: expectedStakeId,
+        actual_stake_id: stakeId,
+      });
+    }
+
+    const rawPoolKey = rawToken.voted_pool_key;
+    let vote: IndexedVe33Vote | null = null;
+    if (rawPoolKey === null) {
+      for (const field of [
+        "voted_pool_id",
+        "pool_key_id",
+        "applied_vote_weight",
+        "voted_swap_fee",
+        "pool_total_vote_weight",
+      ]) {
+        if (rawToken[field] !== null) {
+          throw invalidUpstream(`unvoted VeToken has non-null ${field}`, {
+            ve_id: veIdKey,
+          });
+        }
+      }
+    } else {
+      if (!isRecord(rawPoolKey)) {
+        throw invalidUpstream("voted_pool_key must be an object or null");
+      }
+      const poolKeyInput = indexedPoolKey(rawPoolKey);
+      if (normalizeAddress(poolKeyInput.extension as Address) !== indexedVe33) {
+        throw invalidUpstream("voted pool extension does not match ve33_address", {
+          ve_id: veIdKey,
+        });
+      }
+      let poolKey: Ve33PoolKeyArgument;
+      try {
+        poolKey = toPoolKeyArgument(poolKeyInput);
+      } catch (error) {
+        throw invalidUpstream("indexed VeToken has an invalid voted pool key", {
+          ve_id: veIdKey,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+      const poolId = poolIdFor(poolKey);
+      const indexedPoolId = indexedBytes32(rawToken, "voted_pool_id");
+      if (poolId !== indexedPoolId) {
+        throw invalidUpstream("voted pool key does not hash to voted_pool_id", {
+          ve_id: veIdKey,
+          computed_pool_id: poolId,
+          indexed_pool_id: indexedPoolId,
+        });
+      }
+      const swapFee = indexedUint(rawToken, "voted_swap_fee");
+      const appliedWeight = indexedUint(rawToken, "applied_vote_weight");
+      const poolTotalWeight = indexedUint(rawToken, "pool_total_vote_weight");
+      if (swapFee > UINT64_MAX) {
+        throw invalidUpstream("voted_swap_fee does not fit uint64", {
+          ve_id: veIdKey,
+        });
+      }
+      if (appliedWeight === 0n || appliedWeight > UINT128_MAX) {
+        throw invalidUpstream("active applied_vote_weight must fit uint128 and be positive", {
+          ve_id: veIdKey,
+        });
+      }
+      if (poolTotalWeight > UINT128_MAX) {
+        throw invalidUpstream("pool_total_vote_weight does not fit uint128", {
+          ve_id: veIdKey,
+        });
+      }
+      vote = {
+        poolKeyId: indexedIntegerString(rawToken, "pool_key_id"),
+        poolId,
+        poolKeyInput,
+        poolKey,
+        swapFee,
+        appliedWeight,
+        poolTotalWeight,
+      };
+    }
+    tokens.push({
+      veId,
+      amount,
+      endTime,
+      stakeId,
+      vote,
+      lastStakeChangedEventId: indexedEventId(
+        rawToken,
+        "last_stake_changed_event_id",
+      ),
+      lastTransferEventId: indexedEventId(rawToken, "last_transfer_event_id"),
+    });
+  }
+  tokens.sort((left, right) =>
+    left.veId < right.veId ? -1 : left.veId > right.veId ? 1 : 0,
+  );
+  const stateId = portfolioStateId({
+    chainId: intent.chainId,
+    owner,
+    veToken,
+    ve33,
+    tokens,
+  });
+  return {
+    chainId: intent.chainId,
+    owner,
+    veToken,
+    ve33,
+    sourceUrl: indexed.sourceUrl,
+    totalItems: indexed.totalItems,
+    stateId,
+    tokens,
+  };
+}
+
+function resolveReallocationTargets(
+  requested: PrepareVe33ReallocationIntent["targets"],
+  indexedPools: Record<string, unknown>[],
+  ve33: Address,
+  chainId: string,
+): ResolvedReallocationTarget[] {
+  const poolsByKeyId = new Map<string, Record<string, unknown>>();
+  for (const pool of indexedPools) {
+    const indexedChainId = indexedUint(pool, "chain_id");
+    if (indexedChainId !== BigInt(chainId)) {
+      throw invalidUpstream("Ve33 pool catalog has the wrong chain_id");
+    }
+    const poolKeyId = indexedIntegerString(pool, "pool_key_id");
+    if (poolsByKeyId.has(poolKeyId)) {
+      throw invalidUpstream("Ve33 pool catalog contains duplicate pool_key_id", {
+        pool_key_id: poolKeyId,
+      });
+    }
+    poolsByKeyId.set(poolKeyId, pool);
+  }
+
+  return requested.map((target, index) => {
+    const rawPool = poolsByKeyId.get(target.poolKeyId);
+    if (rawPool === undefined) {
+      throw new ServiceError(
+        "unknown_ve33_pool",
+        `No Ve33 pool exists for pool_key_id ${target.poolKeyId}`,
+      );
+    }
+    if (rawPool.pool_state === null) {
+      throw new ServiceError(
+        "uninitialized_ve33_pool",
+        `Ve33 pool ${target.poolKeyId} is not initialized and cannot receive a vote`,
+      );
+    }
+    if (!isRecord(rawPool.pool_state)) {
+      throw invalidUpstream("Ve33 pool catalog entry is missing pool_state", {
+        pool_key_id: target.poolKeyId,
+      });
+    }
+    const rawPoolKey = rawPool.pool_key;
+    if (!isRecord(rawPoolKey)) {
+      throw invalidUpstream("Ve33 pool catalog entry is missing pool_key");
+    }
+    const poolKeyInput = indexedPoolKey(rawPoolKey);
+    if (normalizeAddress(poolKeyInput.extension as Address) !== ve33) {
+      throw invalidUpstream("target pool extension does not match the portfolio Ve33", {
+        pool_key_id: target.poolKeyId,
+      });
+    }
+    let poolKey: Ve33PoolKeyArgument;
+    try {
+      poolKey = toPoolKeyArgument(poolKeyInput);
+    } catch (error) {
+      throw invalidUpstream("Ve33 pool catalog contains an invalid pool key", {
+        pool_key_id: target.poolKeyId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+    const poolId = poolIdFor(poolKey);
+    if (poolId !== indexedBytes32(rawPool, "pool_id")) {
+      throw invalidUpstream("target pool key does not hash to its indexed pool_id", {
+        pool_key_id: target.poolKeyId,
+      });
+    }
+    return {
+      index,
+      poolKeyId: target.poolKeyId,
+      poolId,
+      poolKey,
+      swapFee: unsigned(target.swapFee, 64, "swap_fee"),
+      weightBps: target.weightBps,
+    };
+  });
+}
+
+function groupByEndTime(
+  tokens: (IndexedVeTokenState & { vote: IndexedVe33Vote })[],
+) {
+  const groups = new Map<string, (IndexedVeTokenState & { vote: IndexedVe33Vote })[]>();
+  for (const token of tokens) {
+    const key = token.endTime.toString();
+    const group = groups.get(key) ?? [];
+    group.push(token);
+    groups.set(key, group);
+  }
+  return [...groups.entries()]
+    .sort(([left], [right]) =>
+      BigInt(left) < BigInt(right) ? -1 : BigInt(left) > BigInt(right) ? 1 : 0,
+    )
+    .map(([, group]) =>
+      group.sort((left, right) =>
+        left.veId < right.veId ? -1 : left.veId > right.veId ? 1 : 0,
+      ),
+    );
+}
+
+function allocateCohort(
+  cohort: (IndexedVeTokenState & { vote: IndexedVe33Vote })[],
+  targets: ResolvedReallocationTarget[],
+): Map<string, TargetChunk[]> {
+  const totalAmount = cohort.reduce((sum, token) => sum + token.amount, 0n);
+  const demand = apportionAmounts(totalAmount, targets);
+  const assignments = new Map<string, TargetChunk[]>();
+  const unassigned = [...cohort].sort((left, right) =>
+    left.amount > right.amount
+      ? -1
+      : left.amount < right.amount
+        ? 1
+        : left.veId < right.veId
+          ? -1
+          : 1,
+  );
+
+  for (let index = unassigned.length - 1; index >= 0; index--) {
+    const source = unassigned[index];
+    const affinity = targets.findIndex(
+      (target) =>
+        target.poolId === source.vote.poolId &&
+        target.swapFee === source.vote.swapFee &&
+        demand[target.index] >= source.amount,
+    );
+    if (affinity === -1) continue;
+    assignments.set(source.veId.toString(), [
+      { target: targets[affinity], amount: source.amount },
+    ]);
+    demand[targets[affinity].index] -= source.amount;
+    unassigned.splice(index, 1);
+  }
+
+  for (let index = unassigned.length - 1; index >= 0; index--) {
+    const source = unassigned[index];
+    const fitting = targets
+      .filter((target) => demand[target.index] >= source.amount)
+      .sort((left, right) => {
+        const leftRemainder = demand[left.index] - source.amount;
+        const rightRemainder = demand[right.index] - source.amount;
+        return leftRemainder < rightRemainder
+          ? -1
+          : leftRemainder > rightRemainder
+            ? 1
+            : left.index - right.index;
+      });
+    const target = fitting[0];
+    if (target === undefined) continue;
+    assignments.set(source.veId.toString(), [
+      { target, amount: source.amount },
+    ]);
+    demand[target.index] -= source.amount;
+    unassigned.splice(index, 1);
+  }
+
+  for (const source of unassigned) {
+    let remaining = source.amount;
+    const chunks: TargetChunk[] = [];
+    while (remaining !== 0n) {
+      const affinity = targets.find(
+        (target) =>
+          target.poolId === source.vote.poolId &&
+          target.swapFee === source.vote.swapFee &&
+          demand[target.index] !== 0n &&
+          !chunks.some(({ target: chunkTarget }) => chunkTarget.index === target.index),
+      );
+      const target =
+        affinity ??
+        [...targets]
+          .filter((candidate) => demand[candidate.index] !== 0n)
+          .sort((left, right) =>
+            demand[left.index] > demand[right.index]
+              ? -1
+              : demand[left.index] < demand[right.index]
+                ? 1
+                : left.index - right.index,
+          )[0];
+      if (target === undefined) {
+        throw new Error("internal reallocation error: target demand exhausted early");
+      }
+      const amount = remaining < demand[target.index] ? remaining : demand[target.index];
+      chunks.push({ target, amount });
+      remaining -= amount;
+      demand[target.index] -= amount;
+    }
+    assignments.set(source.veId.toString(), chunks);
+  }
+  if (demand.some((amount) => amount !== 0n)) {
+    throw new Error("internal reallocation error: target demand was not filled");
+  }
+  return assignments;
+}
+
+function apportionAmounts(
+  totalAmount: bigint,
+  targets: ResolvedReallocationTarget[],
+): bigint[] {
+  const denominator = BigInt(BPS_TOTAL);
+  const amounts = targets.map(
+    (target) => (totalAmount * BigInt(target.weightBps)) / denominator,
+  );
+  let remainder = totalAmount - amounts.reduce((sum, amount) => sum + amount, 0n);
+  const order = targets
+    .map((target) => ({
+      index: target.index,
+      remainder: (totalAmount * BigInt(target.weightBps)) % denominator,
+    }))
+    .sort((left, right) =>
+      left.remainder > right.remainder
+        ? -1
+        : left.remainder < right.remainder
+          ? 1
+          : left.index - right.index,
+    );
+  for (const target of order) {
+    if (remainder === 0n) break;
+    amounts[target.index] += 1n;
+    remainder -= 1n;
+  }
+  if (remainder !== 0n) {
+    throw new Error("internal reallocation error: basis-point remainder is too large");
+  }
+  if (amounts.some((amount) => amount === 0n)) {
+    throw new ServiceError(
+      "ve33_target_rounds_to_zero",
+      "A target allocation rounds to zero stake units within one lock-end cohort; use fewer targets or a larger active stake",
+      {
+        cohort_stake_amount: totalAmount.toString(),
+        target_weight_bps: targets.map(({ weightBps }) => weightBps),
+      },
+    );
+  }
+  return amounts;
+}
+
+function retainedChunkIndex(
+  source: IndexedVeTokenState & { vote: IndexedVe33Vote },
+  chunks: TargetChunk[],
+): number {
+  const affinity = chunks.findIndex(
+    ({ target }) =>
+      target.poolId === source.vote.poolId && target.swapFee === source.vote.swapFee,
+  );
+  if (affinity !== -1) return affinity;
+  return chunks.reduce(
+    (largest, chunk, index) =>
+      chunk.amount > chunks[largest].amount ? index : largest,
+    0,
+  );
+}
+
+function portfolioValidation(portfolio: Ve33Portfolio) {
+  const calls: {
+    type: string;
+    ve_id?: string;
+    data: Hex;
+    expected: Record<string, unknown>;
+  }[] = [
+    {
+      type: "balance_of",
+      data: encodeFunctionData({
+        abi: VE_TOKEN_ABI,
+        functionName: "balanceOf",
+        args: [portfolio.owner],
+      }),
+      expected: { balance: portfolio.totalItems.toString() },
+    },
+  ];
+  for (const token of portfolio.tokens) {
+    calls.push(
+      {
+        type: "owner_of",
+        ve_id: token.veId.toString(),
+        data: encodeFunctionData({
+          abi: VE_TOKEN_ABI,
+          functionName: "ownerOf",
+          args: [token.veId],
+        }),
+        expected: { owner: portfolio.owner },
+      },
+      {
+        type: "stakes",
+        ve_id: token.veId.toString(),
+        data: encodeFunctionData({
+          abi: VE_TOKEN_ABI,
+          functionName: "stakes",
+          args: [token.veId],
+        }),
+        expected: {
+          amount: token.amount.toString(),
+          end_time: token.endTime.toString(),
+        },
+      },
+      {
+        type: "vote_state",
+        ve_id: token.veId.toString(),
+        data: encodeFunctionData({
+          abi: VE_TOKEN_ABI,
+          functionName: "voteState",
+          args: [token.veId],
+        }),
+        expected: {
+          pool_id: token.vote?.poolId ?? numberToHex(0n, { size: 32 }),
+          weight: token.vote?.appliedWeight.toString() ?? "0",
+          voted_swap_fee: token.vote?.swapFee.toString() ?? "0",
+        },
+      },
+      {
+        type: "voting_power",
+        ve_id: token.veId.toString(),
+        data: encodeFunctionData({
+          abi: VE_TOKEN_ABI,
+          functionName: "votingPower",
+          args: [token.veId],
+        }),
+        expected: {
+          note: "Dynamic at the provider block; use this value for the final displayed projection.",
+        },
+      },
+    );
+  }
+  return {
+    required: true,
+    to: portfolio.veToken,
+    calls,
+    multicall_data: encodeFunctionData({
+      abi: VE_TOKEN_ABI,
+      functionName: "multicall",
+      args: [calls.map(({ data }) => data)],
+    }),
+  };
+}
+
+function portfolioStateId(input: {
+  chainId: string;
+  owner: Address;
+  veToken: Address;
+  ve33: Address | null;
+  tokens: IndexedVeTokenState[];
+}) {
+  return keccak256(
+    stringToHex(
+      JSON.stringify({
+        schema_version: "1",
+        chain_id: input.chainId,
+        owner: input.owner,
+        ve_token: input.veToken,
+        ve33: input.ve33,
+        tokens: input.tokens.map((token) => ({
+          ve_id: token.veId.toString(),
+          amount: token.amount.toString(),
+          end_time: token.endTime.toString(),
+          stake_id: token.stakeId,
+          vote:
+            token.vote === null
+              ? null
+              : {
+                  pool_key_id: token.vote.poolKeyId,
+                  pool_id: token.vote.poolId,
+                  pool_key: token.vote.poolKey,
+                  swap_fee: token.vote.swapFee.toString(),
+                  applied_weight: token.vote.appliedWeight.toString(),
+                },
+          last_stake_changed_event_id: token.lastStakeChangedEventId,
+          last_transfer_event_id: token.lastTransferEventId,
+        })),
+      }),
+    ),
+  );
+}
+
+function projectVotingPower(amount: bigint, endTime: bigint, now: bigint) {
+  if (endTime <= now) return 0n;
+  const remaining = endTime - now;
+  if (remaining > VE33_MAX_STAKE_DURATION) return 0n;
+  return (amount * remaining) / VE33_MAX_STAKE_DURATION;
+}
+
+function poolIdFor(poolKey: Ve33PoolKeyArgument): Hex {
+  return keccak256(
+    encodeAbiParameters(
+      [
+        {
+          type: "tuple",
+          components: [
+            { name: "token0", type: "address" },
+            { name: "token1", type: "address" },
+            { name: "config", type: "bytes32" },
+          ],
+        },
+      ],
+      [poolKey],
+    ),
+  );
+}
+
+function indexedPoolKey(poolKey: Record<string, unknown>): Ve33PoolKeyInput {
+  return {
+    token0: indexedAddress(poolKey, "token0"),
+    token1: indexedAddress(poolKey, "token1"),
+    fee: indexedIntegerString(poolKey, "fee"),
+    tickSpacing: indexedOptionalNumber(poolKey, "tick_spacing"),
+    extension: indexedAddress(poolKey, "extension"),
+    stableswapParams: indexedStableswapParams(poolKey),
+  };
+}
+
 export function toPoolKeyArgument(input: Ve33PoolKeyInput): Ve33PoolKeyArgument {
   const token0 = normalizeAddress(input.token0);
   const token1 = normalizeAddress(input.token1);
@@ -980,6 +2090,40 @@ function indexedIntegerString(
   field: string,
 ): string {
   return indexedUint(record, field).toString();
+}
+
+function indexedTimestamp(
+  record: Record<string, unknown>,
+  field: string,
+): bigint {
+  const value = record[field];
+  if (typeof value !== "string") {
+    throw invalidUpstream(`${field} must be an ISO timestamp or unsigned integer`);
+  }
+  if (/^(?:0|[1-9][0-9]*)$/.test(value)) return BigInt(value);
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds) || milliseconds < 0 || milliseconds % 1_000 !== 0) {
+    throw invalidUpstream(`${field} must resolve to a whole-second timestamp`);
+  }
+  return BigInt(milliseconds / 1_000);
+}
+
+function indexedEventId(
+  record: Record<string, unknown>,
+  field: string,
+): string {
+  const value = record[field];
+  if (
+    (typeof value !== "string" && typeof value !== "number") ||
+    (typeof value === "number" && !Number.isSafeInteger(value))
+  ) {
+    throw invalidUpstream(`${field} must be an integer`);
+  }
+  const text = String(value);
+  if (!/^-?(?:0|[1-9][0-9]*)$/.test(text)) {
+    throw invalidUpstream(`${field} must be an integer`);
+  }
+  return text;
 }
 
 function indexedAddress(
