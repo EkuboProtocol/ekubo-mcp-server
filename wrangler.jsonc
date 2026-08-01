@@ -5,6 +5,13 @@
   "compatibility_date": "2026-07-31",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
+  "secrets": {
+    "required": [
+      "ZERO_X_API_KEY",
+      "ACROSS_API_KEY",
+      "ACROSS_INTEGRATOR_ID"
+    ]
+  },
   "vars": {
     "EKUBO_API_URL": "https://prod-api.ekubo.org",
     "EKUBO_QUOTER_URL": "https://prod-api-quoter.ekubo.org"

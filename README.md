@@ -97,6 +97,10 @@ The deployment also uses three Worker secrets:
 - `ACROSS_API_KEY`
 - `ACROSS_INTEGRATOR_ID`
 
+They are declared as required runtime secrets in `wrangler.jsonc`, so a deploy
+fails rather than silently publishing disabled provider tools when a binding is
+missing.
+
 0x requests use Swap API v2's AllowanceHolder endpoints. Across requests use
 `GET /swap/approval` with bearer authentication and the configured integrator
 ID. These credentials remain server-side and are never returned by a tool. The
