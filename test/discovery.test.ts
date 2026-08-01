@@ -2,8 +2,11 @@ import { describe, expect, it } from "bun:test";
 import worker from "../src/index.js";
 import {
   getTokensSchema,
+  getStonxAllocationRecommendationSchema,
   getVe33AllocationsSchema,
   prepareVe33ExtendSchema,
+  prepareVe33ReallocationSchema,
+  prepareVe33StakeSchema,
   prepareVe33VoteSchema,
   publicToolCatalog,
   ROBINHOOD_STONX_CHAIN_ID,
@@ -20,6 +23,7 @@ const env = {
   ZERO_X_API_KEY: "zero-x-test-key",
   ACROSS_API_KEY: "across-test-key",
   ACROSS_INTEGRATOR_ID: "test-integrator",
+  DUNE_API_KEY: "recommendation-test-key",
   ALLOWED_ORIGINS: "https://mcp.ekubo.org",
 };
 const context = {} as unknown as ExecutionContext;
@@ -88,13 +92,16 @@ describe("Worker discovery", () => {
       "ekubo_prepare_swap",
       "ekubo_prepare_ve33_vote",
       "ekubo_prepare_ve33_extend",
+      "ekubo_prepare_ve33_stake",
       "ekubo_prepare_ve33_split",
       "ekubo_prepare_ve33_claim_fees",
       "ekubo_prepare_ve33_reinvest",
       "ekubo_prepare_ve33_claim_all_fees",
       "ekubo_get_ve33_allocations",
+      "ekubo_get_stonx_allocation_recommendation",
       "ekubo_prepare_ve33_reallocation",
     ]);
+    expect(JSON.stringify(catalog)).not.toMatch(/dune|8187907|api\.dune/i);
     expect(
       catalog.tools.every(
         (tool) =>
@@ -161,6 +168,43 @@ describe("Worker discovery", () => {
     expect(
       prepareVe33ExtendSchema.shape.current_pool_key.safeParse(null).success,
     ).toBe(false);
+    expect(getStonxAllocationRecommendationSchema.safeParse({}).success).toBe(
+      true,
+    );
+    expect(
+      prepareVe33StakeSchema.safeParse({
+        chain_id: "4663",
+        ve_token: ROBINHOOD_STONX_VE_TOKEN,
+        sender: "0x1111111111111111111111111111111111111111",
+        stake_token: "0x570c5aa79c798e7a418412cc8399ae5bcce570c5",
+        amount: "1",
+        salt: `0x${"12".repeat(32)}`,
+      }).success,
+    ).toBe(true);
+    const hundredTargets = Array.from({ length: 100 }, (_, index) => ({
+      pool_key_id: String(index + 1),
+      swap_fee: String(index),
+      weight_bps: 100,
+    }));
+    const reallocationBase = {
+      chain_id: "4663",
+      ve_token: ROBINHOOD_STONX_VE_TOKEN,
+      sender: "0x1111111111111111111111111111111111111111",
+      current_state_id: `0x${"34".repeat(32)}`,
+      salt_nonce: `0x${"56".repeat(32)}`,
+    };
+    expect(
+      prepareVe33ReallocationSchema.safeParse({
+        ...reallocationBase,
+        targets: hundredTargets,
+      }).success,
+    ).toBe(true);
+    expect(
+      prepareVe33ReallocationSchema.safeParse({
+        ...reallocationBase,
+        targets: [...hundredTargets, hundredTargets[0]],
+      }).success,
+    ).toBe(false);
 
     const spec = await worker.fetch(
       new Request("https://mcp.ekubo.org/openapi.json"),
@@ -220,6 +264,15 @@ describe("Worker discovery", () => {
     );
     expect(initializeResult.result.instructions).toContain(
       "unconditionally before any split or vote mutation",
+    );
+    expect(initializeResult.result.instructions).toContain(
+      "update my STONX allocations to the suggested allocations",
+    );
+    expect(initializeResult.result.instructions).toContain(
+      "Ownership and NFT transfer actions are outside",
+    );
+    expect(initializeResult.result.instructions).not.toMatch(
+      /dune|8187907|api\.dune/i,
     );
 
     const listed = await worker.fetch(
@@ -373,6 +426,7 @@ describe("Worker discovery", () => {
       abi: { type: string; name?: string }[];
       vetoken_safety: {
         claim_current_pool_fees_before: string[];
+        forbidden_ownership_and_nft_actions: string[];
         notes: string[];
       };
     };
@@ -394,6 +448,17 @@ describe("Worker discovery", () => {
     );
     expect(veToken.vetoken_safety.notes.join(" ")).toContain(
       "Never call burn",
+    );
+    expect(
+      veToken.vetoken_safety.forbidden_ownership_and_nft_actions,
+    ).toEqual(
+      expect.arrayContaining([
+        "transferOwnership",
+        "transferFrom",
+        "safeTransferFrom",
+        "approve (ERC721)",
+        "burn",
+      ]),
     );
 
     const quoterContract = await worker.fetch(

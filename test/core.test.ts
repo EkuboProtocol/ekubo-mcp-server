@@ -33,6 +33,10 @@ const quote = {
 const env: Env = {
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
+  ZERO_X_API_KEY: "unused",
+  ACROSS_API_KEY: "unused",
+  ACROSS_INTEGRATOR_ID: "unused",
+  DUNE_API_KEY: "unused",
 };
 
 describe("MCP service core", () => {
@@ -100,6 +104,7 @@ describe("MCP service core", () => {
         tokenIn: token1,
         tokenOut: token0,
         quoteType: "exact_output",
+        source: "ekubo",
         amount: "100",
       },
       fetcher as typeof fetch,
@@ -128,6 +133,7 @@ describe("MCP service core", () => {
         tokenIn: token0,
         tokenOut: token1,
         quoteType: "exact_input",
+        source: "ekubo",
         amount: "1000",
         slippageBps: 25,
         sender,
@@ -171,6 +177,7 @@ describe("MCP service core", () => {
         tokenIn: token1,
         tokenOut: token0,
         quoteType: "exact_output",
+        source: "ekubo",
         amount: "100",
         slippageBps: 50,
         sender,

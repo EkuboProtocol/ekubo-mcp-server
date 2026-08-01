@@ -7,11 +7,13 @@ import {
   parseAbi,
 } from "viem";
 import {
+  getVe33Allocations,
   prepareAllVe33FeeClaims,
   prepareVe33Claim,
   prepareVe33Extend,
   prepareVe33Reinvest,
   prepareVe33Split,
+  prepareVe33Stake,
   prepareVe33Vote,
   saltToId,
   toPoolKeyArgument,
@@ -210,6 +212,42 @@ describe("ve(3,3) call generation", () => {
     expect(result.clears_current_vote).toBe(true);
   });
 
+  it("defaults new staking plans to max duration without touching an existing NFT", () => {
+    const amount = "123456";
+    const result = prepareVe33Stake({
+      chainId: "4663",
+      veToken,
+      sender,
+      stakeToken: token1,
+      amount,
+      salt,
+      maxDuration: true,
+    });
+    expect(result.max_duration).toBe(true);
+    expect(result.safety).toMatchObject({
+      creates_new_ve_token: true,
+      existing_votes_and_unclaimed_fees_are_untouched: true,
+      max_duration_is_the_default_when_duration_is_omitted: true,
+    });
+    const call = decodeFunctionData({
+      abi: parseAbi([
+        "function stakeMaxDuration(uint128 amount,bytes32 salt) payable returns (uint256)",
+      ]),
+      data: result.calls[0].data,
+    });
+    expect(call.functionName).toBe("stakeMaxDuration");
+    expect(call.args).toEqual([BigInt(amount), salt]);
+    const approval = decodeFunctionData({
+      abi: erc20Abi,
+      data: result.approvals[0].data,
+    });
+    expect(approval.args).toEqual([veToken, BigInt(amount)]);
+    expect(result.transaction_safety).toMatchObject({
+      only_allowlisted_vetoken_functions: true,
+      ownership_or_nft_transfer_calls: 0,
+    });
+  });
+
   it("batches claims across multiple ve-tokens", () => {
     const result = prepareVe33Claim({
       chainId: "4663",
@@ -251,6 +289,10 @@ describe("ve(3,3) call generation", () => {
       {
         EKUBO_API_URL: "https://api.test",
         EKUBO_QUOTER_URL: "https://quoter.test",
+        ZERO_X_API_KEY: "unused",
+        ACROSS_API_KEY: "unused",
+        ACROSS_INTEGRATOR_ID: "unused",
+        DUNE_API_KEY: "unused",
       },
       { chainId: "4663", veToken, sender },
       (async (input: RequestInfo | URL) => {
@@ -344,6 +386,10 @@ describe("ve(3,3) call generation", () => {
       {
         EKUBO_API_URL: "https://api.test",
         EKUBO_QUOTER_URL: "https://quoter.test",
+        ZERO_X_API_KEY: "unused",
+        ACROSS_API_KEY: "unused",
+        ACROSS_INTEGRATOR_ID: "unused",
+        DUNE_API_KEY: "unused",
       },
       {
         phase: "stake",
@@ -364,4 +410,161 @@ describe("ve(3,3) call generation", () => {
     expect(approval.args).toEqual([veToken, BigInt(amount)]);
     expect(result.plan.transaction?.value).toBe("0");
   });
+
+  it("auto-claims every active fee source and apportions reinvested STONX across all active allocations", async () => {
+    const now = 1_800_000_000;
+    const end = now + 1_000_000;
+    const poolAArgument = toPoolKeyArgument(poolA);
+    const poolBArgument = toPoolKeyArgument(poolB);
+    const indexedPoolId = (poolKey: typeof poolAArgument) =>
+      keccak256(
+        encodeAbiParameters(
+          [
+            {
+              type: "tuple",
+              components: [
+                { name: "token0", type: "address" },
+                { name: "token1", type: "address" },
+                { name: "config", type: "bytes32" },
+              ],
+            },
+          ],
+          [poolKey],
+        ),
+      );
+    const indexed = [
+      portfolioToken(
+        1n,
+        "1000000000000000000",
+        end,
+        poolA,
+        indexedPoolId(poolAArgument),
+        "1",
+      ),
+      portfolioToken(
+        2n,
+        "2000000000000000000",
+        end,
+        poolB,
+        indexedPoolId(poolBArgument),
+        "2",
+      ),
+    ];
+    const fetcher = (async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json({
+        data: indexed,
+        pagination: {
+          page: 1,
+          pageSize: 100,
+          totalPages: 1,
+          totalItems: indexed.length,
+        },
+      })) as typeof fetch;
+    const env = {
+      EKUBO_API_URL: "https://api.test",
+      EKUBO_QUOTER_URL: "https://quoter.test",
+      ZERO_X_API_KEY: "unused",
+      ACROSS_API_KEY: "unused",
+      ACROSS_INTEGRATOR_ID: "unused",
+      DUNE_API_KEY: "unused",
+    };
+
+    const claimed = await prepareVe33Reinvest(
+      env,
+      { phase: "claim", chainId: "4663", veToken, sender },
+      fetcher,
+      now,
+    );
+    expect(claimed.phase).toBe("claim");
+    if (claimed.phase !== "claim") throw new Error("unexpected phase");
+    expect(claimed.plan.calls).toHaveLength(2);
+    expect(claimed.plan.calls.every((call) => call.type === "claim_pool_fees")).toBe(
+      true,
+    );
+    expect(claimed.fee_tokens).toEqual([token0, token1, token2]);
+    expect(claimed.pre_claim_balance_snapshots).toHaveLength(3);
+    expect(claimed.next_phase).toContain("Never pass a wallet's pre-existing balance");
+
+    const current = await getVe33Allocations(
+      env,
+      { chainId: "4663", veToken, owner: sender },
+      fetcher,
+      now,
+    );
+    const staked = await prepareVe33Reinvest(
+      env,
+      {
+        phase: "stake_all",
+        chainId: "4663",
+        veToken,
+        sender,
+        stakeToken: token1,
+        currentStateId: current.state_id,
+        amount: "100",
+      },
+      fetcher,
+      now,
+    );
+    expect(staked.phase).toBe("stake_all");
+    if (staked.phase !== "stake_all") throw new Error("unexpected phase");
+    expect(staked.plan.allocations.map((allocation) => allocation.increase_amount)).toEqual([
+      "34",
+      "66",
+    ]);
+    expect(staked.plan.calls).toHaveLength(2);
+    expect(staked.plan.safety).toMatchObject({
+      every_existing_active_allocation_is_increased: true,
+      increase_stake_amount_preserves_existing_votes_and_fee_accounting: true,
+      no_vote_is_cleared_or_replaced: true,
+    });
+    expect(staked.plan.transaction_safety).toMatchObject({
+      ownership_or_nft_transfer_calls: 0,
+    });
+    const approval = decodeFunctionData({
+      abi: erc20Abi,
+      data: staked.plan.approvals[0].data,
+    });
+    expect(approval.args).toEqual([veToken, 100n]);
+  });
 });
+
+function portfolioToken(
+  veId: bigint,
+  amount: string,
+  end: number,
+  pool: {
+    token0: `0x${string}`;
+    token1: `0x${string}`;
+    fee: string;
+    tickSpacing: number;
+    extension: `0x${string}`;
+  },
+  poolId: `0x${string}`,
+  poolKeyId: string,
+) {
+  return {
+    chain_id: "4663",
+    owner: sender,
+    ve_token_address: veToken,
+    ve33_address: extension,
+    token_id: veId.toString(),
+    stake_id: `0x${((veId << 64n) | BigInt(end)).toString(16).padStart(64, "0")}`,
+    amount,
+    end_time: end.toString(),
+    voted_pool_id: poolId,
+    voted_pool_key: {
+      token0: pool.token0,
+      token1: pool.token1,
+      fee: pool.fee,
+      tick_spacing: String(pool.tickSpacing),
+      extension: pool.extension,
+      stableswap_params: null,
+    },
+    pool_key_id: poolKeyId,
+    applied_vote_weight: amount,
+    voted_swap_fee: "10",
+    pool_total_vote_weight: "1000",
+    last_stake_changed_event_id: `-${veId}`,
+    last_transfer_event_id: `-${veId + 10n}`,
+  };
+}

@@ -1,6 +1,7 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-const expectedServerVersion = "0.7.0";
-const expectedCatalogRevision = "2026-08-01.onchain-validation";
+const expectedServerVersion = "0.8.0";
+const expectedCatalogRevision = "2026-08-01.stonx-recommendations";
+const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
 
 if (origin === undefined) {
   throw new Error(
@@ -31,11 +32,13 @@ const expectedTools = [
   "ekubo_prepare_swap",
   "ekubo_prepare_ve33_vote",
   "ekubo_prepare_ve33_extend",
+  "ekubo_prepare_ve33_stake",
   "ekubo_prepare_ve33_split",
   "ekubo_prepare_ve33_claim_fees",
   "ekubo_prepare_ve33_reinvest",
   "ekubo_prepare_ve33_claim_all_fees",
   "ekubo_get_ve33_allocations",
+  "ekubo_get_stonx_allocation_recommendation",
   "ekubo_prepare_ve33_reallocation",
 ];
 assert(
@@ -55,6 +58,10 @@ assert(
     JSON.stringify(expectedTools),
   "HTTP tool catalog does not match the expected toolset",
 );
+assert(
+  !privateRecommendationSourcePattern.test(JSON.stringify(catalog)),
+  "HTTP discovery exposes the private recommendation source",
+);
 
 const initialized = await mcpRequest(1, "initialize", {
   protocolVersion: "2025-11-25",
@@ -70,6 +77,10 @@ assert(
   initialized.result?.instructions?.includes("ekubo_get_ve33_allocations"),
   "MCP VeToken safety instructions are missing",
 );
+assert(
+  !privateRecommendationSourcePattern.test(JSON.stringify(initialized)),
+  "MCP initialization exposes the private recommendation source",
+);
 
 const listed = await mcpRequest(2, "tools/list", {});
 assert(
@@ -83,6 +94,10 @@ assert(
       tool._meta?.["com.ekubo/catalogRevision"] === expectedCatalogRevision,
   ),
   "MCP tools/list is missing the tool catalog revision metadata",
+);
+assert(
+  !privateRecommendationSourcePattern.test(JSON.stringify(listed)),
+  "MCP tools/list exposes the private recommendation source",
 );
 
 const resources = await mcpRequest(3, "resources/list", {});
@@ -118,6 +133,30 @@ assert(
     (contract) => contract.name === "VeToken",
   ),
   "Robinhood Chain VeToken resource is missing",
+);
+
+const recommendationCall = await mcpRequest(6, "tools/call", {
+  name: "ekubo_get_stonx_allocation_recommendation",
+  arguments: {},
+});
+const recommendation = recommendationCall.result?.structuredContent;
+assert(recommendation?.execution_ready === true, "recommendation is not executable");
+assert(
+  recommendation?.target_total_weight_bps === 10_000,
+  "recommendation targets do not total 10,000 bps",
+);
+assert(
+  Array.isArray(recommendation?.targets) && recommendation.targets.length > 0,
+  "recommendation has no executable targets",
+);
+assert(
+  recommendation?.safe_execution_workflow
+    ?.all_current_voter_fees_are_claimed_first === true,
+  "recommendation is missing the fee-first execution invariant",
+);
+assert(
+  !privateRecommendationSourcePattern.test(JSON.stringify(recommendationCall)),
+  "recommendation result exposes the private recommendation source",
 );
 
 console.log(`Ekubo MCP deployment smoke checks passed at ${origin}/mcp`);

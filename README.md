@@ -4,7 +4,8 @@ The official agent interface for Ekubo Protocol transactions. This repository
 deploys a stateless, public MCP server on Cloudflare Workers. It discovers
 tokens, compares Ekubo and 0x liquidity for same-chain EVM swaps, prepares
 Across any-to-any bridges, and constructs unsigned VeToken calls for ve(3,3)
-vote and fee workflows.
+vote and fee workflows. It also publishes provider-neutral STONX allocation
+recommendations resolved to initialized Robinhood Ve33 pools.
 
 The MCP server owns agent-facing transaction construction. `prod-api` remains
 a data API and the quoter remains a route-data service.
@@ -40,10 +41,13 @@ schemas after a Git-triggered deployment.
   first; prefer the portfolio workflow below for complete state validation
 - `ekubo_prepare_ve33_extend` — require the active pool key and use only a
   compound claim-and-extend call
+- `ekubo_prepare_ve33_stake` — create a new VeToken with an exact token
+  approval; max duration is the default when no duration is supplied
 - `ekubo_prepare_ve33_split` — construct a split and predict the child token ID
 - `ekubo_prepare_ve33_claim_fees` — claim one or many VeToken voter-fee balances
-- `ekubo_prepare_ve33_reinvest` — construct the safe claim, full-balance swap,
-  and restake phases
+- `ekubo_prepare_ve33_reinvest` — automatically discover and claim all active
+  fees, construct one exact-input swap per claimed non-stake token, and
+  increase one VeToken or every existing active allocation
 - `ekubo_prepare_ve33_claim_all_fees` — discover every active vote owned by a
   sender and prepare one native VeToken claim multicall, including `ownerOf`
   and `voteState` validation calldata
@@ -54,9 +58,12 @@ schemas after a Git-triggered deployment.
   `onchain_validation` request, explicitly marked `not_executed` until its
   `eth_call` is run. An explicit chain and VeToken pair remains available for
   another deployment such as testnet.
+- `ekubo_get_stonx_allocation_recommendation` — return the current
+  provider-neutral recommendation plus an exact 10,000-bps executable target
+  list resolved only to initialized canonical Ve33 pools
 - `ekubo_prepare_ve33_reallocation` — resolve target `pool_key_id` values and
   compile basis-point target weights into one fee-first atomic VeToken
-  multicall using only claims, splits, and votes
+  multicall using only claims, splits, and votes; accepts up to 100 targets
 
 ## Resources
 
@@ -72,7 +79,9 @@ construct a `cast` call. The client must still verify deployed code and
 permissions and simulate the exact calldata before requesting a signature.
 VeToken address resources include function-level warnings for operations that
 fully clear a vote, the fee-preserving compound alternatives, and the
-stake-orphaning risk of `burn`.
+stake-orphaning risk of `burn`. Ownership handovers, ERC721 approvals and
+transfers, safe transfers, and burns are explicitly outside every safe MCP
+workflow even though the complete ABI resource describes them.
 
 The checked-in snapshot is generated from `../evm-contracts` Foundry
 broadcasts and artifacts. The Yul router address and public quote ABI come from
@@ -134,6 +143,16 @@ votes. Every active source is claimed even when its current claimable amounts
 are zero. Unvoted NFTs are left untouched; the compiler never merges, extends,
 withdraws, or burns a VeToken.
 
+“Update my STONX allocations to the suggested allocations” is a three-tool
+workflow. First call `ekubo_get_stonx_allocation_recommendation` and require
+`execution_ready=true` plus `target_total_weight_bps=10000`. Then fetch and
+validate the wallet's complete current allocation as above. Finally pass its
+exact `state_id` and the recommendation's `targets` to
+`ekubo_prepare_ve33_reallocation`. Recommendation rows that do not yet have an
+initialized canonical pool are reported separately; their weight is
+redistributed among initialized recommendations without exceeding any row's
+allocation cap. The recommendation tool constructs no transaction.
+
 The first-phase claims are also atomic stale-state guards: if an indexed active
 vote now points at another pool or is no longer owned by the sender, its claim
 reverts before any split or vote runs. The client must still verify the returned
@@ -145,9 +164,20 @@ amount.
 Fee reinvestment is intentionally phased. A static transaction cannot know the
 exact output of an exact-input swap and therefore cannot safely call
 `increaseStakeAmount` for every resulting unit in the same transaction. The
-tool first constructs the claims, then constructs exact-input swaps from the
-complete post-claim balance deltas, and finally constructs approval plus
-`increaseStakeAmount` from the measured stake-token output.
+claim phase can omit `claims` to discover every active allocation and returns
+the exact balance-snapshot requests. After the claim confirms, pass only the
+claimed deltas to the swap phase; it constructs one exact-input plan per
+non-stake token. After all receipts confirm, refresh the allocation state and
+pass its `state_id` plus the complete measured STONX output to `stake_all`.
+That phase apportions the exact amount across every existing active allocation
+using only `increaseStakeAmount`, preserving votes and fee accounting. Never
+pass a wallet's pre-existing token balance as a claimed-fee delta.
+
+New stakes use max duration by default and do not touch an existing NFT.
+Extending an existing stake remains an explicit operation because it clears
+the current vote. The extension tool requires the active pool key and uses a
+compound claim-and-extend function, so pending fees are claimed before either
+an explicit duration or `max_duration=true` is applied.
 
 ## Configuration
 
@@ -158,11 +188,13 @@ complete post-claim balance deltas, and finally constructs approval plus
 
 Never make an upstream URL a tool argument. Keeping upstreams
 operator-controlled prevents the MCP server from becoming an arbitrary proxy.
-The deployment also uses three Worker secrets:
+The deployment also uses four Worker secrets:
 
 - `ZERO_X_API_KEY`
 - `ACROSS_API_KEY`
 - `ACROSS_INTEGRATOR_ID`
+- `DUNE_API_KEY` (internal allocation-recommendation data access; never
+  returned or identified by the public MCP surface)
 
 They are declared as required runtime secrets in `wrangler.jsonc`, so a deploy
 fails rather than silently publishing disabled provider tools when a binding is

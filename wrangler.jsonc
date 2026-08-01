@@ -2,7 +2,7 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "mcp",
   "main": "src/index.ts",
-  "compatibility_date": "2026-07-31",
+  "compatibility_date": "2026-08-01",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "keep_vars": true,
@@ -10,7 +10,8 @@
     "required": [
       "ZERO_X_API_KEY",
       "ACROSS_API_KEY",
-      "ACROSS_INTEGRATOR_ID"
+      "ACROSS_INTEGRATOR_ID",
+      "DUNE_API_KEY"
     ]
   },
   "vars": {

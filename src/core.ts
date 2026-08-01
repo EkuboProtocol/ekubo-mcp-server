@@ -14,18 +14,13 @@ import {
   prepareSwapFromQuote,
 } from "./yul-router.js";
 
-export interface Env {
-  EKUBO_API_URL: string;
-  EKUBO_QUOTER_URL: string;
-  ZERO_X_API_KEY?: string;
-  ACROSS_API_KEY?: string;
-  ACROSS_INTEGRATOR_ID?: string;
+export type Env = Cloudflare.Env & {
   ZERO_X_API_URL?: string;
   ACROSS_API_URL?: string;
   ALLOWED_HOSTNAMES?: string;
   ALLOWED_ORIGINS?: string;
   RATE_LIMITER?: RateLimit;
-}
+};
 
 export type QuoteSource = "auto" | "ekubo" | "0x" | "across";
 

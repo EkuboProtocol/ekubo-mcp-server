@@ -171,6 +171,10 @@ function fixtureFetcher(
 const env = {
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
+  ZERO_X_API_KEY: "unused",
+  ACROSS_API_KEY: "unused",
+  ACROSS_INTEGRATOR_ID: "unused",
+  DUNE_API_KEY: "unused",
 };
 
 describe("safe VeToken allocation workflows", () => {
@@ -549,6 +553,77 @@ describe("safe VeToken allocation workflows", () => {
     });
     expect(plan.projection.total_projected_vote_weight).not.toBe("0");
     expect(plan.transaction?.data).toStartWith("0xac9650d8");
+  });
+
+  it("compiles an exact fee-first allocation plan across 100 pools", async () => {
+    const generated = Array.from({ length: 100 }, (_, index) => {
+      const pool: PoolFixture = {
+        token0,
+        token1: numberToHex(BigInt(index + 1), { size: 20 }),
+        fee: "0",
+        tick_spacing: "4",
+        extension: ve33,
+        stableswap_params: null,
+      };
+      return {
+        pool,
+        catalog: {
+          chain_id: chainId,
+          pool_key_id: String(index + 1_000),
+          pool_id: poolId(pool),
+          extension: ve33,
+          pool_key: pool,
+          pool_state: {},
+        },
+      };
+    });
+    const tokens = [tokenFixture({ veId: 1n, amount: "1000000" })];
+    const fetcher = fixtureFetcher(
+      tokens,
+      generated.map(({ catalog }) => catalog),
+    );
+    const current = await getVe33Allocations(
+      env,
+      { chainId, veToken, owner },
+      fetcher,
+      now,
+    );
+    const plan = await prepareVe33Reallocation(
+      env,
+      {
+        chainId,
+        veToken,
+        sender: owner,
+        currentStateId: current.state_id,
+        targets: generated.map(({ catalog }, index) => ({
+          poolKeyId: catalog.pool_key_id,
+          swapFee: String(index),
+          weightBps: 100,
+        })),
+        saltNonce,
+      },
+      fetcher,
+      now,
+    );
+
+    expect(plan.target_allocation).toHaveLength(100);
+    expect(plan.operation_counts).toEqual({
+      fee_claims: 1,
+      splits: 99,
+      votes: 100,
+      total_calls: 200,
+    });
+    expect(
+      plan.target_allocation.reduce(
+        (sum, target) => sum + target.target_weight_bps,
+        0,
+      ),
+    ).toBe(10_000);
+    expect(plan.calls[0].type).toBe("claim_pool_fees");
+    expect(plan.transaction_safety).toMatchObject({
+      only_allowlisted_vetoken_functions: true,
+      ownership_or_nft_transfer_calls: 0,
+    });
   });
 
   it("rejects missing, uninitialized, and inconsistent target pools", async () => {

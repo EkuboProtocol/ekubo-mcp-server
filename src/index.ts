@@ -49,7 +49,7 @@ export default {
           {
             name: "Ekubo Protocol MCP",
             description:
-              "Public, unauthenticated, read-only agent tools for exact and batch token metadata, Ekubo STONX allocation lookup, same-chain swaps, Across bridges, and ve(3,3) calldata preparation",
+              "Public, unauthenticated, read-only agent tools for exact and batch token metadata, provider-neutral STONX allocation recommendations, same-chain swaps, Across bridges, and fee-first ve(3,3) calldata preparation",
             version: MCP_SERVER_VERSION,
             tool_catalog_revision: MCP_TOOL_CATALOG_REVISION,
             tool_count: publicToolCatalog.length,
@@ -72,6 +72,7 @@ export default {
               submits_transactions: false,
               requires_wallet_validation: true,
               requires_user_confirmation: true,
+              ownership_and_nft_transfer_actions: "forbidden",
             },
           },
           200,
@@ -219,6 +220,10 @@ Safe swap and bridge sequence:
 8. Use the user's wallet or signature tooling to sign and submit. Never send credentials to this server.
 
 ve(3,3): call ekubo_get_ve33_allocations before reorganizing votes, show the complete allocation and state_id, validate its read-only multicall, then pass that state_id and target weight_bps values to ekubo_prepare_ve33_reallocation. Keep its fee claims, splits, and votes in the returned atomic order. Use the other dedicated tools for extension, explicit or automatically discovered fee claims, and phased reinvestment. Read ekubo://docs/ve33-workflow before constructing a plan.
+Suggested STONX update: call ekubo_get_stonx_allocation_recommendation, require execution_ready and exactly 10,000 target basis points, then use the normal allocation lookup and fee-first reallocation workflow. The recommendation tool constructs no transaction.
+Fee reinvestment: call ekubo_prepare_ve33_reinvest phase=claim without explicit claims, snapshot exact fee-token balances, use phase=swap for claimed deltas only, refresh allocations, then use phase=stake_all to increase every existing active allocation.
+New stake: use ekubo_prepare_ve33_stake. Max duration is the default when no duration is supplied. Existing stake extension remains explicit and must use the compound fee-claim extension tool.
+Forbidden: never construct transferOwnership, ownership handover, ERC721 approval/transfer, safe transfer, or burn calldata.
 Unsupported contract actions: only after checking tools/list, read ekubo://contracts/evm/{chain_id}, then ekubo://contracts/evm/{chain_id}/{address} for the exact ABI. Verify deployed code and simulate through the user's provider before requesting a signature.
 `;
 }

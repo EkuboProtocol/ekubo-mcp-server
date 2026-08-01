@@ -28,14 +28,16 @@ import {
 import {
   getVe33Allocations,
   prepareAllVe33FeeClaims,
-  prepareVe33Reallocation,
   prepareVe33Claim,
   prepareVe33Extend,
+  prepareVe33Reallocation,
   prepareVe33Reinvest,
   prepareVe33Split,
+  prepareVe33Stake,
   prepareVe33Vote,
   type Ve33PoolKeyInput,
 } from "./ve33.js";
+import { getStonxAllocationRecommendation } from "./recommendations.js";
 import {
   MCP_SERVER_VERSION,
   MCP_TOOL_CATALOG_REVISION,
@@ -44,6 +46,9 @@ import {
 export const ROBINHOOD_STONX_CHAIN_ID = "4663";
 export const ROBINHOOD_STONX_VE_TOKEN = getAddress(
   "0x9d7008E169D040B6c0140eb92E7cA82B12643497",
+);
+export const ROBINHOOD_STONX_VE33 = getAddress(
+  "0xD18685a514E59b06d59824e16Db07e73345d9953",
 );
 
 const chainId = z
@@ -207,7 +212,7 @@ export const prepareVe33VoteSchema = z.object({
       }),
     )
     .min(1)
-    .max(10),
+    .max(100),
   unallocated_permille: z.number().int().min(0).max(1_000),
   salt_nonce: bytes32.describe(
     "User-selected nonce used to derive deterministic, replay-detectable split salts",
@@ -239,6 +244,39 @@ export const prepareVe33SplitSchema = z.object({
   amount,
   salt: bytes32,
 });
+
+export const prepareVe33StakeSchema = z
+  .object({
+    chain_id: chainId,
+    ve_token: address,
+    sender: address,
+    stake_token: address,
+    amount,
+    salt: bytes32.describe(
+      "User-selected salt for a deterministic, replay-detectable VeToken ID",
+    ),
+    duration_seconds: z.number().int().min(1).max(0xffff_ffff).optional(),
+    max_duration: z
+      .boolean()
+      .optional()
+      .describe(
+        "Defaults to true when duration_seconds is omitted; set false only with an explicit duration_seconds",
+      ),
+  })
+  .superRefine((input, context) => {
+    if (input.duration_seconds === undefined && input.max_duration === false) {
+      context.addIssue({
+        code: "custom",
+        message: "max_duration=false requires duration_seconds",
+      });
+    }
+    if (input.duration_seconds !== undefined && input.max_duration === true) {
+      context.addIssue({
+        code: "custom",
+        message: "choose max_duration=true or duration_seconds, not both",
+      });
+    }
+  });
 
 export const prepareVe33ClaimSchema = z.object({
   chain_id: chainId,
@@ -304,7 +342,7 @@ export const prepareVe33ReallocationSchema = z.object({
       }),
     )
     .min(1)
-    .max(10),
+    .max(100),
   salt_nonce: bytes32.describe(
     "User-selected nonce for deterministic child VeToken IDs created by required splits",
   ),
@@ -312,7 +350,7 @@ export const prepareVe33ReallocationSchema = z.object({
 
 export const prepareVe33ReinvestSchema = z
   .object({
-    phase: z.enum(["claim", "swap", "stake"]),
+    phase: z.enum(["claim", "swap", "stake", "stake_all"]),
     chain_id: chainId,
     ve_token: address,
     sender: address,
@@ -321,17 +359,15 @@ export const prepareVe33ReinvestSchema = z
     fee_balances: z
       .array(z.object({ token: address, amount: uintString }))
       .min(1)
-      .max(20)
+      .max(200)
       .optional(),
     slippage_bps: z.number().int().min(0).max(10_000).default(50),
     source: quoteSource.default("auto"),
     ve_id: uintString.optional(),
     amount: uintString.optional(),
+    current_state_id: bytes32.optional(),
   })
   .superRefine((input, context) => {
-    if (input.phase === "claim" && input.claims === undefined) {
-      context.addIssue({ code: "custom", message: "claim phase requires claims" });
-    }
     if (
       input.phase === "swap" &&
       (input.stake_token === undefined || input.fee_balances === undefined)
@@ -352,7 +388,21 @@ export const prepareVe33ReinvestSchema = z
         message: "stake phase requires stake_token, ve_id, and amount",
       });
     }
+    if (
+      input.phase === "stake_all" &&
+      (input.stake_token === undefined ||
+        input.current_state_id === undefined ||
+        input.amount === undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "stake_all phase requires stake_token, current_state_id, and amount",
+      });
+    }
   });
+
+export const getStonxAllocationRecommendationSchema = z.object({});
 
 const annotations = {
   readOnlyHint: true,
@@ -423,6 +473,14 @@ export const publicToolCatalog = [
     _meta: toolCatalogMetadata,
   },
   {
+    name: "ekubo_prepare_ve33_stake",
+    title: "Prepare a new ve-token stake",
+    description:
+      "Create a new VeToken stake with an exact stake-token approval. Max duration is the safe default for new stakes; an explicit shorter duration is optional and no existing NFT, vote, fee balance, or ownership is changed.",
+    inputSchema: z.toJSONSchema(prepareVe33StakeSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
     name: "ekubo_prepare_ve33_split",
     title: "Prepare a ve-token split",
     description:
@@ -442,7 +500,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_ve33_reinvest",
     title: "Prepare ve-token fee reinvestment",
     description:
-      "Build the safe three-phase claim, full-balance exact-input swap, and stake workflow needed to reinvest every claimed fee token into the ve-token's stake token.",
+      "Build the safe phased workflow for 'reinvest my fees': automatically claim all active voter fees, prepare one exact-input swap per claimed non-stake token, then increase one VeToken or every existing active allocation without changing ownership or replacing votes.",
     inputSchema: z.toJSONSchema(prepareVe33ReinvestSchema),
     _meta: toolCatalogMetadata,
   },
@@ -460,6 +518,14 @@ export const publicToolCatalog = [
     description:
       "Use for requests such as 'show all my Ekubo STONX allocations'. The production Ekubo ve(3,3) deployment is the STONX voting system, so pass only owner to select Robinhood Chain 4663 and its canonical VeToken automatically. Returns every pool, selected swap fee, NFT, applied vote weight, totals, state_id, and an onchain_validation request explicitly marked not_executed until the client runs its eth_call. Pass chain_id and ve_token together only for another deployment such as testnet.",
     inputSchema: z.toJSONSchema(getVe33AllocationsSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_get_stonx_allocation_recommendation",
+    title: "Get suggested STONX allocations",
+    description:
+      "Return the current provider-neutral STONX allocation recommendation and an exactly 10,000-bps executable target list resolved only to initialized canonical Robinhood Ve33 pools. The tool constructs no transaction; use the fee-first reallocation workflow to apply it.",
+    inputSchema: z.toJSONSchema(getStonxAllocationRecommendationSchema),
     _meta: toolCatalogMetadata,
   },
   {
@@ -664,9 +730,34 @@ export function createEkuboServer(env: Env) {
     {
       title: publicToolCatalog[7].title,
       description: publicToolCatalog[7].description,
-      inputSchema: prepareVe33SplitSchema,
+      inputSchema: prepareVe33StakeSchema,
       annotations,
       _meta: publicToolCatalog[7]._meta,
+    },
+    async (input) =>
+      toolResult(() =>
+        prepareVe33Stake({
+          chainId: input.chain_id,
+          veToken: input.ve_token as Address,
+          sender: input.sender as Address,
+          stakeToken: input.stake_token as Address,
+          amount: input.amount,
+          salt: input.salt as `0x${string}`,
+          durationSeconds: input.duration_seconds,
+          maxDuration:
+            input.max_duration ?? input.duration_seconds === undefined,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    publicToolCatalog[8].name,
+    {
+      title: publicToolCatalog[8].title,
+      description: publicToolCatalog[8].description,
+      inputSchema: prepareVe33SplitSchema,
+      annotations,
+      _meta: publicToolCatalog[8]._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -682,13 +773,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[8].name,
+    publicToolCatalog[9].name,
     {
-      title: publicToolCatalog[8].title,
-      description: publicToolCatalog[8].description,
+      title: publicToolCatalog[9].title,
+      description: publicToolCatalog[9].description,
       inputSchema: prepareVe33ClaimSchema,
       annotations,
-      _meta: publicToolCatalog[8]._meta,
+      _meta: publicToolCatalog[9]._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -706,13 +797,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[9].name,
+    publicToolCatalog[10].name,
     {
-      title: publicToolCatalog[9].title,
-      description: publicToolCatalog[9].description,
+      title: publicToolCatalog[10].title,
+      description: publicToolCatalog[10].description,
       inputSchema: prepareVe33ReinvestSchema,
       annotations,
-      _meta: publicToolCatalog[9]._meta,
+      _meta: publicToolCatalog[10]._meta,
     },
     async (input) =>
       toolResult(() => {
@@ -725,7 +816,7 @@ export function createEkuboServer(env: Env) {
           return prepareVe33Reinvest(env, {
             phase: "claim",
             ...common,
-            claims: (input.claims ?? []).map((claim) => ({
+            claims: input.claims?.map((claim) => ({
               veId: claim.ve_id,
               poolKey: mapPoolKey(claim.pool_key),
             })),
@@ -744,6 +835,15 @@ export function createEkuboServer(env: Env) {
             source: input.source as QuoteSource,
           });
         }
+        if (input.phase === "stake_all") {
+          return prepareVe33Reinvest(env, {
+            phase: "stake_all",
+            ...common,
+            stakeToken: input.stake_token as Address,
+            currentStateId: input.current_state_id as `0x${string}`,
+            amount: input.amount as string,
+          });
+        }
         return prepareVe33Reinvest(env, {
           phase: "stake",
           ...common,
@@ -755,13 +855,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[10].name,
+    publicToolCatalog[11].name,
     {
-      title: publicToolCatalog[10].title,
-      description: publicToolCatalog[10].description,
+      title: publicToolCatalog[11].title,
+      description: publicToolCatalog[11].description,
       inputSchema: prepareAllVe33FeeClaimsSchema,
       annotations,
-      _meta: publicToolCatalog[10]._meta,
+      _meta: publicToolCatalog[11]._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -775,13 +875,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[11].name,
+    publicToolCatalog[12].name,
     {
-      title: publicToolCatalog[11].title,
-      description: publicToolCatalog[11].description,
+      title: publicToolCatalog[12].title,
+      description: publicToolCatalog[12].description,
       inputSchema: getVe33AllocationsSchema,
       annotations,
-      _meta: publicToolCatalog[11]._meta,
+      _meta: publicToolCatalog[12]._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -794,13 +894,32 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[12].name,
+    publicToolCatalog[13].name,
     {
-      title: publicToolCatalog[12].title,
-      description: publicToolCatalog[12].description,
+      title: publicToolCatalog[13].title,
+      description: publicToolCatalog[13].description,
+      inputSchema: getStonxAllocationRecommendationSchema,
+      annotations,
+      _meta: publicToolCatalog[13]._meta,
+    },
+    async () =>
+      toolResult(() =>
+        getStonxAllocationRecommendation(env, {
+          chainId: ROBINHOOD_STONX_CHAIN_ID,
+          veToken: ROBINHOOD_STONX_VE_TOKEN,
+          ve33: ROBINHOOD_STONX_VE33,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    publicToolCatalog[14].name,
+    {
+      title: publicToolCatalog[14].title,
+      description: publicToolCatalog[14].description,
       inputSchema: prepareVe33ReallocationSchema,
       annotations,
-      _meta: publicToolCatalog[12]._meta,
+      _meta: publicToolCatalog[14]._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -1078,13 +1197,19 @@ async function fetchDocumentation(url: string): Promise<string> {
   return response.text();
 }
 
-const SERVER_INSTRUCTIONS = `Use Ekubo preparation tools only to construct unsigned plans. Never sign or submit without showing the exact plan_id and receiving explicit user confirmation.
+const SERVER_INSTRUCTIONS = `Use Ekubo preparation tools only to construct unsigned plans. Never sign or submit without showing the exact plan_id and receiving explicit user confirmation. Never construct or request transferOwnership, ownership handover, ERC721 transfer/approval, or burn calldata. Ownership and NFT transfer actions are outside this server's safe workflows.
 
 Intent shortcut: for "my Ekubo STONX allocations", "STONX vote allocations", or equivalent requests, call ekubo_get_ve33_allocations with only the user's connected EVM wallet as owner. The production Ve33 deployment is the STONX voting system, and the tool selects Robinhood Chain 4663 plus its canonical VeToken when chain_id and ve_token are omitted. If the connected wallet address is unavailable, ask the user for it. Never infer the user's wallet from a machine environment, repository configuration, local keystore, or unrelated account.
 
 For exact token metadata, call ekubo_get_token for one known chain/address pair and ekubo_get_tokens for multiple known pairs. The batch tool uses one prod-api batch request, accepts tokens across chains, preserves input order and duplicates, and omits identifiers that are not in the canonical list. Use ekubo_search_tokens only when resolving a name, symbol, or address fragment.
 
 For VeToken vote reorganization, first call ekubo_get_ve33_allocations and show the owner, state_id, total applied vote weight, every pool allocation, and contributing ve_ids. Pass that exact state_id to ekubo_prepare_ve33_reallocation. Never construct raw vote, clearVote, extendStake, mergeStakes, withdrawStake, or burn calldata from the ABI resource when a first-class safe workflow exists.
+
+For "update my STONX allocations to the suggested allocations", call ekubo_get_stonx_allocation_recommendation, require execution_ready=true and an exact 10,000-bps target total, then call ekubo_get_ve33_allocations for the connected wallet. Validate its onchain request and pass its exact state_id plus the recommendation targets to ekubo_prepare_ve33_reallocation. The preparation must claim all active voter fees first and must contain no ownership or NFT transfer function.
+
+For "reinvest my fees", call ekubo_prepare_ve33_reinvest with phase=claim and omit claims so it discovers and claims every active allocation. Take the supplied pre-claim balance snapshots, then use phase=swap with only the exact claimed deltas so it prepares one exact-input swap per non-stake token. After receipts confirm, refresh allocations and use phase=stake_all with its exact state_id and the measured STONX output. Never swap a wallet's pre-existing balance.
+
+For a new stake, use ekubo_prepare_ve33_stake; max duration is the default when no duration is supplied. Extending an existing stake is destructive to its vote, so use ekubo_prepare_ve33_extend only with the current pool key; its compound call claims fees first, and max_duration=true must be an explicit choice.
 
 Every active source vote must be claimed unconditionally before any split or vote mutation, even when claimable fees are currently zero. Claims, splits, and votes must remain in the single returned VeToken multicall and in that order. Execute and decode onchain_validation.eth_call immediately before signing, simulate the exact transaction from sender, and discard the plan after any state change or failed expectation.`;
 
@@ -1144,9 +1269,12 @@ const VE33_WORKFLOW = `# Ekubo ve(3,3) call workflow
 - Pool keys may use an exact bytes32 config or data-API fields: fee, tick_spacing, extension, and optional stableswap_params.
 - For claim-all, use ekubo_prepare_ve33_claim_all_fees to discover the owner's indexed active votes and obtain one VeToken multicall plus ownerOf/voteState validation calldata. Revalidate those calls through the user's provider before signing.
 - For any vote reorganization, first use ekubo_get_ve33_allocations and show the complete allocation plus state_id. Pass that exact state_id and target weight_bps values totaling 10,000 to ekubo_prepare_ve33_reallocation.
+- For a suggested STONX update, first call ekubo_get_stonx_allocation_recommendation. Use its executable targets only when execution_ready is true and target_total_weight_bps is exactly 10,000, then follow the normal state lookup and reallocation workflow.
 - The reallocation compiler claims every active source first even when claimable fees are zero, then performs only required splits and target votes in one atomic VeToken multicall. Never detach or reorder those calls.
 - Unvoted NFTs are intentionally outside the reallocation scope. The compiler never merges, extends, withdraws, or burns.
 - Raw VeToken vote, clearVote, extendStake*, and full-source mergeStakes calls can discard pending voter fees. Prefer the fee-preserving tools or compound claim methods. Never call burn on a stake-bearing NFT; it can orphan the underlying stake. Withdraw only an expired stake, claim its active-pool fees first, and verify the recipient.
-- Reinvestment takes three confirmations: snapshot balances and claim, swap the complete post-claim deltas exact-input into the stake token, then measure and stake the complete output.
+- Reinvestment takes three confirmations: snapshot balances and automatically claim all active allocations, swap each complete post-claim delta exact-input into the stake token, then refresh portfolio state and use stake_all to apportion the complete output across every existing active allocation without replacing its vote.
+- New stakes default to stakeMaxDuration and affect no existing NFT. Existing lock extension is intentionally explicit because it clears the vote; the extension tool uses a compound fee claim before either max-duration or custom-duration extension.
+- transferOwnership, ownership handover, ERC721 transfer/approval, safe transfer, and burn are forbidden in every first-class workflow.
 - Re-read ownership, stake amount, active vote, fee balances, allowances, and contract code before signing every plan.
 `;

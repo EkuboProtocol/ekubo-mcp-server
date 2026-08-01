@@ -1,5 +1,6 @@
 import {
   type Address,
+  decodeFunctionData,
   encodeAbiParameters,
   encodeFunctionData,
   erc20Abi,
@@ -34,6 +35,8 @@ const VE_TOKEN_ABI = parseAbi([
   "function claimPoolFeesAndExtendStakeToSelfForDuration(uint256 veId, uint32 duration, (address token0,address token1,bytes32 config) poolKey) payable returns (uint128 amount0,uint128 amount1)",
   "function claimPoolFeesAndExtendStakeToSelfMaxDuration(uint256 veId, (address token0,address token1,bytes32 config) poolKey) payable returns (uint128 amount0,uint128 amount1)",
   "function increaseStakeAmount(uint256 veId, uint128 amount) payable",
+  "function stakeForDuration(uint128 amount, uint32 duration, bytes32 salt) payable returns (uint256 veId)",
+  "function stakeMaxDuration(uint128 amount, bytes32 salt) payable returns (uint256 veId)",
 ]);
 
 const UINT64_MAX = (1n << 64n) - 1n;
@@ -42,6 +45,7 @@ const UINT192_MASK = (1n << 192n) - 1n;
 const UINT256_MAX = (1n << 256n) - 1n;
 const PERMILLE_TOTAL = 1_000;
 const BPS_TOTAL = 10_000;
+const MAX_ALLOCATION_TARGETS = 100;
 const VE33_MAX_STAKE_DURATION = 4n * 365n * 24n * 60n * 60n;
 
 export interface Ve33PoolKeyInput {
@@ -107,6 +111,17 @@ export interface PrepareVe33SplitIntent {
   veId: string;
   amount: string;
   salt: Hex;
+}
+
+export interface PrepareVe33StakeIntent {
+  chainId: string;
+  veToken: Address;
+  sender: Address;
+  stakeToken: Address;
+  amount: string;
+  salt: Hex;
+  durationSeconds?: number;
+  maxDuration: boolean;
 }
 
 export interface PrepareVe33ClaimIntent {
@@ -194,7 +209,7 @@ export type PrepareVe33ReinvestIntent =
       chainId: string;
       veToken: Address;
       sender: Address;
-      claims: { veId: string; poolKey: Ve33PoolKeyInput }[];
+      claims?: { veId: string; poolKey: Ve33PoolKeyInput }[];
     }
   | {
       phase: "swap";
@@ -214,6 +229,15 @@ export type PrepareVe33ReinvestIntent =
       stakeToken: Address;
       veId: string;
       amount: string;
+    }
+  | {
+      phase: "stake_all";
+      chainId: string;
+      veToken: Address;
+      sender: Address;
+      stakeToken: Address;
+      currentStateId: Hex;
+      amount: string;
     };
 
 export function prepareVe33Vote(intent: PrepareVe33VoteIntent) {
@@ -222,6 +246,9 @@ export function prepareVe33Vote(intent: PrepareVe33VoteIntent) {
   if (sourceAmount === 0n) throw invalid("source_amount must be positive");
   if (intent.allocations.length === 0) {
     throw invalid("at least one allocation is required");
+  }
+  if (intent.allocations.length > MAX_ALLOCATION_TARGETS) {
+    throw invalid(`at most ${MAX_ALLOCATION_TARGETS} allocations are supported`);
   }
   const poolIds = new Set(intent.allocations.map(({ poolKeyId }) => poolKeyId));
   if (poolIds.size !== intent.allocations.length) {
@@ -500,6 +527,80 @@ export function prepareVe33Split(intent: PrepareVe33SplitIntent) {
   });
 }
 
+export function prepareVe33Stake(intent: PrepareVe33StakeIntent) {
+  const amount = unsigned(intent.amount, 128, "amount");
+  if (amount === 0n) throw invalid("amount must be positive");
+  if (intent.maxDuration === (intent.durationSeconds !== undefined)) {
+    throw invalid(
+      "choose exactly one staking mode: max_duration=true or duration_seconds",
+    );
+  }
+  if (
+    intent.durationSeconds !== undefined &&
+    (!Number.isInteger(intent.durationSeconds) ||
+      intent.durationSeconds <= 0 ||
+      intent.durationSeconds > 0xffff_ffff)
+  ) {
+    throw invalid("duration_seconds must be a positive uint32");
+  }
+  const stakeToken = getAddress(intent.stakeToken);
+  const veToken = getAddress(intent.veToken);
+  const sender = getAddress(intent.sender);
+  const veId = saltToId(sender, intent.salt, BigInt(intent.chainId), veToken);
+  const nativeStake = BigInt(stakeToken) === 0n;
+  const approvals = nativeStake
+    ? []
+    : [erc20Approval(intent.chainId, stakeToken, veToken, amount)];
+  const type = intent.maxDuration ? "stake_max_duration" : "stake_for_duration";
+  const data = intent.maxDuration
+    ? encodeFunctionData({
+        abi: VE_TOKEN_ABI,
+        functionName: "stakeMaxDuration",
+        args: [amount, intent.salt],
+      })
+    : encodeFunctionData({
+        abi: VE_TOKEN_ABI,
+        functionName: "stakeForDuration",
+        args: [amount, intent.durationSeconds as number, intent.salt],
+      });
+  return ve33Plan({
+    action: "ve33_stake",
+    chainId: intent.chainId,
+    veToken,
+    sender,
+    calls: [
+      {
+        type,
+        ve_id: veId.toString(),
+        amount: amount.toString(),
+        salt: intent.salt,
+        data,
+      },
+    ],
+    details: {
+      ve_id: veId.toString(),
+      stake_token: stakeToken,
+      amount: amount.toString(),
+      max_duration: intent.maxDuration,
+      duration_seconds: intent.durationSeconds ?? null,
+      approvals,
+      approval_scope: nativeStake
+        ? null
+        : {
+            token: stakeToken,
+            spender: veToken,
+            exact_amount: amount.toString(),
+          },
+      safety: {
+        creates_new_ve_token: true,
+        existing_votes_and_unclaimed_fees_are_untouched: true,
+        max_duration_is_the_default_when_duration_is_omitted: true,
+      },
+    },
+    value: nativeStake ? amount : 0n,
+  });
+}
+
 export function prepareVe33Claim(intent: PrepareVe33ClaimIntent) {
   if (intent.claims.length === 0) throw invalid("at least one claim is required");
   const recipient = getAddress(intent.recipient ?? intent.sender);
@@ -720,6 +821,9 @@ export async function prepareVe33Reallocation(
 ) {
   if (intent.targets.length === 0) {
     throw invalid("at least one target allocation is required");
+  }
+  if (intent.targets.length > MAX_ALLOCATION_TARGETS) {
+    throw invalid(`at most ${MAX_ALLOCATION_TARGETS} target allocations are supported`);
   }
   const totalBps = intent.targets.reduce(
     (sum, target) => sum + target.weightBps,
@@ -1022,6 +1126,7 @@ export async function prepareAllVe33FeeClaims(
   const claims: PrepareVe33ClaimIntent["claims"] = [];
   const evidence: Record<string, unknown>[] = [];
   const seenVeIds = new Set<string>();
+  const feeTokens = new Set<Address>();
   let skippedUnvoted = 0;
 
   for (const rawToken of indexed.tokens) {
@@ -1077,6 +1182,8 @@ export async function prepareAllVe33FeeClaims(
       extension,
       stableswapParams: indexedStableswapParams(rawPoolKey),
     };
+    feeTokens.add(normalizeAddress(poolKey.token0));
+    feeTokens.add(normalizeAddress(poolKey.token1));
     let poolKeyArgument: Ve33PoolKeyArgument;
     try {
       poolKeyArgument = toPoolKeyArgument(poolKey);
@@ -1156,6 +1263,10 @@ export async function prepareAllVe33FeeClaims(
     );
   }
 
+  const sortedFeeTokens = [...feeTokens].sort((left, right) =>
+    BigInt(left) < BigInt(right) ? -1 : BigInt(left) > BigInt(right) ? 1 : 0,
+  );
+
   const plan = prepareVe33Claim({
     chainId: intent.chainId,
     veToken,
@@ -1170,6 +1281,10 @@ export async function prepareAllVe33FeeClaims(
       indexed_owned_ve_tokens: indexed.totalItems,
       active_vote_claims: claims.length,
       skipped_unvoted: skippedUnvoted,
+      fee_tokens: sortedFeeTokens,
+      pre_claim_balance_snapshots: sortedFeeTokens.map((token) =>
+        balanceSnapshotRequest(intent.chainId, token, sender),
+      ),
       state_validation: evidence,
     },
   };
@@ -1179,19 +1294,42 @@ export async function prepareVe33Reinvest(
   env: Env,
   intent: PrepareVe33ReinvestIntent,
   fetcher: typeof fetch = fetch,
+  nowSeconds = Math.floor(Date.now() / 1_000),
 ) {
   if (intent.phase === "claim") {
-    const plan = prepareVe33Claim({
-      chainId: intent.chainId,
-      veToken: intent.veToken,
-      sender: intent.sender,
-      claims: intent.claims,
-    });
+    let plan;
+    let feeTokens: Address[];
+    if (intent.claims === undefined) {
+      const discovered = await prepareAllVe33FeeClaims(
+        env,
+        {
+          chainId: intent.chainId,
+          veToken: intent.veToken,
+          sender: intent.sender,
+        },
+        fetcher,
+      );
+      plan = discovered;
+      feeTokens = discovered.discovery.fee_tokens;
+    } else {
+      plan = prepareVe33Claim({
+        chainId: intent.chainId,
+        veToken: intent.veToken,
+        sender: intent.sender,
+        claims: intent.claims,
+      });
+      feeTokens = feeTokensFromClaims(intent.claims);
+    }
+    const sender = getAddress(intent.sender);
     return {
       phase: "claim" as const,
       plan,
+      fee_tokens: feeTokens,
+      pre_claim_balance_snapshots: feeTokens.map((token) =>
+        balanceSnapshotRequest(intent.chainId, token, sender),
+      ),
       next_phase:
-        "Immediately before execution, snapshot the sender's balances for every pool fee token. After the claim confirms, subtract those snapshots from the new balances and call this tool with phase=swap using the complete deltas. Static pre-claim estimates cannot guarantee that every newly accrued unit is reinvested.",
+        "Immediately before execution, take every supplied balance snapshot. After the claim confirms, compute each exact claimed delta and call this tool with phase=swap. For the native token, add the claim transaction's gas cost back to the post-claim balance delta. Never pass a wallet's pre-existing balance as a claimed fee amount.",
     };
   }
 
@@ -1235,8 +1373,115 @@ export async function prepareVe33Reinvest(
       exact_input_full_balance_swaps: swapPlans,
       stake_token_amount_already_claimed: directStakeAmount.toString(),
       next_phase:
-        "After all swap receipts confirm, measure the sender's stake-token increase (including directly claimed stake token) and call this tool with phase=stake and that full amount.",
+        "After every individual swap receipt confirms, measure the sender's exact stake-token increase, including directly claimed stake token. Refresh ekubo_get_ve33_allocations, then call phase=stake_all with its state_id and that full amount to increase every existing active allocation, or phase=stake with one explicit ve_id.",
     };
+  }
+
+  if (intent.phase === "stake_all") {
+    const amount = unsigned(intent.amount, 128, "amount");
+    if (amount === 0n) throw invalid("amount must be positive");
+    const portfolio = await loadVe33Portfolio(
+      env,
+      {
+        chainId: intent.chainId,
+        veToken: intent.veToken,
+        owner: intent.sender,
+      },
+      fetcher,
+    );
+    if (portfolio.stateId.toLowerCase() !== intent.currentStateId.toLowerCase()) {
+      throw new ServiceError(
+        "ve33_state_changed",
+        "The indexed VeToken allocation changed after it was reviewed; fetch the current allocation again",
+        {
+          expected_state_id: intent.currentStateId,
+          actual_state_id: portfolio.stateId,
+        },
+      );
+    }
+    const active = portfolio.tokens.filter(
+      (token): token is IndexedVeTokenState & { vote: IndexedVe33Vote } =>
+        token.vote !== null,
+    );
+    if (active.length === 0) {
+      throw new ServiceError(
+        "no_active_ve33_votes",
+        "The owner has no active allocations to increase",
+      );
+    }
+    const now = BigInt(nowSeconds);
+    const expired = active.filter(
+      (token) => projectVotingPower(token.amount, token.endTime, now) === 0n,
+    );
+    if (expired.length !== 0) {
+      throw new ServiceError(
+        "expired_ve33_votes",
+        "Expired VeTokens cannot receive a safe reinvestment allocation",
+        { ve_ids: expired.map(({ veId }) => veId.toString()) },
+      );
+    }
+    if (amount < BigInt(active.length)) {
+      throw new ServiceError(
+        "ve33_reinvest_amount_too_small",
+        "The reinvested amount is too small to increase every active allocation",
+        { amount: amount.toString(), active_allocations: active.length },
+      );
+    }
+    const apportioned = apportionReinvestment(amount, active);
+    const stakeToken = getAddress(intent.stakeToken);
+    const veToken = getAddress(intent.veToken);
+    const nativeStake = BigInt(stakeToken) === 0n;
+    const approvals = nativeStake
+      ? []
+      : [erc20Approval(intent.chainId, stakeToken, veToken, amount)];
+    const calls: Ve33Call[] = active.map((token, index) => ({
+      type: "increase_stake_amount",
+      ve_id: token.veId.toString(),
+      amount: apportioned[index].toString(),
+      pool_key_id: token.vote.poolKeyId,
+      data: encodeFunctionData({
+        abi: VE_TOKEN_ABI,
+        functionName: "increaseStakeAmount",
+        args: [token.veId, apportioned[index]],
+      }),
+    }));
+    const plan = ve33Plan({
+      schemaVersion: "2",
+      action: "ve33_reinvest_stake_all",
+      chainId: intent.chainId,
+      veToken,
+      sender: intent.sender,
+      calls,
+      details: {
+        current_state_id: portfolio.stateId,
+        stake_token: stakeToken,
+        total_amount: amount.toString(),
+        approvals,
+        approval_scope: nativeStake
+          ? null
+          : {
+              token: stakeToken,
+              spender: veToken,
+              exact_amount: amount.toString(),
+            },
+        allocations: active.map((token, index) => ({
+          ve_id: token.veId.toString(),
+          pool_key_id: token.vote.poolKeyId,
+          prior_stake_amount: token.amount.toString(),
+          increase_amount: apportioned[index].toString(),
+        })),
+        onchain_validation: portfolioOnchainValidation(portfolio),
+        safety: {
+          every_existing_active_allocation_is_increased: true,
+          increase_stake_amount_preserves_existing_votes_and_fee_accounting: true,
+          no_vote_is_cleared_or_replaced: true,
+          unvoted_ve_tokens_are_untouched: true,
+          exact_total_amount_is_apportioned: true,
+        },
+      },
+      value: nativeStake ? amount : 0n,
+    });
+    return { phase: "stake_all" as const, plan, next_phase: null };
   }
 
   const veId = unsigned(intent.veId, 192, "ve_id");
@@ -1247,18 +1492,7 @@ export async function prepareVe33Reinvest(
   const approvals =
     BigInt(stakeToken) === 0n
       ? []
-      : [
-          {
-            chain_id: intent.chainId,
-            to: stakeToken,
-            data: encodeFunctionData({
-              abi: erc20Abi,
-              functionName: "approve",
-              args: [veToken, amount],
-            }),
-            value: "0",
-          },
-        ];
+      : [erc20Approval(intent.chainId, stakeToken, veToken, amount)];
   const data = encodeFunctionData({
     abi: VE_TOKEN_ABI,
     functionName: "increaseStakeAmount",
@@ -1279,6 +1513,14 @@ export async function prepareVe33Reinvest(
     ],
     details: {
       approvals,
+      approval_scope:
+        BigInt(stakeToken) === 0n
+          ? null
+          : {
+              token: stakeToken,
+              spender: veToken,
+              exact_amount: amount.toString(),
+            },
       transaction_value: BigInt(stakeToken) === 0n ? amount.toString() : "0",
     },
     value: BigInt(stakeToken) === 0n ? amount : 0n,
@@ -1839,6 +2081,119 @@ function portfolioStateId(input: {
   );
 }
 
+function feeTokensFromClaims(
+  claims: { veId: string; poolKey: Ve33PoolKeyInput }[],
+): Address[] {
+  const tokens = new Set<Address>();
+  for (const claim of claims) {
+    const poolKey = toPoolKeyArgument(claim.poolKey);
+    tokens.add(poolKey.token0);
+    tokens.add(poolKey.token1);
+  }
+  return [...tokens].sort((left, right) =>
+    BigInt(left) < BigInt(right) ? -1 : BigInt(left) > BigInt(right) ? 1 : 0,
+  );
+}
+
+function balanceSnapshotRequest(
+  chainId: string,
+  token: Address,
+  owner: Address,
+) {
+  return BigInt(token) === 0n
+    ? {
+        token,
+        type: "native_balance",
+        rpc: {
+          chain_id: chainId,
+          method: "eth_getBalance",
+          params: [owner, "pending"],
+        },
+        claimed_delta_instruction:
+          "post_claim_balance - pre_claim_balance + claim_transaction_gas_cost",
+      }
+    : {
+        token,
+        type: "erc20_balance",
+        rpc: {
+          chain_id: chainId,
+          method: "eth_call",
+          params: [
+            {
+              to: token,
+              data: encodeFunctionData({
+                abi: erc20Abi,
+                functionName: "balanceOf",
+                args: [owner],
+              }),
+            },
+            "pending",
+          ],
+        },
+        claimed_delta_instruction: "post_claim_balance - pre_claim_balance",
+      };
+}
+
+function apportionReinvestment(
+  totalAmount: bigint,
+  active: (IndexedVeTokenState & { vote: IndexedVe33Vote })[],
+): bigint[] {
+  const sourceTotal = active.reduce((sum, token) => sum + token.amount, 0n);
+  if (sourceTotal === 0n) {
+    throw invalid("active allocation stake total must be positive");
+  }
+  const minimum = BigInt(active.length);
+  if (totalAmount < minimum) {
+    throw invalid("reinvestment amount cannot increase every active allocation");
+  }
+  const remaining = totalAmount - minimum;
+  const amounts = active.map(
+    (token) => 1n + (remaining * token.amount) / sourceTotal,
+  );
+  let remainder = totalAmount - amounts.reduce((sum, amount) => sum + amount, 0n);
+  const order = active
+    .map((token, index) => ({
+      index,
+      remainder: (remaining * token.amount) % sourceTotal,
+    }))
+    .sort((left, right) =>
+      left.remainder > right.remainder
+        ? -1
+        : left.remainder < right.remainder
+          ? 1
+          : active[left.index].veId < active[right.index].veId
+            ? -1
+            : 1,
+    );
+  for (const target of order) {
+    if (remainder === 0n) break;
+    amounts[target.index] += 1n;
+    remainder -= 1n;
+  }
+  if (remainder !== 0n || amounts.some((amount) => amount <= 0n)) {
+    throw new Error("internal reinvestment apportionment error");
+  }
+  return amounts;
+}
+
+function erc20Approval(
+  chainId: string,
+  token: Address,
+  spender: Address,
+  amount: bigint,
+) {
+  return {
+    chain_id: chainId,
+    to: getAddress(token),
+    data: encodeFunctionData({
+      abi: erc20Abi,
+      functionName: "approve",
+      args: [getAddress(spender), amount],
+    }),
+    value: "0",
+  };
+}
+
 function projectVotingPower(amount: bigint, endTime: bigint, now: bigint) {
   if (endTime <= now) return 0n;
   const remaining = endTime - now;
@@ -2008,6 +2363,7 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
   details: TDetails;
   value?: bigint;
 }) {
+  const functionNames = calls.map(({ data }) => safeVeTokenFunctionName(data));
   const calldata = calls.map(({ data }) => data);
   const transactionData =
     calldata.length === 0
@@ -2045,12 +2401,48 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
             value: value.toString(),
           },
     ...details,
+    transaction_safety: {
+      allowlisted_vetoken_functions: functionNames,
+      only_allowlisted_vetoken_functions: true,
+      ownership_or_nft_transfer_calls: 0,
+      ownership_or_nft_transfer_calls_are_forbidden: true,
+      signs_transactions: false,
+      submits_transactions: false,
+    },
     client_execution: {
       must_revalidate_before_signing: true,
       instruction:
         "Verify ownership or operator approval, current stake/vote state, balances, allowances, and gas through the user's connected provider; then ask the user to confirm this exact plan_id before signing.",
     },
   };
+}
+
+const SAFE_VE_TOKEN_FUNCTIONS = new Set([
+  "claimPoolFees",
+  "claimPoolFeesToSelf",
+  "clearVote",
+  "vote",
+  "splitStake",
+  "claimPoolFeesAndExtendStakeToSelfForDuration",
+  "claimPoolFeesAndExtendStakeToSelfMaxDuration",
+  "increaseStakeAmount",
+  "stakeForDuration",
+  "stakeMaxDuration",
+]);
+
+function safeVeTokenFunctionName(data: Hex): string {
+  let functionName: string;
+  try {
+    functionName = decodeFunctionData({ abi: VE_TOKEN_ABI, data }).functionName;
+  } catch {
+    throw new Error("internal safety error: unknown VeToken calldata");
+  }
+  if (!SAFE_VE_TOKEN_FUNCTIONS.has(functionName)) {
+    throw new Error(
+      `internal safety error: VeToken function ${functionName} is not allowlisted`,
+    );
+  }
+  return functionName;
 }
 
 function unsigned(

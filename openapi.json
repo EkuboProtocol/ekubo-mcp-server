@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Ekubo Protocol MCP Gateway",
-    "version": "0.7.0",
-    "description": "Discovery contract for the public, unauthenticated Ekubo MCP server, including exact single-token and batch-token metadata lookups, a first-class STONX allocation lookup with an explicit not-executed on-chain validation request, Ekubo/0x/Across quotes, and unsigned ve(3,3) call construction. MCP clients discover typed tool schemas through tools/list; GET /tools provides the same revisioned catalog to ordinary HTTP clients.",
+    "version": "0.8.0",
+    "description": "Discovery contract for the public, unauthenticated Ekubo MCP server, including exact token metadata, provider-neutral STONX allocation recommendations, fee-first allocation plans for as many as 100 pools, phased fee reinvestment, max-duration staking, Ekubo/0x/Across quotes, and unsigned ve(3,3) call construction. MCP clients discover typed tool schemas through tools/list; GET /tools provides the same revisioned catalog to ordinary HTTP clients.",
     "contact": {
       "url": "https://ekubo.org",
       "email": "eng@ekubo.org"
