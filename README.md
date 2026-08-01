@@ -20,7 +20,9 @@ a data API and the quoter remains a route-data service.
 MCP-native discovery remains authoritative: clients use `tools/list` and
 `resources/list`/`resources/templates/list`. The HTTP discovery endpoints are
 additive and help crawlers, OpenAPI clients, and humans find the same
-capabilities.
+capabilities. `GET /tools` is deliberately uncached and includes both the
+server version and a tool-catalog revision so integrations can detect stale
+schemas after a Git-triggered deployment.
 
 ## Tools
 
@@ -43,9 +45,12 @@ capabilities.
 - `ekubo_prepare_ve33_claim_all_fees` — discover every active vote owned by a
   sender and prepare one native VeToken claim multicall, including `ownerOf`
   and `voteState` validation calldata
-- `ekubo_get_ve33_allocations` — aggregate the complete owned VeToken portfolio
-  by pool, selected swap fee, NFT, applied weight, and total weight; returns a
-  state commitment and one read-only provider-validation multicall
+- `ekubo_get_ve33_allocations` — handle “show all my Ekubo STONX allocations”
+  with only the connected wallet address because the production Ve33
+  deployment is the STONX voting system; defaults to Robinhood Chain `4663`
+  and its canonical VeToken, then returns the complete portfolio and
+  provider-validation multicall. An explicit chain and VeToken pair remains
+  available for another deployment such as testnet.
 - `ekubo_prepare_ve33_reallocation` — resolve target `pool_key_id` values and
   compile basis-point target weights into one fee-first atomic VeToken
   multicall using only claims, splits, and votes
@@ -100,6 +105,12 @@ The boundary mirrors the Ekubo interface: the public services provide token
 data and route quotes, transaction construction applies the user's slippage,
 and the user's connected wallet or provider handles balances, allowances,
 current-state validation, gas estimation, signing, submission, and receipts.
+
+For STONX allocation requests, clients should call
+`ekubo_get_ve33_allocations` with only the connected EVM wallet address as
+`owner`. The public server is unauthenticated and cannot infer what “my” means.
+If the client does not expose a connected address, ask the user for it; do not
+substitute a local keystore, repository account, or machine environment value.
 
 VeToken splitting follows the deployed contract invariants: the source token
 must retain a nonzero stake, its active vote remains with reduced weight, and

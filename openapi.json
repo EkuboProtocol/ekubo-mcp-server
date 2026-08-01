@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Ekubo Protocol MCP Gateway",
-    "version": "0.4.0",
-    "description": "Discovery contract for the public, unauthenticated Ekubo MCP server, including token discovery, Ekubo/0x/Across quotes, and unsigned ve(3,3) call construction. MCP clients discover typed tool schemas through tools/list; GET /tools provides the same catalog to ordinary HTTP clients.",
+    "version": "0.5.0",
+    "description": "Discovery contract for the public, unauthenticated Ekubo MCP server, including a first-class STONX allocation lookup, token discovery, Ekubo/0x/Across quotes, and unsigned ve(3,3) call construction. MCP clients discover typed tool schemas through tools/list; GET /tools provides the same revisioned catalog to ordinary HTTP clients.",
     "contact": {
       "url": "https://ekubo.org",
       "email": "eng@ekubo.org"
@@ -46,7 +46,7 @@
       "get": {
         "operationId": "listPublicTools",
         "summary": "List MCP tools without an MCP client",
-        "description": "MCP clients should use tools/list at /mcp. This endpoint makes the deterministic tool catalog visible to crawlers and ordinary HTTP clients.",
+        "description": "MCP clients should use tools/list at /mcp. This uncached endpoint makes the deterministic, revisioned tool catalog visible to crawlers and ordinary HTTP clients.",
         "responses": {
           "200": {
             "description": "Tool names, descriptions, and JSON input schemas",
@@ -54,8 +54,23 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["tools"],
+                  "required": [
+                    "server_version",
+                    "catalog_revision",
+                    "tool_count",
+                    "tools"
+                  ],
                   "properties": {
+                    "server_version": {
+                      "type": "string"
+                    },
+                    "catalog_revision": {
+                      "type": "string"
+                    },
+                    "tool_count": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
                     "tools": {
                       "type": "array",
                       "items": {
@@ -197,6 +212,10 @@
           },
           "inputSchema": {
             "type": "object"
+          },
+          "_meta": {
+            "type": "object",
+            "additionalProperties": true
           }
         }
       },

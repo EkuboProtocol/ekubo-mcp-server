@@ -1,10 +1,17 @@
 import { describe, expect, it } from "bun:test";
 import worker from "../src/index.js";
 import {
+  getVe33AllocationsSchema,
   prepareVe33ExtendSchema,
   prepareVe33VoteSchema,
   publicToolCatalog,
+  ROBINHOOD_STONX_CHAIN_ID,
+  ROBINHOOD_STONX_VE_TOKEN,
 } from "../src/server.js";
+import {
+  MCP_SERVER_VERSION,
+  MCP_TOOL_CATALOG_REVISION,
+} from "../src/version.js";
 
 const env = {
   EKUBO_API_URL: "https://api.test",
@@ -24,6 +31,10 @@ describe("Worker discovery", () => {
       context,
     );
     const metadata = (await root.json()) as {
+      description: string;
+      version: string;
+      tool_catalog_revision: string;
+      tool_count: number;
       mcp_endpoint: string;
       authentication: string;
       readiness_url?: string;
@@ -32,6 +43,10 @@ describe("Worker discovery", () => {
       };
     };
     expect(metadata.mcp_endpoint).toBe("https://mcp.ekubo.org/mcp");
+    expect(metadata.description).toContain("STONX allocation");
+    expect(metadata.version).toBe(MCP_SERVER_VERSION);
+    expect(metadata.tool_catalog_revision).toBe(MCP_TOOL_CATALOG_REVISION);
+    expect(metadata.tool_count).toBe(publicToolCatalog.length);
     expect(metadata.authentication).toBe("none");
     expect(metadata.readiness_url).toBeUndefined();
     expect(metadata.safety.requires_wallet_validation).toBe(true);
@@ -54,7 +69,16 @@ describe("Worker discovery", () => {
       env,
       context,
     );
-    const catalog = (await tools.json()) as { tools: typeof publicToolCatalog };
+    expect(tools.headers.get("cache-control")).toBe("no-store");
+    const catalog = (await tools.json()) as {
+      server_version: string;
+      catalog_revision: string;
+      tool_count: number;
+      tools: typeof publicToolCatalog;
+    };
+    expect(catalog.server_version).toBe(MCP_SERVER_VERSION);
+    expect(catalog.catalog_revision).toBe(MCP_TOOL_CATALOG_REVISION);
+    expect(catalog.tool_count).toBe(publicToolCatalog.length);
     expect(catalog.tools.map((tool) => tool.name)).toEqual([
       "ekubo_search_tokens",
       "ekubo_get_token",
@@ -69,6 +93,37 @@ describe("Worker discovery", () => {
       "ekubo_get_ve33_allocations",
       "ekubo_prepare_ve33_reallocation",
     ]);
+    expect(
+      catalog.tools.every(
+        (tool) =>
+          tool._meta["com.ekubo/catalogRevision"] ===
+          MCP_TOOL_CATALOG_REVISION,
+      ),
+    ).toBe(true);
+    const stonxAllocations = catalog.tools.find(
+      (tool) => tool.name === "ekubo_get_ve33_allocations",
+    );
+    expect(stonxAllocations?.description).toContain(
+      "show all my Ekubo STONX allocations",
+    );
+    expect(
+      (stonxAllocations?.inputSchema as { required?: string[] }).required,
+    ).toEqual(["owner"]);
+    expect(
+      getVe33AllocationsSchema.safeParse({
+        owner: "0x1111111111111111111111111111111111111111",
+      }).success,
+    ).toBe(true);
+    expect(
+      getVe33AllocationsSchema.safeParse({
+        chain_id: "46630",
+        owner: "0x1111111111111111111111111111111111111111",
+      }).success,
+    ).toBe(false);
+    expect(ROBINHOOD_STONX_CHAIN_ID).toBe("4663");
+    expect(ROBINHOOD_STONX_VE_TOKEN).toBe(
+      "0x9d7008E169D040B6c0140eb92E7cA82B12643497",
+    );
     const prepareSwap = catalog.tools.find(
       (tool) => tool.name === "ekubo_prepare_swap",
     );
@@ -121,11 +176,19 @@ describe("Worker discovery", () => {
     );
     expect(initialized.status).toBe(200);
     const initializeResult = (await mcpJson(initialized)) as {
-      result: { capabilities: { tools?: unknown }; instructions?: string };
+      result: {
+        capabilities: { tools?: unknown };
+        instructions?: string;
+        serverInfo: { version: string };
+      };
     };
     expect(initializeResult.result.capabilities.tools).toBeDefined();
+    expect(initializeResult.result.serverInfo.version).toBe(MCP_SERVER_VERSION);
     expect(initializeResult.result.instructions).toContain(
       "ekubo_get_ve33_allocations",
+    );
+    expect(initializeResult.result.instructions).toContain(
+      "Never infer the user's wallet",
     );
     expect(initializeResult.result.instructions).toContain(
       "unconditionally before any split or vote mutation",
@@ -147,11 +210,23 @@ describe("Worker discovery", () => {
     );
     expect(listed.status).toBe(200);
     const listResult = (await mcpJson(listed)) as {
-      result: { tools: { name: string }[] };
+      result: {
+        tools: {
+          name: string;
+          _meta?: Record<string, unknown>;
+        }[];
+      };
     };
     expect(listResult.result.tools.map((tool) => tool.name)).toEqual(
       publicToolCatalog.map((tool) => tool.name),
     );
+    expect(
+      listResult.result.tools.every(
+        (tool) =>
+          tool._meta?.["com.ekubo/catalogRevision"] ===
+          MCP_TOOL_CATALOG_REVISION,
+      ),
+    ).toBe(true);
 
     const resources = await worker.fetch(
       new Request("https://mcp.ekubo.org/mcp", {

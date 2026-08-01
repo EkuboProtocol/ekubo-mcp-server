@@ -1,4 +1,6 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
+const expectedServerVersion = "0.5.0";
+const expectedCatalogRevision = "2026-08-01.stonx-allocations";
 
 if (origin === undefined) {
   throw new Error(
@@ -8,6 +10,14 @@ if (origin === undefined) {
 
 const metadata = await getJson("/");
 assert(metadata.mcp_endpoint === `${origin}/mcp`, "root MCP URL is incorrect");
+assert(
+  metadata.version === expectedServerVersion,
+  "root server version is stale",
+);
+assert(
+  metadata.tool_catalog_revision === expectedCatalogRevision,
+  "root tool catalog revision is stale",
+);
 
 const openapi = await getJson("/openapi.json");
 assert(openapi.openapi === "3.1.0", "OpenAPI endpoint is invalid");
@@ -28,6 +38,18 @@ const expectedTools = [
   "ekubo_prepare_ve33_reallocation",
 ];
 assert(
+  catalog.server_version === expectedServerVersion,
+  "HTTP tool catalog server version is stale",
+);
+assert(
+  catalog.catalog_revision === expectedCatalogRevision,
+  "HTTP tool catalog revision is stale",
+);
+assert(
+  catalog.tool_count === expectedTools.length,
+  "HTTP tool catalog count is incorrect",
+);
+assert(
   JSON.stringify(catalog.tools?.map((tool) => tool.name)) ===
     JSON.stringify(expectedTools),
   "HTTP tool catalog does not match the expected toolset",
@@ -40,6 +62,10 @@ const initialized = await mcpRequest(1, "initialize", {
 });
 assert(initialized.result?.capabilities?.tools, "MCP tools capability is missing");
 assert(
+  initialized.result?.serverInfo?.version === expectedServerVersion,
+  "MCP server version is stale",
+);
+assert(
   initialized.result?.instructions?.includes("ekubo_get_ve33_allocations"),
   "MCP VeToken safety instructions are missing",
 );
@@ -49,6 +75,13 @@ assert(
   JSON.stringify(listed.result?.tools?.map((tool) => tool.name)) ===
     JSON.stringify(expectedTools),
   "MCP tools/list does not match the expected toolset",
+);
+assert(
+  listed.result?.tools?.every(
+    (tool) =>
+      tool._meta?.["com.ekubo/catalogRevision"] === expectedCatalogRevision,
+  ),
+  "MCP tools/list is missing the tool catalog revision metadata",
 );
 
 const resources = await mcpRequest(3, "resources/list", {});

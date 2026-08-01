@@ -2,6 +2,10 @@ import { createMcpHandler } from "agents/mcp/server";
 import openapi from "../openapi.json";
 import type { Env } from "./core.js";
 import { createEkuboServer, publicToolCatalog } from "./server.js";
+import {
+  MCP_SERVER_VERSION,
+  MCP_TOOL_CATALOG_REVISION,
+} from "./version.js";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
@@ -45,8 +49,10 @@ export default {
           {
             name: "Ekubo Protocol MCP",
             description:
-              "Public, unauthenticated, read-only agent tools for token discovery, same-chain swaps, Across bridges, and ve(3,3) calldata preparation",
-            version: "0.4.0",
+              "Public, unauthenticated, read-only agent tools for Ekubo STONX allocation lookup, token discovery, same-chain swaps, Across bridges, and ve(3,3) calldata preparation",
+            version: MCP_SERVER_VERSION,
+            tool_catalog_revision: MCP_TOOL_CATALOG_REVISION,
+            tool_count: publicToolCatalog.length,
             mcp_endpoint: `${url.origin}/mcp`,
             mcp_transport: "streamable-http",
             authentication: "none",
@@ -73,9 +79,14 @@ export default {
         );
       case "/tools":
         return json(
-          { tools: publicToolCatalog },
+          {
+            server_version: MCP_SERVER_VERSION,
+            catalog_revision: MCP_TOOL_CATALOG_REVISION,
+            tool_count: publicToolCatalog.length,
+            tools: publicToolCatalog,
+          },
           200,
-          cacheHeaders(3600),
+          { "cache-control": "no-store" },
         );
       case "/openapi.json":
         return json(openapi, 200, cacheHeaders(3600));
@@ -183,12 +194,19 @@ function llmsText(origin: string) {
 MCP endpoint: ${origin}/mcp
 Transport: Streamable HTTP
 Authentication: none
+Server version: ${MCP_SERVER_VERSION}
+Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}
 Tool catalog: ${origin}/tools
 OpenAPI: ${origin}/openapi.json
 Canonical data API OpenAPI: https://prod-api.ekubo.org/openapi.json
 Aggregated quote resource: ekubo://docs/quoter-api
 ve(3,3) workflow resource: ekubo://docs/ve33-workflow
 EVM contract directory: ekubo://contracts/evm
+
+STONX allocation shortcut:
+- For "my Ekubo STONX allocations" or equivalent, call ekubo_get_ve33_allocations with the user's connected EVM wallet address as owner and omit chain_id and ve_token.
+- The production Ve33 deployment is the STONX voting system; omitting those fields selects Robinhood Chain 4663 and the canonical VeToken automatically.
+- If no connected wallet address is available, ask the user. Never infer it from a machine environment, repository, or local keystore.
 
 Safe swap and bridge sequence:
 1. Use ekubo_search_tokens; results prioritize visibility_priority. Show the selected chain and address.
