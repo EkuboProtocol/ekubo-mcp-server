@@ -654,7 +654,7 @@ export async function getVe33Allocations(
   }
 
   return {
-    schema_version: "1",
+    schema_version: "2",
     chain_id: portfolio.chainId,
     owner: portfolio.owner,
     ve_token: portfolio.veToken,
@@ -701,13 +701,13 @@ export async function getVe33Allocations(
         ve_tokens: pool.veTokens,
       })),
     unvoted,
-    provider_validation: portfolioValidation(portfolio),
+    onchain_validation: portfolioOnchainValidation(portfolio),
     safety: {
       indexed_state_is_not_wallet_validation: true,
       state_id_scope:
         "Owned VeToken IDs, amounts, ends, active pool keys, selected swap fees, applied weights, and ownership/stake event cursors; pool-wide totals are informational and intentionally excluded.",
       instruction:
-        "Execute the returned read-only VeToken multicall through the user's provider and compare every decoded result before preparing or signing a reallocation.",
+        "Execute onchain_validation.eth_call through the user's provider and compare every decoded result before preparing or signing a reallocation.",
     },
   };
 }
@@ -958,6 +958,7 @@ export async function prepareVe33Reallocation(
   });
 
   return ve33Plan({
+    schemaVersion: "2",
     action: "ve33_reallocate_votes",
     chainId: intent.chainId,
     veToken: portfolio.veToken,
@@ -975,7 +976,7 @@ export async function prepareVe33Reallocation(
         votes: votes.length,
         total_calls: calls.length,
       },
-      provider_validation: portfolioValidation(portfolio),
+      onchain_validation: portfolioOnchainValidation(portfolio),
       safety: {
         one_atomic_vetoken_multicall: true,
         all_current_fee_claims_are_first: true,
@@ -991,7 +992,7 @@ export async function prepareVe33Reallocation(
         unvoted_ve_tokens_are_untouched: true,
         fee_recipient: portfolio.owner,
         remaining_client_preconditions: [
-          "Decode and verify the provider_validation multicall immediately before signing.",
+          "Execute and decode onchain_validation.eth_call immediately before signing.",
           "Confirm balanceOf(owner), every ownerOf, stakes amount/end, and voteState match the indexed state.",
           "Simulate the exact transaction from sender; any claim, split, salt collision, or target-pool failure reverts the entire multicall.",
         ],
@@ -1711,7 +1712,7 @@ function retainedChunkIndex(
   );
 }
 
-function portfolioValidation(portfolio: Ve33Portfolio) {
+function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
   const calls: {
     type: string;
     ve_id?: string;
@@ -1781,15 +1782,22 @@ function portfolioValidation(portfolio: Ve33Portfolio) {
       },
     );
   }
+  const data = encodeFunctionData({
+    abi: VE_TOKEN_ABI,
+    functionName: "multicall",
+    args: [calls.map(({ data }) => data)],
+  });
   return {
-    required: true,
-    to: portfolio.veToken,
+    status: "not_executed" as const,
+    required_before_signing: true,
+    eth_call: {
+      chain_id: portfolio.chainId,
+      to: portfolio.veToken,
+      data,
+    },
     calls,
-    multicall_data: encodeFunctionData({
-      abi: VE_TOKEN_ABI,
-      functionName: "multicall",
-      args: [calls.map(({ data }) => data)],
-    }),
+    instruction:
+      "Execute eth_call through the user's connected provider, decode its ordered results, and compare every expectation immediately before signing.",
   };
 }
 
@@ -1803,7 +1811,7 @@ function portfolioStateId(input: {
   return keccak256(
     stringToHex(
       JSON.stringify({
-        schema_version: "1",
+        schema_version: "2",
         chain_id: input.chainId,
         owner: input.owner,
         ve_token: input.veToken,
@@ -1982,6 +1990,7 @@ function isPowerOfFour(value: number): boolean {
 }
 
 function ve33Plan<TDetails extends Record<string, unknown>>({
+  schemaVersion = "1",
   action,
   chainId,
   veToken,
@@ -1990,6 +1999,7 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
   details,
   value = 0n,
 }: {
+  schemaVersion?: string;
   action: string;
   chainId: string;
   veToken: Address;
@@ -2018,7 +2028,7 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
     value: value.toString(),
   };
   return {
-    schema_version: "1",
+    schema_version: schemaVersion,
     action,
     plan_id: keccak256(stringToHex(JSON.stringify(identity))),
     requires_user_confirmation: true,

@@ -174,7 +174,7 @@ const env = {
 };
 
 describe("safe VeToken allocation workflows", () => {
-  it("shows aggregate pool, fee, NFT, and total allocations with one validation multicall", async () => {
+  it("shows aggregate pool, fee, NFT, and total allocations with one explicit on-chain validation request", async () => {
     const tokens = [
       tokenFixture({ veId: 1n, amount: "600", weight: "590" }),
       tokenFixture({ veId: 2n, amount: "300", weight: "290" }),
@@ -187,6 +187,7 @@ describe("safe VeToken allocation workflows", () => {
       now,
     );
 
+    expect(result.schema_version).toBe("2");
     expect(result.state_id).toMatch(/^0x[0-9a-f]{64}$/);
     expect(result.snapshot).toMatchObject({
       indexed_owned_ve_tokens: 3,
@@ -213,8 +214,17 @@ describe("safe VeToken allocation workflows", () => {
       ),
     ).toBeGreaterThan(0n);
     expect(result.unvoted).toHaveLength(1);
-    expect(result.provider_validation.calls).toHaveLength(13);
-    expect(result.provider_validation.multicall_data).toStartWith("0xac9650d8");
+    expect("provider_validation" in result).toBe(false);
+    expect(result.onchain_validation).toMatchObject({
+      status: "not_executed",
+      required_before_signing: true,
+      eth_call: {
+        chain_id: chainId,
+        to: veToken,
+      },
+    });
+    expect(result.onchain_validation.calls).toHaveLength(13);
+    expect(result.onchain_validation.eth_call.data).toStartWith("0xac9650d8");
   });
 
   it("claims every active NFT first, including zero-fee states, then splits and votes atomically", async () => {
@@ -260,6 +270,17 @@ describe("safe VeToken allocation workflows", () => {
       votes: 3,
       total_calls: 6,
     });
+    expect(plan.schema_version).toBe("2");
+    expect("provider_validation" in plan).toBe(false);
+    expect(plan.onchain_validation).toMatchObject({
+      status: "not_executed",
+      required_before_signing: true,
+      eth_call: {
+        chain_id: chainId,
+        to: veToken,
+      },
+    });
+    expect(plan.onchain_validation.calls).toHaveLength(13);
     expect(plan.calls.map((call) => call.type)).toEqual([
       "claim_pool_fees",
       "claim_pool_fees",

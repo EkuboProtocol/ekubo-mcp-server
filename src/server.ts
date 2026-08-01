@@ -458,7 +458,7 @@ export const publicToolCatalog = [
     name: "ekubo_get_ve33_allocations",
     title: "Show Ekubo STONX / ve(3,3) allocations",
     description:
-      "Use for requests such as 'show all my Ekubo STONX allocations'. The production Ekubo ve(3,3) deployment is the STONX voting system, so pass only owner to select Robinhood Chain 4663 and its canonical VeToken automatically. Returns every pool, selected swap fee, NFT, applied vote weight, totals, state_id, and one provider-validation multicall. Pass chain_id and ve_token together only for another deployment such as testnet.",
+      "Use for requests such as 'show all my Ekubo STONX allocations'. The production Ekubo ve(3,3) deployment is the STONX voting system, so pass only owner to select Robinhood Chain 4663 and its canonical VeToken automatically. Returns every pool, selected swap fee, NFT, applied vote weight, totals, state_id, and an onchain_validation request explicitly marked not_executed until the client runs its eth_call. Pass chain_id and ve_token together only for another deployment such as testnet.",
     inputSchema: z.toJSONSchema(getVe33AllocationsSchema),
     _meta: toolCatalogMetadata,
   },
@@ -1086,7 +1086,7 @@ For exact token metadata, call ekubo_get_token for one known chain/address pair 
 
 For VeToken vote reorganization, first call ekubo_get_ve33_allocations and show the owner, state_id, total applied vote weight, every pool allocation, and contributing ve_ids. Pass that exact state_id to ekubo_prepare_ve33_reallocation. Never construct raw vote, clearVote, extendStake, mergeStakes, withdrawStake, or burn calldata from the ABI resource when a first-class safe workflow exists.
 
-Every active source vote must be claimed unconditionally before any split or vote mutation, even when claimable fees are currently zero. Claims, splits, and votes must remain in the single returned VeToken multicall and in that order. Execute and decode provider_validation immediately before signing, simulate the exact transaction from sender, and discard the plan after any state change or failed expectation.`;
+Every active source vote must be claimed unconditionally before any split or vote mutation, even when claimable fees are currently zero. Claims, splits, and votes must remain in the single returned VeToken multicall and in that order. Execute and decode onchain_validation.eth_call immediately before signing, simulate the exact transaction from sender, and discard the plan after any state change or failed expectation.`;
 
 const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 

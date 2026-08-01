@@ -1,6 +1,6 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-const expectedServerVersion = "0.6.0";
-const expectedCatalogRevision = "2026-08-01.batch-token-lookup";
+const expectedServerVersion = "0.7.0";
+const expectedCatalogRevision = "2026-08-01.onchain-validation";
 
 if (origin === undefined) {
   throw new Error(

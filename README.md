@@ -51,8 +51,9 @@ schemas after a Git-triggered deployment.
   with only the connected wallet address because the production Ve33
   deployment is the STONX voting system; defaults to Robinhood Chain `4663`
   and its canonical VeToken, then returns the complete portfolio and
-  provider-validation multicall. An explicit chain and VeToken pair remains
-  available for another deployment such as testnet.
+  `onchain_validation` request, explicitly marked `not_executed` until its
+  `eth_call` is run. An explicit chain and VeToken pair remains available for
+  another deployment such as testnet.
 - `ekubo_prepare_ve33_reallocation` — resolve target `pool_key_id` values and
   compile basis-point target weights into one fee-first atomic VeToken
   multicall using only claims, splits, and votes
@@ -123,7 +124,7 @@ claim-and-extend methods because extension clears its vote.
 
 Safe vote reorganization is a two-tool workflow. First call
 `ekubo_get_ve33_allocations`, present its complete allocation and `state_id`,
-and execute its read-only validation multicall through the user's provider.
+and execute `onchain_validation.eth_call` through the user's provider.
 Then pass that exact state ID and target `weight_bps` values to
 `ekubo_prepare_ve33_reallocation`. The target shares must total 10,000. The
 server resolves each `pool_key_id` from the canonical Ve33 pool directory,
