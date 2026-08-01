@@ -29,6 +29,8 @@ schemas after a Git-triggered deployment.
 - `ekubo_search_tokens` — search the canonical token list, ordered by
   descending `visibility_priority`
 - `ekubo_get_token` — fetch token metadata by chain and address
+- `ekubo_get_tokens` — fetch metadata for 1–1,000 exact token identifiers,
+  across chains, through one `prod-api` batch request
 - `ekubo_get_quote` — compare Ekubo and 0x for same-chain exact-input or
   exact-output swaps, or use Across when `destination_chain_id` differs
 - `ekubo_prepare_swap` — return firm unsigned Ekubo, 0x, or Across approval

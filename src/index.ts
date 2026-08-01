@@ -49,7 +49,7 @@ export default {
           {
             name: "Ekubo Protocol MCP",
             description:
-              "Public, unauthenticated, read-only agent tools for Ekubo STONX allocation lookup, token discovery, same-chain swaps, Across bridges, and ve(3,3) calldata preparation",
+              "Public, unauthenticated, read-only agent tools for exact and batch token metadata, Ekubo STONX allocation lookup, same-chain swaps, Across bridges, and ve(3,3) calldata preparation",
             version: MCP_SERVER_VERSION,
             tool_catalog_revision: MCP_TOOL_CATALOG_REVISION,
             tool_count: publicToolCatalog.length,
@@ -209,7 +209,7 @@ STONX allocation shortcut:
 - If no connected wallet address is available, ask the user. Never infer it from a machine environment, repository, or local keystore.
 
 Safe swap and bridge sequence:
-1. Use ekubo_search_tokens; results prioritize visibility_priority. Show the selected chain and address.
+1. Use ekubo_search_tokens when resolving a name or symbol. Use ekubo_get_token for one known chain/address pair, or ekubo_get_tokens for 1–1,000 known pairs in one batch request. Batch results preserve input order and duplicates while omitting unknown identifiers. Show the selected chains and addresses.
 2. Convert the amount to base units using token decimals.
 3. Use ekubo_get_quote or ekubo_prepare_swap with exact input/output intent and destination_chain_id.
 4. Choose slippage before generating calldata.

@@ -19,6 +19,7 @@ import {
   type Env,
   getQuote,
   getToken,
+  getTokens,
   prepareSwap,
   type QuoteSource,
   searchTokens,
@@ -98,6 +99,22 @@ export const getTokenSchema = z.object({
     .string()
     .regex(/^0x[0-9a-fA-F]+$/, "address must be hexadecimal")
     .describe("EVM or Starknet token address"),
+});
+
+export const getTokensSchema = z.object({
+  tokens: z
+    .array(
+      z.object({
+        chain_id: chainId,
+        address: z
+          .string()
+          .regex(/^0x[0-9a-fA-F]+$/, "address must be hexadecimal")
+          .describe("EVM or Starknet token address"),
+      }),
+    )
+    .min(1)
+    .max(1_000)
+    .describe("Exact token identifiers; entries may span multiple chains"),
 });
 
 export const getQuoteSchema = z.object({
@@ -366,6 +383,14 @@ export const publicToolCatalog = [
     _meta: toolCatalogMetadata,
   },
   {
+    name: "ekubo_get_tokens",
+    title: "Get multiple Ekubo tokens",
+    description:
+      "Fetch canonical metadata for 1 to 1,000 exact token identifiers in one batch request. Tokens may span chains. Results preserve input order and duplicates; identifiers absent from the canonical token list are omitted.",
+    inputSchema: z.toJSONSchema(getTokensSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
     name: "ekubo_get_quote",
     title: "Get a swap or bridge quote",
     description:
@@ -500,9 +525,29 @@ export function createEkuboServer(env: Env) {
     {
       title: publicToolCatalog[2].title,
       description: publicToolCatalog[2].description,
-      inputSchema: getQuoteSchema,
+      inputSchema: getTokensSchema,
       annotations,
       _meta: publicToolCatalog[2]._meta,
+    },
+    async (input) =>
+      toolResult(async () => ({
+        tokens: await getTokens(env, {
+          tokens: input.tokens.map((token) => ({
+            chainId: token.chain_id,
+            address: token.address,
+          })),
+        }),
+      })),
+  );
+
+  server.registerTool(
+    publicToolCatalog[3].name,
+    {
+      title: publicToolCatalog[3].title,
+      description: publicToolCatalog[3].description,
+      inputSchema: getQuoteSchema,
+      annotations,
+      _meta: publicToolCatalog[3]._meta,
     },
     async (input) =>
       toolResult(() => {
@@ -527,13 +572,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[3].name,
+    publicToolCatalog[4].name,
     {
-      title: publicToolCatalog[3].title,
-      description: publicToolCatalog[3].description,
+      title: publicToolCatalog[4].title,
+      description: publicToolCatalog[4].description,
       inputSchema: prepareSwapSchema,
       annotations,
-      _meta: publicToolCatalog[3]._meta,
+      _meta: publicToolCatalog[4]._meta,
     },
     async (input) =>
       toolResult(() => {
@@ -558,13 +603,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[4].name,
+    publicToolCatalog[5].name,
     {
-      title: publicToolCatalog[4].title,
-      description: publicToolCatalog[4].description,
+      title: publicToolCatalog[5].title,
+      description: publicToolCatalog[5].description,
       inputSchema: prepareVe33VoteSchema,
       annotations,
-      _meta: publicToolCatalog[4]._meta,
+      _meta: publicToolCatalog[5]._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -592,13 +637,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[5].name,
+    publicToolCatalog[6].name,
     {
-      title: publicToolCatalog[5].title,
-      description: publicToolCatalog[5].description,
+      title: publicToolCatalog[6].title,
+      description: publicToolCatalog[6].description,
       inputSchema: prepareVe33ExtendSchema,
       annotations,
-      _meta: publicToolCatalog[5]._meta,
+      _meta: publicToolCatalog[6]._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -615,13 +660,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[6].name,
+    publicToolCatalog[7].name,
     {
-      title: publicToolCatalog[6].title,
-      description: publicToolCatalog[6].description,
+      title: publicToolCatalog[7].title,
+      description: publicToolCatalog[7].description,
       inputSchema: prepareVe33SplitSchema,
       annotations,
-      _meta: publicToolCatalog[6]._meta,
+      _meta: publicToolCatalog[7]._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -637,13 +682,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[7].name,
+    publicToolCatalog[8].name,
     {
-      title: publicToolCatalog[7].title,
-      description: publicToolCatalog[7].description,
+      title: publicToolCatalog[8].title,
+      description: publicToolCatalog[8].description,
       inputSchema: prepareVe33ClaimSchema,
       annotations,
-      _meta: publicToolCatalog[7]._meta,
+      _meta: publicToolCatalog[8]._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -661,13 +706,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[8].name,
+    publicToolCatalog[9].name,
     {
-      title: publicToolCatalog[8].title,
-      description: publicToolCatalog[8].description,
+      title: publicToolCatalog[9].title,
+      description: publicToolCatalog[9].description,
       inputSchema: prepareVe33ReinvestSchema,
       annotations,
-      _meta: publicToolCatalog[8]._meta,
+      _meta: publicToolCatalog[9]._meta,
     },
     async (input) =>
       toolResult(() => {
@@ -710,13 +755,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[9].name,
+    publicToolCatalog[10].name,
     {
-      title: publicToolCatalog[9].title,
-      description: publicToolCatalog[9].description,
+      title: publicToolCatalog[10].title,
+      description: publicToolCatalog[10].description,
       inputSchema: prepareAllVe33FeeClaimsSchema,
       annotations,
-      _meta: publicToolCatalog[9]._meta,
+      _meta: publicToolCatalog[10]._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -730,13 +775,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[10].name,
+    publicToolCatalog[11].name,
     {
-      title: publicToolCatalog[10].title,
-      description: publicToolCatalog[10].description,
+      title: publicToolCatalog[11].title,
+      description: publicToolCatalog[11].description,
       inputSchema: getVe33AllocationsSchema,
       annotations,
-      _meta: publicToolCatalog[10]._meta,
+      _meta: publicToolCatalog[11]._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -749,13 +794,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[11].name,
+    publicToolCatalog[12].name,
     {
-      title: publicToolCatalog[11].title,
-      description: publicToolCatalog[11].description,
+      title: publicToolCatalog[12].title,
+      description: publicToolCatalog[12].description,
       inputSchema: prepareVe33ReallocationSchema,
       annotations,
-      _meta: publicToolCatalog[11]._meta,
+      _meta: publicToolCatalog[12]._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -1037,13 +1082,15 @@ const SERVER_INSTRUCTIONS = `Use Ekubo preparation tools only to construct unsig
 
 Intent shortcut: for "my Ekubo STONX allocations", "STONX vote allocations", or equivalent requests, call ekubo_get_ve33_allocations with only the user's connected EVM wallet as owner. The production Ve33 deployment is the STONX voting system, and the tool selects Robinhood Chain 4663 plus its canonical VeToken when chain_id and ve_token are omitted. If the connected wallet address is unavailable, ask the user for it. Never infer the user's wallet from a machine environment, repository configuration, local keystore, or unrelated account.
 
+For exact token metadata, call ekubo_get_token for one known chain/address pair and ekubo_get_tokens for multiple known pairs. The batch tool uses one prod-api batch request, accepts tokens across chains, preserves input order and duplicates, and omits identifiers that are not in the canonical list. Use ekubo_search_tokens only when resolving a name, symbol, or address fragment.
+
 For VeToken vote reorganization, first call ekubo_get_ve33_allocations and show the owner, state_id, total applied vote weight, every pool allocation, and contributing ve_ids. Pass that exact state_id to ekubo_prepare_ve33_reallocation. Never construct raw vote, clearVote, extendStake, mergeStakes, withdrawStake, or burn calldata from the ABI resource when a first-class safe workflow exists.
 
 Every active source vote must be claimed unconditionally before any split or vote mutation, even when claimable fees are currently zero. Claims, splits, and votes must remain in the single returned VeToken multicall and in that order. Execute and decode provider_validation immediately before signing, simulate the exact transaction from sender, and discard the plan after any state change or failed expectation.`;
 
 const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 
-1. Search the token list. Results are ordered by descending visibility_priority; show the chosen chain and address to the user.
+1. Search the token list when resolving a name or symbol. For exact identifiers, use ekubo_get_token for one chain/address pair or ekubo_get_tokens for up to 1,000 pairs in one batch. Show the chosen chains and addresses to the user.
 2. Convert the user amount to base units without floating-point arithmetic.
 3. Set destination_chain_id explicitly for a bridge. Raw addresses and eip155:<chain>:<address> token IDs are accepted.
 4. Request an exact-input or exact-output quote. source=auto compares Ekubo and 0x on one chain and selects Across across chains.

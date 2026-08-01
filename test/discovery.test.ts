@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import worker from "../src/index.js";
 import {
+  getTokensSchema,
   getVe33AllocationsSchema,
   prepareVe33ExtendSchema,
   prepareVe33VoteSchema,
@@ -82,6 +83,7 @@ describe("Worker discovery", () => {
     expect(catalog.tools.map((tool) => tool.name)).toEqual([
       "ekubo_search_tokens",
       "ekubo_get_token",
+      "ekubo_get_tokens",
       "ekubo_get_quote",
       "ekubo_prepare_swap",
       "ekubo_prepare_ve33_vote",
@@ -100,6 +102,31 @@ describe("Worker discovery", () => {
           MCP_TOOL_CATALOG_REVISION,
       ),
     ).toBe(true);
+    const batchTokens = catalog.tools.find(
+      (tool) => tool.name === "ekubo_get_tokens",
+    );
+    expect(batchTokens?.description).toContain("one batch request");
+    expect(batchTokens?.description).toContain("omitted");
+    expect(
+      (batchTokens?.inputSchema as { required?: string[] }).required,
+    ).toEqual(["tokens"]);
+    expect(
+      getTokensSchema.safeParse({
+        tokens: [
+          { chain_id: "1", address: "0x0" },
+          { chain_id: "4663", address: "0x1234" },
+        ],
+      }).success,
+    ).toBe(true);
+    expect(getTokensSchema.safeParse({ tokens: [] }).success).toBe(false);
+    expect(
+      getTokensSchema.safeParse({
+        tokens: Array.from({ length: 1_001 }, () => ({
+          chain_id: "1",
+          address: "0x0",
+        })),
+      }).success,
+    ).toBe(false);
     const stonxAllocations = catalog.tools.find(
       (tool) => tool.name === "ekubo_get_ve33_allocations",
     );
@@ -187,6 +214,7 @@ describe("Worker discovery", () => {
     expect(initializeResult.result.instructions).toContain(
       "ekubo_get_ve33_allocations",
     );
+    expect(initializeResult.result.instructions).toContain("ekubo_get_tokens");
     expect(initializeResult.result.instructions).toContain(
       "Never infer the user's wallet",
     );

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { type Env, getQuote, prepareSwap } from "../src/core.js";
+import { type Env, getQuote, getTokens, prepareSwap } from "../src/core.js";
 
 const token0 = "0x0000000000000000000000000000000000000000";
 const token1 = "0x1111111111111111111111111111111111111111";
@@ -36,6 +36,47 @@ const env: Env = {
 };
 
 describe("MCP service core", () => {
+  it("uses one canonical batch endpoint for exact token identifiers", async () => {
+    let requested = "";
+    const upstreamTokens = [
+      { chain_id: "0x1", address: token0, symbol: "ETH" },
+      { chain_id: "0x1237", address: token1, symbol: "TEST" },
+    ];
+    const fetcher = async (input: RequestInfo | URL) => {
+      requested = input.toString();
+      return Response.json(upstreamTokens);
+    };
+
+    const result = await getTokens(
+      env,
+      {
+        tokens: [
+          { chainId: "1", address: token0 },
+          { chainId: "4663", address: token1 },
+        ],
+      },
+      fetcher as typeof fetch,
+    );
+
+    expect(requested).toBe(
+      `https://api.test/tokens/batch?id=1%3A${token0}&id=4663%3A${token1}`,
+    );
+    expect(result).toEqual(upstreamTokens);
+  });
+
+  it("rejects a malformed batch token response", async () => {
+    const fetcher = async (_input: RequestInfo | URL) =>
+      Response.json({ token: "not-an-array" });
+
+    expect(
+      getTokens(
+        env,
+        { tokens: [{ chainId: "1", address: token0 }] },
+        fetcher as typeof fetch,
+      ),
+    ).rejects.toMatchObject({ code: "invalid_upstream_response" });
+  });
+
   it("maps explicit exact-output intent to the canonical quoter path", async () => {
     let requested = "";
     const fetcher = async (input: RequestInfo | URL) => {

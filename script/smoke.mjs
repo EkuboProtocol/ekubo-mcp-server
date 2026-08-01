@@ -1,6 +1,6 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-const expectedServerVersion = "0.5.0";
-const expectedCatalogRevision = "2026-08-01.stonx-allocations";
+const expectedServerVersion = "0.6.0";
+const expectedCatalogRevision = "2026-08-01.batch-token-lookup";
 
 if (origin === undefined) {
   throw new Error(
@@ -26,6 +26,7 @@ const catalog = await getJson("/tools");
 const expectedTools = [
   "ekubo_search_tokens",
   "ekubo_get_token",
+  "ekubo_get_tokens",
   "ekubo_get_quote",
   "ekubo_prepare_swap",
   "ekubo_prepare_ve33_vote",

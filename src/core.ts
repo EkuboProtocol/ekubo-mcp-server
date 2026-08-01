@@ -182,6 +182,25 @@ export async function getToken(
   return fetchJson<Record<string, unknown>>(url.toString(), fetcher);
 }
 
+export async function getTokens(
+  env: Env,
+  input: { tokens: { chainId: string; address: string }[] },
+  fetcher: Fetcher = fetch,
+) {
+  const url = new URL("/tokens/batch", normalizedBase(env.EKUBO_API_URL));
+  for (const token of input.tokens) {
+    url.searchParams.append("id", `${token.chainId}:${token.address}`);
+  }
+  const tokens = await fetchJson<unknown>(url.toString(), fetcher);
+  if (!Array.isArray(tokens) || !tokens.every(isRecord)) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      "Batch token response must be an array of objects",
+    );
+  }
+  return tokens;
+}
+
 export async function getOwnedVe33Tokens(
   env: Env,
   input: { chainId: string; veToken: Address; owner: Address },
@@ -914,6 +933,10 @@ function visibilityPriority(token: Record<string, unknown>): number {
 
 function tokenSymbol(token: Record<string, unknown>): string {
   return typeof token.symbol === "string" ? token.symbol.toLowerCase() : "";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 async function fetchJson<T>(
