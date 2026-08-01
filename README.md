@@ -16,12 +16,11 @@ a data API and the quoter remains a route-data service.
 - `GET /tools` — deterministic tool catalog for non-MCP discovery
 - `GET /openapi.json` — OpenAPI 3.1 discovery contract
 - `GET /llms.txt` — concise agent workflow
-- `GET /health` — Worker liveness
-- `GET /ready` — runtime readiness for the required 0x and Across bindings
 
 MCP-native discovery remains authoritative: clients use `tools/list` and
-`resources/list`. The HTTP discovery endpoints are additive and help crawlers,
-OpenAPI clients, and humans find the same capabilities.
+`resources/list`/`resources/templates/list`. The HTTP discovery endpoints are
+additive and help crawlers, OpenAPI clients, and humans find the same
+capabilities.
 
 ## Tools
 
@@ -40,6 +39,28 @@ OpenAPI clients, and humans find the same capabilities.
 - `ekubo_prepare_ve33_claim_fees` — claim one or many VeToken voter-fee balances
 - `ekubo_prepare_ve33_reinvest` — construct the safe claim, full-balance swap,
   and restake phases
+- `ekubo_prepare_ve33_claim_all_fees` — discover every active vote owned by a
+  sender and prepare one native VeToken claim multicall, including `ownerOf`
+  and `voteState` validation calldata
+
+## Resources
+
+- `ekubo://contracts/evm` — supported chain IDs and contract-resource links
+- `ekubo://contracts/evm/{chain_id}` — address-to-contract map for one chain
+- `ekubo://contracts/evm/{chain_id}/{address}` — the exact deployment metadata
+  and ABI for one contract
+
+Contract resources are an escape hatch for actions that do not have a
+first-class MCP tool. Agents should check `tools/list` first. If an action is
+unsupported, they can read the chain map and then the address-specific ABI to
+construct a `cast` call. The client must still verify deployed code and
+permissions and simulate the exact calldata before requesting a signature.
+
+The checked-in snapshot is generated from `../evm-contracts` Foundry
+broadcasts and artifacts. The Yul router address and public quote ABI come from
+`@ekubo/yul-router-sdk`, so the MCP server follows the SDK version it ships.
+Refresh the contract snapshot after contract deployments or ABI changes with
+`bun run contracts:generate` from this repository.
 
 `source=auto` is the normal quote mode. Same-chain requests try Ekubo and 0x;
 an acceptable Ekubo price-impact quote is preferred as in the interface,
@@ -124,6 +145,7 @@ documentation](https://developers.cloudflare.com/workers/runtime-apis/bindings/r
 
 ```sh
 bun install
+bun run contracts:generate # when ../evm-contracts deployments or ABIs change
 bun run build
 bun run test
 bun run check
@@ -154,15 +176,14 @@ For CI or non-interactive deployment, provide `CLOUDFLARE_API_TOKEN` and
 Smoke-test the deployed origin before adding the custom domain:
 
 ```sh
-curl https://mcp.<account-subdomain>.workers.dev/health
-curl https://mcp.<account-subdomain>.workers.dev/ready
+curl https://mcp.<account-subdomain>.workers.dev/
 curl https://mcp.<account-subdomain>.workers.dev/tools
 MCP_ORIGIN=https://mcp.<account-subdomain>.workers.dev bun run smoke
 npx @modelcontextprotocol/inspector@latest
 ```
 
-`bun run smoke` checks health, provider readiness, root discovery, OpenAPI, the
-HTTP tool catalog, MCP initialization, and protocol-native `tools/list`.
+`bun run smoke` checks root discovery, OpenAPI, the HTTP tool catalog, MCP
+initialization, protocol-native tools, and the contract resource templates.
 
 Connect MCP Inspector to
 `https://mcp.<account-subdomain>.workers.dev/mcp`, initialize the server,

@@ -6,14 +6,6 @@ if (origin === undefined) {
   );
 }
 
-const health = await getJson("/health");
-assert(health.status === "ok", "health endpoint did not return status=ok");
-
-const readiness = await getJson("/ready");
-assert(readiness.status === "ready", "readiness endpoint is degraded");
-assert(readiness.providers?.zero_x, "0x runtime secret is not configured");
-assert(readiness.providers?.across, "Across runtime secrets are not configured");
-
 const metadata = await getJson("/");
 assert(metadata.mcp_endpoint === `${origin}/mcp`, "root MCP URL is incorrect");
 
@@ -31,6 +23,7 @@ const expectedTools = [
   "ekubo_prepare_ve33_split",
   "ekubo_prepare_ve33_claim_fees",
   "ekubo_prepare_ve33_reinvest",
+  "ekubo_prepare_ve33_claim_all_fees",
 ];
 assert(
   JSON.stringify(catalog.tools?.map((tool) => tool.name)) ===
@@ -52,7 +45,42 @@ assert(
   "MCP tools/list does not match the expected toolset",
 );
 
-console.log(`Ekubo MCP deployment is healthy at ${origin}/mcp`);
+const resources = await mcpRequest(3, "resources/list", {});
+assert(
+  resources.result?.resources?.some(
+    (resource) => resource.uri === "ekubo://contracts/evm",
+  ),
+  "contract directory resource is missing",
+);
+
+const templates = await mcpRequest(4, "resources/templates/list", {});
+const expectedTemplates = [
+  "ekubo://contracts/evm/{chain_id}",
+  "ekubo://contracts/evm/{chain_id}/{address}",
+];
+assert(
+  JSON.stringify(
+    templates.result?.resourceTemplates?.map(
+      (template) => template.uriTemplate,
+    ),
+  ) === JSON.stringify(expectedTemplates),
+  "contract resource templates are missing",
+);
+
+const robinhoodContracts = await mcpRequest(5, "resources/read", {
+  uri: "ekubo://contracts/evm/4663",
+});
+const robinhoodDirectory = JSON.parse(
+  robinhoodContracts.result?.contents?.[0]?.text ?? "{}",
+);
+assert(
+  Object.values(robinhoodDirectory.contracts ?? {}).some(
+    (contract) => contract.name === "VeToken",
+  ),
+  "Robinhood Chain VeToken resource is missing",
+);
+
+console.log(`Ekubo MCP deployment smoke checks passed at ${origin}/mcp`);
 console.log(`Discovered tools: ${expectedTools.join(", ")}`);
 
 async function getJson(path) {

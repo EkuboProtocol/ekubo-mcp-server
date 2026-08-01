@@ -12,6 +12,7 @@ import {
 } from "viem";
 import {
   type Env,
+  getOwnedVe33Tokens,
   prepareSwap,
   type QuoteSource,
   ServiceError,
@@ -19,6 +20,8 @@ import {
 
 const VE_TOKEN_ABI = parseAbi([
   "function multicall(bytes[] data) payable returns (bytes[] results)",
+  "function ownerOf(uint256 id) view returns (address result)",
+  "function voteState(uint256 veId) view returns (bytes32 poolId,uint128 weight,uint64 votedSwapFee,uint128 claimable0,uint128 claimable1)",
   "function claimPoolFees(uint256 veId, (address token0,address token1,bytes32 config) poolKey, address recipient) payable returns (uint128 amount0,uint128 amount1)",
   "function claimPoolFeesToSelf(uint256 veId, (address token0,address token1,bytes32 config) poolKey) payable returns (uint128 amount0,uint128 amount1)",
   "function clearVote(uint256 veId) payable",
@@ -108,6 +111,13 @@ export interface PrepareVe33ClaimIntent {
   sender: Address;
   recipient?: Address;
   claims: { veId: string; poolKey: Ve33PoolKeyInput }[];
+}
+
+export interface PrepareAllVe33FeeClaimsIntent {
+  chainId: string;
+  veToken: Address;
+  sender: Address;
+  recipient?: Address;
 }
 
 export type PrepareVe33ReinvestIntent =
@@ -468,6 +478,174 @@ export function prepareVe33Claim(intent: PrepareVe33ClaimIntent) {
   });
 }
 
+export async function prepareAllVe33FeeClaims(
+  env: Env,
+  intent: PrepareAllVe33FeeClaimsIntent,
+  fetcher: typeof fetch = fetch,
+) {
+  const sender = normalizeAddress(intent.sender);
+  const veToken = normalizeAddress(intent.veToken);
+  const indexed = await getOwnedVe33Tokens(
+    env,
+    { chainId: intent.chainId, veToken, owner: sender },
+    fetcher,
+  );
+  const claims: PrepareVe33ClaimIntent["claims"] = [];
+  const evidence: Record<string, unknown>[] = [];
+  const seenVeIds = new Set<string>();
+  let skippedUnvoted = 0;
+
+  for (const rawToken of indexed.tokens) {
+    const indexedChainId = indexedUint(rawToken, "chain_id");
+    const indexedOwner = indexedAddress(rawToken, "owner");
+    const indexedVeToken = indexedAddress(rawToken, "ve_token_address");
+    if (indexedChainId !== BigInt(intent.chainId)) {
+      throw invalidUpstream("indexed VeToken has the wrong chain_id", {
+        expected: intent.chainId,
+        actual: indexedChainId.toString(),
+      });
+    }
+    if (indexedOwner !== sender || indexedVeToken !== veToken) {
+      throw invalidUpstream("indexed VeToken ownership does not match the request", {
+        expected_owner: sender,
+        actual_owner: indexedOwner,
+        expected_ve_token: veToken,
+        actual_ve_token: indexedVeToken,
+      });
+    }
+
+    const rawPoolKey = rawToken.voted_pool_key;
+    if (rawPoolKey === null) {
+      skippedUnvoted++;
+      continue;
+    }
+    if (!isRecord(rawPoolKey)) {
+      throw invalidUpstream("voted_pool_key must be an object or null");
+    }
+
+    const veId = indexedUint(rawToken, "token_id").toString();
+    if (seenVeIds.has(veId)) {
+      throw invalidUpstream("duplicate VeToken ID in ownership response", {
+        ve_id: veId,
+      });
+    }
+    seenVeIds.add(veId);
+
+    const ve33 = indexedAddress(rawToken, "ve33_address");
+    const extension = indexedAddress(rawPoolKey, "extension");
+    if (extension !== ve33) {
+      throw invalidUpstream("voted pool extension does not match ve33_address", {
+        ve_id: veId,
+        extension,
+        ve33,
+      });
+    }
+    const poolKey: Ve33PoolKeyInput = {
+      token0: indexedAddress(rawPoolKey, "token0"),
+      token1: indexedAddress(rawPoolKey, "token1"),
+      fee: indexedIntegerString(rawPoolKey, "fee"),
+      tickSpacing: indexedOptionalNumber(rawPoolKey, "tick_spacing"),
+      extension,
+      stableswapParams: indexedStableswapParams(rawPoolKey),
+    };
+    let poolKeyArgument: Ve33PoolKeyArgument;
+    try {
+      poolKeyArgument = toPoolKeyArgument(poolKey);
+    } catch (error) {
+      throw invalidUpstream("indexed VeToken has an invalid voted pool key", {
+        ve_id: veId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+    const computedPoolId = keccak256(
+      encodeAbiParameters(
+        [
+          {
+            type: "tuple",
+            components: [
+              { name: "token0", type: "address" },
+              { name: "token1", type: "address" },
+              { name: "config", type: "bytes32" },
+            ],
+          },
+        ],
+        [poolKeyArgument],
+      ),
+    );
+    const indexedPoolId = indexedBytes32(rawToken, "voted_pool_id");
+    if (computedPoolId !== indexedPoolId) {
+      throw invalidUpstream("voted pool key does not hash to voted_pool_id", {
+        ve_id: veId,
+        computed_pool_id: computedPoolId,
+        indexed_pool_id: indexedPoolId,
+      });
+    }
+
+    claims.push({ veId, poolKey });
+    evidence.push({
+      ve_id: veId,
+      pool_key_id:
+        typeof rawToken.pool_key_id === "string"
+          ? rawToken.pool_key_id
+          : null,
+      expected_pool_id: computedPoolId,
+      pool_key: poolKeyArgument,
+      owner_of_call: {
+        to: veToken,
+        data: encodeFunctionData({
+          abi: VE_TOKEN_ABI,
+          functionName: "ownerOf",
+          args: [BigInt(veId)],
+        }),
+        expected_owner: sender,
+      },
+      vote_state_call: {
+        to: veToken,
+        data: encodeFunctionData({
+          abi: VE_TOKEN_ABI,
+          functionName: "voteState",
+          args: [BigInt(veId)],
+        }),
+        expected_pool_id: computedPoolId,
+      },
+      last_stake_changed_event_id:
+        typeof rawToken.last_stake_changed_event_id === "string"
+          ? rawToken.last_stake_changed_event_id
+          : null,
+      last_transfer_event_id:
+        typeof rawToken.last_transfer_event_id === "string"
+          ? rawToken.last_transfer_event_id
+          : null,
+    });
+  }
+
+  if (claims.length === 0) {
+    throw new ServiceError(
+      "no_active_ve33_votes",
+      "The owner has no indexed active VeToken votes with fees to claim",
+      { indexed_owned_ve_tokens: indexed.totalItems },
+    );
+  }
+
+  const plan = prepareVe33Claim({
+    chainId: intent.chainId,
+    veToken,
+    sender,
+    recipient: intent.recipient,
+    claims,
+  });
+  return {
+    ...plan,
+    discovery: {
+      source_url: indexed.sourceUrl,
+      indexed_owned_ve_tokens: indexed.totalItems,
+      active_vote_claims: claims.length,
+      skipped_unvoted: skippedUnvoted,
+      state_validation: evidence,
+    },
+  };
+}
+
 export async function prepareVe33Reinvest(
   env: Env,
   intent: PrepareVe33ReinvestIntent,
@@ -774,6 +952,99 @@ function unsigned(
           : UINT256_MAX;
   if (parsed > max) throw invalid(`${label} does not fit uint${bits}`);
   return parsed;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function indexedUint(record: Record<string, unknown>, field: string): bigint {
+  const value = record[field];
+  if (
+    (typeof value !== "string" && typeof value !== "number") ||
+    (typeof value === "number" && (!Number.isSafeInteger(value) || value < 0))
+  ) {
+    throw invalidUpstream(`${field} must be an unsigned integer`);
+  }
+  try {
+    const parsed = BigInt(value);
+    if (parsed < 0n) throw new Error("negative");
+    return parsed;
+  } catch {
+    throw invalidUpstream(`${field} must be an unsigned integer`);
+  }
+}
+
+function indexedIntegerString(
+  record: Record<string, unknown>,
+  field: string,
+): string {
+  return indexedUint(record, field).toString();
+}
+
+function indexedAddress(
+  record: Record<string, unknown>,
+  field: string,
+): Address {
+  const value = record[field];
+  if (typeof value !== "string") {
+    throw invalidUpstream(`${field} must be an EVM address`);
+  }
+  try {
+    return normalizeAddress(value as Address);
+  } catch {
+    throw invalidUpstream(`${field} must be an EVM address`);
+  }
+}
+
+function indexedBytes32(
+  record: Record<string, unknown>,
+  field: string,
+): Hex {
+  const value = indexedUint(record, field);
+  if (value > UINT256_MAX) {
+    throw invalidUpstream(`${field} does not fit bytes32`);
+  }
+  return numberToHex(value, { size: 32 });
+}
+
+function indexedOptionalNumber(
+  record: Record<string, unknown>,
+  field: string,
+): number | null {
+  if (record[field] === null || record[field] === undefined) return null;
+  const value = indexedUint(record, field);
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw invalidUpstream(`${field} is too large`);
+  }
+  return Number(value);
+}
+
+function indexedStableswapParams(
+  poolKey: Record<string, unknown>,
+): Ve33PoolKeyInput["stableswapParams"] {
+  const value = poolKey.stableswap_params;
+  if (value === null || value === undefined) return null;
+  if (!isRecord(value)) {
+    throw invalidUpstream("stableswap_params must be an object or null");
+  }
+  const centerTick = value.center_tick;
+  const amplification = value.amplification;
+  if (
+    typeof centerTick !== "number" ||
+    !Number.isSafeInteger(centerTick) ||
+    typeof amplification !== "number" ||
+    !Number.isSafeInteger(amplification)
+  ) {
+    throw invalidUpstream(
+      "stableswap_params center_tick and amplification must be integers",
+    );
+  }
+  return { centerTick, amplification };
+}
+
+function invalidUpstream(message: string, details?: unknown) {
+  return new ServiceError("invalid_upstream_response", message, details);
 }
 
 function invalid(message: string) {

@@ -1,6 +1,20 @@
-import { McpServer } from "@modelcontextprotocol/server";
+import {
+  McpServer,
+  ResourceNotFoundError,
+  ResourceTemplate,
+} from "@modelcontextprotocol/server";
 import { type Address, getAddress, numberToHex } from "viem";
 import { z } from "zod";
+import {
+  CONTRACT_ADDRESS_TEMPLATE,
+  CONTRACT_CHAIN_TEMPLATE,
+  CONTRACT_DIRECTORY_URI,
+  contractAddressCompletions,
+  contractAddressResource,
+  contractChainCompletions,
+  contractChainResource,
+  contractDirectory,
+} from "./contracts.js";
 import {
   type Env,
   getQuote,
@@ -11,6 +25,7 @@ import {
   ServiceError,
 } from "./core.js";
 import {
+  prepareAllVe33FeeClaims,
   prepareVe33Claim,
   prepareVe33Extend,
   prepareVe33Reinvest,
@@ -206,6 +221,17 @@ export const prepareVe33ClaimSchema = z.object({
   claims: z.array(claimSchema).min(1).max(100),
 });
 
+export const prepareAllVe33FeeClaimsSchema = z.object({
+  chain_id: chainId,
+  ve_token: address,
+  sender: address.describe(
+    "Owner whose indexed VeTokens and active votes should be discovered",
+  ),
+  recipient: address
+    .optional()
+    .describe("Fee recipient; defaults to sender for claimPoolFeesToSelf"),
+});
+
 export const prepareVe33ReinvestSchema = z
   .object({
     phase: z.enum(["claim", "swap", "stake"]),
@@ -321,13 +347,20 @@ export const publicToolCatalog = [
       "Build the safe three-phase claim, full-balance exact-input swap, and stake workflow needed to reinvest every claimed fee token into the ve-token's stake token.",
     inputSchema: z.toJSONSchema(prepareVe33ReinvestSchema),
   },
+  {
+    name: "ekubo_prepare_ve33_claim_all_fees",
+    title: "Prepare all ve-token fee claims",
+    description:
+      "Discover every active vote on VeTokens owned by the sender and generate one native VeToken multicall claiming all indexed pool fees, with ownerOf and voteState validation calldata.",
+    inputSchema: z.toJSONSchema(prepareAllVe33FeeClaimsSchema),
+  },
 ] as const;
 
 export function createEkuboServer(env: Env) {
   const server = new McpServer({
     name: "ekubo",
     title: "Ekubo Protocol",
-    version: "0.2.0",
+    version: "0.3.0",
     websiteUrl: "https://mcp.ekubo.org",
   });
 
@@ -577,6 +610,25 @@ export function createEkuboServer(env: Env) {
       }),
   );
 
+  server.registerTool(
+    publicToolCatalog[9].name,
+    {
+      title: publicToolCatalog[9].title,
+      description: publicToolCatalog[9].description,
+      inputSchema: prepareAllVe33FeeClaimsSchema,
+      annotations,
+    },
+    async (input) =>
+      toolResult(() =>
+        prepareAllVe33FeeClaims(env, {
+          chainId: input.chain_id,
+          veToken: input.ve_token as Address,
+          sender: input.sender as Address,
+          recipient: input.recipient as Address | undefined,
+        }),
+      ),
+  );
+
   server.registerResource(
     "ekubo-agent-workflow",
     "ekubo://docs/agent-workflow",
@@ -655,7 +707,86 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
+  server.registerResource(
+    "ekubo-evm-contract-directory",
+    CONTRACT_DIRECTORY_URI,
+    {
+      title: "Ekubo EVM contract directory",
+      description:
+        "Chain-indexed deployed contract addresses for actions that are not exposed as first-class MCP tools",
+      mimeType: "application/json",
+    },
+    async (uri) => jsonResource(uri, contractDirectory()),
+  );
+
+  server.registerResource(
+    "ekubo-evm-contracts-by-chain",
+    new ResourceTemplate(CONTRACT_CHAIN_TEMPLATE, {
+      list: undefined,
+      complete: {
+        chain_id: (value) => contractChainCompletions(value),
+      },
+    }),
+    {
+      title: "Ekubo EVM deployments by chain",
+      description:
+        "Address-to-contract map for one EVM chain; read an address resource to obtain its ABI",
+      mimeType: "application/json",
+    },
+    async (uri, variables) => {
+      const chainId = templateValue(variables.chain_id);
+      const resource =
+        chainId === undefined ? undefined : contractChainResource(chainId);
+      if (resource === undefined) throw new ResourceNotFoundError(uri.href);
+      return jsonResource(uri, resource);
+    },
+  );
+
+  server.registerResource(
+    "ekubo-evm-contract-by-address",
+    new ResourceTemplate(CONTRACT_ADDRESS_TEMPLATE, {
+      list: undefined,
+      complete: {
+        chain_id: (value) => contractChainCompletions(value),
+        address: (value, context) =>
+          contractAddressCompletions(context?.arguments?.chain_id, value),
+      },
+    }),
+    {
+      title: "Ekubo EVM contract ABI",
+      description:
+        "Deployment metadata and ABI for one exact chain and contract address",
+      mimeType: "application/json",
+    },
+    async (uri, variables) => {
+      const chainId = templateValue(variables.chain_id);
+      const contractAddress = templateValue(variables.address);
+      const resource =
+        chainId === undefined || contractAddress === undefined
+          ? undefined
+          : contractAddressResource(chainId, contractAddress);
+      if (resource === undefined) throw new ResourceNotFoundError(uri.href);
+      return jsonResource(uri, resource);
+    },
+  );
+
   return server;
+}
+
+function jsonResource(uri: URL, value: unknown) {
+  return {
+    contents: [
+      {
+        uri: uri.href,
+        mimeType: "application/json",
+        text: JSON.stringify(value, null, 2),
+      },
+    ],
+  };
+}
+
+function templateValue(value: string | string[]): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
 }
 
 async function toolResult(run: () => unknown | Promise<unknown>) {
@@ -810,6 +941,7 @@ const VE33_WORKFLOW = `# Ekubo ve(3,3) call workflow
 - Replacing or clearing a vote discards pending fee accounting unless fees are claimed first. The vote compiler orders claims before splits and vote changes.
 - Extending moves the stake to a new end time and clears its vote. Supply current_pool_key so the compound claim-and-extend method preserves pending fees.
 - Pool keys may use an exact bytes32 config or data-API fields: fee, tick_spacing, extension, and optional stableswap_params.
+- For claim-all, use ekubo_prepare_ve33_claim_all_fees to discover the owner's indexed active votes and obtain one VeToken multicall plus ownerOf/voteState validation calldata. Revalidate those calls through the user's provider before signing.
 - Reinvestment takes three confirmations: snapshot balances and claim, swap the complete post-claim deltas exact-input into the stake token, then measure and stake the complete output.
 - Re-read ownership, stake amount, active vote, fee balances, allowances, and contract code before signing every plan.
 `;

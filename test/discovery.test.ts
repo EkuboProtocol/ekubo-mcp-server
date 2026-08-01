@@ -22,28 +22,28 @@ describe("Worker discovery", () => {
     const metadata = (await root.json()) as {
       mcp_endpoint: string;
       authentication: string;
+      readiness_url?: string;
       safety: {
         requires_wallet_validation: boolean;
       };
     };
     expect(metadata.mcp_endpoint).toBe("https://mcp.ekubo.org/mcp");
     expect(metadata.authentication).toBe("none");
+    expect(metadata.readiness_url).toBeUndefined();
     expect(metadata.safety.requires_wallet_validation).toBe(true);
 
-    const readiness = await worker.fetch(
+    const removedReadiness = await worker.fetch(
       new Request("https://mcp.ekubo.org/ready"),
       env,
       context,
     );
-    expect(readiness.status).toBe(200);
-    const readinessBody = (await readiness.json()) as {
-      status: string;
-      providers: { zero_x: boolean; across: boolean };
-    };
-    expect(readinessBody).toEqual({
-      status: "ready",
-      providers: { zero_x: true, across: true },
-    });
+    expect(removedReadiness.status).toBe(404);
+    const removedHealth = await worker.fetch(
+      new Request("https://mcp.ekubo.org/health"),
+      env,
+      context,
+    );
+    expect(removedHealth.status).toBe(404);
 
     const tools = await worker.fetch(
       new Request("https://mcp.ekubo.org/tools"),
@@ -61,6 +61,7 @@ describe("Worker discovery", () => {
       "ekubo_prepare_ve33_split",
       "ekubo_prepare_ve33_claim_fees",
       "ekubo_prepare_ve33_reinvest",
+      "ekubo_prepare_ve33_claim_all_fees",
     ]);
     const prepareSwap = catalog.tools.find(
       (tool) => tool.name === "ekubo_prepare_swap",
@@ -78,26 +79,7 @@ describe("Worker discovery", () => {
     };
     expect(document.openapi).toBe("3.1.0");
     expect(document.paths["/mcp"].post).toBeDefined();
-  });
-
-  it("reports degraded readiness when provider secrets are unavailable", async () => {
-    const readiness = await worker.fetch(
-      new Request("https://mcp.ekubo.org/ready"),
-      {
-        EKUBO_API_URL: "https://api.test",
-        EKUBO_QUOTER_URL: "https://quoter.test",
-      },
-      context,
-    );
-    expect(readiness.status).toBe(503);
-    const readinessBody = (await readiness.json()) as {
-      status: string;
-      providers: { zero_x: boolean; across: boolean };
-    };
-    expect(readinessBody).toEqual({
-      status: "degraded",
-      providers: { zero_x: false, across: false },
-    });
+    expect(document.paths["/health"]).toBeUndefined();
   });
 
   it("serves protocol-native MCP initialization and tool discovery", async () => {
@@ -176,6 +158,108 @@ describe("Worker discovery", () => {
     );
     expect(resourceResult.result.resources.map((resource) => resource.uri)).toContain(
       "ekubo://docs/ve33-workflow",
+    );
+    expect(resourceResult.result.resources.map((resource) => resource.uri)).toContain(
+      "ekubo://contracts/evm",
+    );
+
+    const templates = await worker.fetch(
+      new Request("https://mcp.ekubo.org/mcp", {
+        method: "POST",
+        headers: { ...headers, "mcp-protocol-version": "2025-11-25" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 31,
+          method: "resources/templates/list",
+          params: {},
+        }),
+      }),
+      env,
+      context,
+    );
+    expect(templates.status).toBe(200);
+    const templateResult = (await mcpJson(templates)) as {
+      result: { resourceTemplates: { uriTemplate: string }[] };
+    };
+    expect(
+      templateResult.result.resourceTemplates.map(
+        (template) => template.uriTemplate,
+      ),
+    ).toEqual([
+      "ekubo://contracts/evm/{chain_id}",
+      "ekubo://contracts/evm/{chain_id}/{address}",
+    ]);
+
+    const robinhoodContracts = await worker.fetch(
+      new Request("https://mcp.ekubo.org/mcp", {
+        method: "POST",
+        headers: { ...headers, "mcp-protocol-version": "2025-11-25" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 32,
+          method: "resources/read",
+          params: { uri: "ekubo://contracts/evm/4663" },
+        }),
+      }),
+      env,
+      context,
+    );
+    expect(robinhoodContracts.status).toBe(200);
+    const robinhoodResult = (await mcpJson(robinhoodContracts)) as {
+      result: { contents: { text: string }[] };
+    };
+    const robinhoodDirectory = JSON.parse(
+      robinhoodResult.result.contents[0]?.text ?? "{}",
+    ) as {
+      contracts: Record<string, { name: string; abi_resource_uri: string }>;
+    };
+    expect(Object.values(robinhoodDirectory.contracts)).toContainEqual(
+      expect.objectContaining({ name: "VeToken" }),
+    );
+    expect(Object.values(robinhoodDirectory.contracts)).toContainEqual(
+      expect.objectContaining({
+        name: "YulRouter",
+        abi_resource_uri:
+          "ekubo://contracts/evm/4663/0x7B2aA7Ecc0B5936b7C52E6259A19C3BA557d0748",
+      }),
+    );
+
+    const veTokenContract = await worker.fetch(
+      new Request("https://mcp.ekubo.org/mcp", {
+        method: "POST",
+        headers: { ...headers, "mcp-protocol-version": "2025-11-25" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 33,
+          method: "resources/read",
+          params: {
+            uri: "ekubo://contracts/evm/4663/0x9d7008e169d040b6c0140eb92e7ca82b12643497",
+          },
+        }),
+      }),
+      env,
+      context,
+    );
+    expect(veTokenContract.status).toBe(200);
+    const veTokenResult = (await mcpJson(veTokenContract)) as {
+      result: { contents: { text: string }[] };
+    };
+    const veToken = JSON.parse(
+      veTokenResult.result.contents[0]?.text ?? "{}",
+    ) as {
+      name: string;
+      address: string;
+      abi: { type: string; name?: string }[];
+    };
+    expect(veToken.name).toBe("VeToken");
+    expect(veToken.address).toBe(
+      "0x9d7008E169D040B6c0140eb92E7cA82B12643497",
+    );
+    expect(veToken.abi).toContainEqual(
+      expect.objectContaining({
+        type: "function",
+        name: "claimPoolFeesToSelf",
+      }),
     );
 
     const quoterContract = await worker.fetch(

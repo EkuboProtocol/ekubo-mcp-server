@@ -46,12 +46,11 @@ export default {
             name: "Ekubo Protocol MCP",
             description:
               "Public, unauthenticated, read-only agent tools for token discovery, same-chain swaps, Across bridges, and ve(3,3) calldata preparation",
-            version: "0.2.0",
+            version: "0.3.0",
             mcp_endpoint: `${url.origin}/mcp`,
             mcp_transport: "streamable-http",
             authentication: "none",
             tools_url: `${url.origin}/tools`,
-            readiness_url: `${url.origin}/ready`,
             openapi_url: `${url.origin}/openapi.json`,
             llms_txt_url: `${url.origin}/llms.txt`,
             upstream_openapi: {
@@ -61,6 +60,7 @@ export default {
             },
             quoter_contract_resource: "ekubo://docs/quoter-api",
             ve33_workflow_resource: "ekubo://docs/ve33-workflow",
+            contract_directory_resource: "ekubo://contracts/evm",
             safety: {
               signs_transactions: false,
               submits_transactions: false,
@@ -71,20 +71,6 @@ export default {
           200,
           cacheHeaders(300),
         );
-      case "/health":
-        return json({ status: "ok" }, 200, { "cache-control": "no-store" });
-      case "/ready": {
-        const providers = {
-          zero_x: Boolean(env.ZERO_X_API_KEY),
-          across: Boolean(env.ACROSS_API_KEY && env.ACROSS_INTEGRATOR_ID),
-        };
-        const ready = providers.zero_x && providers.across;
-        return json(
-          { status: ready ? "ready" : "degraded", providers },
-          ready ? 200 : 503,
-          { "cache-control": "no-store" },
-        );
-      }
       case "/tools":
         return json(
           { tools: publicToolCatalog },
@@ -106,7 +92,7 @@ export default {
           {
             error: {
               code: "route_not_found",
-              message: "See /, /health, /ready, /tools, /openapi.json, or /mcp",
+              message: "See /, /tools, /openapi.json, or /mcp",
             },
           },
           404,
@@ -202,6 +188,7 @@ OpenAPI: ${origin}/openapi.json
 Canonical data API OpenAPI: https://prod-api.ekubo.org/openapi.json
 Aggregated quote resource: ekubo://docs/quoter-api
 ve(3,3) workflow resource: ekubo://docs/ve33-workflow
+EVM contract directory: ekubo://contracts/evm
 
 Safe swap and bridge sequence:
 1. Use ekubo_search_tokens; results prioritize visibility_priority. Show the selected chain and address.
@@ -213,6 +200,7 @@ Safe swap and bridge sequence:
 7. Validate balances, allowances, and the exact transaction through the user's connected wallet or provider, and require explicit confirmation.
 8. Use the user's wallet or signature tooling to sign and submit. Never send credentials to this server.
 
-ve(3,3): use the dedicated prepare tools for vote allocation/splitting, extension, fee claims, and phased reinvestment. Read ekubo://docs/ve33-workflow before constructing a plan.
+ve(3,3): use the dedicated prepare tools for vote allocation/splitting, extension, explicit or automatically discovered fee claims, and phased reinvestment. Read ekubo://docs/ve33-workflow before constructing a plan.
+Unsupported contract actions: only after checking tools/list, read ekubo://contracts/evm/{chain_id}, then ekubo://contracts/evm/{chain_id}/{address} for the exact ABI. Verify deployed code and simulate through the user's provider before requesting a signature.
 `;
 }

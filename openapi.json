@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Ekubo Protocol MCP Gateway",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "description": "Discovery contract for the public, unauthenticated Ekubo MCP server, including token discovery, Ekubo/0x/Across quotes, and unsigned ve(3,3) call construction. MCP clients discover typed tool schemas through tools/list; GET /tools provides the same catalog to ordinary HTTP clients.",
     "contact": {
       "url": "https://ekubo.org",
@@ -38,66 +38,6 @@
           },
           "404": {
             "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/health": {
-      "get": {
-        "operationId": "getHealth",
-        "summary": "Check Worker availability",
-        "responses": {
-          "200": {
-            "description": "Worker is available",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": ["status"],
-                  "properties": {
-                    "status": {
-                      "const": "ok"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/ready": {
-      "get": {
-        "operationId": "getReadiness",
-        "summary": "Check required provider bindings",
-        "responses": {
-          "200": {
-            "description": "0x and Across runtime secrets are configured",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": ["status", "providers"],
-                  "properties": {
-                    "status": { "const": "ready" },
-                    "providers": {
-                      "type": "object",
-                      "required": ["zero_x", "across"],
-                      "properties": {
-                        "zero_x": { "const": true },
-                        "across": { "const": true }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "One or more required provider bindings are missing"
           }
         }
       }

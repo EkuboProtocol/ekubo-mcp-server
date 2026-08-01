@@ -4,8 +4,10 @@ import {
   encodeAbiParameters,
   erc20Abi,
   keccak256,
+  parseAbi,
 } from "viem";
 import {
+  prepareAllVe33FeeClaims,
   prepareVe33Claim,
   prepareVe33Extend,
   prepareVe33Reinvest,
@@ -219,6 +221,117 @@ describe("ve(3,3) call generation", () => {
       true,
     );
     expect(result.transaction?.data).toStartWith("0xac9650d8");
+  });
+
+  it("discovers every active owned vote and prepares one claim-all multicall", async () => {
+    const poolAArgument = toPoolKeyArgument(poolA);
+    const poolBArgument = toPoolKeyArgument(poolB);
+    const poolId = (poolKey: typeof poolAArgument) =>
+      keccak256(
+        encodeAbiParameters(
+          [
+            {
+              type: "tuple",
+              components: [
+                { name: "token0", type: "address" },
+                { name: "token1", type: "address" },
+                { name: "config", type: "bytes32" },
+              ],
+            },
+          ],
+          [poolKey],
+        ),
+      );
+    let requestedUrl = "";
+    const result = await prepareAllVe33FeeClaims(
+      {
+        EKUBO_API_URL: "https://api.test",
+        EKUBO_QUOTER_URL: "https://quoter.test",
+      },
+      { chainId: "4663", veToken, sender },
+      (async (input: RequestInfo | URL) => {
+        requestedUrl = input.toString();
+        return Response.json({
+          data: [
+            {
+              chain_id: "0x1237",
+              owner: sender,
+              ve_token_address: veToken,
+              ve33_address: extension,
+              token_id: "0x7b",
+              voted_pool_id: poolId(poolAArgument),
+              voted_pool_key: {
+                token0: poolA.token0,
+                token1: poolA.token1,
+                fee: "0x0",
+                tick_spacing: "0x4",
+                extension,
+                stableswap_params: null,
+              },
+              pool_key_id: "1",
+              last_stake_changed_event_id: "10",
+              last_transfer_event_id: "9",
+            },
+            {
+              chain_id: "4663",
+              owner: sender,
+              ve_token_address: veToken,
+              ve33_address: extension,
+              token_id: "456",
+              voted_pool_id: poolId(poolBArgument),
+              voted_pool_key: {
+                token0: poolB.token0,
+                token1: poolB.token1,
+                fee: "0",
+                tick_spacing: "16",
+                extension,
+                stableswap_params: null,
+              },
+              pool_key_id: "2",
+            },
+            {
+              chain_id: "4663",
+              owner: sender,
+              ve_token_address: veToken,
+              ve33_address: extension,
+              token_id: "789",
+              voted_pool_id: null,
+              voted_pool_key: null,
+            },
+          ],
+          pagination: {
+            page: 1,
+            pageSize: 100,
+            totalPages: 1,
+            totalItems: 3,
+          },
+        });
+      }) as typeof fetch,
+    );
+
+    const url = new URL(requestedUrl);
+    expect(url.pathname).toBe(`/ve33/${veToken}/${sender}`);
+    expect(url.searchParams.get("chainId")).toBe("4663");
+    expect(url.searchParams.get("pageSize")).toBe("100");
+    expect(result.calls).toHaveLength(2);
+    expect(result.discovery).toMatchObject({
+      indexed_owned_ve_tokens: 3,
+      active_vote_claims: 2,
+      skipped_unvoted: 1,
+    });
+    expect(result.discovery.state_validation).toHaveLength(2);
+    expect(result.discovery.state_validation[0]).toMatchObject({
+      ve_id: "123",
+      expected_pool_id: poolId(poolAArgument),
+    });
+    const decoded = decodeFunctionData({
+      abi: parseAbi([
+        "function multicall(bytes[] data) payable returns (bytes[] results)",
+      ]),
+      data: result.transaction?.data ?? "0x",
+    });
+    expect(decoded.functionName).toBe("multicall");
+    expect(decoded.args[0]).toHaveLength(2);
   });
 
   it("builds the final full-amount approval and restake phase", async () => {

@@ -182,6 +182,69 @@ export async function getToken(
   return fetchJson<Record<string, unknown>>(url.toString(), fetcher);
 }
 
+export async function getOwnedVe33Tokens(
+  env: Env,
+  input: { chainId: string; veToken: Address; owner: Address },
+  fetcher: Fetcher = fetch,
+) {
+  const url = new URL(
+    `/ve33/${encodeURIComponent(input.veToken)}/${encodeURIComponent(input.owner)}`,
+    normalizedBase(env.EKUBO_API_URL),
+  );
+  url.searchParams.set("chainId", input.chainId);
+  url.searchParams.set("pageSize", "100");
+  url.searchParams.set("page", "1");
+  const response = await fetchJson<{
+    data?: unknown;
+    pagination?: {
+      page?: unknown;
+      pageSize?: unknown;
+      totalPages?: unknown;
+      totalItems?: unknown;
+    };
+  }>(url.toString(), fetcher);
+  if (!Array.isArray(response.data)) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      "VeToken ownership response is missing its data array",
+    );
+  }
+  const totalItems = response.pagination?.totalItems;
+  const totalPages = response.pagination?.totalPages;
+  if (
+    typeof totalItems !== "number" ||
+    !Number.isInteger(totalItems) ||
+    totalItems < 0 ||
+    typeof totalPages !== "number" ||
+    !Number.isInteger(totalPages) ||
+    totalPages < 0
+  ) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      "VeToken ownership response has invalid pagination",
+    );
+  }
+  if (totalItems > 100 || totalPages > 1) {
+    throw new ServiceError(
+      "too_many_ve_tokens",
+      "claim-all supports at most 100 owned VeTokens in one atomic multicall; use explicit claim batches",
+      { total_items: totalItems, maximum: 100 },
+    );
+  }
+  if (response.data.length !== totalItems) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      "VeToken ownership page does not contain every indexed item",
+      { returned_items: response.data.length, total_items: totalItems },
+    );
+  }
+  return {
+    sourceUrl: url.toString(),
+    tokens: response.data as Record<string, unknown>[],
+    totalItems,
+  };
+}
+
 export async function getQuote(
   env: Env,
   intent: QuoteIntent,
