@@ -9,6 +9,11 @@ if (origin === undefined) {
 const health = await getJson("/health");
 assert(health.status === "ok", "health endpoint did not return status=ok");
 
+const readiness = await getJson("/ready");
+assert(readiness.status === "ready", "readiness endpoint is degraded");
+assert(readiness.providers?.zero_x, "0x runtime secret is not configured");
+assert(readiness.providers?.across, "Across runtime secrets are not configured");
+
 const metadata = await getJson("/");
 assert(metadata.mcp_endpoint === `${origin}/mcp`, "root MCP URL is incorrect");
 

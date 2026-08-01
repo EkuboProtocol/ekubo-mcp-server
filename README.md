@@ -17,6 +17,7 @@ a data API and the quoter remains a route-data service.
 - `GET /openapi.json` — OpenAPI 3.1 discovery contract
 - `GET /llms.txt` — concise agent workflow
 - `GET /health` — Worker liveness
+- `GET /ready` — runtime readiness for the required 0x and Across bindings
 
 MCP-native discovery remains authoritative: clients use `tools/list` and
 `resources/list`. The HTTP discovery endpoints are additive and help crawlers,
@@ -154,13 +155,14 @@ Smoke-test the deployed origin before adding the custom domain:
 
 ```sh
 curl https://mcp.<account-subdomain>.workers.dev/health
+curl https://mcp.<account-subdomain>.workers.dev/ready
 curl https://mcp.<account-subdomain>.workers.dev/tools
 MCP_ORIGIN=https://mcp.<account-subdomain>.workers.dev bun run smoke
 npx @modelcontextprotocol/inspector@latest
 ```
 
-`bun run smoke` checks health, root discovery, OpenAPI, the HTTP tool catalog,
-MCP initialization, and protocol-native `tools/list`.
+`bun run smoke` checks health, provider readiness, root discovery, OpenAPI, the
+HTTP tool catalog, MCP initialization, and protocol-native `tools/list`.
 
 Connect MCP Inspector to
 `https://mcp.<account-subdomain>.workers.dev/mcp`, initialize the server,

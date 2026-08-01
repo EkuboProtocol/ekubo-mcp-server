@@ -5,6 +5,9 @@ import { publicToolCatalog } from "../src/server.js";
 const env = {
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
+  ZERO_X_API_KEY: "zero-x-test-key",
+  ACROSS_API_KEY: "across-test-key",
+  ACROSS_INTEGRATOR_ID: "test-integrator",
   ALLOWED_ORIGINS: "https://mcp.ekubo.org",
 };
 const context = {} as unknown as ExecutionContext;
@@ -26,6 +29,21 @@ describe("Worker discovery", () => {
     expect(metadata.mcp_endpoint).toBe("https://mcp.ekubo.org/mcp");
     expect(metadata.authentication).toBe("none");
     expect(metadata.safety.requires_wallet_validation).toBe(true);
+
+    const readiness = await worker.fetch(
+      new Request("https://mcp.ekubo.org/ready"),
+      env,
+      context,
+    );
+    expect(readiness.status).toBe(200);
+    const readinessBody = (await readiness.json()) as {
+      status: string;
+      providers: { zero_x: boolean; across: boolean };
+    };
+    expect(readinessBody).toEqual({
+      status: "ready",
+      providers: { zero_x: true, across: true },
+    });
 
     const tools = await worker.fetch(
       new Request("https://mcp.ekubo.org/tools"),
@@ -60,6 +78,26 @@ describe("Worker discovery", () => {
     };
     expect(document.openapi).toBe("3.1.0");
     expect(document.paths["/mcp"].post).toBeDefined();
+  });
+
+  it("reports degraded readiness when provider secrets are unavailable", async () => {
+    const readiness = await worker.fetch(
+      new Request("https://mcp.ekubo.org/ready"),
+      {
+        EKUBO_API_URL: "https://api.test",
+        EKUBO_QUOTER_URL: "https://quoter.test",
+      },
+      context,
+    );
+    expect(readiness.status).toBe(503);
+    const readinessBody = (await readiness.json()) as {
+      status: string;
+      providers: { zero_x: boolean; across: boolean };
+    };
+    expect(readinessBody).toEqual({
+      status: "degraded",
+      providers: { zero_x: false, across: false },
+    });
   });
 
   it("serves protocol-native MCP initialization and tool discovery", async () => {

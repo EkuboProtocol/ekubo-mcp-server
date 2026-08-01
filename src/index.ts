@@ -51,6 +51,7 @@ export default {
             mcp_transport: "streamable-http",
             authentication: "none",
             tools_url: `${url.origin}/tools`,
+            readiness_url: `${url.origin}/ready`,
             openapi_url: `${url.origin}/openapi.json`,
             llms_txt_url: `${url.origin}/llms.txt`,
             upstream_openapi: {
@@ -72,6 +73,18 @@ export default {
         );
       case "/health":
         return json({ status: "ok" }, 200, { "cache-control": "no-store" });
+      case "/ready": {
+        const providers = {
+          zero_x: Boolean(env.ZERO_X_API_KEY),
+          across: Boolean(env.ACROSS_API_KEY && env.ACROSS_INTEGRATOR_ID),
+        };
+        const ready = providers.zero_x && providers.across;
+        return json(
+          { status: ready ? "ready" : "degraded", providers },
+          ready ? 200 : 503,
+          { "cache-control": "no-store" },
+        );
+      }
       case "/tools":
         return json(
           { tools: publicToolCatalog },
@@ -93,7 +106,7 @@ export default {
           {
             error: {
               code: "route_not_found",
-              message: "See /, /tools, /openapi.json, or /mcp",
+              message: "See /, /health, /ready, /tools, /openapi.json, or /mcp",
             },
           },
           404,

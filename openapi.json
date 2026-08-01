@@ -69,6 +69,39 @@
         }
       }
     },
+    "/ready": {
+      "get": {
+        "operationId": "getReadiness",
+        "summary": "Check required provider bindings",
+        "responses": {
+          "200": {
+            "description": "0x and Across runtime secrets are configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["status", "providers"],
+                  "properties": {
+                    "status": { "const": "ready" },
+                    "providers": {
+                      "type": "object",
+                      "required": ["zero_x", "across"],
+                      "properties": {
+                        "zero_x": { "const": true },
+                        "across": { "const": true }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "One or more required provider bindings are missing"
+          }
+        }
+      }
+    },
     "/tools": {
       "get": {
         "operationId": "listPublicTools",
