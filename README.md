@@ -6,7 +6,8 @@ tokens, compares Ekubo and 0x liquidity for same-chain EVM swaps, prepares
 Across any-to-any bridges, and constructs unsigned VeToken calls for ve(3,3)
 vote and fee workflows. It also publishes provider-neutral STONX allocation
 recommendations resolved to initialized Robinhood Ve33 pools, enumerates
-indexed LP positions by owner, and exposes exact pool state and liquidity data.
+indexed LP positions by owner, reproduces the interface's indexed/API/USD/RPC
+position-data pipeline, and exposes exact pool state and liquidity data.
 
 The MCP server owns agent-facing transaction construction. `prod-api` remains
 a data API and the quoter remains a route-data service.
@@ -70,7 +71,11 @@ schemas after a Git-triggered deployment.
   every target; `compact_max_lock` consolidates and extends stake before
   creating exactly one voting NFT per target.
 - `ekubo_get_positions_by_owner` — enumerate indexed position NFTs with their
-  pool keys, bounds, liquidity, current pool state, rewards, and pagination
+  pool keys, bounds, liquidity, current pool state, rewards, pagination,
+  canonical token USD metadata, and exact pending position-state `eth_call`
+- `ekubo_get_position` — hydrate one owner position with NFT metadata, history,
+  campaigns, earned rewards, token USD prices, and an atomic Multicall3 query
+  for current principal, fees or Ve33 rewards, and ownership
 - `ekubo_get_pool` — resolve an exact chain/core/pool ID to a verified PoolKey,
   decoded config, and indexed state snapshot when available
 - `ekubo_get_pool_liquidity` — return tick-level net liquidity deltas for one
@@ -81,6 +86,8 @@ schemas after a Git-triggered deployment.
 
 ## Resources
 
+- `ekubo://docs/lp-position-workflow` — interface-equivalent indexed/API/USD/
+  RPC joins, atomic TWAMM/Ve33 read semantics, decoding, and APR inputs
 - `ekubo://contracts/evm` — supported chain IDs and contract-resource links
 - `ekubo://contracts/evm/{chain_id}` — address-to-contract map for one chain
 - `ekubo://contracts/evm/{chain_id}/{address}` — the exact deployment metadata
@@ -128,6 +135,12 @@ semantics. Indexed pool-state snapshots may be cached upstream for 180 seconds,
 while PoolKeys and tick-liquidity data may be cached for 1,800 seconds. Polling
 more frequently than those freshness windows does not produce fresher pool
 data.
+
+Position-state plans use one Multicall3 `eth_call` at `pending`. TWAMM virtual
+orders or Ve33 reward accumulation, when required, are simulated immediately
+before the position read in that same call. Splitting them into separate calls
+would discard the simulated state; the aggregate payload is read-only workflow
+data and must never be broadcast.
 
 Every chain input accepts a JSON integer, decimal string, or hexadecimal
 string. Responses use canonical decimal chain-ID strings. Pool fees are uint64

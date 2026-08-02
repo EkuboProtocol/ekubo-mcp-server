@@ -34,6 +34,7 @@ import {
   getPositionsByOwner,
   type PoolKeyInput,
 } from "./pools.js";
+import { getPosition } from "./positions.js";
 import {
   getVe33Allocations,
   prepareAllVe33FeeClaims,
@@ -231,6 +232,17 @@ export const getPositionsByOwnerSchema = z.object({
   state: z.enum(["opened", "closed"]).optional(),
   page_size: z.number().int().min(1).max(200).default(50),
   page: z.number().int().min(1).default(1),
+});
+
+export const getPositionSchema = z.object({
+  owner: address.describe(
+    "Current indexed owner used to locate the exact position without ERC721 enumeration",
+  ),
+  chain_id: chainId,
+  positions_address: address.describe("Ekubo Positions or Ve33Positions manager"),
+  token_id: uintLikeString.describe(
+    "Position NFT token ID as an exact decimal or hexadecimal integer string",
+  ),
 });
 
 export const getPoolSchema = z.object({
@@ -650,6 +662,14 @@ export const publicToolCatalog = [
     description:
       "Decode the packed bytes32 extension, exact uint64 Q64 fee, concentrated/stableswap discriminator, and tick spacing or stableswap parameters. The fee is never returned as a JSON number.",
     inputSchema: z.toJSONSchema(decodePoolConfigSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_get_position",
+    title: "Get complete Ekubo position details",
+    description:
+      "Hydrate one indexed owner position with the same inputs used by the interface: pool key, bounds, indexed liquidity and pool state, NFT metadata, event history, campaigns and earned rewards, token metadata and USD prices, plus an exact pending Multicall3 eth_call and nested decode plan for current principal, fees or Ve33 rewards, and owner.",
+    inputSchema: z.toJSONSchema(getPositionSchema),
     _meta: toolCatalogMetadata,
   },
 ] as const;
@@ -1152,6 +1172,26 @@ export function createEkuboServer(env: Env) {
       toolResult(() => ({ decoded_config: decodePoolConfig(config as Hex) })),
   );
 
+  server.registerTool(
+    publicToolCatalog[20].name,
+    {
+      title: publicToolCatalog[20].title,
+      description: publicToolCatalog[20].description,
+      inputSchema: getPositionSchema,
+      annotations,
+      _meta: publicToolCatalog[20]._meta,
+    },
+    async (input) =>
+      toolResult(() =>
+        getPosition(env, {
+          owner: input.owner,
+          chainId: canonicalChainId(input.chain_id),
+          positionsAddress: input.positions_address,
+          tokenId: input.token_id,
+        }),
+      ),
+  );
+
   server.registerResource(
     "ekubo-agent-workflow",
     "ekubo://docs/agent-workflow",
@@ -1167,6 +1207,26 @@ export function createEkuboServer(env: Env) {
           uri: uri.href,
           mimeType: "text/markdown",
           text: AGENT_WORKFLOW,
+        },
+      ],
+    }),
+  );
+
+  server.registerResource(
+    "ekubo-lp-position-workflow",
+    "ekubo://docs/lp-position-workflow",
+    {
+      title: "Ekubo LP position data and onchain state workflow",
+      description:
+        "How to combine indexed position data, token USD prices, position history, and atomic pending eth_call state exactly as the interface does",
+      mimeType: "text/markdown",
+    },
+    async (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "text/markdown",
+          text: LP_POSITION_WORKFLOW,
         },
       ],
     }),
@@ -1465,7 +1525,7 @@ Intent shortcut: for "my Ekubo STONX allocations", "STONX vote allocations", or 
 
 For exact token metadata, call ekubo_get_token for one known chain/address pair and ekubo_get_tokens for multiple known pairs. The batch tool uses one prod-api batch request, accepts tokens across chains, preserves input order and duplicates, and omits identifiers that are not in the canonical list. Use ekubo_search_tokens only when resolving a name, symbol, or address fragment.
 
-For LP discovery, use ekubo_get_positions_by_owner instead of attempting ERC721 enumeration. Use ekubo_get_pool for one exact chain/core/pool ID and ekubo_get_pool_liquidity for tick-level depth. Use ekubo_derive_pool_id and ekubo_decode_pool_config for PoolKey construction and inspection. A pool fee is an exact uint64 Q64 integer: accept and return it only as a decimal or hexadecimal string, never a JSON number.
+For LP discovery, use ekubo_get_positions_by_owner instead of attempting ERC721 enumeration. Its response joins canonical token metadata and USD prices and attaches an exact pending eth_call to each supported EVM position. For the interface-equivalent detail payload (metadata, history, campaigns, rewards, prices, and the atomic current-state query), call ekubo_get_position with the same owner, chain, manager, and token ID. Read ekubo://docs/lp-position-workflow. Never split TWAMM execution or Ve33 reward accumulation from the following position read: those calls must stay in the supplied single Multicall3 eth_call and must never be broadcast. Use ekubo_get_pool for one exact chain/core/pool ID and ekubo_get_pool_liquidity for tick-level depth. Use ekubo_derive_pool_id and ekubo_decode_pool_config for PoolKey construction and inspection. A pool fee is an exact uint64 Q64 integer: accept and return it only as a decimal or hexadecimal string, never a JSON number.
 
 For VeToken vote reorganization, first call ekubo_get_ve33_allocations and show the owner, state_id, total applied vote weight, every pool allocation, and contributing ve_ids. Pass that exact state_id to ekubo_prepare_ve33_reallocation. Never construct raw vote, clearVote, extendStake, mergeStakes, withdrawStake, or burn calldata from the ABI resource when a first-class safe workflow exists.
 
@@ -1489,6 +1549,36 @@ const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 8. Require explicit user confirmation before signing.
 9. Ask the user's wallet or signature tooling to sign and submit. Never send credentials to this server.
 10. Re-quote and revalidate after any change, expiry, or stale block.
+`;
+
+const LP_POSITION_WORKFLOW = `# Ekubo LP position data and onchain state
+
+Ekubo position NFTs are not ERC721-enumerable. Start with \`ekubo_get_positions_by_owner\`; do not scan \`tokenOfOwnerByIndex\`. The owner response includes the interface's indexed portfolio-row inputs (PoolKey, bounds, position liquidity, pool state, incentive rewards), current canonical token metadata and USD prices, and one exact pending state query per supported EVM position.
+
+For a detail view, call \`ekubo_get_position\` with the owner, chain, positions manager, and token ID from that list. It returns:
+
+- the exact indexed position snapshot;
+- NFT metadata, including its salt and mint transaction;
+- position history events used for fee/reward APR;
+- active incentive campaigns and indexed earned rewards;
+- pool, reward, and STONX token metadata with \`decimals\` and \`usd_price\`;
+- the pending onchain state query used by the interface.
+
+## Execute the current-state query
+
+Send \`current_state_query.rpc_request\` unchanged to an EIP-155 JSON-RPC endpoint for \`chain_id\`. It is a single Multicall3 \`eth_call\` at \`pending\`. Decode the outer \`aggregate3\` result as \`(bool success, bytes returnData)[]\`, then decode the indicated nested result indexes using the listed result fields. Serialize decoded integers as decimal strings in JSON.
+
+Standard Positions return \`liquidity, principal0, principal1, fees0, fees1\`. Ve33Positions return \`liquidity, principal0, principal1, rewardAmount\`; ordinary swap fees are zero for that manager. \`ownerOf\` is included in the same aggregate so the caller can reject stale indexed ownership.
+
+TWAMM positions prepend \`lockAndExecuteVirtualOrders\`. Ve33 positions prepend \`maybeAccumulateRewards\`. Those are state-changing functions run only inside the read-only EVM simulation. Keep the refresh and state read inside the supplied ordered aggregate: separate eth_calls would discard the simulated refresh before the state read. Never broadcast the Multicall3 payload.
+
+## USD values and historical APR
+
+For each raw amount, divide by \`10^token.decimals\`, multiply by the matching \`token.usd_price\`, and sum token0 and token1. Current principal USD uses \`principal0\` and \`principal1\`; current fee USD uses \`fees0\` and \`fees1\`. Missing prices make USD values unavailable.
+
+To reproduce all-time APR, find the latest \`update\` event in \`position_history\` and replay the identical aggregate at event block + 1. For 1-day or 7-day APR, resolve the block closest to pending timestamp minus the interval, then replay at that block. Reuse the same aggregate \`to\` and \`data\`; replace only the JSON-RPC block parameter with a hexadecimal block quantity. Add any \`collect_fees\` amounts (or \`claim_rewards\` for Ve33) since the start snapshot, value them using the current token prices as the interface does, divide earnings by current principal USD, and annualize by elapsed seconds. Do not report APR when liquidity changed between snapshots or required price/history data is unavailable.
+
+The indexed \`pool_state\` is appropriate for portfolio range math and discovery. The pending contract simulation is authoritative for immediately withdrawable principal, uncollected fees or accumulated Ve33 rewards, and current ownership.
 `;
 
 const EXECUTION_PLAN_WORKFLOW = `# Ekubo execution plan handoff

@@ -109,6 +109,73 @@ describe("pool and position reads", () => {
     expect(result.cache.upstream_cache_control).toBe("no-cache");
   });
 
+  it("joins token prices and pending state queries into owner positions", async () => {
+    const result = await getPositionsByOwner(
+      env,
+      {
+        owner: token1,
+        chainId: "4663",
+        state: "opened",
+        pageSize: 25,
+        page: 1,
+      },
+      (async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/tokens/batch?")) {
+          return Response.json([
+            {
+              chain_id: "0x1237",
+              address: token0,
+              symbol: "ZERO",
+              decimals: 18,
+              usd_price: 1,
+            },
+            {
+              chain_id: "0x1237",
+              address: token1,
+              symbol: "ONE",
+              decimals: 6,
+              usd_price: 2,
+            },
+          ]);
+        }
+        return Response.json({
+          data: [
+            {
+              id: "0x1",
+              chain_id: "0x1237",
+              positions_address:
+                "0x02D9876A21AF7545f8632C3af76eC90b5ad4b66D",
+              owner: token1,
+              pool_key: {
+                token0,
+                token1,
+                fee: "0x0",
+                tick_spacing: "0x400",
+                extension: token0,
+                stableswap_params: null,
+              },
+              bounds: { lower: -1024, upper: 1024 },
+              liquidity: "100",
+              pool_state: { sqrt_ratio: "1", tick: 0, liquidity: "100" },
+            },
+          ],
+          pagination: { page: 1, pageSize: 25, totalPages: 1, totalItems: 1 },
+        });
+      }) as typeof fetch,
+    );
+
+    expect(result.tokens.map((token) => token.usd_price)).toEqual([1, 2]);
+    expect(result.positions[0]).toMatchObject({
+      chain_id: "4663",
+      current_state_query: {
+        available: true,
+        manager_version: "positions_v3",
+        block_parameter: "pending",
+      },
+    });
+  });
+
   it("resolves and verifies an exact pool key and indexed state", async () => {
     const derived = derivePoolId({
       token0,

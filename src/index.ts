@@ -69,6 +69,8 @@ export default {
             quoter_contract_resource: "ekubo://docs/quoter-api",
             ve33_workflow_resource: "ekubo://docs/ve33-workflow",
             execution_plan_resource: "ekubo://docs/execution-plan",
+            lp_position_workflow_resource:
+              "ekubo://docs/lp-position-workflow",
             contract_directory_resource: "ekubo://contracts/evm",
             safety: {
               signs_transactions: false,
@@ -227,12 +229,13 @@ Canonical data API OpenAPI: https://prod-api.ekubo.org/openapi.json
 Aggregated quote resource: ekubo://docs/quoter-api
 ve(3,3) workflow resource: ekubo://docs/ve33-workflow
 Execution plan resource: ekubo://docs/execution-plan
+LP position workflow resource: ekubo://docs/lp-position-workflow
 EVM contract directory: ekubo://contracts/evm
 
 Operational semantics:
 - MCP tool results are not stored or replayed by this server.
 - No fixed request quota is guaranteed. If the deployment limiter returns HTTP 429, honor Retry-After: 60 and back off.
-- Owner positions use upstream no-cache semantics. Indexed pool state is cached upstream for up to 180 seconds; tick liquidity and pool keys for up to 1,800 seconds. STONX recommendations are at most 86,400 seconds old.
+- Owner positions use upstream no-cache semantics. Position tools join canonical token metadata and USD prices and provide exact atomic pending eth_call plans for current position state. Indexed pool state is cached upstream for up to 180 seconds; tick liquidity and pool keys for up to 1,800 seconds. STONX recommendations are at most 86,400 seconds old.
 
 STONX allocation shortcut:
 - For "my Ekubo STONX allocations" or equivalent, call ekubo_get_ve33_allocations with the user's connected EVM wallet address as owner and omit chain_id and ve_token.

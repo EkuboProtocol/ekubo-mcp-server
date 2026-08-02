@@ -11,7 +11,12 @@ import {
   keccak256,
   numberToHex,
 } from "viem";
-import { type Env, ServiceError } from "./core.js";
+import { type Env, getTokens, ServiceError } from "./core.js";
+import {
+  buildPositionStateReadPlan,
+  type IndexedPosition,
+  positionTokenIdentifiers,
+} from "./position-state.js";
 
 export interface PoolKeyInput {
   token0: string;
@@ -147,17 +152,79 @@ export async function getPositionsByOwner(
       "Position ownership response must contain data and pagination",
     );
   }
+  const positions = normalizeChainIdFields(response.data);
+  const readablePositions = positions.filter(isIndexedPosition);
+  const tokenIdentifiers = uniqueTokenIdentifiers(
+    readablePositions.flatMap(positionTokenIdentifiers),
+  );
+  const tokens =
+    tokenIdentifiers.length === 0
+      ? []
+      : await getTokens(env, { tokens: tokenIdentifiers }, fetcher);
+  const readPlans = new Map(
+    readablePositions.map((position) => [
+      positionIdentity(position),
+      buildPositionStateReadPlan(position),
+    ]),
+  );
   return {
     owner,
     chain_id: input.chainId ?? null,
     state: input.state ?? "all",
-    positions: normalizeChainIdFields(response.data),
+    positions: positions.map((position) =>
+      isIndexedPosition(position)
+        ? {
+            ...position,
+            current_state_query: readPlans.get(positionIdentity(position)),
+          }
+        : position,
+    ),
+    tokens,
+    token_metadata_note:
+      "Canonical token metadata and current USD prices used by the Ekubo interface. Join by canonical chain_id and numeric address; usd_price may be null.",
+    current_state_note:
+      "Indexed liquidity and pool_state are discovery snapshots. Execute each available current_state_query eth_call to obtain pending principal, uncollected fees or Ve33 rewards, and owner using the same simulation path as the interface.",
     pagination: response.pagination,
     cache: {
       mcp_result_storage: "none",
       upstream_cache_control: "no-cache",
     },
   };
+}
+
+function isIndexedPosition(value: unknown): value is IndexedPosition {
+  if (!isRecord(value)) return false;
+  const poolKey = value.pool_key;
+  const bounds = value.bounds;
+  return (
+    (typeof value.chain_id === "string" || typeof value.chain_id === "number") &&
+    typeof value.id === "string" &&
+    typeof value.positions_address === "string" &&
+    isRecord(poolKey) &&
+    typeof poolKey.token0 === "string" &&
+    typeof poolKey.token1 === "string" &&
+    typeof poolKey.fee === "string" &&
+    typeof poolKey.extension === "string" &&
+    isRecord(bounds) &&
+    typeof bounds.lower === "number" &&
+    typeof bounds.upper === "number"
+  );
+}
+
+function positionIdentity(position: IndexedPosition) {
+  return `${BigInt(position.chain_id)}:${BigInt(position.positions_address)}:${BigInt(position.id)}`;
+}
+
+function uniqueTokenIdentifiers(
+  tokens: { chainId: string; address: string }[],
+) {
+  const seen = new Set<string>();
+  return tokens.filter((token) => {
+    const key = `${BigInt(token.chainId)}:${BigInt(token.address)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export async function getPool(

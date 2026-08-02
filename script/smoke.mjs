@@ -1,6 +1,6 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-const expectedServerVersion = "0.10.0";
-const expectedCatalogRevision = "2026-08-02.pool-position-reads";
+const expectedServerVersion = "0.11.0";
+const expectedCatalogRevision = "2026-08-02.position-interface-parity";
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
 
 if (origin === undefined) {
@@ -45,6 +45,7 @@ const expectedTools = [
   "ekubo_get_pool_liquidity",
   "ekubo_derive_pool_id",
   "ekubo_decode_pool_config",
+  "ekubo_get_position",
 ];
 assert(
   catalog.server_version === expectedServerVersion,
@@ -111,6 +112,12 @@ assert(
     (resource) => resource.uri === "ekubo://docs/execution-plan",
   ),
   "execution plan resource is missing",
+);
+assert(
+  resources.result?.resources?.some(
+    (resource) => resource.uri === "ekubo://docs/lp-position-workflow",
+  ),
+  "LP position workflow resource is missing",
 );
 assert(
   resources.result?.resources?.some(

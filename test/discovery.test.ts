@@ -43,6 +43,7 @@ describe("Worker discovery", () => {
       tool_count: number;
       mcp_endpoint: string;
       authentication: string;
+      lp_position_workflow_resource: string;
       readiness_url?: string;
       safety: {
         requires_wallet_validation: boolean;
@@ -60,6 +61,9 @@ describe("Worker discovery", () => {
     expect(metadata.tool_catalog_revision).toBe(MCP_TOOL_CATALOG_REVISION);
     expect(metadata.tool_count).toBe(publicToolCatalog.length);
     expect(metadata.authentication).toBe("none");
+    expect(metadata.lp_position_workflow_resource).toBe(
+      "ekubo://docs/lp-position-workflow",
+    );
     expect(metadata.readiness_url).toBeUndefined();
     expect(metadata.safety.requires_wallet_validation).toBe(true);
     expect(metadata.operational_semantics.rate_limit_contract).toContain(
@@ -119,6 +123,7 @@ describe("Worker discovery", () => {
       "ekubo_get_pool_liquidity",
       "ekubo_derive_pool_id",
       "ekubo_decode_pool_config",
+      "ekubo_get_position",
     ]);
     expect(JSON.stringify(catalog)).not.toMatch(/dune|8187907|api\.dune/i);
     expect(
@@ -376,6 +381,9 @@ describe("Worker discovery", () => {
     );
     expect(resourceResult.result.resources.map((resource) => resource.uri)).toContain(
       "ekubo://docs/execution-plan",
+    );
+    expect(resourceResult.result.resources.map((resource) => resource.uri)).toContain(
+      "ekubo://docs/lp-position-workflow",
     );
     expect(resourceResult.result.resources.map((resource) => resource.uri)).toContain(
       "ekubo://contracts/evm",
