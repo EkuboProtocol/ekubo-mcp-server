@@ -51,7 +51,7 @@ export default {
           {
             name: "Ekubo Protocol MCP",
             description:
-              "Public, unauthenticated, non-custodial agent tools for protocol and LP reads, pair-pool discovery, provider-neutral STONX allocations, and unsigned swap, bridge, LP deposit, LP earnings claim, and fee-first ve(3,3) calldata preparation",
+              "Public, unauthenticated, non-custodial agent tools for protocol and LP reads, pair-pool discovery, provider-neutral STONX allocations, and unsigned swap, bridge, LP deposit, withdrawal, earnings claim, and fee-first ve(3,3) calldata preparation",
             version: MCP_SERVER_VERSION,
             tool_catalog_revision: MCP_TOOL_CATALOG_REVISION,
             tool_count: publicToolCatalog.length,
@@ -235,7 +235,7 @@ EVM contract directory: ekubo://contracts/evm
 Operational semantics:
 - MCP tool results are not stored or replayed by this server.
 - No fixed request quota is guaranteed. If the deployment limiter returns HTTP 429, honor Retry-After: 60 and back off.
-- Owner positions use upstream no-cache semantics. Position tools join canonical token metadata and USD prices and provide exact atomic pending eth_call plans for current position state. Pair-pool discovery defaults to a zero TVL floor and returns verified PoolKeys plus the correct position manager. LP deposit and earnings-claim preparation return complete wallet execution plans; claims preserve principal liquidity and the NFT, and no Cast encoding is needed. Indexed pool state is cached upstream for up to 180 seconds; tick liquidity and pool keys for up to 1,800 seconds. STONX recommendations are at most 86,400 seconds old.
+- Owner positions use upstream no-cache semantics. Position tools join canonical token metadata and USD prices and provide exact atomic pending eth_call plans for current position state. Pair-pool discovery defaults to a zero TVL floor and returns verified PoolKeys plus the correct position manager. LP deposits, withdrawals, and earnings claims return complete wallet execution plans; wallet tooling never constructs or appends calls, claims preserve principal, and withdrawals preserve the NFT. Indexed pool state is cached upstream for up to 180 seconds; tick liquidity and pool keys for up to 1,800 seconds. STONX recommendations are at most 86,400 seconds old.
 
 STONX allocation shortcut:
 - For "my Ekubo STONX allocations" or equivalent, call ekubo_get_ve33_allocations with the user's connected EVM wallet address as owner and omit chain_id and ve_token.

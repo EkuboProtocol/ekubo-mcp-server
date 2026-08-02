@@ -3,6 +3,7 @@ import type { Env } from "../src/core.js";
 import {
   prepareLpPositionDeposit,
   prepareLpPositionEarningsClaim,
+  prepareLpPositionWithdraw,
 } from "../src/liquidity.js";
 import { derivePoolId } from "../src/pools.js";
 
@@ -24,7 +25,7 @@ const positionsV3 = "0x02D9876A21AF7545f8632C3af76eC90b5ad4b66D";
 const positionsV2 = "0xA37cc341634AFD9E0919D334606E676dbAb63E17";
 const sender = "0xaf42bF32648740e62A754413EFFDEB1782ce5443";
 
-describe("LP deposit preparation", () => {
+describe("LP position preparation", () => {
   it("builds approvals, a nonzero liquidity floor, native refund, and wallet plan", async () => {
     const pool = derivePoolId({
       token0: native,
@@ -245,6 +246,119 @@ describe("LP deposit preparation", () => {
     });
     expect(result.claim.removes_liquidity).toBe(false);
   });
+
+  it("prepares a partial v3 withdrawal and collects fees in one call", async () => {
+    const result = await prepareLpPositionWithdraw(
+      env,
+      {
+        chainId: "4663",
+        sender,
+        positionsAddress: positionsV3,
+        tokenId: "42",
+        liquidity: "400",
+      },
+      ownedPositionFetcher({
+        positionsAddress: positionsV3,
+        extension: native,
+      }),
+    );
+
+    expect(result.action).toBe("ekubo_withdraw_lp_position");
+    expect(result.withdrawal).toMatchObject({
+      implementation_function: "withdraw",
+      requested_liquidity: "400",
+      indexed_liquidity: "1000",
+      requested_share_bps_of_indexed_liquidity: "4000",
+      full_withdrawal_by_indexed_snapshot: false,
+      collects_fees: true,
+      claims_ve33_rewards: false,
+      burns_or_transfers_nft: false,
+    });
+    expect(result.decoded_calls[0]?.arguments).toMatchObject({
+      liquidity: "400",
+      recipient: sender,
+      with_fees: true,
+    });
+    expect(result.execution_plan.ordered_steps).toHaveLength(1);
+    expect(result.execution_plan.ordered_steps[0]?.kind).toBe("execution");
+    expect(result.output_protection.contract_minimum_amounts_supported).toBe(
+      false,
+    );
+    expect(result.confirmation.no_cast_required).toContain(
+      "complete transaction list",
+    );
+  });
+
+  it("prepares a full Ve33 withdrawal with its reward claim", async () => {
+    const result = await prepareLpPositionWithdraw(
+      env,
+      {
+        chainId: "4663",
+        sender,
+        positionsAddress: ve33Positions,
+        tokenId: "43",
+        liquidity: "1000",
+      },
+      ownedPositionFetcher({
+        positionsAddress: ve33Positions,
+        extension: ve33,
+        tokenId: "43",
+      }),
+    );
+
+    expect(result.withdrawal).toMatchObject({
+      implementation_function: "withdrawAndClaimRewards",
+      full_withdrawal_by_indexed_snapshot: true,
+      collects_fees: false,
+      claims_ve33_rewards: true,
+    });
+    expect(result.decoded_calls[0]?.result_fields.map((field) => field.name)).toEqual([
+      "amount0",
+      "amount1",
+      "rewardAmount",
+    ]);
+    expect(result.onchain_validation.required_current_liquidity_at_least).toBe(
+      "1000",
+    );
+  });
+
+  it("prepares the explicit v2 withdrawal overload with fees", async () => {
+    const result = await prepareLpPositionWithdraw(
+      env,
+      {
+        chainId: "4663",
+        sender,
+        positionsAddress: positionsV2,
+        tokenId: "44",
+        liquidity: "250",
+      },
+      ownedPositionFetcher({
+        positionsAddress: positionsV2,
+        extension: native,
+        tokenId: "44",
+      }),
+    );
+
+    expect(result.position.manager_version).toBe("positions_v2");
+    expect(result.decoded_calls[0]?.arguments).toMatchObject({
+      bounds: { lower: -20_495_360, upper: -19_787_776 },
+      liquidity: "250",
+      with_fees: true,
+    });
+    expect(result.withdrawal.collects_fees).toBe(true);
+  });
+
+  it("rejects zero-liquidity withdrawal plans", async () => {
+    await expect(
+      prepareLpPositionWithdraw(env, {
+        chainId: "4663",
+        sender,
+        positionsAddress: positionsV3,
+        tokenId: "42",
+        liquidity: "0",
+      }),
+    ).rejects.toThrow("Withdrawal liquidity must be positive");
+  });
 });
 
 function ownedPositionFetcher({
@@ -274,6 +388,7 @@ function ownedPositionFetcher({
               stableswap_params: null,
             },
             bounds: { lower: -20_495_360, upper: -19_787_776 },
+            liquidity: "1000",
           },
         ],
         pagination: { totalPages: 1 },

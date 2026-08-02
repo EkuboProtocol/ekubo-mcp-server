@@ -154,7 +154,7 @@ const POSITIONS_V3_COLLECT_FEES_ABI = [
   },
 ] as const satisfies Abi;
 
-const POSITIONS_V2_COLLECT_FEES_ABI = [
+const POSITIONS_V2_WITHDRAW_ABI = [
   {
     type: "function",
     name: "withdraw",
@@ -180,6 +180,54 @@ const POSITIONS_V2_COLLECT_FEES_ABI = [
       { name: "withFees", type: "bool", internalType: "bool" },
     ],
     outputs: POSITIONS_V3_COLLECT_FEES_ABI[0].outputs,
+    stateMutability: "payable",
+  },
+] as const satisfies Abi;
+
+const POSITIONS_V3_WITHDRAW_ABI = [
+  {
+    type: "function",
+    name: "withdraw",
+    inputs: [
+      { name: "id", type: "uint256", internalType: "uint256" },
+      {
+        name: "poolKey",
+        type: "tuple",
+        internalType: "struct PoolKey",
+        components: POOL_KEY_COMPONENTS,
+      },
+      { name: "tickLower", type: "int32", internalType: "int32" },
+      { name: "tickUpper", type: "int32", internalType: "int32" },
+      { name: "liquidity", type: "uint128", internalType: "uint128" },
+      { name: "recipient", type: "address", internalType: "address" },
+      { name: "withFees", type: "bool", internalType: "bool" },
+    ],
+    outputs: POSITIONS_V3_COLLECT_FEES_ABI[0].outputs,
+    stateMutability: "payable",
+  },
+] as const satisfies Abi;
+
+const VE33_WITHDRAW_AND_CLAIM_REWARDS_ABI = [
+  {
+    type: "function",
+    name: "withdrawAndClaimRewards",
+    inputs: [
+      { name: "id", type: "uint256", internalType: "uint256" },
+      {
+        name: "poolKey",
+        type: "tuple",
+        internalType: "struct PoolKey",
+        components: POOL_KEY_COMPONENTS,
+      },
+      { name: "tickLower", type: "int32", internalType: "int32" },
+      { name: "tickUpper", type: "int32", internalType: "int32" },
+      { name: "liquidity", type: "uint128", internalType: "uint128" },
+      { name: "recipient", type: "address", internalType: "address" },
+    ],
+    outputs: [
+      ...POSITIONS_V3_COLLECT_FEES_ABI[0].outputs,
+      { name: "rewardAmount", type: "uint256", internalType: "uint256" },
+    ],
     stateMutability: "payable",
   },
 ] as const satisfies Abi;
@@ -636,11 +684,11 @@ export async function prepareLpPositionEarningsClaim(
       with_fees: true,
     };
     transactionData = encodeFunctionData({
-      abi: POSITIONS_V2_COLLECT_FEES_ABI,
+      abi: POSITIONS_V2_WITHDRAW_ABI,
       functionName: "withdraw",
       args: [tokenId, poolKey, bounds, 0n, recipient, true],
     });
-    transactionResultFields = POSITIONS_V2_COLLECT_FEES_ABI[0].outputs;
+    transactionResultFields = POSITIONS_V2_WITHDRAW_ABI[0].outputs;
   } else if (managerVersion === "ve33_positions_v3") {
     action = "claim_rewards";
     implementationFunction = "claimRewards";
@@ -796,6 +844,236 @@ export async function prepareLpPositionEarningsClaim(
   };
 }
 
+export async function prepareLpPositionWithdraw(
+  env: Env,
+  input: {
+    chainId: string;
+    sender: string;
+    positionsAddress: string;
+    tokenId: string;
+    liquidity: string;
+    recipient?: string;
+  },
+  fetcher: Fetcher = fetch,
+) {
+  const sender = normalizeAddress(input.sender);
+  const recipient = normalizeAddress(input.recipient ?? input.sender);
+  const liquidity = uint128(input.liquidity, "liquidity");
+  if (liquidity === 0n) {
+    throw new ServiceError(
+      "invalid_liquidity",
+      "Withdrawal liquidity must be positive; use ekubo_prepare_lp_position_earnings_claim for a fees- or rewards-only action",
+    );
+  }
+  const owned = await getOwnedIndexedPosition(
+    env,
+    {
+      owner: sender,
+      chainId: input.chainId,
+      positionsAddress: input.positionsAddress,
+      tokenId: input.tokenId,
+    },
+    fetcher,
+  );
+  const currentStateQuery = buildPositionStateReadPlan(owned.indexedPosition);
+  if (!currentStateQuery.available) {
+    throw new ServiceError(
+      currentStateQuery.reason,
+      "First-class LP withdrawal requires a supported EVM Positions manager",
+      currentStateQuery,
+    );
+  }
+
+  const { manager_version: managerVersion, pool_key: poolKey } =
+    currentStateQuery;
+  const bounds = currentStateQuery.bounds;
+  const tokenId = owned.tokenId;
+  let implementationFunction: "withdraw" | "withdrawAndClaimRewards";
+  let transactionData: Hex;
+  let decodedArguments: Record<string, unknown>;
+  let transactionResultFields: readonly { name: string; type: string }[];
+
+  if (managerVersion === "positions_v2") {
+    implementationFunction = "withdraw";
+    decodedArguments = {
+      token_id: tokenId.toString(),
+      pool_key: poolKey,
+      bounds,
+      liquidity: liquidity.toString(),
+      recipient,
+      with_fees: true,
+    };
+    transactionData = encodeFunctionData({
+      abi: POSITIONS_V2_WITHDRAW_ABI,
+      functionName: "withdraw",
+      args: [tokenId, poolKey, bounds, liquidity, recipient, true],
+    });
+    transactionResultFields = POSITIONS_V2_WITHDRAW_ABI[0].outputs;
+  } else if (managerVersion === "ve33_positions_v3") {
+    implementationFunction = "withdrawAndClaimRewards";
+    decodedArguments = {
+      token_id: tokenId.toString(),
+      pool_key: poolKey,
+      tick_lower: bounds.lower,
+      tick_upper: bounds.upper,
+      liquidity: liquidity.toString(),
+      recipient,
+    };
+    transactionData = encodeFunctionData({
+      abi: VE33_WITHDRAW_AND_CLAIM_REWARDS_ABI,
+      functionName: "withdrawAndClaimRewards",
+      args: [
+        tokenId,
+        poolKey,
+        bounds.lower,
+        bounds.upper,
+        liquidity,
+        recipient,
+      ],
+    });
+    transactionResultFields =
+      VE33_WITHDRAW_AND_CLAIM_REWARDS_ABI[0].outputs;
+  } else {
+    implementationFunction = "withdraw";
+    decodedArguments = {
+      token_id: tokenId.toString(),
+      pool_key: poolKey,
+      tick_lower: bounds.lower,
+      tick_upper: bounds.upper,
+      liquidity: liquidity.toString(),
+      recipient,
+      with_fees: true,
+    };
+    transactionData = encodeFunctionData({
+      abi: POSITIONS_V3_WITHDRAW_ABI,
+      functionName: "withdraw",
+      args: [
+        tokenId,
+        poolKey,
+        bounds.lower,
+        bounds.upper,
+        liquidity,
+        recipient,
+        true,
+      ],
+    });
+    transactionResultFields = POSITIONS_V3_WITHDRAW_ABI[0].outputs;
+  }
+
+  const transaction: PreparedTransaction = {
+    chain_id: owned.chainId,
+    to: owned.positionsAddress,
+    data: transactionData,
+    value: "0",
+  };
+  const indexedLiquidity = exactIndexedLiquidity(owned.indexedPosition.liquidity);
+  const tokenIdentifiers = [
+    ...positionTokenIdentifiers(owned.indexedPosition),
+    ...(managerVersion === "ve33_positions_v3" && owned.chainId === "4663"
+      ? [{ chainId: owned.chainId, address: ROBINHOOD_STONX_ADDRESS }]
+      : []),
+  ];
+  const tokens = await getTokens(env, { tokens: tokenIdentifiers }, fetcher);
+  const identity = {
+    action: "withdraw_liquidity",
+    chain_id: owned.chainId,
+    sender,
+    recipient,
+    positions_address: owned.positionsAddress,
+    token_id: tokenId.toString(),
+    pool_key: poolKey,
+    bounds,
+    liquidity: liquidity.toString(),
+    transaction: transactionIdentity(transaction),
+  };
+
+  return {
+    schema_version: "1",
+    action: "ekubo_withdraw_lp_position",
+    plan_id: keccak256(stringToHex(JSON.stringify(identity))),
+    requires_user_confirmation: true,
+    confirmation_ready: true,
+    wallet_validation_required: true,
+    request: {
+      chain_id: owned.chainId,
+      sender,
+      recipient,
+      positions_address: owned.positionsAddress,
+      token_id: tokenId.toString(),
+      liquidity: liquidity.toString(),
+    },
+    withdrawal: {
+      implementation_function: implementationFunction,
+      requested_liquidity: liquidity.toString(),
+      indexed_liquidity: indexedLiquidity?.toString() ?? null,
+      requested_share_bps_of_indexed_liquidity:
+        indexedLiquidity === null || indexedLiquidity === 0n
+          ? null
+          : ((liquidity * 10_000n) / indexedLiquidity).toString(),
+      full_withdrawal_by_indexed_snapshot:
+        indexedLiquidity === null ? null : liquidity === indexedLiquidity,
+      collects_fees: managerVersion !== "ve33_positions_v3",
+      claims_ve33_rewards: managerVersion === "ve33_positions_v3",
+      burns_or_transfers_nft: false,
+      note: "The indexed liquidity comparison is informational. The pending current-state query and exact wallet simulation are authoritative.",
+    },
+    output_protection: {
+      contract_minimum_amounts_supported: false,
+      principal_estimate:
+        "After decoding the pending current-state query, multiply principal0 and principal1 by requested_liquidity / decoded current liquidity. Standard fees0/fees1 or the Ve33 rewardAmount are collected in full by this withdrawal.",
+      requirement:
+        "Because the manager withdrawal methods have no minimum-token-output arguments, show the pending estimate and simulate the exact transaction immediately before confirmation and submission.",
+    },
+    position: {
+      pool_key: poolKey,
+      bounds,
+      manager_version: managerVersion,
+    },
+    tokens,
+    decoded_calls: [
+      {
+        order: 1,
+        function: implementationFunction,
+        arguments: decodedArguments,
+        result_fields: transactionResultFields,
+      },
+    ],
+    transaction,
+    execution_plan: executionPlan({
+      chainId: owned.chainId,
+      sender,
+      transaction,
+    }),
+    onchain_validation: {
+      status: "not_executed",
+      current_state_query: currentStateQuery,
+      required_current_liquidity_at_least: liquidity.toString(),
+      instruction:
+        "Execute current_state_query exactly as supplied at pending. Verify owner equals sender and decoded liquidity is at least requested_liquidity, then show current principal plus fees or Ve33 rewards. Simulate the exact withdrawal transaction immediately before submission and discard the plan if any value changed.",
+    },
+    wallet_policy_requirements: {
+      allowed_chain_id: owned.chainId,
+      allowed_targets: [owned.positionsAddress],
+      allowed_transfer_recipients: [recipient],
+      native_value_in_plan: "0",
+      calldata_selectors: [
+        {
+          target: owned.positionsAddress,
+          function: implementationFunction,
+          selector: transactionData.slice(0, 10),
+        },
+      ],
+      note: "The wallet owns policy authorization. This Ekubo server cannot modify allowed-target, recipient, native-value, or calldata-selector policy.",
+    },
+    confirmation: {
+      instruction:
+        "Show requested liquidity, its share of current liquidity, expected principal and earnings, recipient, manager, exact call, and plan_id. Require explicit confirmation before asking a wallet MCP to sign or submit.",
+      no_cast_required:
+        "All calldata and the complete transaction list are supplied. Pass execution_plan directly to the wallet MCP; do not reconstruct or add calls with Cast.",
+    },
+  };
+}
+
 function erc20Approval(
   chainId: string,
   token: Address,
@@ -865,4 +1143,15 @@ function validateBounds(lower: number, upper: number) {
       `Bounds must be ordered integer ticks within ${EVM_MIN_TICK}..${EVM_MAX_TICK}`,
     );
   }
+}
+
+function exactIndexedLiquidity(value: unknown): bigint | null {
+  if (
+    typeof value !== "string" ||
+    !/^(?:(?:0|[1-9][0-9]*)|0x[0-9a-fA-F]+)$/.test(value)
+  ) {
+    return null;
+  }
+  const parsed = BigInt(value);
+  return parsed <= MAX_U128 ? parsed : null;
 }

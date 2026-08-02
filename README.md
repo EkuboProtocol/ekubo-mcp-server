@@ -8,8 +8,8 @@ vote and fee workflows. It also publishes provider-neutral STONX allocation
 recommendations resolved to initialized Robinhood Ve33 pools, enumerates
 indexed LP positions by owner, reproduces the interface's indexed/API/USD/RPC
 position-data pipeline, discovers pair-level position candidates, prepares
-unsigned LP deposits and earnings claims, and exposes exact pool state and
-liquidity data.
+unsigned LP deposits, withdrawals, and earnings claims, and exposes exact pool
+state and liquidity data.
 
 The MCP server owns agent-facing transaction construction. `prod-api` remains
 a data API and the quoter remains a route-data service.
@@ -89,6 +89,9 @@ schemas after a Git-triggered deployment.
   prepare collection of standard LP fees or Ve33 LP rewards without removing
   liquidity or touching the NFT, including pending ownership/earnings reads,
   decoded calldata, wallet-policy requirements, and a wallet execution plan
+- `ekubo_prepare_lp_position_withdraw` — prepare a partial or full position
+  withdrawal from an exact liquidity amount, automatically collecting ordinary
+  fees or Ve33 rewards and returning the complete wallet transaction list
 - `ekubo_get_pool` — resolve an exact chain/core/pool ID to a verified PoolKey,
   decoded config, and indexed state snapshot when available
 - `ekubo_get_pool_liquidity` — return tick-level net liquidity deltas for one
@@ -175,6 +178,13 @@ It automatically selects standard fee collection or Ve33 reward claiming. Run
 its pending current-state query to verify ownership and show the current claim,
 then pass its execution plan unchanged to the wallet MCP. The prepared call does
 not remove liquidity, burn the NFT, or transfer it.
+
+For a partial or full withdrawal, execute the position's pending current-state
+query, choose the exact positive liquidity amount, and call
+`ekubo_prepare_lp_position_withdraw`. It resolves the PoolKey, bounds, manager
+overload, recipient, and fee/reward behavior and returns the only transaction
+the wallet should simulate and submit. Wallet tooling must not construct or add
+calls. The position NFT is preserved.
 
 Every chain input accepts a JSON integer, decimal string, or hexadecimal
 string. Responses use canonical decimal chain-ID strings. Pool fees are uint64
