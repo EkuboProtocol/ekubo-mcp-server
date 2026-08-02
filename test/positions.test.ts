@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { decodeFunctionData, multicall3Abi } from "viem";
+import { decodeFunctionData, getAddress, multicall3Abi } from "viem";
 import type { Env } from "../src/core.js";
 import {
   buildPositionStateReadPlan,
@@ -66,6 +66,41 @@ describe("position interface parity", () => {
     expect(plan.decode.position_state_result_fields.map((field) => field.name)).toEqual(
       ["liquidity", "principal0", "principal1", "rewardAmount"],
     );
+    expect(plan.local_decode_plan).toMatchObject({
+      kind: "multicall3",
+      function_name: "aggregate3",
+      expected_result_count: 3,
+      results: [
+        {
+          index: 0,
+          id: "accumulate_ve33_rewards_in_simulation",
+          required_success: true,
+          expected_return_data: "0x",
+        },
+        {
+          index: 1,
+          id: "position_state",
+          decode: {
+            kind: "function_result",
+            function_name: "getPositionRewardsAndLiquidity",
+          },
+        },
+        {
+          index: 2,
+          id: "current_owner",
+          decode: { kind: "function_result", function_name: "ownerOf" },
+          expected: { equals_address: getAddress(indexedPosition.owner) },
+        },
+      ],
+    });
+    expect(plan.result_decoder).toMatchObject({
+      trust_boundary: "execute_and_decode_on_user_device",
+      preferred_tool: {
+        name: "wallet_batch_eth_call",
+        call: { include_raw: true },
+      },
+      standalone_tool: { name: "wallet_decode_abi_result" },
+    });
 
     const aggregate = decodeFunctionData({
       abi: multicall3Abi,
@@ -84,6 +119,48 @@ describe("position interface parity", () => {
     expect(calls[0]?.callData.slice(0, 10)).toBe("0x3d046327");
     expect(calls[1]?.callData.slice(0, 10)).toBe("0x1906054d");
     expect(calls[2]?.callData.slice(0, 10)).toBe("0x6352211e");
+  });
+
+  it("selects the canonical standard v2 and v3 result ABIs", () => {
+    const managers = [
+      {
+        address: "0xA37cc341634AFD9E0919D334606E676dbAb63E17",
+        version: "positions_v2",
+      },
+      {
+        address: "0x02D9876A21AF7545f8632C3af76eC90b5ad4b66D",
+        version: "positions_v3",
+      },
+    ] as const;
+
+    for (const manager of managers) {
+      const plan = buildPositionStateReadPlan({
+        ...indexedPosition,
+        positions_address: manager.address,
+        pool_key: { ...indexedPosition.pool_key, extension: token0 },
+      });
+      expect(plan).toMatchObject({
+        available: true,
+        manager_version: manager.version,
+        local_decode_plan: {
+          kind: "multicall3",
+          expected_result_count: 2,
+          results: [
+            {
+              id: "position_state",
+              decode: {
+                kind: "function_result",
+                function_name: "getPositionFeesAndLiquidity",
+              },
+            },
+            {
+              id: "current_owner",
+              decode: { function_name: "ownerOf" },
+            },
+          ],
+        },
+      });
+    }
   });
 
   it("hydrates indexed, API, USD-token, and onchain-query inputs", async () => {

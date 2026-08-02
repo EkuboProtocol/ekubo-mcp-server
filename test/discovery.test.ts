@@ -48,6 +48,11 @@ describe("Worker discovery", () => {
       safety: {
         requires_wallet_validation: boolean;
       };
+      local_result_decoding: {
+        trust_boundary: string;
+        decode_kinds: string[];
+        custom_bytes: { input_encoding: string; preserves_input: boolean };
+      };
       operational_semantics: {
         rate_limit_contract: string;
         polling_guidance: { pool_liquidity_depth_seconds: number };
@@ -66,6 +71,18 @@ describe("Worker discovery", () => {
     );
     expect(metadata.readiness_url).toBeUndefined();
     expect(metadata.safety.requires_wallet_validation).toBe(true);
+    expect(metadata.local_result_decoding).toMatchObject({
+      trust_boundary: "user_device",
+      decode_kinds: [
+        "function_result",
+        "multicall3",
+        "semantic_value",
+      ],
+      custom_bytes: {
+        input_encoding: "hex_bytes",
+        preserves_input: true,
+      },
+    });
     expect(metadata.operational_semantics.rate_limit_contract).toContain(
       "Retry-After: 60",
     );

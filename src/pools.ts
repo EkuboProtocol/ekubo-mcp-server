@@ -183,7 +183,7 @@ export async function getPositionsByOwner(
   const readPlans = new Map(
     readablePositions.map((position) => [
       positionIdentity(position),
-      buildPositionStateReadPlan(position),
+      buildPositionStateReadPlan(position, owner),
     ]),
   );
   return {
@@ -202,7 +202,7 @@ export async function getPositionsByOwner(
     token_metadata_note:
       "Canonical token metadata and current USD prices used by the Ekubo interface. Join by canonical chain_id and numeric address; usd_price may be null.",
     current_state_note:
-      "Indexed liquidity and pool_state are discovery snapshots. Execute each available current_state_query eth_call to obtain pending principal, uncollected fees or Ve33 rewards, and owner using the same simulation path as the interface.",
+      "Indexed liquidity and pool_state are discovery snapshots. Execute and decode each available current_state_query locally with its supplied result_decoder. Require every inner call to succeed, retain raw eth_call return data, and compare the decoded owner with expected_owner before using pending principal, fees or Ve33 rewards.",
     pagination: response.pagination,
     cache: {
       mcp_result_storage: "none",

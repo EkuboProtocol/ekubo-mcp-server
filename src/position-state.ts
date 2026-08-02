@@ -13,6 +13,11 @@ import {
   multicall3Abi,
   numberToHex,
 } from "viem";
+import {
+  functionResultDecodePlan,
+  JSON_SAFE_ABI_OUTPUT,
+  localWalletDecoderHandoff,
+} from "./abi-decode.js";
 import { ServiceError } from "./core.js";
 
 export const MULTICALL3_ADDRESS = getAddress(
@@ -190,7 +195,10 @@ interface InnerCall {
   resultFields: readonly { name: string; type: string }[];
 }
 
-export function buildPositionStateReadPlan(position: IndexedPosition) {
+export function buildPositionStateReadPlan(
+  position: IndexedPosition,
+  expectedOwner?: string,
+) {
   const chainId = BigInt(position.chain_id).toString();
   if (!SUPPORTED_EVM_CHAIN_IDS.has(chainId)) {
     return {
@@ -220,72 +228,25 @@ export function buildPositionStateReadPlan(position: IndexedPosition) {
   validateBounds(position.bounds);
   const poolKey = encodePositionPoolKey(position.pool_key, managerVersion);
   const tokenId = BigInt(position.id);
-  const calls: InnerCall[] = [];
-
-  const refresh = refreshCall(
-    position.pool_key.extension,
-    poolKey,
+  const calls = positionStateCalls({
+    positionsAddress,
     managerVersion,
-  );
-  if (refresh !== undefined) calls.push(refresh);
-
-  if (managerVersion === "positions_v2") {
-    calls.push({
-      purpose: "position_state",
-      target: positionsAddress,
-      abi: POSITIONS_V2_STATE_ABI,
-      functionName: "getPositionFeesAndLiquidity",
-      callData: encodeFunctionData({
-        abi: POSITIONS_V2_STATE_ABI,
-        functionName: "getPositionFeesAndLiquidity",
-        args: [tokenId, poolKey, position.bounds],
-      }),
-      stateMutability: "view",
-      resultFields: POSITIONS_V2_STATE_ABI[0].outputs,
-    });
-  } else if (managerVersion === "ve33_positions_v3") {
-    calls.push({
-      purpose: "position_state",
-      target: positionsAddress,
-      abi: VE33_POSITIONS_STATE_ABI,
-      functionName: "getPositionRewardsAndLiquidity",
-      callData: encodeFunctionData({
-        abi: VE33_POSITIONS_STATE_ABI,
-        functionName: "getPositionRewardsAndLiquidity",
-        args: [tokenId, poolKey, position.bounds.lower, position.bounds.upper],
-      }),
-      stateMutability: "view",
-      resultFields: VE33_POSITIONS_STATE_ABI[0].outputs,
-    });
-  } else {
-    calls.push({
-      purpose: "position_state",
-      target: positionsAddress,
-      abi: POSITIONS_V3_STATE_ABI,
-      functionName: "getPositionFeesAndLiquidity",
-      callData: encodeFunctionData({
-        abi: POSITIONS_V3_STATE_ABI,
-        functionName: "getPositionFeesAndLiquidity",
-        args: [tokenId, poolKey, position.bounds.lower, position.bounds.upper],
-      }),
-      stateMutability: "view",
-      resultFields: POSITIONS_V3_STATE_ABI[0].outputs,
-    });
-  }
-
-  calls.push({
-    purpose: "current_owner",
-    target: positionsAddress,
-    abi: OWNER_OF_ABI,
-    functionName: "ownerOf",
-    callData: encodeFunctionData({
-      abi: OWNER_OF_ABI,
-      functionName: "ownerOf",
-      args: [tokenId],
-    }),
-    stateMutability: "view",
-    resultFields: OWNER_OF_ABI[0].outputs,
+    tokenId,
+    poolKey,
+    bounds: position.bounds,
   });
+  const refresh = calls.find(
+    (call) =>
+      call.purpose === "accumulate_ve33_rewards_in_simulation" ||
+      call.purpose === "execute_twamm_virtual_orders_in_simulation",
+  );
+  const expectedOwnerValue =
+    expectedOwner ??
+    (typeof position.owner === "string" ? position.owner : undefined);
+  const normalizedExpectedOwner =
+    expectedOwnerValue === undefined
+      ? null
+      : normalizeAddress(expectedOwnerValue);
 
   const aggregateData = encodeFunctionData({
     abi: multicall3Abi,
@@ -304,6 +265,32 @@ export function buildPositionStateReadPlan(position: IndexedPosition) {
   const ownerResultIndex = calls.findIndex(
     (call) => call.purpose === "current_owner",
   );
+  const decodePlan = {
+    kind: "multicall3" as const,
+    abi: multicall3Abi,
+    function_name: "aggregate3",
+    required: true,
+    expected_result_count: calls.length,
+    output_serialization: JSON_SAFE_ABI_OUTPUT,
+    results: calls.map((call, index) => ({
+      index,
+      id: call.purpose,
+      required_success: true,
+      ...(call.resultFields.length === 0
+        ? { expected_return_data: "0x" }
+        : {
+            decode: functionResultDecodePlan(call.abi, call.functionName),
+          }),
+      ...(index === ownerResultIndex && normalizedExpectedOwner !== null
+        ? {
+            expected: {
+              path: "owner",
+              equals_address: normalizedExpectedOwner,
+            },
+          }
+        : {}),
+    })),
+  };
 
   return {
     available: true as const,
@@ -312,6 +299,7 @@ export function buildPositionStateReadPlan(position: IndexedPosition) {
     positions_address: positionsAddress,
     manager_version: managerVersion,
     token_id: tokenId.toString(),
+    expected_owner: normalizedExpectedOwner,
     pool_key: poolKey,
     bounds: position.bounds,
     rpc_request: {
@@ -350,6 +338,14 @@ export function buildPositionStateReadPlan(position: IndexedPosition) {
       integer_serialization:
         "Serialize every decoded integer as a decimal string before returning it through JSON.",
     },
+    local_decode_plan: decodePlan,
+    result_decoder: localWalletDecoderHandoff({
+      chainId,
+      id: `ekubo-position-state-${tokenId}`,
+      to: MULTICALL3_ADDRESS,
+      data: aggregateData,
+      decode: decodePlan,
+    }),
     semantics: {
       read_only: true,
       never_broadcast:
@@ -372,6 +368,95 @@ export function positionTokenIdentifiers(position: IndexedPosition) {
       address,
     }),
   );
+}
+
+function positionStateCalls(input: {
+  positionsAddress: Address;
+  managerVersion: ManagerVersion;
+  tokenId: bigint;
+  poolKey: { token0: Address; token1: Address; config: Hex };
+  bounds: { lower: number; upper: number };
+}): InnerCall[] {
+  const calls: InnerCall[] = [];
+  const refresh = refreshCall(
+    configExtension(input.poolKey.config),
+    input.poolKey,
+    input.managerVersion,
+  );
+  if (refresh !== undefined) calls.push(refresh);
+
+  if (input.managerVersion === "positions_v2") {
+    calls.push({
+      purpose: "position_state",
+      target: input.positionsAddress,
+      abi: POSITIONS_V2_STATE_ABI,
+      functionName: "getPositionFeesAndLiquidity",
+      callData: encodeFunctionData({
+        abi: POSITIONS_V2_STATE_ABI,
+        functionName: "getPositionFeesAndLiquidity",
+        args: [input.tokenId, input.poolKey, input.bounds],
+      }),
+      stateMutability: "view",
+      resultFields: POSITIONS_V2_STATE_ABI[0].outputs,
+    });
+  } else if (input.managerVersion === "ve33_positions_v3") {
+    calls.push({
+      purpose: "position_state",
+      target: input.positionsAddress,
+      abi: VE33_POSITIONS_STATE_ABI,
+      functionName: "getPositionRewardsAndLiquidity",
+      callData: encodeFunctionData({
+        abi: VE33_POSITIONS_STATE_ABI,
+        functionName: "getPositionRewardsAndLiquidity",
+        args: [
+          input.tokenId,
+          input.poolKey,
+          input.bounds.lower,
+          input.bounds.upper,
+        ],
+      }),
+      stateMutability: "view",
+      resultFields: VE33_POSITIONS_STATE_ABI[0].outputs,
+    });
+  } else {
+    calls.push({
+      purpose: "position_state",
+      target: input.positionsAddress,
+      abi: POSITIONS_V3_STATE_ABI,
+      functionName: "getPositionFeesAndLiquidity",
+      callData: encodeFunctionData({
+        abi: POSITIONS_V3_STATE_ABI,
+        functionName: "getPositionFeesAndLiquidity",
+        args: [
+          input.tokenId,
+          input.poolKey,
+          input.bounds.lower,
+          input.bounds.upper,
+        ],
+      }),
+      stateMutability: "view",
+      resultFields: POSITIONS_V3_STATE_ABI[0].outputs,
+    });
+  }
+
+  calls.push({
+    purpose: "current_owner",
+    target: input.positionsAddress,
+    abi: OWNER_OF_ABI,
+    functionName: "ownerOf",
+    callData: encodeFunctionData({
+      abi: OWNER_OF_ABI,
+      functionName: "ownerOf",
+      args: [input.tokenId],
+    }),
+    stateMutability: "view",
+    resultFields: OWNER_OF_ABI[0].outputs,
+  });
+  return calls;
+}
+
+function configExtension(config: Hex): Address {
+  return getAddress(`0x${config.slice(2, 42)}`);
 }
 
 function refreshCall(

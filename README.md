@@ -172,7 +172,23 @@ Position-state plans use one Multicall3 `eth_call` at `pending`. TWAMM virtual
 orders or Ve33 reward accumulation, when required, are simulated immediately
 before the position read in that same call. Splitting them into separate calls
 would discard the simulated state; the aggregate payload is read-only workflow
-data and must never be broadcast.
+data and must never be broadcast. Each query carries a complete declarative
+Multicall3 and child-result decode plan for local wallet execution. The wallet
+returns raw bytes by default, decodes them on the user's device, and never
+installs or executes codec code named by the remote plan.
+
+Decode plans distinguish Solidity ABI decoding from protocol semantics.
+Standard results use `function_result`; atomic position queries use
+`multicall3` with an ABI and required child-result specification. A semantic
+codec attached to an ABI output preserves the ABI-decoded value and adds the
+interpreted value. A custom payload with no ABI envelope may instead use
+`semantic_value` with `input_encoding: hex_bytes`, which preserves the input
+bytes and passes them directly to the identified codec. Codec IDs are
+platform-neutral. Implementations explicitly identify their ecosystem; for
+example, Ekubo's compact `SqrtRatio` codec names the pinned npm package URL,
+export, version, and integrity for `@ekubo/sdk`. Wallets must run only a locally
+installed, allowlisted implementation and must never fetch or execute code from
+a decode plan.
 
 For a new LP position, start with `ekubo_get_position_pool_candidates`; do not
 browse `prod-api` or infer a manager from an ABI resource. Its default
@@ -191,12 +207,14 @@ unconfirmed quote output as though it were a settled wallet balance.
 For an existing position, call `ekubo_prepare_lp_position_earnings_claim` with
 the connected owner, chain, manager, and token ID from the owner-position list.
 It automatically selects standard fee collection or Ve33 reward claiming. Run
-its pending current-state query to verify ownership and include the current
-claim with its unchanged execution plan in the wallet MCP handoff. The prepared
-call does not remove liquidity, burn the NFT, or transfer it.
+its pending current-state query with the supplied local decode plan, verify the
+decoded owner against `expected_owner`, and include the current claim with its
+unchanged execution plan in the wallet MCP handoff. The prepared call does not
+remove liquidity, burn the NFT, or transfer it.
 
-For a partial or full withdrawal, execute the position's pending current-state
-query, choose the exact positive liquidity amount, and call
+For a partial or full withdrawal, execute and decode the position's pending
+current-state query, choose an exact positive liquidity amount no greater than
+the decoded liquidity, and call
 `ekubo_prepare_lp_position_withdraw`. It resolves the PoolKey, bounds, manager
 overload, recipient, and fee/reward behavior and returns the only transaction
 the wallet should simulate and submit. Wallet tooling must not construct or add

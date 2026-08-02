@@ -7,6 +7,7 @@ import {
   type Address,
   type Hex,
 } from "viem";
+import { localFunctionResultMetadata } from "./abi-decode.js";
 import { ServiceError } from "./core.js";
 import {
   erc20ApprovalTransaction,
@@ -325,6 +326,14 @@ export function prepareAuctionCreatorProceeds(input: {
           params: [{ to: AUCTIONS_V3, data: ownerRead }, "pending"],
         },
         decode_as: "address",
+        ...localFunctionResultMetadata({
+          chainId: input.chainId,
+          id: `ekubo-auction-owner-${tokenId}`,
+          to: AUCTIONS_V3,
+          data: ownerRead,
+          abi: AUCTIONS_ABI,
+          functionName: "ownerOf",
+        }),
         expected: sender,
       },
     },

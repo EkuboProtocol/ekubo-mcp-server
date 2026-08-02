@@ -6,6 +6,7 @@ import {
   type Address,
   type Hex,
 } from "viem";
+import { localFunctionResultMetadata } from "./abi-decode.js";
 import { type Env, ServiceError } from "./core.js";
 import { preparedTransaction, preparedUiAction } from "./ui-actions.js";
 
@@ -111,6 +112,20 @@ export async function getRewardsClaimsByOwner(
           item.drop_address === INCENTIVES_V2
             ? INCENTIVES_V2
             : INCENTIVES_DATA_FETCHER_V3;
+        const isClaimedData = encodeFunctionData({
+          abi: INCENTIVES_ABI,
+          functionName: "isClaimed",
+          args: [item.key, BigInt(item.claim.index)],
+        });
+        const isAvailableData = encodeFunctionData({
+          abi: INCENTIVES_ABI,
+          functionName: "isAvailable",
+          args: [
+            item.key,
+            BigInt(item.claim.index),
+            BigInt(item.claim.amount),
+          ],
+        });
         return [
           {
             claim_index: index,
@@ -123,16 +138,20 @@ export async function getRewardsClaimsByOwner(
               params: [
                 {
                   to: target,
-                  data: encodeFunctionData({
-                    abi: INCENTIVES_ABI,
-                    functionName: "isClaimed",
-                    args: [item.key, BigInt(item.claim.index)],
-                  }),
+                  data: isClaimedData,
                 },
                 "pending",
               ],
             },
             decode_as: "bool",
+            ...localFunctionResultMetadata({
+              chainId: item.chain_id,
+              id: `ekubo-reward-claim-${index}-is-claimed`,
+              to: target,
+              data: isClaimedData,
+              abi: INCENTIVES_ABI,
+              functionName: "isClaimed",
+            }),
           },
           {
             claim_index: index,
@@ -145,20 +164,20 @@ export async function getRewardsClaimsByOwner(
               params: [
                 {
                   to: target,
-                  data: encodeFunctionData({
-                    abi: INCENTIVES_ABI,
-                    functionName: "isAvailable",
-                    args: [
-                      item.key,
-                      BigInt(item.claim.index),
-                      BigInt(item.claim.amount),
-                    ],
-                  }),
+                  data: isAvailableData,
                 },
                 "pending",
               ],
             },
             decode_as: "bool",
+            ...localFunctionResultMetadata({
+              chainId: item.chain_id,
+              id: `ekubo-reward-claim-${index}-is-available`,
+              to: target,
+              data: isAvailableData,
+              abi: INCENTIVES_ABI,
+              functionName: "isAvailable",
+            }),
           },
         ];
       }),

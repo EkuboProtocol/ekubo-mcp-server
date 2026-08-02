@@ -435,7 +435,29 @@ describe("EVM interface action preparation", () => {
       fetcher,
     );
 
-    expect(read).toMatchObject({ phase: "read_current_price" });
+    expect(read).toMatchObject({
+      phase: "read_current_price",
+      current_price_query: {
+        local_decode_plan: {
+          kind: "function_result",
+          function_name: "poolPrice",
+          semantic_codecs: [
+            {
+              path: "sqrtRatio",
+              semantic_type: "ekubo.sqrt_ratio_float",
+              codec: {
+                id: "ekubo.sqrt_ratio_float_to_q128",
+                implementations: [{ ecosystem: "npm" }],
+              },
+            },
+          ],
+        },
+        result_decoder: {
+          preferred_tool: { name: "wallet_batch_eth_call" },
+          standalone_tool: { name: "wallet_decode_abi_result" },
+        },
+      },
+    });
     expect(
       (read as typeof read & { target: Record<string, unknown> }).target,
     ).toEqual({
@@ -443,7 +465,15 @@ describe("EVM interface action preparation", () => {
       fixed_q128_sqrt_ratio: (1n << 128n).toString(),
       compact_sqrt_ratio: ((1n << 95n) + (1n << 62n)).toString(),
     });
-    expect(quote).toMatchObject({ phase: "quote" });
+    expect(quote).toMatchObject({
+      phase: "quote",
+      quote_query: {
+        local_decode_plan: {
+          kind: "function_result",
+          function_name: "quote",
+        },
+      },
+    });
     expect(execute).toMatchObject({
       phase: "execute",
       execution_plan_ready: true,

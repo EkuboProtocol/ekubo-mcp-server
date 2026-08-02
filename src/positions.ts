@@ -91,7 +91,7 @@ export async function getPosition(
     { tokens: tokenIdentifiers },
     fetcher,
   );
-  const currentStateQuery = buildPositionStateReadPlan(indexedPosition);
+  const currentStateQuery = buildPositionStateReadPlan(indexedPosition, owner);
 
   return {
     owner,
@@ -107,7 +107,7 @@ export async function getPosition(
     current_state_query: currentStateQuery,
     interface_parity: {
       current_values:
-        "Execute current_state_query at pending. Decode principal0, principal1, fees0, fees1 for standard Positions, or principal0, principal1 and rewardAmount for Ve33Positions.",
+        "Execute current_state_query at pending through wallet call tooling with its supplied local_decode_plan. Decode on the user's device, retain raw return data, require every inner call to succeed, and compare the decoded owner with expected_owner.",
       usd_values:
         "Divide token amounts by 10^decimals, multiply by the matching token usd_price, and sum token0 plus token1. The interface treats missing or zero prices as unavailable.",
       apr_history:

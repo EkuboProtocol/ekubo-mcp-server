@@ -76,6 +76,23 @@ export default {
               wallet_authorization_on_simulated_result: true,
               ownership_and_nft_transfer_actions: "forbidden",
             },
+            local_result_decoding: {
+              trust_boundary: "user_device",
+              raw_return_data_default: "included",
+              raw_return_data_on_decode_failure: "required",
+              decode_kinds: [
+                "function_result",
+                "multicall3",
+                "semantic_value",
+              ],
+              custom_bytes: {
+                kind: "semantic_value",
+                input_encoding: "hex_bytes",
+                preserves_input: true,
+              },
+              semantic_codec_policy:
+                "Platform-neutral codec IDs with explicit implementation assertions; wallets execute only locally installed allowlisted codecs and never fetch code from a plan.",
+            },
             operational_semantics: {
               mcp_tool_result_storage: "none",
               mcp_http_cache:
@@ -234,6 +251,7 @@ EVM contract directory: ekubo://contracts/evm
 
 Operational semantics:
 - MCP tool results are not stored or replayed by this server.
+- Onchain read plans carry canonical ABIs for local wallet decoding. Raw return bytes are included by default and preserved on failure. semantic_value with input_encoding=hex_bytes supports custom non-ABI payloads through locally installed allowlisted codecs; remote plans never supply executable code.
 - No fixed request quota is guaranteed. If the deployment limiter returns HTTP 429, honor Retry-After: 60 and back off.
 - Owner positions use upstream no-cache semantics. Position tools join canonical token metadata and USD prices and provide exact atomic pending eth_call plans for current position state. Pair-pool discovery defaults to a zero TVL floor and returns verified PoolKeys plus the correct position manager. Every EVM interface transaction path has a first-class prepare tool returning complete wallet execution plans; wallet tooling never constructs or appends calls. Indexed pool state is cached upstream for up to 180 seconds; tick liquidity and pool keys for up to 1,800 seconds. STONX recommendations are at most 86,400 seconds old.
 

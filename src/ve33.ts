@@ -19,6 +19,11 @@ import {
   stringToHex,
 } from "viem";
 import {
+  functionResultDecodePlan,
+  localFunctionResultMetadata,
+  localWalletDecoderHandoff,
+} from "./abi-decode.js";
+import {
   type Env,
   getOwnedVe33Tokens,
   getVe33Pools,
@@ -615,6 +620,14 @@ export function prepareVe33Withdraw(intent: PrepareVe33WithdrawIntent) {
               params: [{ to: veToken, data: ownerRead }, "pending"],
             },
             decode_as: "address",
+            ...localFunctionResultMetadata({
+              chainId: intent.chainId,
+              id: `ekubo-ve33-owner-${veId}`,
+              to: veToken,
+              data: ownerRead,
+              abi: VE_TOKEN_ABI,
+              functionName: "ownerOf",
+            }),
             expected: getAddress(intent.sender),
           },
           {
@@ -626,6 +639,14 @@ export function prepareVe33Withdraw(intent: PrepareVe33WithdrawIntent) {
               params: [{ to: veToken, data: stakeRead }, "pending"],
             },
             decode_as: "(uint128 amount,uint64 endTime)",
+            ...localFunctionResultMetadata({
+              chainId: intent.chainId,
+              id: `ekubo-ve33-stake-${veId}`,
+              to: veToken,
+              data: stakeRead,
+              abi: VE_TOKEN_ABI,
+              functionName: "stakes",
+            }),
           },
         ],
         instruction:
@@ -885,28 +906,33 @@ export function prepareVe33Merge(intent: PrepareVe33MergeIntent) {
   }
 
   const veToken = getAddress(intent.veToken);
-  const ownerReads = [destinationVeId, ...sourceIds].map((veId, index) => ({
-    label: index === 0 ? "destination_owner" : `source_${index}_owner`,
-    ve_id: veId.toString(),
-    request: {
-      jsonrpc: "2.0",
-      id: index + 1,
-      method: "eth_call",
-      params: [
-        {
-          to: veToken,
-          data: encodeFunctionData({
-            abi: VE_TOKEN_ABI,
-            functionName: "ownerOf",
-            args: [veId],
-          }),
-        },
-        "pending",
-      ],
-    },
-    decode_as: "address",
-    expected: getAddress(intent.sender),
-  }));
+  const ownerReads = [destinationVeId, ...sourceIds].map((veId, index) => {
+    const data = encodeFunctionData({
+      abi: VE_TOKEN_ABI,
+      functionName: "ownerOf",
+      args: [veId],
+    });
+    return {
+      label: index === 0 ? "destination_owner" : `source_${index}_owner`,
+      ve_id: veId.toString(),
+      request: {
+        jsonrpc: "2.0",
+        id: index + 1,
+        method: "eth_call",
+        params: [{ to: veToken, data }, "pending"],
+      },
+      decode_as: "address",
+      ...localFunctionResultMetadata({
+        chainId: intent.chainId,
+        id: `ekubo-ve33-merge-owner-${veId}`,
+        to: veToken,
+        data,
+        abi: VE_TOKEN_ABI,
+        functionName: "ownerOf",
+      }),
+      expected: getAddress(intent.sender),
+    };
+  });
 
   return ve33Plan({
     action: "ve33_merge_stakes",
@@ -2608,12 +2634,14 @@ function retainedChunkIndex(
 function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
   const calls: {
     type: string;
+    function_name: "balanceOf" | "ownerOf" | "stakes" | "voteState" | "votingPower";
     ve_id?: string;
     data: Hex;
     expected: Record<string, unknown>;
   }[] = [
     {
       type: "balance_of",
+      function_name: "balanceOf",
       data: encodeFunctionData({
         abi: VE_TOKEN_ABI,
         functionName: "balanceOf",
@@ -2626,6 +2654,7 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
     calls.push(
       {
         type: "owner_of",
+        function_name: "ownerOf",
         ve_id: token.veId.toString(),
         data: encodeFunctionData({
           abi: VE_TOKEN_ABI,
@@ -2636,6 +2665,7 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
       },
       {
         type: "stakes",
+        function_name: "stakes",
         ve_id: token.veId.toString(),
         data: encodeFunctionData({
           abi: VE_TOKEN_ABI,
@@ -2649,6 +2679,7 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
       },
       {
         type: "vote_state",
+        function_name: "voteState",
         ve_id: token.veId.toString(),
         data: encodeFunctionData({
           abi: VE_TOKEN_ABI,
@@ -2663,6 +2694,7 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
       },
       {
         type: "voting_power",
+        function_name: "votingPower",
         ve_id: token.veId.toString(),
         data: encodeFunctionData({
           abi: VE_TOKEN_ABI,
@@ -2680,6 +2712,23 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
     functionName: "multicall",
     args: [calls.map(({ data }) => data)],
   });
+  const localDecodePlan = {
+    ...functionResultDecodePlan(VE_TOKEN_ABI, "multicall"),
+    nested_results: {
+      path: "results",
+      expected_result_count: calls.length,
+      results: calls.map((call, index) => ({
+        index,
+        id: call.type,
+        required: true,
+        decode: functionResultDecodePlan(
+          VE_TOKEN_ABI,
+          call.function_name,
+        ),
+        expected: call.expected,
+      })),
+    },
+  };
   return {
     status: "not_executed" as const,
     required_before_signing: true,
@@ -2688,9 +2737,17 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
       to: portfolio.veToken,
       data,
     },
+    local_decode_plan: localDecodePlan,
+    result_decoder: localWalletDecoderHandoff({
+      chainId: portfolio.chainId,
+      id: "ekubo-ve33-portfolio-state",
+      to: portfolio.veToken,
+      data,
+      decode: localDecodePlan,
+    }),
     calls,
     instruction:
-      "Execute eth_call through the user's connected provider, decode its ordered results, and compare every expectation immediately before signing.",
+      "Execute and decode eth_call on the user's device with local_decode_plan, retain raw outer and child bytes, and compare every expectation immediately before signing.",
   };
 }
 
@@ -2751,38 +2808,44 @@ function balanceSnapshotRequest(
   token: Address,
   owner: Address,
 ) {
-  return BigInt(token) === 0n
-    ? {
-        token,
-        type: "native_balance",
-        rpc: {
-          chain_id: chainId,
-          method: "eth_getBalance",
-          params: [owner, "pending"],
-        },
-        claimed_delta_instruction:
-          "post_claim_balance - pre_claim_balance + claim_transaction_gas_cost",
-      }
-    : {
-        token,
-        type: "erc20_balance",
-        rpc: {
-          chain_id: chainId,
-          method: "eth_call",
-          params: [
-            {
-              to: token,
-              data: encodeFunctionData({
-                abi: erc20Abi,
-                functionName: "balanceOf",
-                args: [owner],
-              }),
-            },
-            "pending",
-          ],
-        },
-        claimed_delta_instruction: "post_claim_balance - pre_claim_balance",
-      };
+  if (BigInt(token) === 0n) {
+    return {
+      token,
+      type: "native_balance",
+      rpc: {
+        chain_id: chainId,
+        method: "eth_getBalance",
+        params: [owner, "pending"],
+      },
+      result_encoding: "hexadecimal_json_rpc_quantity",
+      result_serialization: "decimal_string",
+      claimed_delta_instruction:
+        "post_claim_balance - pre_claim_balance + claim_transaction_gas_cost",
+    };
+  }
+  const data = encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: [owner],
+  });
+  return {
+    token,
+    type: "erc20_balance",
+    rpc: {
+      chain_id: chainId,
+      method: "eth_call",
+      params: [{ to: token, data }, "pending"],
+    },
+    ...localFunctionResultMetadata({
+      chainId,
+      id: `ekubo-token-balance-${token}`,
+      to: token,
+      data,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+    }),
+    claimed_delta_instruction: "post_claim_balance - pre_claim_balance",
+  };
 }
 
 function apportionReinvestment(

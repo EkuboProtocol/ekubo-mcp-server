@@ -6,6 +6,11 @@ import {
   type Hop,
 } from "@ekubo/yul-router-sdk";
 import { encodeFunctionData, getAddress, type Address, type Hex } from "viem";
+import {
+  functionResultDecodePlan,
+  localWalletDecoderHandoff,
+  sqrtRatioFloatSemanticCodec,
+} from "./abi-decode.js";
 import { type Env, getTokens, ServiceError } from "./core.js";
 import { decodePoolConfig, getPool } from "./pools.js";
 import {
@@ -132,6 +137,18 @@ export async function prepareFixPoolPrice(
     method: "eth_call",
     params: [{ to: CORE_DATA_FETCHER_V3, data: readData }, "pending"],
   } as const;
+  const currentPriceDecodePlan = functionResultDecodePlan(
+    CORE_DATA_FETCHER_ABI,
+    "poolPrice",
+    { semanticCodecs: [sqrtRatioFloatSemanticCodec("sqrtRatio")] },
+  );
+  const currentPriceResultDecoder = localWalletDecoderHandoff({
+    chainId: input.chainId,
+    id: `ekubo-pool-price-${pool.pool_id}`,
+    to: CORE_DATA_FETCHER_V3,
+    data: readData,
+    decode: currentPriceDecodePlan,
+  });
 
   const shared = {
     schema_version: "1",
@@ -168,6 +185,8 @@ export async function prepareFixPoolPrice(
       current_price_query: {
         rpc_request: currentPriceQuery,
         decode_as: "(uint96 sqrtRatio,int32 tick)",
+        local_decode_plan: currentPriceDecodePlan,
+        result_decoder: currentPriceResultDecoder,
         resume:
           "Call this tool again with pending_current_sqrt_ratio set to decoded sqrtRatio.",
       },
@@ -216,6 +235,14 @@ export async function prepareFixPoolPrice(
     method: "eth_call",
     params: [{ to: YUL_ROUTER_ADDRESS, data: quoteCalldata }, "pending"],
   } as const;
+  const quoteDecodePlan = functionResultDecodePlan(YUL_ROUTER_ABI, "quote");
+  const quoteResultDecoder = localWalletDecoderHandoff({
+    chainId: input.chainId,
+    id: `ekubo-fix-price-quote-${pool.pool_id}`,
+    to: YUL_ROUTER_ADDRESS,
+    data: quoteCalldata,
+    decode: quoteDecodePlan,
+  });
 
   if (input.quoteResult === undefined) {
     return {
@@ -230,6 +257,8 @@ export async function prepareFixPoolPrice(
         rpc_request: quoteQuery,
         decode_as:
           "(address specifiedToken,address calculatedToken,int256 specifiedAmount,int256 calculatedAmount)",
+        local_decode_plan: quoteDecodePlan,
+        result_decoder: quoteResultDecoder,
         resume:
           "Call this tool again with the exact decoded quote_result. Do not alter token addresses or signed amounts.",
       },
@@ -339,8 +368,16 @@ export async function prepareFixPoolPrice(
         partial_fill_stops_at_target: true,
       },
       onchainValidation: {
-        current_price_query: currentPriceQuery,
-        quote_query: quoteQuery,
+        current_price_query: {
+          rpc_request: currentPriceQuery,
+          local_decode_plan: currentPriceDecodePlan,
+          result_decoder: currentPriceResultDecoder,
+        },
+        quote_query: {
+          rpc_request: quoteQuery,
+          local_decode_plan: quoteDecodePlan,
+          result_decoder: quoteResultDecoder,
+        },
         instruction:
           "Immediately before signing, rerun both supplied pending reads, verify the current price remains on the same side of the target, verify the quote tuple still matches, and simulate the exact execution plan.",
       },

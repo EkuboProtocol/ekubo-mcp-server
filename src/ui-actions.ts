@@ -172,7 +172,10 @@ export async function prepareLpPositionTransfer(
     },
     fetcher,
   );
-  const currentStateQuery = buildPositionStateReadPlan(owned.indexedPosition);
+  const currentStateQuery = buildPositionStateReadPlan(
+    owned.indexedPosition,
+    owned.owner,
+  );
   if (!currentStateQuery.available) {
     throw new ServiceError(
       currentStateQuery.reason,
@@ -229,7 +232,7 @@ export async function prepareLpPositionTransfer(
       status: "not_executed",
       current_state_query: currentStateQuery,
       instruction:
-        "Execute current_state_query at pending and verify owner equals sender immediately before simulating the transfer.",
+        "Execute current_state_query at pending with its supplied local_decode_plan, require every inner call to succeed, compare decoded owner with expected_owner locally, and retain raw return data immediately before simulating the transfer.",
     },
   });
 }

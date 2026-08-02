@@ -18,6 +18,7 @@ import {
   numberToHex,
   stringToHex,
 } from "viem";
+import { localFunctionResultMetadata } from "./abi-decode.js";
 import { type Env, getTokens, ServiceError } from "./core.js";
 import {
   executionPlan,
@@ -562,6 +563,14 @@ export async function prepareLpPositionDeposit(
     },
     fetcher,
   );
+  const ownerReadData =
+    tokenId === undefined
+      ? null
+      : encodeFunctionData({
+          abi: OWNER_OF_ABI,
+          functionName: "ownerOf",
+          args: [tokenId],
+        });
   const ownerValidation =
     tokenId === undefined
       ? null
@@ -575,16 +584,20 @@ export async function prepareLpPositionDeposit(
             params: [
               {
                 to: positionsAddress,
-                data: encodeFunctionData({
-                  abi: OWNER_OF_ABI,
-                  functionName: "ownerOf",
-                  args: [tokenId],
-                }),
+                data: ownerReadData!,
               },
               "pending",
             ],
           },
           decode_as: "address",
+          ...localFunctionResultMetadata({
+            chainId: input.chainId,
+            id: `ekubo-lp-owner-${tokenId}`,
+            to: positionsAddress,
+            data: ownerReadData!,
+            abi: OWNER_OF_ABI,
+            functionName: "ownerOf",
+          }),
         };
   const identity = {
     action: input.mode,
@@ -803,7 +816,10 @@ export async function prepareLpPositionEarningsClaim(
     },
     fetcher,
   );
-  const currentStateQuery = buildPositionStateReadPlan(owned.indexedPosition);
+  const currentStateQuery = buildPositionStateReadPlan(
+    owned.indexedPosition,
+    owned.owner,
+  );
   if (!currentStateQuery.available) {
     throw new ServiceError(
       currentStateQuery.reason,
@@ -811,6 +827,10 @@ export async function prepareLpPositionEarningsClaim(
       currentStateQuery,
     );
   }
+  const stakeTokenReadData = encodeFunctionData({
+    abi: STAKE_TOKEN_ABI,
+    functionName: "stakeToken",
+  });
 
   const { manager_version: managerVersion, pool_key: poolKey } =
     currentStateQuery;
@@ -946,7 +966,7 @@ export async function prepareLpPositionEarningsClaim(
           ? ["rewardAmount"]
           : ["fees0", "fees1"],
       instruction:
-        "Execute current_state_query exactly as supplied at pending, verify owner equals sender, and pass the decoded claimable amount with the plan to the wallet. Then have the wallet simulate the exact execution transaction immediately before authorization and submission.",
+        "Execute current_state_query exactly as supplied at pending with its local_decode_plan. Require every inner call to succeed, compare decoded owner with expected_owner locally, retain the raw result, and pass the decoded claimable amount with the plan to the wallet. Then have the wallet simulate the exact execution transaction immediately before authorization and submission.",
     },
     reward_token:
       managerVersion === "ve33_positions_v3"
@@ -960,15 +980,20 @@ export async function prepareLpPositionEarningsClaim(
               params: [
                 {
                   to: owned.positionsAddress,
-                  data: encodeFunctionData({
-                    abi: STAKE_TOKEN_ABI,
-                    functionName: "stakeToken",
-                  }),
+                  data: stakeTokenReadData,
                 },
                 "pending",
               ],
             },
             decode_as: "address",
+            ...localFunctionResultMetadata({
+              chainId: owned.chainId,
+              id: `ekubo-stake-token-${owned.positionsAddress}`,
+              to: owned.positionsAddress,
+              data: stakeTokenReadData,
+              abi: STAKE_TOKEN_ABI,
+              functionName: "stakeToken",
+            }),
           }
         : null,
     wallet_policy_requirements: {
@@ -1025,7 +1050,10 @@ export async function prepareLpPositionWithdraw(
     },
     fetcher,
   );
-  const currentStateQuery = buildPositionStateReadPlan(owned.indexedPosition);
+  const currentStateQuery = buildPositionStateReadPlan(
+    owned.indexedPosition,
+    owned.owner,
+  );
   if (!currentStateQuery.available) {
     throw new ServiceError(
       currentStateQuery.reason,
@@ -1200,7 +1228,7 @@ export async function prepareLpPositionWithdraw(
       current_state_query: currentStateQuery,
       required_current_liquidity_at_least: liquidity.toString(),
       instruction:
-        "Execute current_state_query exactly as supplied at pending. Verify owner equals sender and decoded liquidity is at least requested_liquidity, then pass current principal plus fees or Ve33 rewards to the wallet with the plan. Have the wallet simulate the exact withdrawal transaction immediately before authorization and submission, and discard the plan if any value changed.",
+        "Execute current_state_query exactly as supplied at pending with its local_decode_plan. Require every inner call to succeed, compare decoded owner with expected_owner locally, and require decoded liquidity at least requested_liquidity. Retain the raw result, pass current principal plus fees or Ve33 rewards to the wallet with the plan, simulate the exact withdrawal immediately before authorization and submission, and discard the plan if any value changed.",
     },
     wallet_policy_requirements: {
       allowed_chain_id: owned.chainId,

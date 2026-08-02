@@ -11,6 +11,7 @@ import {
   type Address,
   type Hex,
 } from "viem";
+import { localFunctionResultMetadata } from "./abi-decode.js";
 import { ServiceError } from "./core.js";
 import {
   erc20ApprovalTransaction,
@@ -450,6 +451,14 @@ function prepareExistingOrderAction(
           params: [{ to: ordersAddress, data: ownerRead }, "pending"],
         },
         decode_as: "address",
+        ...localFunctionResultMetadata({
+          chainId: input.chainId,
+          id: `ekubo-twamm-order-owner-${tokenId}`,
+          to: ordersAddress,
+          data: ownerRead,
+          abi: ORDERS_ABI,
+          functionName: "ownerOf",
+        }),
         expected: sender,
       },
     },
