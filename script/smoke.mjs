@@ -1,6 +1,7 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
 const expectedServerVersion = "0.15.0";
 const expectedCatalogRevision = "2026-08-02.evm-interface-transaction-parity";
+const smokeNonce = `${Date.now()}-${Math.random()}`;
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
 
 if (origin === undefined) {
@@ -219,6 +220,7 @@ console.log(`Discovered tools: ${expectedTools.join(", ")}`);
 async function getJson(path) {
   const url = new URL(path, origin);
   url.searchParams.set("smoke_catalog_revision", expectedCatalogRevision);
+  url.searchParams.set("smoke_nonce", smokeNonce);
   const response = await fetch(url, {
     headers: { accept: "application/json" },
   });
