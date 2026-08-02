@@ -7,6 +7,7 @@ import {
   derivePoolId,
   getPool,
   getPoolLiquidity,
+  getPositionPoolCandidates,
   getPositionsByOwner,
 } from "../src/pools.js";
 
@@ -237,5 +238,62 @@ describe("pool and position reads", () => {
     );
     expect(result.liquidity_deltas).toHaveLength(2);
     expect(result.interpretation).toContain("cumulatively");
+  });
+
+  it("returns verified pair candidates with the correct Ve33 manager", async () => {
+    const ve33 = "0xD18685a514E59b06d59824e16Db07e73345d9953";
+    const ve33Positions = "0xdA38ac72CE7220c4dd7719d114ef94eDadb8f068";
+    const derived = derivePoolId({
+      token0,
+      token1,
+      fee: "0",
+      extension: ve33,
+      tickSpacing: 1024,
+    });
+    const result = await getPositionPoolCandidates(
+      env,
+      {
+        chainId: "4663",
+        tokenA: token1,
+        tokenB: token0,
+        minTvlUsd: 0,
+      },
+      (async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/tokens/batch?")) {
+          return Response.json([
+            { chain_id: "4663", address: token0, symbol: "ZERO", decimals: 18 },
+            { chain_id: "4663", address: token1, symbol: "ONE", decimals: 6 },
+          ]);
+        }
+        return Response.json({
+          topPools: [
+            {
+              pool_id: BigInt(derived.pool_id).toString(),
+              core_address: BigInt(core).toString(),
+              extension: BigInt(ve33).toString(),
+              fee: "0",
+              tick_spacing: 1024,
+              stableswap_params: null,
+              tvl0_total: "1",
+              tvl1_total: "2",
+            },
+          ],
+        });
+      }) as typeof fetch,
+    );
+
+    expect(result.pair).toEqual({ token0, token1 });
+    expect(result.candidate_count).toBe(1);
+    expect(result.candidates[0]).toMatchObject({
+      pool_id: derived.pool_id,
+      core_generation: "v3",
+      pool_type: "concentrated",
+      extension: { type: "ve33" },
+      position_manager: {
+        address: ve33Positions,
+        contract: "Ve33Positions",
+      },
+    });
   });
 });

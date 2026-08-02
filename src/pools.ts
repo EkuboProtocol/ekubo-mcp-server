@@ -6,6 +6,7 @@ import {
 } from "@ekubo/sdk";
 import {
   type Address,
+  encodeAbiParameters,
   getAddress,
   type Hex,
   keccak256,
@@ -35,6 +36,24 @@ type Fetcher = typeof fetch;
 
 const UINT64_MAX = (1n << 64n) - 1n;
 const EVM_MAX_TICK_SPACING = 698_605n;
+const V2_CORE_ADDRESS = getAddress(
+  "0xe0e0e08A6A4b9Dc7bD67BCB7aadE5cF48157d444",
+);
+const V3_CORE_ADDRESS = getAddress(
+  "0x00000000000014aA86C5d3c41765bb24e11bd701",
+);
+const V2_POSITIONS_ADDRESS = getAddress(
+  "0xA37cc341634AFD9E0919D334606E676dbAb63E17",
+);
+const V3_POSITIONS_ADDRESS = getAddress(
+  "0x02D9876A21AF7545f8632C3af76eC90b5ad4b66D",
+);
+const VE33_POSITIONS_ADDRESS = getAddress(
+  "0xdA38ac72CE7220c4dd7719d114ef94eDadb8f068",
+);
+const VE33_EXTENSION_ADDRESS = getAddress(
+  "0xD18685a514E59b06d59824e16Db07e73345d9953",
+);
 
 export function canonicalChainId(value: string | number): string {
   if (typeof value === "number") {
@@ -321,6 +340,105 @@ export async function getPoolLiquidity(
   };
 }
 
+export async function getPositionPoolCandidates(
+  env: Env,
+  input: {
+    chainId: string;
+    tokenA: string;
+    tokenB: string;
+    minTvlUsd: number;
+    coreAddress?: string;
+    extension?: string;
+    poolType?: "concentrated" | "stableswap";
+  },
+  fetcher: Fetcher = fetch,
+) {
+  const tokenA = normalizeAddress(input.tokenA);
+  const tokenB = normalizeAddress(input.tokenB);
+  if (tokenA === tokenB) {
+    throw new ServiceError(
+      "invalid_pair",
+      "Position pool discovery requires two different tokens",
+    );
+  }
+  const [token0, token1] =
+    BigInt(tokenA) < BigInt(tokenB) ? [tokenA, tokenB] : [tokenB, tokenA];
+  const coreFilter =
+    input.coreAddress === undefined
+      ? undefined
+      : normalizeAddress(input.coreAddress);
+  const extensionFilter =
+    input.extension === undefined
+      ? undefined
+      : normalizeAddress(input.extension);
+  const url = new URL(
+    `/pair/${encodeURIComponent(input.chainId)}/${encodeURIComponent(token0)}/${encodeURIComponent(token1)}/pools`,
+    normalizedBase(env.EKUBO_API_URL),
+  );
+  url.searchParams.set("minTvlUsd", input.minTvlUsd.toString());
+  const response = await fetchJson<Record<string, unknown>>(url, fetcher);
+  if (!Array.isArray(response.topPools)) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      "Pair pool response is missing topPools",
+    );
+  }
+
+  const candidates = response.topPools
+    .map((entry, index) =>
+      normalizePoolCandidate(input.chainId, token0, token1, entry, index),
+    )
+    .filter(
+      (candidate) =>
+        (coreFilter === undefined || candidate.core_address === coreFilter) &&
+        (extensionFilter === undefined ||
+          candidate.extension.address === extensionFilter) &&
+        (input.poolType === undefined || candidate.pool_type === input.poolType),
+    );
+  const tokens = await getTokens(
+    env,
+    {
+      tokens: [
+        { chainId: input.chainId, address: token0 },
+        { chainId: input.chainId, address: token1 },
+      ],
+    },
+    fetcher,
+  );
+
+  return {
+    chain_id: input.chainId,
+    pair: { token0, token1 },
+    tokens,
+    filters: {
+      min_tvl_usd: input.minTvlUsd,
+      core_address: coreFilter ?? null,
+      extension: extensionFilter ?? null,
+      pool_type: input.poolType ?? null,
+    },
+    candidates,
+    candidate_count: candidates.length,
+    selection_guidance: {
+      ranking:
+        "Candidates preserve the data API ordering. Compare exact 24-hour volume, fees, TVL, depth, pool type, and extension; do not choose by fee alone.",
+      initialized_only:
+        "Every returned row is an indexed existing pool. min_tvl_usd defaults to zero so initialized pools with negligible liquidity remain discoverable.",
+      position_manager:
+        "Use each candidate's position_manager when constructing a position. Ve33 pools use Ve33Positions; ordinary v3 pools use Positions; legacy v2 pools use the v2 Positions manager.",
+      exact_pool_key:
+        "Use pool_key.config verbatim. pool_id was independently re-derived and checked against the indexed row.",
+    },
+    sources: {
+      pair_pools: url.toString(),
+      token_metadata: `${normalizedBase(env.EKUBO_API_URL)}tokens/batch`,
+    },
+    cache: {
+      mcp_result_storage: "none",
+      upstream_max_age_seconds: 180,
+    },
+  };
+}
+
 export function normalizeChainIdFields<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((entry) => normalizeChainIdFields(entry)) as T;
@@ -402,6 +520,238 @@ function encodePoolConfig(input: PoolKeyInput): Hex {
       extension,
     });
   }
+}
+
+function normalizePoolCandidate(
+  chainId: string,
+  token0: Address,
+  token1: Address,
+  value: unknown,
+  index: number,
+) {
+  if (!isRecord(value)) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      `Pair pool candidate ${index} is not an object`,
+    );
+  }
+  if (
+    typeof value.pool_id !== "string" ||
+    typeof value.core_address !== "string" ||
+    typeof value.extension !== "string" ||
+    typeof value.fee !== "string" ||
+    (value.tick_spacing !== null &&
+      typeof value.tick_spacing !== "number" &&
+      typeof value.tick_spacing !== "string")
+  ) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      `Pair pool candidate ${index} has invalid identity fields`,
+    );
+  }
+  const coreAddress = normalizeAddress(value.core_address);
+  const extension = normalizeAddress(value.extension);
+  const stable = value.stableswap_params;
+  const stableswapParams =
+    stable === null
+      ? null
+      : isRecord(stable) &&
+          typeof stable.center_tick === "number" &&
+          typeof stable.amplification === "number"
+        ? {
+            centerTick: stable.center_tick,
+            amplification: stable.amplification,
+          }
+        : undefined;
+  if (stableswapParams === undefined) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      `Pair pool candidate ${index} has invalid stableswap_params`,
+    );
+  }
+  const generation =
+    coreAddress === V3_CORE_ADDRESS
+      ? "v3"
+      : coreAddress === V2_CORE_ADDRESS
+        ? "v2"
+        : "unknown";
+  if (generation === "unknown") {
+    throw new ServiceError(
+      "unsupported_core",
+      `Pair pool candidate ${index} uses an unsupported Core deployment`,
+      { chain_id: chainId, core_address: coreAddress },
+    );
+  }
+  const poolInput: PoolKeyInput = {
+    token0,
+    token1,
+    fee: value.fee,
+    tickSpacing: value.tick_spacing,
+    extension,
+    stableswapParams,
+  };
+  const config =
+    generation === "v3"
+      ? encodePoolConfig(poolInput)
+      : encodeV2PoolConfig(poolInput);
+  const poolId = derivePoolIdFromConfig(token0, token1, config);
+  const indexedPoolId = unsigned(value.pool_id, "indexed pool_id");
+  if (BigInt(poolId) !== indexedPoolId) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      `Pair pool candidate ${index} PoolKey does not derive to its indexed pool_id`,
+      { indexed_pool_id: value.pool_id, derived_pool_id: poolId },
+    );
+  }
+  const poolType = stableswapParams === null ? "concentrated" : "stableswap";
+  const manager = positionManager(generation, extension);
+  return {
+    rank: index + 1,
+    pool_id: poolId,
+    pool_id_decimal: indexedPoolId.toString(),
+    core_address: coreAddress,
+    core_generation: generation,
+    core_resource_uri: `ekubo://contracts/evm/${chainId}/${coreAddress}`,
+    pool_key: { token0, token1, config },
+    decoded_config:
+      generation === "v3"
+        ? decodePoolConfig(config)
+        : {
+            config,
+            version: "v2",
+            extension,
+            fee: unsigned(value.fee, "pool fee").toString(),
+            tick_spacing:
+              poolType === "concentrated"
+                ? Number(unsigned(value.tick_spacing ?? 0, "tick_spacing"))
+                : null,
+            stableswap_params:
+              stableswapParams === null
+                ? null
+                : {
+                    center_tick: stableswapParams.centerTick,
+                    amplification: stableswapParams.amplification,
+                  },
+            exact_integer_note:
+              "fee is a uint64 Q64 value and is intentionally serialized as a decimal string, never a JSON number",
+          },
+    pool_type: poolType,
+    extension: {
+      address: extension,
+      type: extensionType(generation, extension),
+      resource_uri:
+        BigInt(extension) === 0n
+          ? null
+          : `ekubo://contracts/evm/${chainId}/${extension}`,
+    },
+    position_manager: {
+      ...manager,
+      resource_uri: `ekubo://contracts/evm/${chainId}/${manager.address}`,
+    },
+    stats: normalizeChainIdFields(value),
+  };
+}
+
+function derivePoolIdFromConfig(
+  token0: Address,
+  token1: Address,
+  config: Hex,
+) {
+  return keccak256(
+    encodeAbiParameters(
+      [
+        {
+          type: "tuple",
+          components: [
+            { name: "token0", type: "address" },
+            { name: "token1", type: "address" },
+            { name: "config", type: "bytes32" },
+          ],
+        },
+      ],
+      [{ token0, token1, config }],
+    ),
+  );
+}
+
+function encodeV2PoolConfig(input: PoolKeyInput): Hex {
+  if (input.fee === undefined || input.extension === undefined) {
+    throw new ServiceError("invalid_pool_key", "v2 pool key is incomplete");
+  }
+  const fee = unsigned(input.fee, "pool_key.fee");
+  if (fee > UINT64_MAX) {
+    throw new ServiceError("invalid_pool_key", "pool_key.fee exceeds uint64");
+  }
+  let low32: bigint;
+  if (input.stableswapParams !== null && input.stableswapParams !== undefined) {
+    const { amplification, centerTick } = input.stableswapParams;
+    if (
+      !Number.isInteger(amplification) ||
+      amplification < 0 ||
+      amplification > 127 ||
+      !Number.isInteger(centerTick) ||
+      centerTick % 16 !== 0
+    ) {
+      throw new ServiceError(
+        "invalid_pool_key",
+        "v2 stableswap parameters are invalid",
+      );
+    }
+    const encodedCenter = BigInt(centerTick / 16);
+    if (encodedCenter < -(1n << 23n) || encodedCenter > (1n << 23n) - 1n) {
+      throw new ServiceError(
+        "invalid_pool_key",
+        "v2 stableswap center tick exceeds signed 24 bits",
+      );
+    }
+    low32 =
+      (BigInt(amplification) << 24n) |
+      (encodedCenter < 0n ? (1n << 24n) + encodedCenter : encodedCenter);
+  } else {
+    low32 = unsigned(input.tickSpacing ?? 0, "pool_key.tick_spacing");
+    if (low32 > 0xffff_ffffn) {
+      throw new ServiceError("invalid_pool_key", "v2 pool config exceeds uint32");
+    }
+  }
+  return numberToHex(
+    (BigInt(normalizeAddress(input.extension)) << 96n) | (fee << 32n) | low32,
+    { size: 32 },
+  );
+}
+
+function positionManager(generation: "v2" | "v3", extension: Address) {
+  if (generation === "v2") {
+    return { address: V2_POSITIONS_ADDRESS, contract: "Positions", version: "v2" };
+  }
+  if (extension === VE33_EXTENSION_ADDRESS) {
+    return {
+      address: VE33_POSITIONS_ADDRESS,
+      contract: "Ve33Positions",
+      version: "v3",
+    };
+  }
+  return { address: V3_POSITIONS_ADDRESS, contract: "Positions", version: "v3" };
+}
+
+function extensionType(generation: "v2" | "v3", extension: Address) {
+  if (BigInt(extension) === 0n) return "none";
+  const known =
+    generation === "v2"
+      ? new Map<string, string>([
+          ["0xd4279c050da1f5c5b2830558c7a08e57e12b54ec", "twamm"],
+          ["0x51d02a5948496a67827242eabc5725531342527c", "oracle"],
+          ["0x553a2efc570c9e104942cec6ac1c18118e54c091", "mev_capture"],
+        ])
+      : new Map<string, string>([
+          ["0xd47f1b1edcfeabb08f6ebd8fc337c27e636c75ba", "twamm"],
+          ["0xd4f1060cb9c1a13e1d2d20379b8aa2cf7541ed9b", "twamm_legacy"],
+          ["0x517e506700271aea091b02f42756f5e174af5230", "oracle"],
+          ["0x5555ff9ff2757500bf4ee020dcfd0210cffa41be", "mev_capture"],
+          ["0xd4b54d0ca6979da05f25895e6e269e678ba00f9e", "boosted_fees"],
+          ["0x948b9c2c99718034954110cb61a6e08e107745f9", "boosted_fees"],
+          [VE33_EXTENSION_ADDRESS.toLowerCase(), "ve33"],
+        ]);
+  return known.get(extension.toLowerCase()) ?? "custom";
 }
 
 function poolKeyFromApi(poolKey: Record<string, unknown>): PoolKeyInput {

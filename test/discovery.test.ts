@@ -124,6 +124,8 @@ describe("Worker discovery", () => {
       "ekubo_derive_pool_id",
       "ekubo_decode_pool_config",
       "ekubo_get_position",
+      "ekubo_get_position_pool_candidates",
+      "ekubo_prepare_lp_position_deposit",
     ]);
     expect(JSON.stringify(catalog)).not.toMatch(/dune|8187907|api\.dune/i);
     expect(

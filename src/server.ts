@@ -31,10 +31,12 @@ import {
   derivePoolId,
   getPool,
   getPoolLiquidity,
+  getPositionPoolCandidates,
   getPositionsByOwner,
   type PoolKeyInput,
 } from "./pools.js";
 import { getPosition } from "./positions.js";
+import { prepareLpPositionDeposit } from "./liquidity.js";
 import {
   getVe33Allocations,
   prepareAllVe33FeeClaims,
@@ -260,6 +262,61 @@ export const derivePoolIdSchema = z.object({
 });
 
 export const decodePoolConfigSchema = z.object({ config: bytes32 });
+
+export const getPositionPoolCandidatesSchema = z.object({
+  chain_id: chainId,
+  token_a: poolAddress.describe("First token in either numeric order"),
+  token_b: poolAddress.describe("Second token in either numeric order"),
+  min_tvl_usd: z
+    .number()
+    .finite()
+    .min(0)
+    .default(0)
+    .describe(
+      "Optional indexed TVL floor. Zero is the creation-safe default so tiny initialized pools are not hidden",
+    ),
+  core_address: poolAddress.optional().describe("Optional exact Core filter"),
+  extension: poolAddress.optional().describe("Optional exact extension filter"),
+  pool_type: z.enum(["concentrated", "stableswap"]).optional(),
+});
+
+export const prepareLpPositionDepositSchema = z
+  .object({
+    chain_id: chainId,
+    sender: address,
+    core_address: poolAddress.describe(
+      "Exact Core address from ekubo_get_position_pool_candidates",
+    ),
+    pool_id: uintLikeString.describe(
+      "Exact existing pool ID from ekubo_get_position_pool_candidates",
+    ),
+    mode: z.enum(["mint_new", "add_liquidity"]).default("mint_new"),
+    token_id: uintLikeString.optional().describe(
+      "Required only for add_liquidity; omit when minting a new position NFT",
+    ),
+    tick_lower: z.number().int().min(-88_722_835).max(88_722_835),
+    tick_upper: z.number().int().min(-88_722_835).max(88_722_835),
+    max_amount0: uintString.describe(
+      "Maximum token0 input in base units; use zero for a single-sided deposit",
+    ),
+    max_amount1: uintString.describe(
+      "Maximum token1 input in base units; use zero for a single-sided deposit",
+    ),
+    slippage_bps: z
+      .number()
+      .int()
+      .min(1)
+      .max(5_000)
+      .describe(
+        "User-selected liquidity slippage tolerance; used to derive a nonzero minimum liquidity",
+      ),
+  })
+  .refine(
+    (input) =>
+      (input.mode === "mint_new" && input.token_id === undefined) ||
+      (input.mode === "add_liquidity" && input.token_id !== undefined),
+    "mint_new must omit token_id; add_liquidity must provide token_id",
+  );
 
 const claimSchema = z.object({
   ve_id: uintString,
@@ -670,6 +727,22 @@ export const publicToolCatalog = [
     description:
       "Hydrate one indexed owner position with the same inputs used by the interface: pool key, bounds, indexed liquidity and pool state, NFT metadata, event history, campaigns and earned rewards, token metadata and USD prices, plus an exact pending Multicall3 eth_call and nested decode plan for current principal, fees or Ve33 rewards, and owner.",
     inputSchema: z.toJSONSchema(getPositionSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_get_position_pool_candidates",
+    title: "Find pools for an LP position",
+    description:
+      "List existing indexed pools for a token pair without browsing the data API or reading contract ABIs. Returns v2/v3 Core generation, independently verified exact PoolKeys and pool IDs, pool type and extension classification, token USD metadata, 24-hour TVL/volume/fee/depth statistics, and the correct Positions or Ve33Positions manager for each candidate. Defaults to min_tvl_usd=0 so initialized low-liquidity pools remain visible.",
+    inputSchema: z.toJSONSchema(getPositionPoolCandidatesSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_lp_position_deposit",
+    title: "Prepare an LP position deposit",
+    description:
+      "Prepare a new v3 position mint or add liquidity to an existing position in one first-class workflow. Resolves and verifies the indexed pool, selects Positions or Ve33Positions, computes expected and nonzero minimum liquidity from the indexed price and user slippage, encodes deposit/refund Multicall calldata, exact ERC20 approvals and cleanup, owner validation when applicable, wallet-policy requirements, and a signer-neutral execution_plan. No Cast encoding is required.",
+    inputSchema: z.toJSONSchema(prepareLpPositionDepositSchema),
     _meta: toolCatalogMetadata,
   },
 ] as const;
@@ -1192,6 +1265,56 @@ export function createEkuboServer(env: Env) {
       ),
   );
 
+  server.registerTool(
+    publicToolCatalog[21].name,
+    {
+      title: publicToolCatalog[21].title,
+      description: publicToolCatalog[21].description,
+      inputSchema: getPositionPoolCandidatesSchema,
+      annotations,
+      _meta: publicToolCatalog[21]._meta,
+    },
+    async (input) =>
+      toolResult(() =>
+        getPositionPoolCandidates(env, {
+          chainId: canonicalChainId(input.chain_id),
+          tokenA: input.token_a,
+          tokenB: input.token_b,
+          minTvlUsd: input.min_tvl_usd,
+          coreAddress: input.core_address,
+          extension: input.extension,
+          poolType: input.pool_type,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    publicToolCatalog[22].name,
+    {
+      title: publicToolCatalog[22].title,
+      description: publicToolCatalog[22].description,
+      inputSchema: prepareLpPositionDepositSchema,
+      annotations,
+      _meta: publicToolCatalog[22]._meta,
+    },
+    async (input) =>
+      toolResult(() =>
+        prepareLpPositionDeposit(env, {
+          chainId: canonicalChainId(input.chain_id),
+          sender: input.sender,
+          coreAddress: input.core_address,
+          poolId: input.pool_id,
+          mode: input.mode,
+          tokenId: input.token_id,
+          tickLower: input.tick_lower,
+          tickUpper: input.tick_upper,
+          maxAmount0: input.max_amount0,
+          maxAmount1: input.max_amount1,
+          slippageBps: input.slippage_bps,
+        }),
+      ),
+  );
+
   server.registerResource(
     "ekubo-agent-workflow",
     "ekubo://docs/agent-workflow",
@@ -1525,7 +1648,11 @@ Intent shortcut: for "my Ekubo STONX allocations", "STONX vote allocations", or 
 
 For exact token metadata, call ekubo_get_token for one known chain/address pair and ekubo_get_tokens for multiple known pairs. The batch tool uses one prod-api batch request, accepts tokens across chains, preserves input order and duplicates, and omits identifiers that are not in the canonical list. Use ekubo_search_tokens only when resolving a name, symbol, or address fragment.
 
-For LP discovery, use ekubo_get_positions_by_owner instead of attempting ERC721 enumeration. Its response joins canonical token metadata and USD prices and attaches an exact pending eth_call to each supported EVM position. For the interface-equivalent detail payload (metadata, history, campaigns, rewards, prices, and the atomic current-state query), call ekubo_get_position with the same owner, chain, manager, and token ID. Read ekubo://docs/lp-position-workflow. Never split TWAMM execution or Ve33 reward accumulation from the following position read: those calls must stay in the supplied single Multicall3 eth_call and must never be broadcast. Use ekubo_get_pool for one exact chain/core/pool ID and ekubo_get_pool_liquidity for tick-level depth. Use ekubo_derive_pool_id and ekubo_decode_pool_config for PoolKey construction and inspection. A pool fee is an exact uint64 Q64 integer: accept and return it only as a decimal or hexadecimal string, never a JSON number.
+For LP discovery, use ekubo_get_positions_by_owner instead of attempting ERC721 enumeration. Its response joins canonical token metadata and USD prices and attaches an exact pending eth_call to each supported EVM position. For the interface-equivalent detail payload (metadata, history, campaigns, rewards, prices, and the atomic current-state query), call ekubo_get_position with the same owner, chain, manager, and token ID. Read ekubo://docs/lp-position-workflow. Never split TWAMM execution or Ve33 reward accumulation from the following position read: those calls must stay in the supplied single Multicall3 eth_call and must never be broadcast.
+
+For creating an LP position, call ekubo_get_position_pool_candidates with the pair. Do not browse prod-api, manually derive pool IDs, or inspect manager ABIs. Show the candidate's Core generation, exact pool key, extension, manager, TVL, depth, volume, and fees. If the wallet lacks one side, prepare and execute that funding swap separately, wait for its successful receipt, measure the actual new token balance, reserve native gas, and only then prepare the deposit from the measured available amounts; never treat a quote's expected output as a settled balance. After the user chooses an existing v3 pool, range, token maxima, and slippage, call ekubo_prepare_lp_position_deposit. It computes a nonzero minimum liquidity, approvals, native refund, allowance cleanup, decoded calls, wallet-policy requirements, and a complete execution_plan. Pass that plan to the wallet MCP for simulation and execution after explicit confirmation; never use Cast to reconstruct LP calldata. If wallet policy rejects the plan, report its exact target, spender, selector, or native-value finding and do not attempt to change wallet policy.
+
+Use ekubo_get_pool for one exact chain/core/pool ID and ekubo_get_pool_liquidity for tick-level depth. Use ekubo_derive_pool_id and ekubo_decode_pool_config for PoolKey construction and inspection. A pool fee is an exact uint64 Q64 integer: accept and return it only as a decimal or hexadecimal string, never a JSON number.
 
 For VeToken vote reorganization, first call ekubo_get_ve33_allocations and show the owner, state_id, total applied vote weight, every pool allocation, and contributing ve_ids. Pass that exact state_id to ekubo_prepare_ve33_reallocation. Never construct raw vote, clearVote, extendStake, mergeStakes, withdrawStake, or burn calldata from the ABI resource when a first-class safe workflow exists.
 
@@ -1579,6 +1706,16 @@ For each raw amount, divide by \`10^token.decimals\`, multiply by the matching \
 To reproduce all-time APR, find the latest \`update\` event in \`position_history\` and replay the identical aggregate at event block + 1. For 1-day or 7-day APR, resolve the block closest to pending timestamp minus the interval, then replay at that block. Reuse the same aggregate \`to\` and \`data\`; replace only the JSON-RPC block parameter with a hexadecimal block quantity. Add any \`collect_fees\` amounts (or \`claim_rewards\` for Ve33) since the start snapshot, value them using the current token prices as the interface does, divide earnings by current principal USD, and annualize by elapsed seconds. Do not report APR when liquidity changed between snapshots or required price/history data is unavailable.
 
 The indexed \`pool_state\` is appropriate for portfolio range math and discovery. The pending contract simulation is authoritative for immediately withdrawable principal, uncollected fees or accumulated Ve33 rewards, and current ownership.
+
+## Discover and prepare a deposit
+
+Call \`ekubo_get_position_pool_candidates\` with the chain and token pair. It replaces direct data-API browsing and ABI inspection by returning every indexed candidate above the requested TVL floor, including verified PoolKey/config, Core generation, extension type, exact statistics, and the correct Positions manager. The default zero TVL floor is intentional for position creation because it keeps initialized pools with negligible liquidity visible.
+
+Once the user selects an existing v3 candidate, range, maximum token amounts, and slippage, call \`ekubo_prepare_lp_position_deposit\`. The tool fetches the verified pool state, calculates expected liquidity with shared SDK math, derives a nonzero minimum liquidity, selects Positions or Ve33Positions, and returns exact approvals, deposit/refund calldata, optional allowance cleanup, owner validation, decoded intent, wallet-policy requirements, and \`execution_plan\`.
+
+If the wallet needs a preliminary swap to acquire one side, use \`ekubo_prepare_swap\` as a separate plan. Simulate it through the wallet MCP, obtain explicit confirmation, submit it, and wait for a successful receipt. Then read the actual resulting balance or balance delta, preserve enough native token for gas, and call the LP preparer with the measured maxima. Do not combine the deposit with an unconfirmed swap or size it from quoted output alone.
+
+Do not encode \`mintAndDeposit\`, \`deposit\`, \`multicall\`, or \`refundNativeToken\` with Cast. Give the returned execution plan unchanged to the user's wallet MCP for sequential simulation and, after explicit confirmation, submission. The wallet remains authoritative for allowed targets, approval spenders, native-value limits, known selectors, connected account, and chain. This server cannot loosen wallet policy.
 `;
 
 const EXECUTION_PLAN_WORKFLOW = `# Ekubo execution plan handoff

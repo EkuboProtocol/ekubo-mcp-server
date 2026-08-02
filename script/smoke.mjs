@@ -1,6 +1,6 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-const expectedServerVersion = "0.11.0";
-const expectedCatalogRevision = "2026-08-02.position-interface-parity";
+const expectedServerVersion = "0.12.0";
+const expectedCatalogRevision = "2026-08-02.lp-discovery-deposit-plans";
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
 
 if (origin === undefined) {
@@ -46,6 +46,8 @@ const expectedTools = [
   "ekubo_derive_pool_id",
   "ekubo_decode_pool_config",
   "ekubo_get_position",
+  "ekubo_get_position_pool_candidates",
+  "ekubo_prepare_lp_position_deposit",
 ];
 assert(
   catalog.server_version === expectedServerVersion,

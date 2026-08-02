@@ -7,7 +7,8 @@ Across any-to-any bridges, and constructs unsigned VeToken calls for ve(3,3)
 vote and fee workflows. It also publishes provider-neutral STONX allocation
 recommendations resolved to initialized Robinhood Ve33 pools, enumerates
 indexed LP positions by owner, reproduces the interface's indexed/API/USD/RPC
-position-data pipeline, and exposes exact pool state and liquidity data.
+position-data pipeline, discovers pair-level position candidates, prepares
+unsigned LP deposits, and exposes exact pool state and liquidity data.
 
 The MCP server owns agent-facing transaction construction. `prod-api` remains
 a data API and the quoter remains a route-data service.
@@ -76,6 +77,13 @@ schemas after a Git-triggered deployment.
 - `ekubo_get_position` — hydrate one owner position with NFT metadata, history,
   campaigns, earned rewards, token USD prices, and an atomic Multicall3 query
   for current principal, fees or Ve33 rewards, and ownership
+- `ekubo_get_position_pool_candidates` — list existing pools for a pair with
+  verified exact PoolKeys, v2/v3 Core generation, extension classification,
+  token prices, pool statistics, and the correct position manager
+- `ekubo_prepare_lp_position_deposit` — prepare a new v3 position mint or add
+  liquidity with shared-SDK liquidity math, a nonzero slippage floor, exact
+  approvals/refunds/cleanup, decoded intent, wallet-policy requirements, and a
+  signer-neutral execution plan; no Cast encoding is required
 - `ekubo_get_pool` — resolve an exact chain/core/pool ID to a verified PoolKey,
   decoded config, and indexed state snapshot when available
 - `ekubo_get_pool_liquidity` — return tick-level net liquidity deltas for one
@@ -141,6 +149,20 @@ orders or Ve33 reward accumulation, when required, are simulated immediately
 before the position read in that same call. Splitting them into separate calls
 would discard the simulated state; the aggregate payload is read-only workflow
 data and must never be broadcast.
+
+For a new LP position, start with `ekubo_get_position_pool_candidates`; do not
+browse `prod-api` or infer a manager from an ABI resource. Its default
+`min_tvl_usd=0` keeps initialized pools with negligible liquidity visible.
+After the user selects an existing v3 pool, range, token maxima, and slippage,
+call `ekubo_prepare_lp_position_deposit`. Pass its exact `execution_plan` to the
+wallet MCP for policy checking and sequential simulation. The wallet—not this
+server—controls target, spender, selector, native-value, signing, and submission
+authorization.
+
+If one side must be acquired first, prepare and execute that swap as a separate
+wallet plan. Wait for its successful receipt, measure the actual token balance,
+reserve native gas, and only then size and prepare the LP deposit. Never use an
+unconfirmed quote output as though it were a settled wallet balance.
 
 Every chain input accepts a JSON integer, decimal string, or hexadecimal
 string. Responses use canonical decimal chain-ID strings. Pool fees are uint64
