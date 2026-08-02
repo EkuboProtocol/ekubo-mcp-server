@@ -1,6 +1,9 @@
 {
   "schema_version": 1,
   "source": "evm-contracts Foundry broadcast and artifact snapshot",
+  "source_commit": "8e70f7c763b1ae0752514d29170c703f5cf71de2",
+  "source_tag": "v3.2.0",
+  "source_worktree_dirty": true,
   "chains": {
     "1": {
       "0x00000000000014aA86C5d3c41765bb24e11bd701": {

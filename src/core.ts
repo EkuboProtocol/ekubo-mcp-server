@@ -152,9 +152,8 @@ export async function searchTokens(
   url.searchParams.set("chainId", input.chainId);
   url.searchParams.set("search", input.query);
   url.searchParams.set("pageSize", input.pageSize.toString());
-  const tokens = await fetchJson<Record<string, unknown>[]>(
-    url.toString(),
-    fetcher,
+  const tokens = normalizeResponseChainIds(
+    await fetchJson<Record<string, unknown>[]>(url.toString(), fetcher),
   );
   const normalizedQuery = input.query.trim().toLowerCase();
   return [...tokens].sort((left, right) => {
@@ -179,7 +178,9 @@ export async function getToken(
     `/tokens/${encodeURIComponent(input.chainId)}/${encodeURIComponent(input.address)}`,
     normalizedBase(env.EKUBO_API_URL),
   );
-  return fetchJson<Record<string, unknown>>(url.toString(), fetcher);
+  return normalizeResponseChainIds(
+    await fetchJson<Record<string, unknown>>(url.toString(), fetcher),
+  );
 }
 
 export async function getTokens(
@@ -198,7 +199,7 @@ export async function getTokens(
       "Batch token response must be an array of objects",
     );
   }
-  return tokens;
+  return normalizeResponseChainIds(tokens);
 }
 
 export async function getOwnedVe33Tokens(
@@ -946,6 +947,31 @@ function tokenSymbol(token: Record<string, unknown>): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeResponseChainIds<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeResponseChainIds(entry)) as T;
+  }
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      key === "chain_id" &&
+      (typeof entry === "string" || typeof entry === "number")
+        ? normalizeResponseChainId(entry)
+        : normalizeResponseChainIds(entry),
+    ]),
+  ) as T;
+}
+
+function normalizeResponseChainId(value: string | number): string {
+  try {
+    const parsed = BigInt(value);
+    return parsed > 0n ? parsed.toString() : String(value);
+  } catch {
+    return String(value);
+  }
 }
 
 async function fetchJson<T>(

@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Ekubo Protocol MCP Gateway",
-    "version": "0.8.0",
-    "description": "Discovery contract for the public, unauthenticated Ekubo MCP server, including exact token metadata, provider-neutral STONX allocation recommendations, fee-first allocation plans for as many as 100 pools, phased fee reinvestment, max-duration staking, Ekubo/0x/Across quotes, and unsigned ve(3,3) call construction. MCP clients discover typed tool schemas through tools/list; GET /tools provides the same revisioned catalog to ordinary HTTP clients.",
+    "version": "0.10.0",
+    "description": "Discovery contract for the public, unauthenticated, non-custodial Ekubo MCP server, including pool and owner-position reads, exact token metadata, provider-neutral STONX allocation recommendations, Ekubo/0x/Across quotes, and unsigned ve(3,3) call construction. MCP clients discover typed tool schemas through tools/list; GET /tools provides the same revisioned catalog to ordinary HTTP clients.",
     "contact": {
       "url": "https://ekubo.org",
       "email": "eng@ekubo.org"
@@ -125,7 +125,7 @@
       "post": {
         "operationId": "sendMcpMessage",
         "summary": "Send an MCP JSON-RPC message",
-        "description": "Use initialize and tools/list for protocol-native discovery, then tools/call to invoke a read-only Ekubo tool.",
+        "description": "Use initialize and tools/list for protocol-native discovery, then tools/call to invoke an Ekubo read or unsigned-preparation tool. The server never signs or submits transactions.",
         "requestBody": {
           "required": true,
           "content": {

@@ -21,6 +21,9 @@ interface GeneratedArtifact {
 interface GeneratedCatalog {
   schema_version: number;
   source: string;
+  source_commit: string;
+  source_tag: string;
+  source_worktree_dirty: boolean;
   chains: Record<string, Record<Address, GeneratedDeployment>>;
   artifacts: Record<string, GeneratedArtifact>;
   abis: Record<string, Abi>;
@@ -79,6 +82,7 @@ export function contractDirectory() {
       "Read-only contract context for actions that are not available as first-class Ekubo MCP tools.",
     usage:
       "Prefer tools/list for supported actions. For an unsupported action, read the chain resource, then the exact chain/address resource for its ABI before constructing and simulating calldata.",
+    provenance: contractProvenance(),
     templates: {
       chain: CONTRACT_CHAIN_TEMPLATE,
       contract: CONTRACT_ADDRESS_TEMPLATE,
@@ -94,6 +98,7 @@ export function contractChainResource(chainId: string) {
   return {
     schema_version: 1,
     chain_id: chainId,
+    provenance: contractProvenance(),
     contracts: Object.fromEntries(
       Object.entries(contracts).map(([address, contract]) => [
         address,
@@ -118,6 +123,7 @@ export function contractAddressResource(chainId: string, address: string) {
     chain_id: chainId,
     address: contract.address,
     name: contract.name,
+    provenance: contractProvenance(),
     deployment: {
       address_source: contract.addressSource,
       scripts: contract.deploymentScripts,
@@ -185,6 +191,18 @@ export function contractAddressResource(chainId: string, address: string) {
           },
         }
       : {}),
+  };
+}
+
+function contractProvenance() {
+  return {
+    source_repository: "evm-contracts",
+    source_commit: catalog.source_commit,
+    source_tag: catalog.source_tag,
+    source_worktree_dirty_at_snapshot: catalog.source_worktree_dirty,
+    note: catalog.source_worktree_dirty
+      ? "The generated address/artifact snapshot included uncommitted source-repository changes; use source_commit plus ABI sha256 and deployment scripts for verification."
+      : "The generated address/artifact snapshot came from a clean source-repository worktree.",
   };
 }
 

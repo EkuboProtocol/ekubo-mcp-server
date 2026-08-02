@@ -11,6 +11,7 @@ import {
   publicToolCatalog,
   ROBINHOOD_STONX_CHAIN_ID,
   ROBINHOOD_STONX_VE_TOKEN,
+  searchTokensSchema,
 } from "../src/server.js";
 import {
   MCP_SERVER_VERSION,
@@ -46,15 +47,28 @@ describe("Worker discovery", () => {
       safety: {
         requires_wallet_validation: boolean;
       };
+      operational_semantics: {
+        rate_limit_contract: string;
+        polling_guidance: { pool_liquidity_depth_seconds: number };
+      };
     };
     expect(metadata.mcp_endpoint).toBe("https://mcp.ekubo.org/mcp");
     expect(metadata.description).toContain("STONX allocation");
+    expect(metadata.description).toContain("non-custodial");
+    expect(metadata.description).not.toContain("read-only agent tools");
     expect(metadata.version).toBe(MCP_SERVER_VERSION);
     expect(metadata.tool_catalog_revision).toBe(MCP_TOOL_CATALOG_REVISION);
     expect(metadata.tool_count).toBe(publicToolCatalog.length);
     expect(metadata.authentication).toBe("none");
     expect(metadata.readiness_url).toBeUndefined();
     expect(metadata.safety.requires_wallet_validation).toBe(true);
+    expect(metadata.operational_semantics.rate_limit_contract).toContain(
+      "Retry-After: 60",
+    );
+    expect(
+      metadata.operational_semantics.polling_guidance
+        .pool_liquidity_depth_seconds,
+    ).toBe(1800);
 
     const removedReadiness = await worker.fetch(
       new Request("https://mcp.ekubo.org/ready"),
@@ -100,6 +114,11 @@ describe("Worker discovery", () => {
       "ekubo_get_ve33_allocations",
       "ekubo_get_stonx_allocation_recommendation",
       "ekubo_prepare_ve33_reallocation",
+      "ekubo_get_positions_by_owner",
+      "ekubo_get_pool",
+      "ekubo_get_pool_liquidity",
+      "ekubo_derive_pool_id",
+      "ekubo_decode_pool_config",
     ]);
     expect(JSON.stringify(catalog)).not.toMatch(/dune|8187907|api\.dune/i);
     expect(
@@ -126,6 +145,20 @@ describe("Worker discovery", () => {
       }).success,
     ).toBe(true);
     expect(getTokensSchema.safeParse({ tokens: [] }).success).toBe(false);
+    expect(
+      searchTokensSchema.safeParse({
+        chain_id: 4663,
+        query: "STONX",
+        page_size: 20,
+      }).success,
+    ).toBe(true);
+    expect(
+      searchTokensSchema.safeParse({
+        chain_id: "0x1237",
+        query: "STONX",
+        page_size: 20,
+      }).success,
+    ).toBe(true);
     expect(
       getTokensSchema.safeParse({
         tokens: Array.from({ length: 1_001 }, () => ({
@@ -246,6 +279,7 @@ describe("Worker discovery", () => {
       context,
     );
     expect(initialized.status).toBe(200);
+    expect(initialized.headers.get("cache-control")).toBe("no-store");
     const initializeResult = (await mcpJson(initialized)) as {
       result: {
         capabilities: { tools?: unknown };

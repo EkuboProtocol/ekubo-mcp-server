@@ -3,7 +3,7 @@ import {
   ResourceNotFoundError,
   ResourceTemplate,
 } from "@modelcontextprotocol/server";
-import { type Address, getAddress, numberToHex } from "viem";
+import { type Address, getAddress, type Hex, numberToHex } from "viem";
 import { z } from "zod";
 import {
   CONTRACT_ADDRESS_TEMPLATE,
@@ -25,6 +25,15 @@ import {
   searchTokens,
   ServiceError,
 } from "./core.js";
+import {
+  canonicalChainId,
+  decodePoolConfig,
+  derivePoolId,
+  getPool,
+  getPoolLiquidity,
+  getPositionsByOwner,
+  type PoolKeyInput,
+} from "./pools.js";
 import {
   getVe33Allocations,
   prepareAllVe33FeeClaims,
@@ -52,9 +61,19 @@ export const ROBINHOOD_STONX_VE33 = getAddress(
 );
 
 const chainId = z
-  .string()
-  .regex(/^[0-9]+$/, "chain_id must contain decimal digits")
-  .describe("Decimal EVM chain ID, matching the Ekubo token list");
+  .union([
+    z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    z
+      .string()
+      .regex(
+        /^(?:[1-9][0-9]*|0x[0-9a-fA-F]+)$/,
+        "chain_id must be a positive decimal or hexadecimal integer",
+      ),
+  ])
+  .refine((value) => BigInt(value) > 0n, "chain_id must be positive")
+  .describe(
+    "EVM chain ID as a JSON integer, decimal string, or hexadecimal string; responses use a canonical decimal string",
+  );
 const address = z
   .string()
   .regex(/^0x[0-9a-fA-F]{40}$/, "must be a 20-byte EVM address")
@@ -181,6 +200,54 @@ const poolKeySchema = z
       (poolKey.fee !== undefined && poolKey.extension !== undefined),
     "provide config, or provide fee, tick_spacing, and extension",
   );
+
+const exactPoolKeySchema = z
+  .object({
+    token0: poolAddress,
+    token1: poolAddress,
+    config: bytes32.optional(),
+    fee: uintLikeString
+      .optional()
+      .describe(
+        "Exact uint64 Q64 fee as a decimal or hexadecimal string; never pass it as a JSON number",
+      ),
+    tick_spacing: z.union([z.number().int().min(1), uintLikeString]).optional(),
+    extension: poolAddress.optional(),
+    stableswap_params: stableswapParamsSchema.optional(),
+  })
+  .refine(
+    (poolKey) =>
+      poolKey.config !== undefined ||
+      (poolKey.fee !== undefined &&
+        poolKey.extension !== undefined &&
+        (poolKey.tick_spacing !== undefined ||
+          poolKey.stableswap_params !== undefined)),
+    "provide config, or fee, extension, and tick_spacing/stableswap_params",
+  );
+
+export const getPositionsByOwnerSchema = z.object({
+  owner: address,
+  chain_id: chainId.optional(),
+  state: z.enum(["opened", "closed"]).optional(),
+  page_size: z.number().int().min(1).max(200).default(50),
+  page: z.number().int().min(1).default(1),
+});
+
+export const getPoolSchema = z.object({
+  chain_id: chainId,
+  core_address: poolAddress,
+  pool_id: uintLikeString.describe(
+    "PoolKey hash as an exact decimal or hexadecimal integer string",
+  ),
+});
+
+export const getPoolLiquiditySchema = getPoolSchema;
+
+export const derivePoolIdSchema = z.object({
+  pool_key: exactPoolKeySchema,
+});
+
+export const decodePoolConfigSchema = z.object({ config: bytes32 });
 
 const claimSchema = z.object({
   ve_id: uintString,
@@ -545,6 +612,46 @@ export const publicToolCatalog = [
     inputSchema: z.toJSONSchema(prepareVe33ReallocationSchema),
     _meta: toolCatalogMetadata,
   },
+  {
+    name: "ekubo_get_positions_by_owner",
+    title: "Get Ekubo positions by owner",
+    description:
+      "Enumerate an owner's indexed Ekubo position NFTs without relying on ERC721 enumeration. Returns pool keys, bounds, liquidity, current indexed pool state, rewards, and pagination. Optionally filter by chain and opened/closed state.",
+    inputSchema: z.toJSONSchema(getPositionsByOwnerSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_get_pool",
+    title: "Get an Ekubo pool",
+    description:
+      "Resolve an exact chain/core/pool ID to its PoolKey and decoded config, verify that the key hashes back to the requested ID, and return the indexed pool-state snapshot when one is available.",
+    inputSchema: z.toJSONSchema(getPoolSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_get_pool_liquidity",
+    title: "Get Ekubo pool liquidity depth",
+    description:
+      "Return tick-level net liquidity deltas for one exact chain/core/pool ID. Accumulate the deltas in ascending tick order to reconstruct active liquidity depth.",
+    inputSchema: z.toJSONSchema(getPoolLiquiditySchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_derive_pool_id",
+    title: "Derive an Ekubo pool ID",
+    description:
+      "Pack or accept an exact PoolKey config and derive pool_id = keccak256(abi.encode(PoolKey)). The uint64 Q64 fee is string-only so JavaScript cannot silently round it.",
+    inputSchema: z.toJSONSchema(derivePoolIdSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_decode_pool_config",
+    title: "Decode an Ekubo pool config",
+    description:
+      "Decode the packed bytes32 extension, exact uint64 Q64 fee, concentrated/stableswap discriminator, and tick spacing or stableswap parameters. The fee is never returned as a JSON number.",
+    inputSchema: z.toJSONSchema(decodePoolConfigSchema),
+    _meta: toolCatalogMetadata,
+  },
 ] as const;
 
 export function createEkuboServer(env: Env) {
@@ -570,7 +677,7 @@ export function createEkuboServer(env: Env) {
     async ({ chain_id, query, page_size }) =>
       toolResult(async () => ({
         tokens: await searchTokens(env, {
-          chainId: chain_id,
+          chainId: canonicalChainId(chain_id),
           query,
           pageSize: page_size,
         }),
@@ -589,7 +696,7 @@ export function createEkuboServer(env: Env) {
     async ({ chain_id, address: tokenAddress }) =>
       toolResult(async () => ({
         token: await getToken(env, {
-          chainId: chain_id,
+          chainId: canonicalChainId(chain_id),
           address: tokenAddress,
         }),
       })),
@@ -608,7 +715,7 @@ export function createEkuboServer(env: Env) {
       toolResult(async () => ({
         tokens: await getTokens(env, {
           tokens: input.tokens.map((token) => ({
-            chainId: token.chain_id,
+            chainId: canonicalChainId(token.chain_id),
             address: token.address,
           })),
         }),
@@ -626,11 +733,14 @@ export function createEkuboServer(env: Env) {
     },
     async (input) =>
       toolResult(() => {
-        const destinationChainId = input.destination_chain_id ?? input.chain_id;
+        const inputChainId = canonicalChainId(input.chain_id);
+        const destinationChainId = canonicalChainId(
+          input.destination_chain_id ?? input.chain_id,
+        );
         return getQuote(env, {
-          chainId: input.chain_id,
+          chainId: inputChainId,
           destinationChainId,
-          tokenIn: tokenAddress(input.token_in, input.chain_id, "token_in"),
+          tokenIn: tokenAddress(input.token_in, inputChainId, "token_in"),
           tokenOut: tokenAddress(
             input.token_out,
             destinationChainId,
@@ -657,11 +767,14 @@ export function createEkuboServer(env: Env) {
     },
     async (input) =>
       toolResult(() => {
-        const destinationChainId = input.destination_chain_id ?? input.chain_id;
+        const inputChainId = canonicalChainId(input.chain_id);
+        const destinationChainId = canonicalChainId(
+          input.destination_chain_id ?? input.chain_id,
+        );
         return prepareSwap(env, {
-          chainId: input.chain_id,
+          chainId: inputChainId,
           destinationChainId,
-          tokenIn: tokenAddress(input.token_in, input.chain_id, "token_in"),
+          tokenIn: tokenAddress(input.token_in, inputChainId, "token_in"),
           tokenOut: tokenAddress(
             input.token_out,
             destinationChainId,
@@ -689,7 +802,7 @@ export function createEkuboServer(env: Env) {
     async (input) =>
       toolResult(() =>
         prepareVe33Vote({
-          chainId: input.chain_id,
+          chainId: canonicalChainId(input.chain_id),
           veToken: input.ve_token as Address,
           sender: input.sender as Address,
           sourceVeId: input.source_ve_id,
@@ -723,7 +836,7 @@ export function createEkuboServer(env: Env) {
     async (input) =>
       toolResult(() =>
         prepareVe33Extend({
-          chainId: input.chain_id,
+          chainId: canonicalChainId(input.chain_id),
           veToken: input.ve_token as Address,
           sender: input.sender as Address,
           veId: input.ve_id,
@@ -746,7 +859,7 @@ export function createEkuboServer(env: Env) {
     async (input) =>
       toolResult(() =>
         prepareVe33Stake({
-          chainId: input.chain_id,
+          chainId: canonicalChainId(input.chain_id),
           veToken: input.ve_token as Address,
           sender: input.sender as Address,
           stakeToken: input.stake_token as Address,
@@ -771,7 +884,7 @@ export function createEkuboServer(env: Env) {
     async (input) =>
       toolResult(() =>
         prepareVe33Split({
-          chainId: input.chain_id,
+          chainId: canonicalChainId(input.chain_id),
           veToken: input.ve_token as Address,
           sender: input.sender as Address,
           veId: input.ve_id,
@@ -793,7 +906,7 @@ export function createEkuboServer(env: Env) {
     async (input) =>
       toolResult(() =>
         prepareVe33Claim({
-          chainId: input.chain_id,
+          chainId: canonicalChainId(input.chain_id),
           veToken: input.ve_token as Address,
           sender: input.sender as Address,
           recipient: input.recipient as Address | undefined,
@@ -817,7 +930,7 @@ export function createEkuboServer(env: Env) {
     async (input) =>
       toolResult(() => {
         const common = {
-          chainId: input.chain_id,
+          chainId: canonicalChainId(input.chain_id),
           veToken: input.ve_token as Address,
           sender: input.sender as Address,
         };
@@ -875,7 +988,7 @@ export function createEkuboServer(env: Env) {
     async (input) =>
       toolResult(() =>
         prepareAllVe33FeeClaims(env, {
-          chainId: input.chain_id,
+          chainId: canonicalChainId(input.chain_id),
           veToken: input.ve_token as Address,
           sender: input.sender as Address,
           recipient: input.recipient as Address | undefined,
@@ -895,7 +1008,10 @@ export function createEkuboServer(env: Env) {
     async (input) =>
       toolResult(() =>
         getVe33Allocations(env, {
-          chainId: input.chain_id ?? ROBINHOOD_STONX_CHAIN_ID,
+          chainId:
+            input.chain_id === undefined
+              ? ROBINHOOD_STONX_CHAIN_ID
+              : canonicalChainId(input.chain_id),
           veToken: (input.ve_token ?? ROBINHOOD_STONX_VE_TOKEN) as Address,
           owner: input.owner as Address,
         }),
@@ -933,7 +1049,7 @@ export function createEkuboServer(env: Env) {
     async (input) =>
       toolResult(() =>
         prepareVe33Reallocation(env, {
-          chainId: input.chain_id,
+          chainId: canonicalChainId(input.chain_id),
           veToken: input.ve_token as Address,
           sender: input.sender as Address,
           currentStateId: input.current_state_id as `0x${string}`,
@@ -946,6 +1062,94 @@ export function createEkuboServer(env: Env) {
           strategy: input.strategy,
         }),
       ),
+  );
+
+  server.registerTool(
+    publicToolCatalog[15].name,
+    {
+      title: publicToolCatalog[15].title,
+      description: publicToolCatalog[15].description,
+      inputSchema: getPositionsByOwnerSchema,
+      annotations,
+      _meta: publicToolCatalog[15]._meta,
+    },
+    async (input) =>
+      toolResult(() =>
+        getPositionsByOwner(env, {
+          owner: input.owner,
+          chainId:
+            input.chain_id === undefined
+              ? undefined
+              : canonicalChainId(input.chain_id),
+          state: input.state,
+          pageSize: input.page_size,
+          page: input.page,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    publicToolCatalog[16].name,
+    {
+      title: publicToolCatalog[16].title,
+      description: publicToolCatalog[16].description,
+      inputSchema: getPoolSchema,
+      annotations,
+      _meta: publicToolCatalog[16]._meta,
+    },
+    async (input) =>
+      toolResult(() =>
+        getPool(env, {
+          chainId: canonicalChainId(input.chain_id),
+          coreAddress: input.core_address,
+          poolId: input.pool_id,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    publicToolCatalog[17].name,
+    {
+      title: publicToolCatalog[17].title,
+      description: publicToolCatalog[17].description,
+      inputSchema: getPoolLiquiditySchema,
+      annotations,
+      _meta: publicToolCatalog[17]._meta,
+    },
+    async (input) =>
+      toolResult(() =>
+        getPoolLiquidity(env, {
+          chainId: canonicalChainId(input.chain_id),
+          coreAddress: input.core_address,
+          poolId: input.pool_id,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    publicToolCatalog[18].name,
+    {
+      title: publicToolCatalog[18].title,
+      description: publicToolCatalog[18].description,
+      inputSchema: derivePoolIdSchema,
+      annotations,
+      _meta: publicToolCatalog[18]._meta,
+    },
+    async (input) =>
+      toolResult(() => derivePoolId(mapExactPoolKey(input.pool_key))),
+  );
+
+  server.registerTool(
+    publicToolCatalog[19].name,
+    {
+      title: publicToolCatalog[19].title,
+      description: publicToolCatalog[19].description,
+      inputSchema: decodePoolConfigSchema,
+      annotations,
+      _meta: publicToolCatalog[19]._meta,
+    },
+    async ({ config }) =>
+      toolResult(() => ({ decoded_config: decodePoolConfig(config as Hex) })),
   );
 
   server.registerResource(
@@ -1213,6 +1417,32 @@ function mapPoolKey(poolKey: {
   };
 }
 
+function mapExactPoolKey(poolKey: {
+  token0: string;
+  token1: string;
+  config?: string;
+  fee?: string;
+  tick_spacing?: number | string;
+  extension?: string;
+  stableswap_params?: { center_tick: number; amplification: number };
+}): PoolKeyInput {
+  return {
+    token0: poolKey.token0,
+    token1: poolKey.token1,
+    config: poolKey.config as Hex | undefined,
+    fee: poolKey.fee,
+    tickSpacing: poolKey.tick_spacing,
+    extension: poolKey.extension,
+    stableswapParams:
+      poolKey.stableswap_params === undefined
+        ? undefined
+        : {
+            centerTick: poolKey.stableswap_params.center_tick,
+            amplification: poolKey.stableswap_params.amplification,
+          },
+  };
+}
+
 async function fetchDocumentation(url: string): Promise<string> {
   const response = await fetch(url, {
     headers: { accept: "application/json" },
@@ -1234,6 +1464,8 @@ Prepared plans expose execution_plan: one signer-neutral, ordered transaction se
 Intent shortcut: for "my Ekubo STONX allocations", "STONX vote allocations", or equivalent requests, call ekubo_get_ve33_allocations with only the user's connected EVM wallet as owner. The production Ve33 deployment is the STONX voting system, and the tool selects Robinhood Chain 4663 plus its canonical VeToken when chain_id and ve_token are omitted. If the connected wallet address is unavailable, ask the user for it. Never infer the user's wallet from a machine environment, repository configuration, local keystore, or unrelated account.
 
 For exact token metadata, call ekubo_get_token for one known chain/address pair and ekubo_get_tokens for multiple known pairs. The batch tool uses one prod-api batch request, accepts tokens across chains, preserves input order and duplicates, and omits identifiers that are not in the canonical list. Use ekubo_search_tokens only when resolving a name, symbol, or address fragment.
+
+For LP discovery, use ekubo_get_positions_by_owner instead of attempting ERC721 enumeration. Use ekubo_get_pool for one exact chain/core/pool ID and ekubo_get_pool_liquidity for tick-level depth. Use ekubo_derive_pool_id and ekubo_decode_pool_config for PoolKey construction and inspection. A pool fee is an exact uint64 Q64 integer: accept and return it only as a decimal or hexadecimal string, never a JSON number.
 
 For VeToken vote reorganization, first call ekubo_get_ve33_allocations and show the owner, state_id, total applied vote weight, every pool allocation, and contributing ve_ids. Pass that exact state_id to ekubo_prepare_ve33_reallocation. Never construct raw vote, clearVote, extendStake, mergeStakes, withdrawStake, or burn calldata from the ABI resource when a first-class safe workflow exists.
 
@@ -1261,7 +1493,7 @@ const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 
 const EXECUTION_PLAN_WORKFLOW = `# Ekubo execution plan handoff
 
-Every executable preparation result includes an execution_plan object. It is the canonical boundary between this read-only Ekubo MCP server and a signing wallet.
+Every executable preparation result includes an execution_plan object. It is the canonical boundary between this non-custodial Ekubo MCP server and a signing wallet.
 
 ## Bind the sender first
 

@@ -65,7 +65,10 @@ describe("MCP service core", () => {
     expect(requested).toBe(
       `https://api.test/tokens/batch?id=1%3A${token0}&id=4663%3A${token1}`,
     );
-    expect(result).toEqual(upstreamTokens);
+    expect(result).toEqual([
+      { ...upstreamTokens[0], chain_id: "1" },
+      { ...upstreamTokens[1], chain_id: "4663" },
+    ]);
   });
 
   it("rejects a malformed batch token response", async () => {

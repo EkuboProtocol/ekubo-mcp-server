@@ -1,8 +1,12 @@
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { promisify } from "node:util";
 import { getAddress } from "viem";
+
+const execFileAsync = promisify(execFile);
 
 const repository = path.resolve(process.argv[2] ?? "../evm-contracts");
 const output = path.resolve(
@@ -10,6 +14,22 @@ const output = path.resolve(
 );
 const broadcastRoot = path.join(repository, "broadcast");
 const artifactRoot = path.join(repository, "out");
+const sourceCommit = (
+  await execFileAsync("git", ["-C", repository, "rev-parse", "HEAD"])
+).stdout.trim();
+const sourceTag = (
+  await execFileAsync("git", [
+    "-C",
+    repository,
+    "describe",
+    "--tags",
+    "--abbrev=0",
+    "HEAD",
+  ])
+).stdout.trim();
+const sourceWorktreeDirty = (
+  await execFileAsync("git", ["-C", repository, "status", "--porcelain"])
+).stdout.trim().length > 0;
 
 const broadcastFiles = (await walk(broadcastRoot)).filter((file) => {
   const relative = path.relative(broadcastRoot, file);
@@ -108,6 +128,9 @@ for (const deployment of [...deployments.values()].sort(compareDeployments)) {
 const generated = {
   schema_version: 1,
   source: "evm-contracts Foundry broadcast and artifact snapshot",
+  source_commit: sourceCommit,
+  source_tag: sourceTag,
+  source_worktree_dirty: sourceWorktreeDirty,
   chains,
   artifacts,
   abis,

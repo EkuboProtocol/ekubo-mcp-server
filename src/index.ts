@@ -32,7 +32,9 @@ export default {
         },
         allowedOriginHostnames: allowedOriginHostnames(env, url.hostname),
       });
-      return withSecurityHeaders(await handler(request, env, ctx));
+      const response = withSecurityHeaders(await handler(request, env, ctx));
+      response.headers.set("cache-control", "no-store");
+      return response;
     }
 
     if (request.method !== "GET" && request.method !== "HEAD") {
@@ -49,7 +51,7 @@ export default {
           {
             name: "Ekubo Protocol MCP",
             description:
-              "Public, unauthenticated, read-only agent tools for exact and batch token metadata, provider-neutral STONX allocation recommendations, same-chain swaps, Across bridges, and fee-first ve(3,3) calldata preparation",
+              "Public, unauthenticated, non-custodial agent tools for protocol reads and provider-neutral STONX allocations plus unsigned swap, bridge, and fee-first ve(3,3) calldata preparation",
             version: MCP_SERVER_VERSION,
             tool_catalog_revision: MCP_TOOL_CATALOG_REVISION,
             tool_count: publicToolCatalog.length,
@@ -74,6 +76,27 @@ export default {
               requires_wallet_validation: true,
               requires_user_confirmation: true,
               ownership_and_nft_transfer_actions: "forbidden",
+            },
+            operational_semantics: {
+              mcp_tool_result_storage: "none",
+              mcp_http_cache:
+                "no-store; tool calls are not replayed from an MCP cache",
+              rate_limit_contract:
+                "No fixed request quota is guaranteed. A configured deployment limiter returns HTTP 429 with Retry-After: 60; clients must back off and honor that header.",
+              polling_guidance: {
+                positions_by_owner:
+                  "Upstream uses no-cache; poll only when ownership or liquidity may have changed.",
+                pool_state_seconds: 180,
+                pool_liquidity_depth_seconds: 1800,
+                pool_key_seconds: 1800,
+                recommendation_max_age_seconds: 86400,
+              },
+              discovery_http_cache_seconds: {
+                root: 300,
+                tools: 0,
+                openapi: 3600,
+                llms_txt: 3600,
+              },
             },
           },
           200,
@@ -205,6 +228,11 @@ Aggregated quote resource: ekubo://docs/quoter-api
 ve(3,3) workflow resource: ekubo://docs/ve33-workflow
 Execution plan resource: ekubo://docs/execution-plan
 EVM contract directory: ekubo://contracts/evm
+
+Operational semantics:
+- MCP tool results are not stored or replayed by this server.
+- No fixed request quota is guaranteed. If the deployment limiter returns HTTP 429, honor Retry-After: 60 and back off.
+- Owner positions use upstream no-cache semantics. Indexed pool state is cached upstream for up to 180 seconds; tick liquidity and pool keys for up to 1,800 seconds. STONX recommendations are at most 86,400 seconds old.
 
 STONX allocation shortcut:
 - For "my Ekubo STONX allocations" or equivalent, call ekubo_get_ve33_allocations with the user's connected EVM wallet address as owner and omit chain_id and ve_token.

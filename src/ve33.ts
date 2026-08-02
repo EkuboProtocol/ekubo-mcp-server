@@ -1,4 +1,10 @@
 import {
+  decodeEvmPoolConfig,
+  deriveEvmPoolId,
+  encodeEvmConcentratedPoolConfig,
+  encodeEvmStableswapPoolConfig,
+} from "@ekubo/sdk";
+import {
   type Address,
   decodeFunctionData,
   encodeAbiParameters,
@@ -1476,21 +1482,7 @@ export async function prepareAllVe33FeeClaims(
         reason: error instanceof Error ? error.message : String(error),
       });
     }
-    const computedPoolId = keccak256(
-      encodeAbiParameters(
-        [
-          {
-            type: "tuple",
-            components: [
-              { name: "token0", type: "address" },
-              { name: "token1", type: "address" },
-              { name: "config", type: "bytes32" },
-            ],
-          },
-        ],
-        [poolKeyArgument],
-      ),
-    );
+    const computedPoolId = poolIdFor(poolKeyArgument);
     const indexedPoolId = indexedBytes32(rawToken, "voted_pool_id");
     if (computedPoolId !== indexedPoolId) {
       throw invalidUpstream("voted pool key does not hash to voted_pool_id", {
@@ -2485,21 +2477,7 @@ function projectVotingPower(amount: bigint, endTime: bigint, now: bigint) {
 }
 
 function poolIdFor(poolKey: Ve33PoolKeyArgument): Hex {
-  return keccak256(
-    encodeAbiParameters(
-      [
-        {
-          type: "tuple",
-          components: [
-            { name: "token0", type: "address" },
-            { name: "token1", type: "address" },
-            { name: "config", type: "bytes32" },
-          ],
-        },
-      ],
-      [poolKey],
-    ),
-  );
+  return deriveEvmPoolId(poolKey, keccak256);
 }
 
 function indexedPoolKey(poolKey: Record<string, unknown>): Ve33PoolKeyInput {
@@ -2534,40 +2512,66 @@ export function toPoolKeyArgument(input: Ve33PoolKeyInput): Ve33PoolKeyArgument 
   const fee = unsigned(input.fee, 64, "pool_key.fee");
   if (fee !== 0n) throw invalid("ve33 pool_key.fee must be zero");
   const tickSpacing = input.tickSpacing ?? 0;
-  if (!Number.isInteger(tickSpacing) || tickSpacing < 0 || tickSpacing > 0x7fff_ffff) {
-    throw invalid("pool_key.tick_spacing must be a non-negative int31");
+  if (!Number.isInteger(tickSpacing) || tickSpacing < 0 || tickSpacing > 698_605) {
+    throw invalid("pool_key.tick_spacing must be between 0 and 698605");
   }
   const stable = input.stableswapParams;
-  let low32: bigint;
   if (stable) {
     if (
       !Number.isInteger(stable.amplification) ||
       stable.amplification < 0 ||
-      stable.amplification > 127 ||
+      stable.amplification > 26 ||
       !Number.isInteger(stable.centerTick) ||
       stable.centerTick % 16 !== 0
     ) {
       throw invalid(
-        "stableswap amplification must be 0..127 and center_tick a multiple of 16",
+        "stableswap amplification must be 0..26 and center_tick a multiple of 16",
       );
     }
     const encodedCenter = stable.centerTick / 16;
     if (encodedCenter < -(1 << 23) || encodedCenter > (1 << 23) - 1) {
       throw invalid("stableswap center_tick does not fit int24 after division");
     }
-    low32 =
-      (BigInt(stable.amplification) << 24n) |
-      BigInt(encodedCenter & 0x00ff_ffff);
+    try {
+      return {
+        token0,
+        token1,
+        config: encodeEvmStableswapPoolConfig({
+          fee,
+          centerTick: stable.centerTick,
+          amplification: stable.amplification,
+          extension: normalizeAddress(input.extension),
+        }),
+      };
+    } catch (error) {
+      throw invalid(error instanceof Error ? error.message : String(error));
+    }
   } else {
     if (tickSpacing !== 0 && !isPowerOfFour(tickSpacing)) {
       throw invalid("ve33 concentrated tick_spacing must be a power of four");
     }
-    low32 = BigInt(tickSpacing);
-    if (tickSpacing !== 0) low32 |= 1n << 31n;
+    try {
+      return {
+        token0,
+        token1,
+        config:
+          tickSpacing === 0
+            ? encodeEvmStableswapPoolConfig({
+                fee,
+                centerTick: 0,
+                amplification: 0,
+                extension: normalizeAddress(input.extension),
+              })
+            : encodeEvmConcentratedPoolConfig({
+                fee,
+                tickSpacing,
+                extension: normalizeAddress(input.extension),
+              }),
+      };
+    } catch (error) {
+      throw invalid(error instanceof Error ? error.message : String(error));
+    }
   }
-  const packed =
-    low32 | (fee << 32n) | (BigInt(normalizeAddress(input.extension)) << 96n);
-  return { token0, token1, config: numberToHex(packed, { size: 32 }) };
 }
 
 export function saltToId(
@@ -2607,16 +2611,23 @@ function normalizeAddress(value: Address): Address {
 }
 
 function validateVe33Config(config: Hex) {
-  const packed = BigInt(config);
-  const fee = (packed >> 32n) & UINT64_MAX;
-  if (fee !== 0n) throw invalid("ve33 pool_key.config must encode zero fee");
-  const low32 = Number(packed & 0xffff_ffffn);
-  const isConcentrated = (low32 & 0x8000_0000) !== 0;
-  const tickSpacing = low32 & 0x7fff_ffff;
-  if (isConcentrated && !isPowerOfFour(tickSpacing)) {
+  const decoded = decodeEvmPoolConfig(config);
+  if (decoded.fee !== 0n) {
+    throw invalid("ve33 pool_key.config must encode zero fee");
+  }
+  if (
+    decoded.poolType === "concentrated" &&
+    !isPowerOfFour(decoded.tickSpacing)
+  ) {
     throw invalid(
       "ve33 concentrated pool_key.config must encode power-of-four tick spacing",
     );
+  }
+  if (
+    decoded.poolType === "stableswap" &&
+    decoded.stableswapParams.amplification > 26
+  ) {
+    throw invalid("ve33 stableswap pool_key.config amplification exceeds 26");
   }
 }
 

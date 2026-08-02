@@ -5,7 +5,8 @@ deploys a stateless, public MCP server on Cloudflare Workers. It discovers
 tokens, compares Ekubo and 0x liquidity for same-chain EVM swaps, prepares
 Across any-to-any bridges, and constructs unsigned VeToken calls for ve(3,3)
 vote and fee workflows. It also publishes provider-neutral STONX allocation
-recommendations resolved to initialized Robinhood Ve33 pools.
+recommendations resolved to initialized Robinhood Ve33 pools, enumerates
+indexed LP positions by owner, and exposes exact pool state and liquidity data.
 
 The MCP server owns agent-facing transaction construction. `prod-api` remains
 a data API and the quoter remains a route-data service.
@@ -68,6 +69,15 @@ schemas after a Git-triggered deployment.
   multicall. `preserve_existing_locks` apportions each expiry cohort across
   every target; `compact_max_lock` consolidates and extends stake before
   creating exactly one voting NFT per target.
+- `ekubo_get_positions_by_owner` — enumerate indexed position NFTs with their
+  pool keys, bounds, liquidity, current pool state, rewards, and pagination
+- `ekubo_get_pool` — resolve an exact chain/core/pool ID to a verified PoolKey,
+  decoded config, and indexed state snapshot when available
+- `ekubo_get_pool_liquidity` — return tick-level net liquidity deltas for one
+  exact pool
+- `ekubo_derive_pool_id` — pack a PoolKey and derive its exact Keccak pool ID
+- `ekubo_decode_pool_config` — decode the extension, exact uint64 Q64 fee,
+  v3 discriminator, and concentrated or stableswap parameters
 
 ## Resources
 
@@ -88,8 +98,10 @@ transfers, safe transfers, and burns are explicitly outside every safe MCP
 workflow even though the complete ABI resource describes them.
 
 The checked-in snapshot is generated from `../evm-contracts` Foundry
-broadcasts and artifacts. The Yul router address and public quote ABI come from
-`@ekubo/yul-router-sdk`, so the MCP server follows the SDK version it ships.
+broadcasts and artifacts. Every contract resource includes the source commit,
+nearest tag, snapshot worktree state, and per-ABI hash. The Yul router address
+and public quote ABI come from `@ekubo/yul-router-sdk`, so the MCP server follows
+the SDK version it ships.
 Refresh the contract snapshot after contract deployments or ABI changes with
 `bun run contracts:generate` from this repository.
 
@@ -101,11 +113,26 @@ provider. Token arguments accept raw EVM addresses or
 `eip155:<chain_id>:<address>` identifiers. The output token's EIP-155 chain
 must match `destination_chain_id`.
 
-Every current tool is read-only and idempotent. The Worker has no wallet, key
-material, signing function, or broadcast function. It returns an exact unsigned
-transaction plan for the agent to present to the user. After confirmation, the
-user's wallet or signature tooling is responsible for approvals, current-state
-validation, signing, and submission through the user's connected provider.
+The catalog explicitly contains read tools and unsigned preparation tools. All
+server operations are non-custodial and idempotent: the Worker has no wallet,
+key material, signing function, or broadcast function. Preparation tools return
+an exact unsigned transaction plan for the agent to present to the user. After
+confirmation, the user's wallet or signature tooling is responsible for
+approvals, current-state validation, signing, and submission through the
+user's connected provider.
+
+MCP tool results are not stored or replayed and `/mcp` responses use
+`Cache-Control: no-store`. No fixed request quota is guaranteed; clients must
+honor HTTP 429 and `Retry-After: 60`. Owner positions use upstream `no-cache`
+semantics. Indexed pool-state snapshots may be cached upstream for 180 seconds,
+while PoolKeys and tick-liquidity data may be cached for 1,800 seconds. Polling
+more frequently than those freshness windows does not produce fresher pool
+data.
+
+Every chain input accepts a JSON integer, decimal string, or hexadecimal
+string. Responses use canonical decimal chain-ID strings. Pool fees are uint64
+Q64 values and must always be passed and consumed as decimal or hexadecimal
+strings, never JSON numbers.
 
 Every executable preparation also includes a signer-neutral `execution_plan`
 handoff. Its `ordered_steps` place approvals before the main execution and any
