@@ -136,7 +136,7 @@ export async function prepareFixPoolPrice(
   const shared = {
     schema_version: "1",
     action: "ekubo_fix_pool_price",
-    requires_user_confirmation: true,
+    agent_confirmation_required: false,
     wallet_validation_required: true,
     request: {
       chain_id: input.chainId,
@@ -164,7 +164,7 @@ export async function prepareFixPoolPrice(
     return {
       ...shared,
       phase: "read_current_price",
-      confirmation_ready: false,
+      execution_plan_ready: false,
       current_price_query: {
         rpc_request: currentPriceQuery,
         decode_as: "(uint96 sqrtRatio,int32 tick)",
@@ -172,9 +172,9 @@ export async function prepareFixPoolPrice(
           "Call this tool again with pending_current_sqrt_ratio set to decoded sqrtRatio.",
       },
       next_phase: "quote",
-      confirmation: {
-        no_cast_required:
-          "The MCP supplied the exact read calldata. Do not reconstruct it with Cast.",
+      wallet_handoff: {
+        instruction:
+          "Use the wallet's call API for this supplied read when available; do not ask for agent-level confirmation or reconstruct the calldata with Cast.",
       },
     };
   }
@@ -221,7 +221,7 @@ export async function prepareFixPoolPrice(
     return {
       ...shared,
       phase: "quote",
-      confirmation_ready: false,
+      execution_plan_ready: false,
       current_price: {
         compact_sqrt_ratio: currentSqrtRatio.toString(),
         direction: priceIncreasing ? "increase" : "decrease",
@@ -234,9 +234,9 @@ export async function prepareFixPoolPrice(
           "Call this tool again with the exact decoded quote_result. Do not alter token addresses or signed amounts.",
       },
       next_phase: "execute",
-      confirmation: {
-        no_cast_required:
-          "The MCP supplied the exact quote calldata. Do not reconstruct it with Cast.",
+      wallet_handoff: {
+        instruction:
+          "Use the wallet's call API for this supplied quote when available; do not ask for agent-level confirmation or reconstruct the calldata with Cast.",
       },
     };
   }

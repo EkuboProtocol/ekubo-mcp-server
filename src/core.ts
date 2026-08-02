@@ -446,8 +446,8 @@ export async function prepareSwap(
         : "ekubo_bridge",
     source: selected.source,
     plan_id: keccak256(stringToHex(JSON.stringify(identity))),
-    requires_user_confirmation: true,
-    confirmation_ready: true,
+    execution_plan_ready: true,
+    agent_confirmation_required: false,
     wallet_validation_required: true,
     request: quoteRequest(intent),
     quote_source_url: selected.sourceUrl,
@@ -472,9 +472,9 @@ export async function prepareSwap(
       approvals.length === 1
         ? { transaction: serializeTransaction(approvals[0]) }
         : null,
-    confirmation: {
+    wallet_handoff: {
       instruction:
-        "Ask the user to confirm this exact plan_id and slippage tolerance before signing. Re-prepare after any change or stale quote.",
+        "Pass this complete plan to the wallet's simulation and authorization flow. Do not ask the user for a separate agent-level approval; the wallet presents the simulated result and collects authorization or signature. Re-prepare after any change or stale quote.",
       recipient,
       sender: getAddress(intent.sender),
     },
@@ -498,11 +498,11 @@ export async function prepareSwap(
         ...(approvals.length === 0
           ? []
           : [
-              "Check current allowance and ask for confirmation before signing the approval transaction if it is required",
+              "Check current allowance so the wallet can omit an approval transaction that is no longer required",
             ]),
         "Validate the exact swap transaction against current state through the user's connected wallet or provider",
-        "Ask the user to confirm the exact plan ID, slippage bound, recipient, value, and calldata",
-        "Have the user's wallet sign and submit; this MCP server must not receive a private key or seed phrase",
+        "Pass the complete execution_plan to the wallet; do not request a separate agent-level confirmation",
+        "Have the wallet present the simulated result, collect authorization or signature, and submit; this MCP server must not receive a private key or seed phrase",
         ...(cleanupTransactions.length === 0
           ? []
           : [

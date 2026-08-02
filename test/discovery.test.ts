@@ -341,6 +341,15 @@ describe("Worker discovery", () => {
     expect(initializeResult.result.instructions).toContain(
       "plan_id commits to the chain",
     );
+    expect(initializeResult.result.instructions).toContain(
+      "Do not ask the user for a separate agent-level confirmation",
+    );
+    expect(initializeResult.result.instructions).toContain(
+      "Cast remains an optional fallback",
+    );
+    expect(initializeResult.result.instructions).not.toContain(
+      "receiving explicit user confirmation",
+    );
     expect(initializeResult.result.instructions).not.toMatch(
       /dune|8187907|api\.dune/i,
     );
@@ -407,7 +416,8 @@ describe("Worker discovery", () => {
     };
     expect(preparedWrapResult.result.structuredContent).toMatchObject({
       action: "ekubo_wrap_native_token",
-      confirmation_ready: true,
+      execution_plan_ready: true,
+      agent_confirmation_required: false,
     });
 
     const resources = await worker.fetch(

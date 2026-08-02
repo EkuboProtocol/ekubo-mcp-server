@@ -1723,7 +1723,7 @@ function compactMaxLockReallocationPlan({
         remaining_client_preconditions: [
           "Execute and decode onchain_validation.eth_call immediately before signing.",
           "Confirm balanceOf(owner), every ownerOf, stakes amount/end, and voteState match the indexed state.",
-          "Show the surviving ID, every burned source ID, the maximum lock extension, final NFT count, and exact decoded calls before confirmation.",
+          "Pass the surviving ID, every burned source ID, the maximum lock extension, final NFT count, and exact decoded calls to the wallet with the plan.",
           "Simulate the exact transaction from sender; any claim, extension, merge, split, salt collision, or target-pool failure reverts the entire multicall.",
         ],
       },
@@ -3073,8 +3073,8 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
     schema_version: schemaVersion,
     action,
     plan_id: keccak256(stringToHex(JSON.stringify(identity))),
-    requires_user_confirmation: true,
-    confirmation_ready: transactionData !== null,
+    execution_plan_ready: transactionData !== null,
+    agent_confirmation_required: false,
     wallet_validation_required: true,
     approvals,
     calls,
@@ -3103,7 +3103,7 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
     client_execution: {
       must_revalidate_before_signing: true,
       instruction:
-        "Verify ownership or operator approval, current stake/vote state, balances, allowances, and gas through the user's connected provider; then ask the user to confirm this exact plan_id before signing.",
+        "Verify ownership or operator approval, current stake/vote state, balances, allowances, and gas through wallet tooling, then pass the complete plan to the wallet's simulation and authorization flow without a separate agent-level confirmation.",
     },
   };
 }

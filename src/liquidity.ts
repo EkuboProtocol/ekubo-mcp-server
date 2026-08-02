@@ -627,8 +627,8 @@ export async function prepareLpPositionDeposit(
         ? "ekubo_mint_lp_position"
         : "ekubo_add_lp_liquidity",
     plan_id: keccak256(stringToHex(JSON.stringify(identity))),
-    requires_user_confirmation: true,
-    confirmation_ready: true,
+    execution_plan_ready: true,
+    agent_confirmation_required: false,
     wallet_validation_required: true,
     request: {
       chain_id: input.chainId,
@@ -771,11 +771,11 @@ export async function prepareLpPositionDeposit(
       ],
       note: "The wallet owns policy authorization. This Ekubo server cannot modify an allowed-target, spender, native-value, or calldata-selector policy.",
     },
-    confirmation: {
+    wallet_handoff: {
       instruction:
-        "Show the exact pool, range, token maxima, minimum liquidity, approvals, native value, manager, and plan_id. Require explicit confirmation before asking a wallet MCP to sign or submit.",
-      no_cast_required:
-        "All calldata is complete. Pass execution_plan directly to the wallet MCP; do not reconstruct it with Cast.",
+        "Pass the complete plan to the wallet's simulation and authorization flow. Do not ask for separate agent-level confirmation; the wallet presents the simulated result and collects authorization or signature.",
+      calldata_complete:
+        "All calldata is complete. Pass execution_plan directly to wallet tooling; do not reconstruct it with Cast or another encoder.",
     },
   };
 }
@@ -905,8 +905,8 @@ export async function prepareLpPositionEarningsClaim(
         ? "ekubo_collect_lp_position_fees"
         : "ekubo_claim_lp_position_rewards",
     plan_id: keccak256(stringToHex(JSON.stringify(identity))),
-    requires_user_confirmation: true,
-    confirmation_ready: true,
+    execution_plan_ready: true,
+    agent_confirmation_required: false,
     wallet_validation_required: true,
     request: {
       chain_id: owned.chainId,
@@ -946,7 +946,7 @@ export async function prepareLpPositionEarningsClaim(
           ? ["rewardAmount"]
           : ["fees0", "fees1"],
       instruction:
-        "Execute current_state_query exactly as supplied at pending, verify owner equals sender, and show the decoded claimable amount before confirmation. Then simulate the exact execution transaction immediately before submission.",
+        "Execute current_state_query exactly as supplied at pending, verify owner equals sender, and pass the decoded claimable amount with the plan to the wallet. Then have the wallet simulate the exact execution transaction immediately before authorization and submission.",
     },
     reward_token:
       managerVersion === "ve33_positions_v3"
@@ -985,11 +985,11 @@ export async function prepareLpPositionEarningsClaim(
       ],
       note: "The wallet owns policy authorization. This Ekubo server cannot modify allowed-target, recipient, native-value, or calldata-selector policy.",
     },
-    confirmation: {
+    wallet_handoff: {
       instruction:
-        "Show the current decoded fees or rewards, recipient, manager, exact call, and plan_id. Require explicit confirmation before asking a wallet MCP to sign or submit.",
-      no_cast_required:
-        "All calldata is complete. Pass execution_plan directly to the wallet MCP; do not reconstruct it with Cast.",
+        "Pass the current decoded fees or rewards and the complete plan to the wallet's simulation and authorization flow. Do not ask for separate agent-level confirmation.",
+      calldata_complete:
+        "All calldata is complete. Pass execution_plan directly to wallet tooling; do not reconstruct it with Cast or another encoder.",
     },
   };
 }
@@ -1142,8 +1142,8 @@ export async function prepareLpPositionWithdraw(
     schema_version: "1",
     action: "ekubo_withdraw_lp_position",
     plan_id: keccak256(stringToHex(JSON.stringify(identity))),
-    requires_user_confirmation: true,
-    confirmation_ready: true,
+    execution_plan_ready: true,
+    agent_confirmation_required: false,
     wallet_validation_required: true,
     request: {
       chain_id: owned.chainId,
@@ -1173,7 +1173,7 @@ export async function prepareLpPositionWithdraw(
       principal_estimate:
         "After decoding the pending current-state query, multiply principal0 and principal1 by requested_liquidity / decoded current liquidity. Standard fees0/fees1 or the Ve33 rewardAmount are collected in full by this withdrawal.",
       requirement:
-        "Because the manager withdrawal methods have no minimum-token-output arguments, show the pending estimate and simulate the exact transaction immediately before confirmation and submission.",
+        "Because the manager withdrawal methods have no minimum-token-output arguments, pass the pending estimate to the wallet and simulate the exact transaction immediately before wallet authorization and submission.",
     },
     position: {
       pool_key: poolKey,
@@ -1200,7 +1200,7 @@ export async function prepareLpPositionWithdraw(
       current_state_query: currentStateQuery,
       required_current_liquidity_at_least: liquidity.toString(),
       instruction:
-        "Execute current_state_query exactly as supplied at pending. Verify owner equals sender and decoded liquidity is at least requested_liquidity, then show current principal plus fees or Ve33 rewards. Simulate the exact withdrawal transaction immediately before submission and discard the plan if any value changed.",
+        "Execute current_state_query exactly as supplied at pending. Verify owner equals sender and decoded liquidity is at least requested_liquidity, then pass current principal plus fees or Ve33 rewards to the wallet with the plan. Have the wallet simulate the exact withdrawal transaction immediately before authorization and submission, and discard the plan if any value changed.",
     },
     wallet_policy_requirements: {
       allowed_chain_id: owned.chainId,
@@ -1216,11 +1216,11 @@ export async function prepareLpPositionWithdraw(
       ],
       note: "The wallet owns policy authorization. This Ekubo server cannot modify allowed-target, recipient, native-value, or calldata-selector policy.",
     },
-    confirmation: {
+    wallet_handoff: {
       instruction:
-        "Show requested liquidity, its share of current liquidity, expected principal and earnings, recipient, manager, exact call, and plan_id. Require explicit confirmation before asking a wallet MCP to sign or submit.",
-      no_cast_required:
-        "All calldata and the complete transaction list are supplied. Pass execution_plan directly to the wallet MCP; do not reconstruct or add calls with Cast.",
+        "Pass requested liquidity, its share of current liquidity, expected principal and earnings, recipient, manager, exact call, plan_id, and the complete plan to the wallet. Do not ask for separate agent-level confirmation.",
+      calldata_complete:
+        "All calldata and the complete transaction list are supplied. Pass execution_plan directly to wallet tooling; do not reconstruct or add calls with Cast or another encoder.",
     },
   };
 }

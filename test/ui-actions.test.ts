@@ -334,7 +334,8 @@ describe("EVM interface action preparation", () => {
 
     expect(recovery).toMatchObject({
       phase: "sign_claim_conditions",
-      confirmation_ready: false,
+      execution_plan_ready: false,
+      agent_confirmation_required: false,
     });
     expect(recovery.signature_request?.method).toBe("eth_signTypedData_v4");
     expect(reward.exact_transaction_list).toHaveLength(1);
@@ -445,7 +446,8 @@ describe("EVM interface action preparation", () => {
     expect(quote).toMatchObject({ phase: "quote" });
     expect(execute).toMatchObject({
       phase: "execute",
-      confirmation_ready: true,
+      execution_plan_ready: true,
+      agent_confirmation_required: false,
     });
     const executable = execute as typeof execute & {
       decoded_calls: { function: string }[];

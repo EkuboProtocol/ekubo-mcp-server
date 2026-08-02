@@ -316,8 +316,8 @@ export function prepareRecoveryFundClaim(input: {
       action: "ekubo_claim_recovery_fund",
       phase: "sign_claim_conditions",
       next_phase: "prepare_execution",
-      requires_user_confirmation: true,
-      confirmation_ready: false,
+      execution_plan_ready: false,
+      agent_confirmation_required: false,
       wallet_validation_required: true,
       request: {
         chain_id: input.chainId,
@@ -329,9 +329,11 @@ export function prepareRecoveryFundClaim(input: {
       },
       signature_request: recoverySignatureRequest(sender),
       resume:
-        "After the user explicitly approves and signs this exact typed data, call this tool again with signature. The MCP will then construct the complete multicall.",
-      confirmation: {
-        no_cast_required:
+        "Pass this exact typed-data request to the wallet's signing flow. After the wallet presents it and collects the signature, call this tool again with signature. The MCP will then construct the complete multicall.",
+      wallet_handoff: {
+        instruction:
+          "Do not ask for a separate agent-level approval. The wallet owns presentation and authorization of this typed-data signature.",
+        calldata_complete:
           "The MCP supplies both the exact typed-data request and, after signing, all transaction calldata.",
       },
     };

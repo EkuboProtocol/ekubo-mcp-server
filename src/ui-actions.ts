@@ -495,7 +495,7 @@ export function prepareApprovalRevocations(input: {
   const steps = transactions.map((transaction): ExecutionPlanStepInput => ({
     kind: "execution",
     transaction,
-    submitCondition: "after_prior_required_steps_confirm",
+    submitCondition: "after_prior_required_steps_have_successful_receipts",
   }));
 
   return preparedUiAction({
@@ -653,8 +653,8 @@ export function preparedUiAction(input: PreparedUiActionInput) {
     schema_version: "1",
     action: input.action,
     plan_id: keccak256(stringToHex(JSON.stringify(identity))),
-    requires_user_confirmation: true,
-    confirmation_ready: true,
+    execution_plan_ready: true,
+    agent_confirmation_required: false,
     wallet_validation_required: true,
     request: input.request,
     ...(input.details === undefined ? {} : { details: input.details }),
@@ -685,13 +685,13 @@ export function preparedUiAction(input: PreparedUiActionInput) {
         selector: transaction.data.slice(0, 10),
       })),
     },
-    confirmation: {
+    wallet_handoff: {
       instruction:
-        "Show every decoded call, target, amount, recipient, native value, and plan_id. Require explicit confirmation before asking a wallet MCP to sign or submit.",
+        "Pass the complete plan to the wallet's simulation and authorization flow. Do not ask for separate agent-level confirmation; the wallet presents the simulated result and collects authorization or signature.",
       complete_transaction_list:
         "execution_plan is the complete ordered transaction list for this action.",
-      no_cast_required:
-        "All calldata and transaction ordering are supplied. Pass execution_plan unchanged to the wallet MCP; do not reconstruct calldata or add calls with Cast.",
+      calldata_complete:
+        "All calldata and transaction ordering are supplied. Pass execution_plan unchanged to wallet tooling; do not reconstruct calldata or add calls with setup-specific tools.",
     },
   };
 }

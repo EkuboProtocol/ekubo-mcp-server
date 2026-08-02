@@ -120,7 +120,7 @@ describe("LP position preparation", () => {
     expect(
       result.execution_plan.ordered_steps.map((step) => step.kind),
     ).toEqual(["approval", "execution", "allowance_cleanup"]);
-    expect(result.confirmation.no_cast_required).toContain("wallet MCP");
+    expect(result.wallet_handoff.calldata_complete).toContain("wallet tooling");
   });
 
   it("rejects zero-slippage-floor patterns and mismatched modes", async () => {
@@ -216,7 +216,7 @@ describe("LP position preparation", () => {
     ]);
     expect(result.execution_plan.ordered_steps).toHaveLength(1);
     expect(result.execution_plan.ordered_steps[0]?.kind).toBe("execution");
-    expect(result.confirmation.no_cast_required).toContain("wallet MCP");
+    expect(result.wallet_handoff.calldata_complete).toContain("wallet tooling");
   });
 
   it("prepares Ve33 reward claiming without removing liquidity", async () => {
@@ -324,7 +324,7 @@ describe("LP position preparation", () => {
     expect(result.output_protection.contract_minimum_amounts_supported).toBe(
       false,
     );
-    expect(result.confirmation.no_cast_required).toContain(
+    expect(result.wallet_handoff.calldata_complete).toContain(
       "complete transaction list",
     );
   });

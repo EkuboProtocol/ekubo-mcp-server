@@ -155,10 +155,10 @@ must match `destination_chain_id`.
 The catalog explicitly contains read tools and unsigned preparation tools. All
 server operations are non-custodial and idempotent: the Worker has no wallet,
 key material, signing function, or broadcast function. Preparation tools return
-an exact unsigned transaction plan for the agent to present to the user. After
-confirmation, the user's wallet or signature tooling is responsible for
-approvals, current-state validation, signing, and submission through the
-user's connected provider.
+an exact unsigned transaction plan for the agent to pass to the user's wallet.
+The agent does not ask for a separate confirmation first: wallet tooling is
+responsible for current-state simulation, presenting the simulated result,
+collecting authorization or signature, signing, and submission.
 
 MCP tool results are not stored or replayed and `/mcp` responses use
 `Cache-Control: no-store`. No fixed request quota is guaranteed; clients must
@@ -191,9 +191,9 @@ unconfirmed quote output as though it were a settled wallet balance.
 For an existing position, call `ekubo_prepare_lp_position_earnings_claim` with
 the connected owner, chain, manager, and token ID from the owner-position list.
 It automatically selects standard fee collection or Ve33 reward claiming. Run
-its pending current-state query to verify ownership and show the current claim,
-then pass its execution plan unchanged to the wallet MCP. The prepared call does
-not remove liquidity, burn the NFT, or transfer it.
+its pending current-state query to verify ownership and include the current
+claim with its unchanged execution plan in the wallet MCP handoff. The prepared
+call does not remove liquidity, burn the NFT, or transfer it.
 
 For a partial or full withdrawal, execute the position's pending current-state
 query, choose the exact positive liquidity amount, and call
@@ -212,29 +212,29 @@ handoff. Its `ordered_steps` place approvals before the main execution and any
 exact-output allowance cleanup after it. Each step provides the same call as a
 decimal transaction object and as exact EIP-1193 `eth_call`,
 `eth_estimateGas`, and `eth_sendTransaction` requests. This makes the plan
-directly adaptable to either a local Cast account or a separately trusted
-EIP-1193-compatible wallet MCP without reconstructing calldata. The `plan_id`
+directly adaptable to a separately trusted wallet MCP or compatible wallet API
+without reconstructing calldata. The `plan_id`
 commits to the chain, sender, destination, calldata, and native value of every
 approval, execution, and cleanup transaction in the sequence.
 
-Bind the actual wallet address as `sender` before preparation. For a local
-wallet, use a keystore/account only when the user explicitly selected it; for a
-wallet MCP, use its connected account. In both cases verify the observed chain
-and account against `execution_plan.chain_id` and `sender`, revalidate and
-estimate every ordered step immediately before submission, and wait for a
-successful receipt before advancing. With Cast, use `--data` for `cast call`
-but pass the identical raw calldata as the positional signature argument to
-`cast estimate` and `cast send`. See the MCP resource
-`ekubo://docs/execution-plan` for the canonical adapter workflow.
+Bind the actual wallet address as `sender` before preparation. Prefer the
+connected account and call/simulate/submit abstractions exposed by wallet
+tooling. Verify the observed chain and account against
+`execution_plan.chain_id` and `sender`, revalidate and estimate every ordered
+step immediately before submission, and wait for a successful receipt before
+advancing. Use Cast only when the user selected it or no compatible wallet
+abstraction is available; the execution-plan resource retains its exact
+fallback syntax without making Cast the default.
 
-`confirmation_ready` means the quote, slippage bounds, and unsigned calldata
-are complete enough to present to the user. It does not mean the transaction
-was validated or authorized. ERC20 plans include the required unsigned approval
+`execution_plan_ready` means the quote, bounds, and unsigned calldata are
+complete enough to hand to the wallet. `agent_confirmation_required` is false:
+the wallet presents its simulated result and owns authorization. ERC20 plans
+include the required unsigned approval
 transaction(s) in addition to the unsigned swap or bridge transaction.
 Exact-output Ekubo and 0x plans that create an allowance also include a
 post-execution allowance reset.
-The client should check current allowance before asking the user to sign any
-approval.
+The client should check current allowance before handing any still-required
+approval step to the wallet.
 `wallet_validation_required` remains true for every prepared plan.
 
 The boundary mirrors the Ekubo interface: the public services provide token

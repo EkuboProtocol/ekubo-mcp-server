@@ -72,7 +72,8 @@ export default {
               signs_transactions: false,
               submits_transactions: false,
               requires_wallet_validation: true,
-              requires_user_confirmation: true,
+              agent_confirmation_required: false,
+              wallet_authorization_on_simulated_result: true,
               ownership_and_nft_transfer_actions: "forbidden",
             },
             operational_semantics: {
@@ -246,15 +247,15 @@ Safe swap and bridge sequence:
 2. Convert the amount to base units using token decimals.
 3. Use ekubo_get_quote or ekubo_prepare_swap with exact input/output intent and destination_chain_id.
 4. Choose slippage before generating calldata.
-5. Only treat a plan as ready when confirmation_ready is true.
-6. Show the source, exact plan ID, chains, bounds, approvals, recipient, execution transaction, and any allowance reset.
-7. Validate balances, allowances, and the exact transaction through the user's connected wallet or provider, and require explicit confirmation.
-8. Use the user's wallet or signature tooling to sign and submit. Never send credentials to this server.
+5. Only treat a plan as executable when execution_plan_ready is true.
+6. Include the source, exact plan ID, chains, bounds, approvals, recipient, execution transaction, and any allowance reset in the wallet handoff.
+7. Pass the complete plan to the user's wallet tooling for balance, allowance, policy, and exact-transaction simulation. Do not ask for separate agent-level confirmation.
+8. Let the wallet present the simulated result, collect authorization or signature, and submit. Never send credentials to this server.
 
-Wallet handoff: every executable preparation includes execution_plan. Read ekubo://docs/execution-plan, bind sender before preparation, verify its chain_id and sender against the selected local Cast account or connected wallet MCP, and preserve ordered_steps. Pass the exact execution_plan to a separately trusted compatible wallet MCP. For Cast, use --data with cast call and pass the same raw data positionally to cast estimate and cast send. The plan_id commits to the chain, sender, destination, calldata, and native value of all approval, execution, and cleanup calls.
+Wallet handoff: every executable preparation includes execution_plan. Read ekubo://docs/execution-plan, bind sender before preparation, verify its chain_id and sender against the connected wallet, and preserve ordered_steps. Prefer a compatible wallet MCP or other wallet abstraction and pass it the exact plan. Use Cast only when the user selected it or no compatible wallet abstraction is available. The plan_id commits to the chain, sender, destination, calldata, and native value of all approval, execution, and cleanup calls.
 
 ve(3,3): call ekubo_get_ve33_allocations before reorganizing votes, show the complete allocation and state_id, validate its read-only multicall, then pass that state_id and at most 25 target weight_bps values to ekubo_prepare_ve33_reallocation. Preserve the exact returned atomic order. Use the other dedicated tools for explicit extension, fee claims, and phased reinvestment. Read ekubo://docs/ve33-workflow before constructing a plan.
-Suggested STONX update: call ekubo_get_stonx_allocation_recommendation, require execution_ready, at most 25 targets, and exactly 10,000 target basis points, then use strategy=compact_max_lock. Show the survivor, burned source NFT IDs, max-lock extension, final one-NFT-per-pool count, and decoded calls before confirmation. The recommendation tool constructs no transaction.
+Suggested STONX update: call ekubo_get_stonx_allocation_recommendation, require execution_ready, at most 25 targets, and exactly 10,000 target basis points, then use strategy=compact_max_lock. Pass the survivor, burned source NFT IDs, max-lock extension, final one-NFT-per-pool count, decoded calls, and complete plan to the wallet. The recommendation tool constructs no transaction.
 Fee reinvestment: call ekubo_prepare_ve33_reinvest phase=claim without explicit claims, snapshot exact fee-token balances, use phase=swap for claimed deltas only, refresh allocations, then use phase=stake_all to increase every existing active allocation.
 New stake: use ekubo_prepare_ve33_stake. Max duration is the default when no duration is supplied. Existing voted-stake extension remains explicit and must use the compound fee-claim extension path; unvoted extension is supported directly.
 Forbidden: never construct transferOwnership, ownership handover, VeToken ERC721 approval/transfer, or burn calldata. LP position transfer is supported only through ekubo_prepare_lp_position_transfer.

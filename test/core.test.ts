@@ -116,7 +116,7 @@ describe("MCP service core", () => {
     expect(requested).toBe(`https://quoter.test/1/-100/${token0}/${token1}`);
   });
 
-  it("returns confirmation-gated calldata for wallet-side validation", async () => {
+  it("returns wallet-owned authorization calldata for wallet-side validation", async () => {
     const requested: string[] = [];
     const fetcher = async (input: RequestInfo | URL) => {
       const url = input.toString();
@@ -142,8 +142,8 @@ describe("MCP service core", () => {
       fetcher as typeof fetch,
     );
 
-    expect(result.requires_user_confirmation).toBe(true);
-    expect(result.confirmation_ready).toBe(true);
+    expect(result.execution_plan_ready).toBe(true);
+    expect(result.agent_confirmation_required).toBe(false);
     expect(result.wallet_validation_required).toBe(true);
     expect(result.client_execution.must_revalidate_before_signing).toBe(true);
     expect(result.transaction.data).toStartWith("0x");

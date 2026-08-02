@@ -49,8 +49,8 @@ describe("portable execution plan", () => {
       execution.ordered_steps.map((step) => step.submit_condition),
     ).toEqual([
       "if_required_by_current_allowance",
-      "after_prior_required_steps_confirm",
-      "after_execution_confirms_success_if_allowance_remains",
+      "after_prior_required_steps_have_successful_receipts",
+      "after_execution_has_successful_receipt_if_allowance_remains",
     ]);
     expect(execution.ordered_steps[1].eip1193.submit).toEqual({
       method: "eth_sendTransaction",
@@ -69,6 +69,13 @@ describe("portable execution plan", () => {
     expect(
       execution.execution_policy.wait_for_successful_receipt_before_next_step,
     ).toBe(true);
+    expect(execution.execution_policy.agent_confirmation_required).toBe(false);
+    expect(
+      execution.execution_policy
+        .wallet_collects_authorization_on_simulated_result,
+    ).toBe(true);
+    expect(execution.adapters.mcp_wallet).toContain("Preferred when available");
+    expect(execution.adapters.cast_fallback).toContain("only when");
     expect(execution.execution_policy.atomic_batch_required).toBe(true);
     expect(execution.execution_policy.atomic_batch_instruction).toContain(
       "one wallet-level atomic batch",
@@ -120,12 +127,14 @@ describe("portable execution plan", () => {
         {
           kind: "execution",
           transaction: first,
-          submitCondition: "after_prior_required_steps_confirm",
+          submitCondition:
+            "after_prior_required_steps_have_successful_receipts",
         },
         {
           kind: "execution",
           transaction: second,
-          submitCondition: "after_prior_required_steps_confirm",
+          submitCondition:
+            "after_prior_required_steps_have_successful_receipts",
         },
       ],
     });

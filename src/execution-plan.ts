@@ -26,8 +26,8 @@ export interface ExecutionPlanStepInput {
   transaction: PreparedTransaction;
   submitCondition:
     | "if_required_by_current_allowance"
-    | "after_prior_required_steps_confirm"
-    | "after_execution_confirms_success_if_allowance_remains"
+    | "after_prior_required_steps_have_successful_receipts"
+    | "after_execution_has_successful_receipt_if_allowance_remains"
     | "after_required_signature_is_supplied";
 }
 
@@ -39,8 +39,9 @@ interface ExecutionPlanFromStepsInput {
 }
 
 /**
- * Produce one signer-neutral handoff that can be consumed by an EIP-1193 wallet
- * (including a wallet exposed through MCP) or translated directly to Cast.
+ * Produce one signer-neutral handoff that can be consumed by wallet tooling,
+ * including a wallet exposed through MCP. A direct Cast adapter remains an
+ * optional fallback when no higher-level wallet abstraction is available.
  * The Ekubo MCP server still never signs or submits any of these requests.
  */
 export function executionPlan({
@@ -63,13 +64,14 @@ export function executionPlan({
       {
         kind: "execution" as const,
         transaction,
-        submitCondition: "after_prior_required_steps_confirm" as const,
+        submitCondition:
+          "after_prior_required_steps_have_successful_receipts" as const,
       },
       ...postExecutionTransactions.map((prepared) => ({
         kind: "allowance_cleanup" as const,
         transaction: prepared,
         submitCondition:
-          "after_execution_confirms_success_if_allowance_remains" as const,
+          "after_execution_has_successful_receipt_if_allowance_remains" as const,
       })),
     ],
     atomicBatchRequired,
@@ -147,7 +149,9 @@ export function executionPlanFromSteps({
       revalidate_and_estimate_immediately_before_each_submission: true,
       wait_for_successful_receipt_before_next_step: true,
       do_not_submit_cleanup_before_execution_success: true,
-      require_explicit_user_confirmation_before_signing: true,
+      agent_confirmation_required: false,
+      wallet_must_simulate_before_authorization: true,
+      wallet_collects_authorization_on_simulated_result: true,
       ...(atomicBatchRequired
         ? {
             atomic_batch_instruction:
@@ -157,9 +161,9 @@ export function executionPlanFromSteps({
     },
     adapters: {
       mcp_wallet:
-        "Use each ordered step's EIP-1193 request with the separately trusted wallet MCP, after verifying that its connected chain and account exactly match chain_id and sender.",
-      local_cast:
-        "For cast call use transaction.data with --data. For cast estimate and cast send pass transaction.data as the positional SIG argument. Always pass --from for preflight and the exact transaction.value with --value; select the signer only at send time.",
+        "Preferred when available: pass this complete execution_plan to the separately trusted wallet MCP's simulation and execution APIs after verifying that its connected chain and account exactly match chain_id and sender. Do not ask for a separate agent-level confirmation; the wallet presents the simulated result and collects authorization or signature.",
+      cast_fallback:
+        "Use only when the user selected Cast or no compatible wallet abstraction is available. For cast call use transaction.data with --data. For cast estimate and cast send pass transaction.data as the positional SIG argument. Always pass --from for preflight and the exact transaction.value with --value; select the signer only at send time.",
     },
   };
 }
