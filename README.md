@@ -8,7 +8,8 @@ vote and fee workflows. It also publishes provider-neutral STONX allocation
 recommendations resolved to initialized Robinhood Ve33 pools, enumerates
 indexed LP positions by owner, reproduces the interface's indexed/API/USD/RPC
 position-data pipeline, discovers pair-level position candidates, prepares
-unsigned LP deposits, and exposes exact pool state and liquidity data.
+unsigned LP deposits and earnings claims, and exposes exact pool state and
+liquidity data.
 
 The MCP server owns agent-facing transaction construction. `prod-api` remains
 a data API and the quoter remains a route-data service.
@@ -84,6 +85,10 @@ schemas after a Git-triggered deployment.
   liquidity with shared-SDK liquidity math, a nonzero slippage floor, exact
   approvals/refunds/cleanup, decoded intent, wallet-policy requirements, and a
   signer-neutral execution plan; no Cast encoding is required
+- `ekubo_prepare_lp_position_earnings_claim` — resolve an owned position and
+  prepare collection of standard LP fees or Ve33 LP rewards without removing
+  liquidity or touching the NFT, including pending ownership/earnings reads,
+  decoded calldata, wallet-policy requirements, and a wallet execution plan
 - `ekubo_get_pool` — resolve an exact chain/core/pool ID to a verified PoolKey,
   decoded config, and indexed state snapshot when available
 - `ekubo_get_pool_liquidity` — return tick-level net liquidity deltas for one
@@ -163,6 +168,13 @@ If one side must be acquired first, prepare and execute that swap as a separate
 wallet plan. Wait for its successful receipt, measure the actual token balance,
 reserve native gas, and only then size and prepare the LP deposit. Never use an
 unconfirmed quote output as though it were a settled wallet balance.
+
+For an existing position, call `ekubo_prepare_lp_position_earnings_claim` with
+the connected owner, chain, manager, and token ID from the owner-position list.
+It automatically selects standard fee collection or Ve33 reward claiming. Run
+its pending current-state query to verify ownership and show the current claim,
+then pass its execution plan unchanged to the wallet MCP. The prepared call does
+not remove liquidity, burn the NFT, or transfer it.
 
 Every chain input accepts a JSON integer, decimal string, or hexadecimal
 string. Responses use canonical decimal chain-ID strings. Pool fees are uint64

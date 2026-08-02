@@ -36,7 +36,10 @@ import {
   type PoolKeyInput,
 } from "./pools.js";
 import { getPosition } from "./positions.js";
-import { prepareLpPositionDeposit } from "./liquidity.js";
+import {
+  prepareLpPositionDeposit,
+  prepareLpPositionEarningsClaim,
+} from "./liquidity.js";
 import {
   getVe33Allocations,
   prepareAllVe33FeeClaims,
@@ -317,6 +320,22 @@ export const prepareLpPositionDepositSchema = z
       (input.mode === "add_liquidity" && input.token_id !== undefined),
     "mint_new must omit token_id; add_liquidity must provide token_id",
   );
+
+export const prepareLpPositionEarningsClaimSchema = z.object({
+  chain_id: chainId,
+  sender: address.describe(
+    "Current position owner and wallet that will submit the transaction",
+  ),
+  positions_address: address.describe(
+    "Exact Positions or Ve33Positions manager from the owned position",
+  ),
+  token_id: uintLikeString.describe(
+    "Position NFT token ID as an exact decimal or hexadecimal integer string",
+  ),
+  recipient: address
+    .optional()
+    .describe("Fee or reward recipient; defaults to sender"),
+});
 
 const claimSchema = z.object({
   ve_id: uintString,
@@ -743,6 +762,14 @@ export const publicToolCatalog = [
     description:
       "Prepare a new v3 position mint or add liquidity to an existing position in one first-class workflow. Resolves and verifies the indexed pool, selects Positions or Ve33Positions, computes expected and nonzero minimum liquidity from the indexed price and user slippage, encodes deposit/refund Multicall calldata, exact ERC20 approvals and cleanup, owner validation when applicable, wallet-policy requirements, and a signer-neutral execution_plan. No Cast encoding is required.",
     inputSchema: z.toJSONSchema(prepareLpPositionDepositSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_lp_position_earnings_claim",
+    title: "Prepare an LP fee or reward claim",
+    description:
+      "Prepare collection of all currently accrued fees from an owned standard position or all currently accrued rewards from an owned Ve33 position. Resolves the indexed PoolKey and bounds, automatically chooses v2 withdraw-with-zero-liquidity, v3 collectFees, or Ve33 claimRewards, preserves all liquidity and the NFT, supplies an atomic pending ownership/earnings read, exact decoded calldata and result fields, wallet-policy requirements, and a signer-neutral execution_plan. No Cast encoding is required.",
+    inputSchema: z.toJSONSchema(prepareLpPositionEarningsClaimSchema),
     _meta: toolCatalogMetadata,
   },
 ] as const;
@@ -1315,6 +1342,27 @@ export function createEkuboServer(env: Env) {
       ),
   );
 
+  server.registerTool(
+    publicToolCatalog[23].name,
+    {
+      title: publicToolCatalog[23].title,
+      description: publicToolCatalog[23].description,
+      inputSchema: prepareLpPositionEarningsClaimSchema,
+      annotations,
+      _meta: publicToolCatalog[23]._meta,
+    },
+    async (input) =>
+      toolResult(() =>
+        prepareLpPositionEarningsClaim(env, {
+          chainId: canonicalChainId(input.chain_id),
+          sender: input.sender,
+          positionsAddress: input.positions_address,
+          tokenId: input.token_id,
+          recipient: input.recipient,
+        }),
+      ),
+  );
+
   server.registerResource(
     "ekubo-agent-workflow",
     "ekubo://docs/agent-workflow",
@@ -1650,7 +1698,11 @@ For exact token metadata, call ekubo_get_token for one known chain/address pair 
 
 For LP discovery, use ekubo_get_positions_by_owner instead of attempting ERC721 enumeration. Its response joins canonical token metadata and USD prices and attaches an exact pending eth_call to each supported EVM position. For the interface-equivalent detail payload (metadata, history, campaigns, rewards, prices, and the atomic current-state query), call ekubo_get_position with the same owner, chain, manager, and token ID. Read ekubo://docs/lp-position-workflow. Never split TWAMM execution or Ve33 reward accumulation from the following position read: those calls must stay in the supplied single Multicall3 eth_call and must never be broadcast.
 
-For creating an LP position, call ekubo_get_position_pool_candidates with the pair. Do not browse prod-api, manually derive pool IDs, or inspect manager ABIs. Show the candidate's Core generation, exact pool key, extension, manager, TVL, depth, volume, and fees. If the wallet lacks one side, prepare and execute that funding swap separately, wait for its successful receipt, measure the actual new token balance, reserve native gas, and only then prepare the deposit from the measured available amounts; never treat a quote's expected output as a settled balance. After the user chooses an existing v3 pool, range, token maxima, and slippage, call ekubo_prepare_lp_position_deposit. It computes a nonzero minimum liquidity, approvals, native refund, allowance cleanup, decoded calls, wallet-policy requirements, and a complete execution_plan. Pass that plan to the wallet MCP for simulation and execution after explicit confirmation; never use Cast to reconstruct LP calldata. If wallet policy rejects the plan, report its exact target, spender, selector, or native-value finding and do not attempt to change wallet policy.
+For creating an LP position, call ekubo_get_position_pool_candidates with the pair. Do not browse prod-api, manually derive pool IDs, or inspect manager ABIs. Show the candidate's Core generation, exact pool key, extension, manager, TVL, depth, volume, and fees. If the wallet lacks one side, prepare and execute that funding swap separately, wait for its successful receipt, measure the actual new token balance, reserve native gas, and only then prepare the deposit from the measured available amounts; never treat a quote's expected output as a settled balance. After the user chooses an existing v3 pool, range, token maxima, and slippage, call ekubo_prepare_lp_position_deposit. It computes a nonzero minimum liquidity, approvals, native refund, allowance cleanup, decoded calls, wallet-policy requirements, and a complete execution_plan.
+
+For “collect my LP fees” or “claim my LP rewards”, call ekubo_prepare_lp_position_earnings_claim with the connected owner wallet, manager, and token ID from ekubo_get_positions_by_owner. It automatically uses v2 zero-liquidity fee withdrawal, v3 collectFees, or Ve33 claimRewards and never removes liquidity, burns, or transfers the NFT. Execute its current_state_query first, verify the pending owner and show the decoded fees or rewards, then pass its execution_plan to the wallet MCP for simulation and explicit confirmation. Never infer or manually encode the manager function.
+
+Pass LP execution plans to the wallet MCP for simulation and execution after explicit confirmation; never use Cast to reconstruct LP calldata. If wallet policy rejects a plan, report its exact target, spender, recipient, selector, or native-value finding and do not attempt to change wallet policy.
 
 Use ekubo_get_pool for one exact chain/core/pool ID and ekubo_get_pool_liquidity for tick-level depth. Use ekubo_derive_pool_id and ekubo_decode_pool_config for PoolKey construction and inspection. A pool fee is an exact uint64 Q64 integer: accept and return it only as a decimal or hexadecimal string, never a JSON number.
 
@@ -1716,6 +1768,12 @@ Once the user selects an existing v3 candidate, range, maximum token amounts, an
 If the wallet needs a preliminary swap to acquire one side, use \`ekubo_prepare_swap\` as a separate plan. Simulate it through the wallet MCP, obtain explicit confirmation, submit it, and wait for a successful receipt. Then read the actual resulting balance or balance delta, preserve enough native token for gas, and call the LP preparer with the measured maxima. Do not combine the deposit with an unconfirmed swap or size it from quoted output alone.
 
 Do not encode \`mintAndDeposit\`, \`deposit\`, \`multicall\`, or \`refundNativeToken\` with Cast. Give the returned execution plan unchanged to the user's wallet MCP for sequential simulation and, after explicit confirmation, submission. The wallet remains authoritative for allowed targets, approval spenders, native-value limits, known selectors, connected account, and chain. This server cannot loosen wallet policy.
+
+## Collect fees or claim rewards
+
+Call \`ekubo_prepare_lp_position_earnings_claim\` with the connected owner wallet, chain, positions manager, and token ID returned by \`ekubo_get_positions_by_owner\`. Standard v3 Positions use \`collectFees\`; legacy v2 Positions use the explicit \`withdraw\` overload with liquidity zero and \`withFees=true\`; Ve33Positions use \`claimRewards\`. The recipient defaults to the sender and may be supplied explicitly. None of these paths withdraws principal, burns the NFT, or transfers it.
+
+Before confirmation, execute the returned \`onchain_validation.current_state_query\` exactly as supplied at \`pending\`. Verify its decoded owner is the sender and show \`fees0/fees1\` for standard positions or \`rewardAmount\` for Ve33. Then give the returned \`execution_plan\` unchanged to the wallet MCP for exact simulation and submission after explicit confirmation. Do not reconstruct the calldata with Cast or infer a manager function from an ABI resource.
 `;
 
 const EXECUTION_PLAN_WORKFLOW = `# Ekubo execution plan handoff

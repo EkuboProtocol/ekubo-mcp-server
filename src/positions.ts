@@ -28,16 +28,9 @@ export async function getPosition(
   },
   fetcher: Fetcher = fetch,
 ) {
-  const owner = normalizeAddress(input.owner);
-  const chainId = canonicalChainId(input.chainId);
-  const positionsAddress = normalizeAddress(input.positionsAddress);
-  const tokenId = unsigned(input.tokenId, "token_id");
+  const owned = await getOwnedIndexedPosition(env, input, fetcher);
+  const { owner, chainId, positionsAddress, tokenId, indexedPosition } = owned;
   const base = normalizedBase(env.EKUBO_API_URL);
-  const indexedPosition = await findIndexedPosition(
-    base,
-    { owner, chainId, positionsAddress, tokenId },
-    fetcher,
-  );
 
   const metadataUrl = new URL(
     `/positions/${encodeURIComponent(chainId)}/${BigInt(positionsAddress)}/${tokenId}`,
@@ -141,6 +134,28 @@ export async function getPosition(
       onchain_block_parameter: "pending",
     },
   };
+}
+
+export async function getOwnedIndexedPosition(
+  env: Env,
+  input: {
+    owner: string;
+    chainId: string;
+    positionsAddress: string;
+    tokenId: string;
+  },
+  fetcher: Fetcher = fetch,
+) {
+  const owner = normalizeAddress(input.owner);
+  const chainId = canonicalChainId(input.chainId);
+  const positionsAddress = normalizeAddress(input.positionsAddress);
+  const tokenId = unsigned(input.tokenId, "token_id");
+  const indexedPosition = await findIndexedPosition(
+    normalizedBase(env.EKUBO_API_URL),
+    { owner, chainId, positionsAddress, tokenId },
+    fetcher,
+  );
+  return { owner, chainId, positionsAddress, tokenId, indexedPosition };
 }
 
 async function findIndexedPosition(

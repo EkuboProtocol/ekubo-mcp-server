@@ -24,6 +24,11 @@ import {
   transactionIdentity,
 } from "./execution-plan.js";
 import { decodePoolConfig, getPool } from "./pools.js";
+import {
+  buildPositionStateReadPlan,
+  positionTokenIdentifiers,
+} from "./position-state.js";
+import { getOwnedIndexedPosition } from "./positions.js";
 
 type Fetcher = typeof fetch;
 
@@ -39,6 +44,9 @@ const VE33_POSITIONS_ADDRESS = getAddress(
 );
 const VE33_EXTENSION_ADDRESS = getAddress(
   "0xD18685a514E59b06d59824e16Db07e73345d9953",
+);
+const ROBINHOOD_STONX_ADDRESS = getAddress(
+  "0x570C5aa79c798E7A418412cC8399ae5bcCe570C5",
 );
 
 const POOL_KEY_COMPONENTS = [
@@ -118,6 +126,82 @@ const OWNER_OF_ABI = [
     name: "ownerOf",
     inputs: [{ name: "id", type: "uint256", internalType: "uint256" }],
     outputs: [{ name: "owner", type: "address", internalType: "address" }],
+    stateMutability: "view",
+  },
+] as const satisfies Abi;
+
+const POSITIONS_V3_COLLECT_FEES_ABI = [
+  {
+    type: "function",
+    name: "collectFees",
+    inputs: [
+      { name: "id", type: "uint256", internalType: "uint256" },
+      {
+        name: "poolKey",
+        type: "tuple",
+        internalType: "struct PoolKey",
+        components: POOL_KEY_COMPONENTS,
+      },
+      { name: "tickLower", type: "int32", internalType: "int32" },
+      { name: "tickUpper", type: "int32", internalType: "int32" },
+      { name: "recipient", type: "address", internalType: "address" },
+    ],
+    outputs: [
+      { name: "amount0", type: "uint128", internalType: "uint128" },
+      { name: "amount1", type: "uint128", internalType: "uint128" },
+    ],
+    stateMutability: "payable",
+  },
+] as const satisfies Abi;
+
+const POSITIONS_V2_COLLECT_FEES_ABI = [
+  {
+    type: "function",
+    name: "withdraw",
+    inputs: [
+      { name: "id", type: "uint256", internalType: "uint256" },
+      {
+        name: "poolKey",
+        type: "tuple",
+        internalType: "struct PoolKey",
+        components: POOL_KEY_COMPONENTS,
+      },
+      {
+        name: "bounds",
+        type: "tuple",
+        internalType: "struct Bounds",
+        components: [
+          { name: "lower", type: "int32", internalType: "int32" },
+          { name: "upper", type: "int32", internalType: "int32" },
+        ],
+      },
+      { name: "liquidity", type: "uint128", internalType: "uint128" },
+      { name: "recipient", type: "address", internalType: "address" },
+      { name: "withFees", type: "bool", internalType: "bool" },
+    ],
+    outputs: POSITIONS_V3_COLLECT_FEES_ABI[0].outputs,
+    stateMutability: "payable",
+  },
+] as const satisfies Abi;
+
+const VE33_CLAIM_REWARDS_ABI = [
+  {
+    type: "function",
+    name: "claimRewards",
+    inputs: POSITIONS_V3_COLLECT_FEES_ABI[0].inputs,
+    outputs: [
+      { name: "amount", type: "uint256", internalType: "uint256" },
+    ],
+    stateMutability: "payable",
+  },
+] as const satisfies Abi;
+
+const STAKE_TOKEN_ABI = [
+  {
+    type: "function",
+    name: "stakeToken",
+    inputs: [],
+    outputs: [{ name: "", type: "address", internalType: "address" }],
     stateMutability: "view",
   },
 ] as const satisfies Abi;
@@ -451,7 +535,7 @@ export async function prepareLpPositionDeposit(
           positionsAddress,
         ]),
       ],
-      allowed_approval_spender: positionsAddress,
+      allowed_approval_spenders: [positionsAddress],
       native_value_in_plan: nativeValue.toString(),
       required_max_native_value_per_batch_at_least: nativeValue.toString(),
       calldata_selectors: [
@@ -492,6 +576,220 @@ export async function prepareLpPositionDeposit(
     confirmation: {
       instruction:
         "Show the exact pool, range, token maxima, minimum liquidity, approvals, native value, manager, and plan_id. Require explicit confirmation before asking a wallet MCP to sign or submit.",
+      no_cast_required:
+        "All calldata is complete. Pass execution_plan directly to the wallet MCP; do not reconstruct it with Cast.",
+    },
+  };
+}
+
+export async function prepareLpPositionEarningsClaim(
+  env: Env,
+  input: {
+    chainId: string;
+    sender: string;
+    positionsAddress: string;
+    tokenId: string;
+    recipient?: string;
+  },
+  fetcher: Fetcher = fetch,
+) {
+  const sender = normalizeAddress(input.sender);
+  const recipient = normalizeAddress(input.recipient ?? input.sender);
+  const owned = await getOwnedIndexedPosition(
+    env,
+    {
+      owner: sender,
+      chainId: input.chainId,
+      positionsAddress: input.positionsAddress,
+      tokenId: input.tokenId,
+    },
+    fetcher,
+  );
+  const currentStateQuery = buildPositionStateReadPlan(owned.indexedPosition);
+  if (!currentStateQuery.available) {
+    throw new ServiceError(
+      currentStateQuery.reason,
+      "First-class earnings claims require a supported EVM Positions manager",
+      currentStateQuery,
+    );
+  }
+
+  const { manager_version: managerVersion, pool_key: poolKey } =
+    currentStateQuery;
+  const bounds = currentStateQuery.bounds;
+  const tokenId = owned.tokenId;
+  let action: "collect_fees" | "claim_rewards";
+  let implementationFunction: "collectFees" | "withdraw" | "claimRewards";
+  let transactionData: Hex;
+  let decodedArguments: Record<string, unknown>;
+  let transactionResultFields: readonly { name: string; type: string }[];
+
+  if (managerVersion === "positions_v2") {
+    action = "collect_fees";
+    implementationFunction = "withdraw";
+    decodedArguments = {
+      token_id: tokenId.toString(),
+      pool_key: poolKey,
+      bounds,
+      liquidity: "0",
+      recipient,
+      with_fees: true,
+    };
+    transactionData = encodeFunctionData({
+      abi: POSITIONS_V2_COLLECT_FEES_ABI,
+      functionName: "withdraw",
+      args: [tokenId, poolKey, bounds, 0n, recipient, true],
+    });
+    transactionResultFields = POSITIONS_V2_COLLECT_FEES_ABI[0].outputs;
+  } else if (managerVersion === "ve33_positions_v3") {
+    action = "claim_rewards";
+    implementationFunction = "claimRewards";
+    decodedArguments = {
+      token_id: tokenId.toString(),
+      pool_key: poolKey,
+      tick_lower: bounds.lower,
+      tick_upper: bounds.upper,
+      recipient,
+    };
+    transactionData = encodeFunctionData({
+      abi: VE33_CLAIM_REWARDS_ABI,
+      functionName: "claimRewards",
+      args: [tokenId, poolKey, bounds.lower, bounds.upper, recipient],
+    });
+    transactionResultFields = VE33_CLAIM_REWARDS_ABI[0].outputs;
+  } else {
+    action = "collect_fees";
+    implementationFunction = "collectFees";
+    decodedArguments = {
+      token_id: tokenId.toString(),
+      pool_key: poolKey,
+      tick_lower: bounds.lower,
+      tick_upper: bounds.upper,
+      recipient,
+    };
+    transactionData = encodeFunctionData({
+      abi: POSITIONS_V3_COLLECT_FEES_ABI,
+      functionName: "collectFees",
+      args: [tokenId, poolKey, bounds.lower, bounds.upper, recipient],
+    });
+    transactionResultFields = POSITIONS_V3_COLLECT_FEES_ABI[0].outputs;
+  }
+
+  const transaction: PreparedTransaction = {
+    chain_id: owned.chainId,
+    to: owned.positionsAddress,
+    data: transactionData,
+    value: "0",
+  };
+  const tokenIdentifiers = [
+    ...positionTokenIdentifiers(owned.indexedPosition),
+    ...(managerVersion === "ve33_positions_v3" && owned.chainId === "4663"
+      ? [{ chainId: owned.chainId, address: ROBINHOOD_STONX_ADDRESS }]
+      : []),
+  ];
+  const tokens = await getTokens(env, { tokens: tokenIdentifiers }, fetcher);
+  const identity = {
+    action,
+    chain_id: owned.chainId,
+    sender,
+    recipient,
+    positions_address: owned.positionsAddress,
+    token_id: tokenId.toString(),
+    pool_key: poolKey,
+    bounds,
+    transaction: transactionIdentity(transaction),
+  };
+
+  return {
+    schema_version: "1",
+    action:
+      action === "collect_fees"
+        ? "ekubo_collect_lp_position_fees"
+        : "ekubo_claim_lp_position_rewards",
+    plan_id: keccak256(stringToHex(JSON.stringify(identity))),
+    requires_user_confirmation: true,
+    confirmation_ready: true,
+    wallet_validation_required: true,
+    request: {
+      chain_id: owned.chainId,
+      sender,
+      recipient,
+      positions_address: owned.positionsAddress,
+      token_id: tokenId.toString(),
+    },
+    claim: {
+      kind: action,
+      implementation_function: implementationFunction,
+      removes_liquidity: false,
+      burns_or_transfers_nft: false,
+      pool_key: poolKey,
+      bounds,
+    },
+    tokens,
+    decoded_calls: [
+      {
+        order: 1,
+        function: implementationFunction,
+        arguments: decodedArguments,
+        result_fields: transactionResultFields,
+      },
+    ],
+    transaction,
+    execution_plan: executionPlan({
+      chainId: owned.chainId,
+      sender,
+      transaction,
+    }),
+    onchain_validation: {
+      status: "not_executed",
+      current_state_query: currentStateQuery,
+      claimable_result_fields:
+        managerVersion === "ve33_positions_v3"
+          ? ["rewardAmount"]
+          : ["fees0", "fees1"],
+      instruction:
+        "Execute current_state_query exactly as supplied at pending, verify owner equals sender, and show the decoded claimable amount before confirmation. Then simulate the exact execution transaction immediately before submission.",
+    },
+    reward_token:
+      managerVersion === "ve33_positions_v3"
+        ? {
+            known_address:
+              owned.chainId === "4663" ? ROBINHOOD_STONX_ADDRESS : null,
+            rpc_request: {
+              jsonrpc: "2.0",
+              id: 1,
+              method: "eth_call",
+              params: [
+                {
+                  to: owned.positionsAddress,
+                  data: encodeFunctionData({
+                    abi: STAKE_TOKEN_ABI,
+                    functionName: "stakeToken",
+                  }),
+                },
+                "pending",
+              ],
+            },
+            decode_as: "address",
+          }
+        : null,
+    wallet_policy_requirements: {
+      allowed_chain_id: owned.chainId,
+      allowed_targets: [owned.positionsAddress],
+      allowed_transfer_recipients: [recipient],
+      native_value_in_plan: "0",
+      calldata_selectors: [
+        {
+          target: owned.positionsAddress,
+          function: implementationFunction,
+          selector: transactionData.slice(0, 10),
+        },
+      ],
+      note: "The wallet owns policy authorization. This Ekubo server cannot modify allowed-target, recipient, native-value, or calldata-selector policy.",
+    },
+    confirmation: {
+      instruction:
+        "Show the current decoded fees or rewards, recipient, manager, exact call, and plan_id. Require explicit confirmation before asking a wallet MCP to sign or submit.",
       no_cast_required:
         "All calldata is complete. Pass execution_plan directly to the wallet MCP; do not reconstruct it with Cast.",
     },
