@@ -19,6 +19,11 @@ import {
   type QuoteSource,
   ServiceError,
 } from "./core.js";
+import {
+  type PreparedTransaction,
+  transactionIdentity,
+  executionPlan,
+} from "./execution-plan.js";
 
 const VE_TOKEN_ABI = parseAbi([
   "function multicall(bytes[] data) payable returns (bytes[] results)",
@@ -571,6 +576,7 @@ export function prepareVe33Stake(intent: PrepareVe33StakeIntent) {
     chainId: intent.chainId,
     veToken,
     sender,
+    approvals,
     calls: [
       {
         type,
@@ -586,7 +592,6 @@ export function prepareVe33Stake(intent: PrepareVe33StakeIntent) {
       amount: amount.toString(),
       max_duration: intent.maxDuration,
       duration_seconds: intent.durationSeconds ?? null,
-      approvals,
       approval_scope: nativeStake
         ? null
         : {
@@ -1729,12 +1734,12 @@ export async function prepareVe33Reinvest(
       chainId: intent.chainId,
       veToken,
       sender: intent.sender,
+      approvals,
       calls,
       details: {
         current_state_id: portfolio.stateId,
         stake_token: stakeToken,
         total_amount: amount.toString(),
-        approvals,
         approval_scope: nativeStake
           ? null
           : {
@@ -1781,6 +1786,7 @@ export async function prepareVe33Reinvest(
     chainId: intent.chainId,
     veToken,
     sender: intent.sender,
+    approvals,
     calls: [
       {
         type: "increase_stake_amount",
@@ -1790,7 +1796,6 @@ export async function prepareVe33Reinvest(
       },
     ],
     details: {
-      approvals,
       approval_scope:
         BigInt(stakeToken) === 0n
           ? null
@@ -2628,6 +2633,7 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
   chainId,
   veToken,
   sender,
+  approvals = [],
   calls,
   details,
   value = 0n,
@@ -2637,6 +2643,7 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
   chainId: string;
   veToken: Address;
   sender: Address;
+  approvals?: PreparedTransaction[];
   calls: Ve33Call[];
   details: TDetails;
   value?: bigint;
@@ -2657,10 +2664,26 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
     action,
     chain_id: chainId,
     sender: getAddress(sender),
-    to: getAddress(veToken),
-    data: transactionData,
-    value: value.toString(),
+    approvals: approvals.map(transactionIdentity),
+    transaction:
+      transactionData === null
+        ? null
+        : transactionIdentity({
+            chain_id: chainId,
+            to: getAddress(veToken),
+            data: transactionData,
+            value: value.toString(),
+          }),
   };
+  const transaction =
+    transactionData === null
+      ? null
+      : {
+          chain_id: chainId,
+          to: getAddress(veToken),
+          data: transactionData,
+          value: value.toString(),
+        };
   return {
     schema_version: schemaVersion,
     action,
@@ -2668,16 +2691,18 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
     requires_user_confirmation: true,
     confirmation_ready: transactionData !== null,
     wallet_validation_required: true,
+    approvals,
     calls,
-    transaction:
-      transactionData === null
+    transaction,
+    execution_plan:
+      transaction === null
         ? null
-        : {
-            chain_id: chainId,
-            to: getAddress(veToken),
-            data: transactionData,
-            value: value.toString(),
-          },
+        : executionPlan({
+            chainId,
+            sender,
+            approvals,
+            transaction,
+          }),
     ...details,
     transaction_safety: {
       allowlisted_vetoken_functions: functionNames,

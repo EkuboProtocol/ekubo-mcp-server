@@ -246,6 +246,11 @@ describe("ve(3,3) call generation", () => {
       only_allowlisted_vetoken_functions: true,
       ownership_or_nft_transfer_calls: 0,
     });
+    expect(result.execution_plan?.ordered_steps.map((step) => step.kind)).toEqual([
+      "approval",
+      "execution",
+    ]);
+    expect(result.execution_plan?.sender).toBe(sender);
   });
 
   it("batches claims across multiple ve-tokens", () => {

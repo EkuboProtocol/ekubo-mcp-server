@@ -146,6 +146,20 @@ describe("MCP service core", () => {
     expect(result.wallet_validation_required).toBe(true);
     expect(result.client_execution.must_revalidate_before_signing).toBe(true);
     expect(result.transaction.data).toStartWith("0x");
+    expect(result.execution_plan).toMatchObject({
+      chain_id: "1",
+      caip2_chain_id: "eip155:1",
+      sender,
+      ordered_steps: [
+        {
+          kind: "execution",
+          transaction: { chain_id: "1", from: sender },
+          eip1193: {
+            submit: { method: "eth_sendTransaction" },
+          },
+        },
+      ],
+    });
     expect(result.plan_id).toMatch(/^0x[0-9a-f]{64}$/);
     expect(requested).toEqual([
       `https://quoter.test/1/1000/${token0}/${token1}`,
@@ -188,6 +202,11 @@ describe("MCP service core", () => {
     expect(result.approval?.transaction.chain_id).toBe("1");
     expect(result.approval?.transaction.to).toBe(token1);
     expect(result.approval?.transaction.data).toStartWith("0x095ea7b3");
+    expect(result.execution_plan.ordered_steps.map((step) => step.kind)).toEqual([
+      "approval",
+      "execution",
+      "allowance_cleanup",
+    ]);
     expect(result.client_execution.must_revalidate_before_signing).toBe(true);
   });
 });

@@ -107,6 +107,26 @@ transaction plan for the agent to present to the user. After confirmation, the
 user's wallet or signature tooling is responsible for approvals, current-state
 validation, signing, and submission through the user's connected provider.
 
+Every executable preparation also includes a signer-neutral `execution_plan`
+handoff. Its `ordered_steps` place approvals before the main execution and any
+exact-output allowance cleanup after it. Each step provides the same call as a
+decimal transaction object and as exact EIP-1193 `eth_call`,
+`eth_estimateGas`, and `eth_sendTransaction` requests. This makes the plan
+directly adaptable to either a local Cast account or a separately trusted
+EIP-1193-compatible wallet MCP without reconstructing calldata. The `plan_id`
+commits to the chain, sender, destination, calldata, and native value of every
+approval, execution, and cleanup transaction in the sequence.
+
+Bind the actual wallet address as `sender` before preparation. For a local
+wallet, use a keystore/account only when the user explicitly selected it; for a
+wallet MCP, use its connected account. In both cases verify the observed chain
+and account against `execution_plan.chain_id` and `sender`, revalidate and
+estimate every ordered step immediately before submission, and wait for a
+successful receipt before advancing. With Cast, use `--data` for `cast call`
+but pass the identical raw calldata as the positional signature argument to
+`cast estimate` and `cast send`. See the MCP resource
+`ekubo://docs/execution-plan` for the canonical adapter workflow.
+
 `confirmation_ready` means the quote, slippage bounds, and unsigned calldata
 are complete enough to present to the user. It does not mean the transaction
 was validated or authorized. ERC20 plans include the required unsigned approval

@@ -274,6 +274,10 @@ describe("Worker discovery", () => {
     expect(initializeResult.result.instructions).toContain(
       "Ownership and NFT transfer actions are outside",
     );
+    expect(initializeResult.result.instructions).toContain("execution_plan");
+    expect(initializeResult.result.instructions).toContain(
+      "plan_id commits to the chain",
+    );
     expect(initializeResult.result.instructions).not.toMatch(
       /dune|8187907|api\.dune/i,
     );
@@ -335,6 +339,9 @@ describe("Worker discovery", () => {
     );
     expect(resourceResult.result.resources.map((resource) => resource.uri)).toContain(
       "ekubo://docs/ve33-workflow",
+    );
+    expect(resourceResult.result.resources.map((resource) => resource.uri)).toContain(
+      "ekubo://docs/execution-plan",
     );
     expect(resourceResult.result.resources.map((resource) => resource.uri)).toContain(
       "ekubo://contracts/evm",
@@ -516,6 +523,10 @@ describe("Worker discovery", () => {
         structuredContent: {
           action: string;
           transaction: { chain_id: string; data: string };
+          execution_plan: {
+            chain_id: string;
+            ordered_steps: { kind: string }[];
+          };
         };
       };
     };
@@ -526,6 +537,10 @@ describe("Worker discovery", () => {
     expect(splitResult.result.structuredContent.transaction.data).toStartWith(
       "0x",
     );
+    expect(splitResult.result.structuredContent.execution_plan).toMatchObject({
+      chain_id: "4663",
+      ordered_steps: [{ kind: "execution" }],
+    });
 
     const mismatchedCaip = await worker.fetch(
       new Request("https://mcp.ekubo.org/mcp", {

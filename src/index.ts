@@ -66,6 +66,7 @@ export default {
             },
             quoter_contract_resource: "ekubo://docs/quoter-api",
             ve33_workflow_resource: "ekubo://docs/ve33-workflow",
+            execution_plan_resource: "ekubo://docs/execution-plan",
             contract_directory_resource: "ekubo://contracts/evm",
             safety: {
               signs_transactions: false,
@@ -202,6 +203,7 @@ OpenAPI: ${origin}/openapi.json
 Canonical data API OpenAPI: https://prod-api.ekubo.org/openapi.json
 Aggregated quote resource: ekubo://docs/quoter-api
 ve(3,3) workflow resource: ekubo://docs/ve33-workflow
+Execution plan resource: ekubo://docs/execution-plan
 EVM contract directory: ekubo://contracts/evm
 
 STONX allocation shortcut:
@@ -218,6 +220,8 @@ Safe swap and bridge sequence:
 6. Show the source, exact plan ID, chains, bounds, approvals, recipient, execution transaction, and any allowance reset.
 7. Validate balances, allowances, and the exact transaction through the user's connected wallet or provider, and require explicit confirmation.
 8. Use the user's wallet or signature tooling to sign and submit. Never send credentials to this server.
+
+Wallet handoff: every executable preparation includes execution_plan. Read ekubo://docs/execution-plan, bind sender before preparation, verify its chain_id and sender against the selected local Cast account or connected wallet MCP, and preserve ordered_steps. Pass the exact execution_plan to a separately trusted compatible wallet MCP. For Cast, use --data with cast call and pass the same raw data positionally to cast estimate and cast send. The plan_id commits to the chain, sender, destination, calldata, and native value of all approval, execution, and cleanup calls.
 
 ve(3,3): call ekubo_get_ve33_allocations before reorganizing votes, show the complete allocation and state_id, validate its read-only multicall, then pass that state_id and at most 25 target weight_bps values to ekubo_prepare_ve33_reallocation. Preserve the exact returned atomic order. Use the other dedicated tools for explicit extension, fee claims, and phased reinvestment. Read ekubo://docs/ve33-workflow before constructing a plan.
 Suggested STONX update: call ekubo_get_stonx_allocation_recommendation, require execution_ready, at most 25 targets, and exactly 10,000 target basis points, then use strategy=compact_max_lock. Show the survivor, burned source NFT IDs, max-lock extension, final one-NFT-per-pool count, and decoded calls before confirmation. The recommendation tool constructs no transaction.

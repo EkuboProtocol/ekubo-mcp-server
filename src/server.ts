@@ -461,7 +461,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_swap",
     title: "Prepare a swap or bridge",
     description:
-      "Fetch a firm Ekubo, 0x, or Across quote and generate unsigned approval plus execution calldata. The client uses the user's connected wallet or provider to validate, sign, and submit.",
+      "Fetch a firm Ekubo, 0x, or Across quote and generate unsigned approval plus execution calldata. Returns one ordered execution_plan for a connected wallet or provider, local Cast, or a separately trusted EIP-1193-compatible wallet MCP.",
     inputSchema: z.toJSONSchema(prepareSwapSchema),
     _meta: toolCatalogMetadata,
   },
@@ -988,6 +988,26 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerResource(
+    "ekubo-execution-plan",
+    "ekubo://docs/execution-plan",
+    {
+      title: "Ekubo execution plan handoff",
+      description:
+        "Signer-neutral prepared-plan execution through local Cast or a separately trusted EIP-1193-compatible wallet MCP",
+      mimeType: "text/markdown",
+    },
+    async (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "text/markdown",
+          text: EXECUTION_PLAN_WORKFLOW,
+        },
+      ],
+    }),
+  );
+
+  server.registerResource(
     "ekubo-api-openapi",
     "https://prod-api.ekubo.org/openapi.json",
     {
@@ -1209,6 +1229,8 @@ async function fetchDocumentation(url: string): Promise<string> {
 
 const SERVER_INSTRUCTIONS = `Use Ekubo preparation tools only to construct unsigned plans. Never sign or submit without showing the exact plan_id and receiving explicit user confirmation. Never construct or request transferOwnership, ownership handover, ERC721 transfer/approval, or burn calldata. Ownership and NFT transfer actions are outside this server's safe workflows.
 
+Prepared plans expose execution_plan: one signer-neutral, ordered transaction sequence with decimal transaction fields plus exact EIP-1193 eth_call, eth_estimateGas, and eth_sendTransaction requests. Read ekubo://docs/execution-plan. For a local wallet, translate those exact fields to Cast. For an MCP wallet, pass the execution_plan to a separately trusted compatible wallet server. In both modes, verify the connected chain and account exactly match execution_plan.chain_id and sender, revalidate each step immediately before submission, preserve order, wait for each receipt, and never send wallet credentials to this Ekubo server. The plan_id commits to the chain, sender, destination, calldata, and native value of every approval, execution, and cleanup transaction.
+
 Intent shortcut: for "my Ekubo STONX allocations", "STONX vote allocations", or equivalent requests, call ekubo_get_ve33_allocations with only the user's connected EVM wallet as owner. The production Ve33 deployment is the STONX voting system, and the tool selects Robinhood Chain 4663 plus its canonical VeToken when chain_id and ve_token are omitted. If the connected wallet address is unavailable, ask the user for it. Never infer the user's wallet from a machine environment, repository configuration, local keystore, or unrelated account.
 
 For exact token metadata, call ekubo_get_token for one known chain/address pair and ekubo_get_tokens for multiple known pairs. The batch tool uses one prod-api batch request, accepts tokens across chains, preserves input order and duplicates, and omits identifiers that are not in the canonical list. Use ekubo_search_tokens only when resolving a name, symbol, or address fragment.
@@ -1235,6 +1257,36 @@ const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 8. Require explicit user confirmation before signing.
 9. Ask the user's wallet or signature tooling to sign and submit. Never send credentials to this server.
 10. Re-quote and revalidate after any change, expiry, or stale block.
+`;
+
+const EXECUTION_PLAN_WORKFLOW = `# Ekubo execution plan handoff
+
+Every executable preparation result includes an execution_plan object. It is the canonical boundary between this read-only Ekubo MCP server and a signing wallet.
+
+## Bind the sender first
+
+Choose the actual signing account before calling a preparation tool and pass that exact address as sender. Use a connected wallet address for a wallet MCP. Use a local Cast account only when the user explicitly selected local-wallet execution and the account. Never infer "my wallet" from a local keystore or environment without that direction.
+
+After preparation, require execution_plan.chain_id and sender to match the wallet's observed chain and account. A mismatch invalidates the plan; do not rewrite the sender or silently switch networks.
+
+## Execute ordered_steps
+
+Each step contains the same unsigned call in two encodings:
+
+- transaction has decimal chain_id, value, and optional gas with exact from, to, and data fields. It is convenient for explicit field mapping and Cast.
+- eip1193 contains ready-to-forward eth_call, eth_estimateGas, and eth_sendTransaction requests with hexadecimal JSON-RPC quantities. Use these with a compatible wallet provider or separately trusted wallet MCP.
+
+Process steps sequentially. Check whether an approval is still required from current allowance; if submitted, wait for its successful receipt. Revalidate and estimate the execution immediately before signing it. Submit allowance_cleanup only after the main execution receipt succeeds. Stop on any rejection, revert, failed receipt, chain/account change, expired quote, or changed plan.
+
+## Local Cast adapter
+
+For each step, verify the RPC chain ID. Simulate with cast call TO --data DATA --from SENDER --value VALUE. Estimate the identical bytes with cast estimate TO DATA --from SENDER --value VALUE. After explicit confirmation, submit those same bytes with cast send TO DATA plus the user's selected --account, --keystore, or hardware-wallet option and --value VALUE. Recheck chain ID immediately before every send and independently fetch each receipt.
+
+Raw calldata is passed differently by Cast subcommands: call uses --data, while estimate and send use DATA as the positional signature argument. Do not reconstruct calldata from a displayed function description.
+
+## Wallet MCP adapter
+
+Treat the wallet MCP as a separate trust boundary from this public Ekubo server. Verify its connected chain and account, pass the exact execution_plan to its simulation/send tools, show the plan ID and material transfers/approvals to the user, then request explicit authorization before submission. Never provide a private key, mnemonic, or wallet credential to either MCP server.
 `;
 
 const QUOTER_API = `# Ekubo aggregated quote contract

@@ -13,6 +13,11 @@ import {
   type EvmQuoterQuoteType,
   prepareSwapFromQuote,
 } from "./yul-router.js";
+import {
+  type PreparedTransaction,
+  transactionIdentity,
+  executionPlan,
+} from "./execution-plan.js";
 
 export type Env = Cloudflare.Env & {
   ZERO_X_API_URL?: string;
@@ -413,6 +418,12 @@ export async function prepareSwap(
       ? [erc20Approval(intent.chainId, intent.tokenIn, approvalSpender, 0n)]
       : [];
 
+  const serializedTransaction = serializeTransaction(mainTransaction);
+  const serializedApprovals = approvals.map(serializeTransaction);
+  const serializedCleanupTransactions = cleanupTransactions.map(
+    serializeTransaction,
+  );
+
   const identity = {
     source: selected.source,
     chain_id: mainTransaction.chainId,
@@ -422,9 +433,11 @@ export async function prepareSwap(
     quote_expiry_timestamp: selected.quoteExpiryTimestamp,
     sender: getAddress(intent.sender),
     recipient,
-    to: mainTransaction.to,
-    data: mainTransaction.data,
-    value: mainTransaction.value.toString(),
+    approvals: serializedApprovals.map(transactionIdentity),
+    transaction: transactionIdentity(serializedTransaction),
+    post_execution_transactions: serializedCleanupTransactions.map(
+      transactionIdentity,
+    ),
   };
 
   return {
@@ -454,17 +467,9 @@ export async function prepareSwap(
       expected_fill_time_seconds: selected.expectedFillTime,
       raw: selected.raw,
     },
-    transaction: {
-      chain_id: mainTransaction.chainId,
-      to: mainTransaction.to,
-      data: mainTransaction.data,
-      value: mainTransaction.value.toString(),
-      ...(mainTransaction.gas === undefined
-        ? {}
-        : { gas: mainTransaction.gas.toString() }),
-    },
-    approvals: approvals.map(serializeTransaction),
-    post_execution_transactions: cleanupTransactions.map(serializeTransaction),
+    transaction: serializedTransaction,
+    approvals: serializedApprovals,
+    post_execution_transactions: serializedCleanupTransactions,
     approval:
       approvals.length === 1
         ? { transaction: serializeTransaction(approvals[0]) }
@@ -475,6 +480,13 @@ export async function prepareSwap(
       recipient,
       sender: getAddress(intent.sender),
     },
+    execution_plan: executionPlan({
+      chainId: intent.chainId,
+      sender: intent.sender,
+      approvals: serializedApprovals,
+      transaction: serializedTransaction,
+      postExecutionTransactions: serializedCleanupTransactions,
+    }),
     client_execution: {
       wallet: "Use the user's wallet or signature tooling; never send credentials to this MCP server",
       provider:
@@ -875,7 +887,9 @@ function erc20Approval(
   };
 }
 
-function serializeTransaction(transaction: UnsignedTransaction) {
+function serializeTransaction(
+  transaction: UnsignedTransaction,
+): PreparedTransaction {
   return {
     chain_id: transaction.chainId,
     to: transaction.to,
