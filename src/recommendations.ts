@@ -10,8 +10,14 @@ import { type Env, getVe33Pools, ServiceError } from "./core.js";
 
 const RECOMMENDATION_RESULT_URL =
   "https://api.dune.com/api/v1/query/8187907/results";
+const RECOMMENDATION_EXECUTE_URL =
+  "https://api.dune.com/api/v1/query/8187907/execute";
 const MAX_RECOMMENDATION_POOLS = 100;
 const MAX_EXECUTABLE_RECOMMENDATION_TARGETS = 25;
+const MAX_RECOMMENDATION_AGE_MS = 24 * 60 * 60 * 1_000;
+const REFRESH_MAX_WAIT_MS = 20_000;
+const REFRESH_POLL_INTERVAL_MS = 1_000;
+const PROVIDER_REQUEST_TIMEOUT_MS = 20_000;
 const BPS_TOTAL = 10_000;
 const PREFERRED_VE33_TICK_SPACING = 1_024;
 const UINT64_MAX = (1n << 64n) - 1n;
@@ -46,6 +52,14 @@ interface RecommendationRow {
 interface RecommendationSnapshot {
   snapshotAt: string;
   rows: RecommendationRow[];
+  refreshedOnRequest: boolean;
+}
+
+interface RecommendationRuntime {
+  now?: () => number;
+  sleep?: (milliseconds: number) => Promise<void>;
+  refreshMaxWaitMs?: number;
+  refreshPollIntervalMs?: number;
 }
 
 interface ResolvedPool {
@@ -69,9 +83,10 @@ export async function getStonxAllocationRecommendation(
   env: Env,
   intent: RecommendationIntent,
   fetcher: typeof fetch = fetch,
+  runtime: RecommendationRuntime = {},
 ) {
   const [snapshot, poolCatalog] = await Promise.all([
-    fetchRecommendationSnapshot(env, fetcher),
+    fetchRecommendationSnapshot(env, fetcher, runtime),
     getVe33Pools(
       env,
       { chainId: intent.chainId, ve33: getAddress(intent.ve33) },
@@ -150,6 +165,8 @@ export async function getStonxAllocationRecommendation(
     schema_version: "1",
     recommendation_id: recommendationId,
     snapshot_at: snapshot.snapshotAt,
+    snapshot_refreshed_on_request: snapshot.refreshedOnRequest,
+    snapshot_max_age_seconds: MAX_RECOMMENDATION_AGE_MS / 1_000,
     chain_id: intent.chainId,
     ve_token: getAddress(intent.veToken),
     ve33: getAddress(intent.ve33),
@@ -245,6 +262,7 @@ export async function getStonxAllocationRecommendation(
 async function fetchRecommendationSnapshot(
   env: Env,
   fetcher: typeof fetch,
+  runtime: RecommendationRuntime,
 ): Promise<RecommendationSnapshot> {
   if (!env.DUNE_API_KEY) {
     throw new ServiceError(
@@ -254,27 +272,38 @@ async function fetchRecommendationSnapshot(
   }
   const url = new URL(RECOMMENDATION_RESULT_URL);
   url.searchParams.set("limit", MAX_RECOMMENDATION_POOLS.toString());
-  let response: Response;
-  try {
-    response = await fetcher(url, {
-      headers: {
-        accept: "application/json",
-        "X-Dune-API-Key": env.DUNE_API_KEY,
-      },
-      signal: AbortSignal.timeout(20_000),
-    });
-  } catch {
-    throw recommendationUnavailable();
+  const payload = await fetchProviderJson(env, fetcher, url);
+  if (payload.state === "QUERY_STATE_COMPLETED") {
+    const snapshot = parseRecommendationSnapshot(payload, false);
+    if (isFresh(snapshot.snapshotAt, runtime)) return snapshot;
+  } else if (isActiveExecution(payload)) {
+    return waitForRefreshedSnapshot(
+      env,
+      fetcher,
+      executionId(payload),
+      runtime,
+    );
   }
-  if (!response.ok) throw recommendationUnavailable();
 
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw recommendationUnavailable();
-  }
-  if (!isRecord(payload) || payload.state !== "QUERY_STATE_COMPLETED") {
+  const execution = await fetchProviderJson(
+    env,
+    fetcher,
+    RECOMMENDATION_EXECUTE_URL,
+    { method: "POST" },
+  );
+  return waitForRefreshedSnapshot(
+    env,
+    fetcher,
+    executionId(execution),
+    runtime,
+  );
+}
+
+function parseRecommendationSnapshot(
+  payload: Record<string, unknown>,
+  refreshedOnRequest: boolean,
+): RecommendationSnapshot {
+  if (payload.state !== "QUERY_STATE_COMPLETED") {
     throw recommendationUnavailable();
   }
   const snapshotAt = payload.submitted_at;
@@ -315,7 +344,102 @@ async function fetchRecommendationSnapshot(
   if (pairKeys.size !== rows.length) {
     throw invalidRecommendation("Recommendation snapshot contains duplicate pairs");
   }
-  return { snapshotAt, rows };
+  return { snapshotAt, rows, refreshedOnRequest };
+}
+
+async function waitForRefreshedSnapshot(
+  env: Env,
+  fetcher: typeof fetch,
+  id: string,
+  runtime: RecommendationRuntime,
+): Promise<RecommendationSnapshot> {
+  const now = runtime.now ?? Date.now;
+  const sleep = runtime.sleep ?? delay;
+  const maxWaitMs = runtime.refreshMaxWaitMs ?? REFRESH_MAX_WAIT_MS;
+  const pollIntervalMs =
+    runtime.refreshPollIntervalMs ?? REFRESH_POLL_INTERVAL_MS;
+  const deadline = now() + maxWaitMs;
+  const url = new URL(
+    `/api/v1/execution/${encodeURIComponent(id)}/results`,
+    "https://api.dune.com",
+  );
+  url.searchParams.set("limit", MAX_RECOMMENDATION_POOLS.toString());
+
+  while (true) {
+    const payload = await fetchProviderJson(env, fetcher, url);
+    if (payload.state === "QUERY_STATE_COMPLETED") {
+      const snapshot = parseRecommendationSnapshot(payload, true);
+      if (!isFresh(snapshot.snapshotAt, runtime)) {
+        throw recommendationUnavailable();
+      }
+      return snapshot;
+    }
+    if (!isActiveExecution(payload) || now() >= deadline) {
+      throw recommendationUnavailable();
+    }
+    await sleep(Math.min(pollIntervalMs, Math.max(0, deadline - now())));
+  }
+}
+
+async function fetchProviderJson(
+  env: Env,
+  fetcher: typeof fetch,
+  url: string | URL,
+  init: RequestInit = {},
+): Promise<Record<string, unknown>> {
+  let response: Response;
+  try {
+    const headers = new Headers(init.headers);
+    headers.set("accept", "application/json");
+    headers.set("X-Dune-API-Key", env.DUNE_API_KEY);
+    response = await fetcher(url, {
+      ...init,
+      headers,
+      signal: AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS),
+    });
+  } catch {
+    throw recommendationUnavailable();
+  }
+  if (!response.ok) throw recommendationUnavailable();
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw recommendationUnavailable();
+  }
+  if (!isRecord(payload)) throw recommendationUnavailable();
+  return payload;
+}
+
+function isFresh(snapshotAt: string, runtime: RecommendationRuntime): boolean {
+  const submittedAt = Date.parse(snapshotAt);
+  if (!Number.isFinite(submittedAt)) return false;
+  return (runtime.now ?? Date.now)() - submittedAt <= MAX_RECOMMENDATION_AGE_MS;
+}
+
+function isActiveExecution(payload: Record<string, unknown>): boolean {
+  return (
+    payload.state === "QUERY_STATE_PENDING" ||
+    payload.state === "QUERY_STATE_EXECUTING"
+  );
+}
+
+function executionId(payload: Record<string, unknown>): string {
+  const value = payload.execution_id;
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 200 ||
+    !/^[0-9A-Za-z_-]+$/.test(value)
+  ) {
+    throw recommendationUnavailable();
+  }
+  return value;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function parseRecommendationRow(value: unknown, index: number): RecommendationRow {

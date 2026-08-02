@@ -62,6 +62,8 @@ describe("STONX allocation recommendations", () => {
     );
 
     expect(result.execution_ready).toBe(true);
+    expect(result.snapshot_refreshed_on_request).toBe(false);
+    expect(result.snapshot_max_age_seconds).toBe(86_400);
     expect(result.recommendation_count).toBe(3);
     expect(result.executable_target_count).toBe(2);
     expect(result.unavailable_weight_bps).toBe(1_000);
@@ -111,6 +113,145 @@ describe("STONX allocation recommendations", () => {
       "allocation_recommendations_unavailable",
     );
     expect(JSON.stringify(unavailable)).not.toMatch(/dune|8187907|api\.dune/i);
+  });
+
+  it("refreshes and returns a snapshot older than one day", async () => {
+    const initialNow = Date.parse("2026-08-03T12:00:00.000Z");
+    const refreshedAt = "2026-08-03T12:00:01.000Z";
+    const requests: { method: string; pathname: string }[] = [];
+    let clock = initialNow;
+    let executionPolls = 0;
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(input.toString());
+      const method = init?.method ?? "GET";
+      requests.push({ method, pathname: url.pathname });
+      if (url.hostname !== "api.dune.com") {
+        return poolResponse(pools);
+      }
+      expect(new Headers(init?.headers).get("X-Dune-API-Key")).toBe(
+        "private-test-key",
+      );
+      if (url.pathname === "/api/v1/query/8187907/results") {
+        return recommendationResponse("2026-08-02T11:59:59.999Z");
+      }
+      if (url.pathname === "/api/v1/query/8187907/execute") {
+        expect(method).toBe("POST");
+        return Response.json({
+          execution_id: "refresh_1",
+          state: "QUERY_STATE_PENDING",
+        });
+      }
+      if (url.pathname === "/api/v1/execution/refresh_1/results") {
+        executionPolls += 1;
+        return executionPolls === 1
+          ? Response.json({
+              execution_id: "refresh_1",
+              state: "QUERY_STATE_EXECUTING",
+            })
+          : recommendationResponse(refreshedAt);
+      }
+      throw new Error(`unexpected request ${method} ${url.pathname}`);
+    }) as typeof fetch;
+
+    const result = await getStonxAllocationRecommendation(
+      env,
+      { chainId, veToken, ve33 },
+      fetcher,
+      {
+        now: () => clock,
+        sleep: async (milliseconds) => {
+          clock += milliseconds;
+        },
+      },
+    );
+
+    expect(result.snapshot_at).toBe(refreshedAt);
+    expect(result.snapshot_refreshed_on_request).toBe(true);
+    expect(executionPolls).toBe(2);
+    expect(requests).toContainEqual({
+      method: "POST",
+      pathname: "/api/v1/query/8187907/execute",
+    });
+  });
+
+  it("reuses an already-running refresh instead of submitting another", async () => {
+    const now = Date.parse("2026-08-03T12:00:00.000Z");
+    let executeRequests = 0;
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(input.toString());
+      if (url.hostname !== "api.dune.com") return poolResponse(pools);
+      if (url.pathname === "/api/v1/query/8187907/results") {
+        return Response.json({
+          execution_id: "refresh_in_progress",
+          state: "QUERY_STATE_EXECUTING",
+        });
+      }
+      if (url.pathname === "/api/v1/query/8187907/execute") {
+        executeRequests += 1;
+        throw new Error("must not submit a second refresh");
+      }
+      if (
+        url.pathname ===
+        "/api/v1/execution/refresh_in_progress/results"
+      ) {
+        return recommendationResponse("2026-08-03T11:59:59.000Z");
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${url.pathname}`);
+    }) as typeof fetch;
+
+    const result = await getStonxAllocationRecommendation(
+      env,
+      { chainId, veToken, ve33 },
+      fetcher,
+      { now: () => now },
+    );
+
+    expect(result.snapshot_refreshed_on_request).toBe(true);
+    expect(executeRequests).toBe(0);
+  });
+
+  it("fails closed when a stale snapshot cannot refresh before the deadline", async () => {
+    const initialNow = Date.parse("2026-08-03T12:00:00.000Z");
+    let clock = initialNow;
+    let executeRequests = 0;
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(input.toString());
+      if (url.hostname !== "api.dune.com") return poolResponse(pools);
+      if (url.pathname === "/api/v1/query/8187907/results") {
+        return recommendationResponse("2026-08-01T12:00:00.000Z");
+      }
+      if (url.pathname === "/api/v1/query/8187907/execute") {
+        executeRequests += 1;
+        return Response.json({
+          execution_id: "refresh_timeout",
+          state: "QUERY_STATE_PENDING",
+        });
+      }
+      return Response.json({
+        execution_id: "refresh_timeout",
+        state: "QUERY_STATE_EXECUTING",
+      });
+    }) as typeof fetch;
+
+    const error = await getStonxAllocationRecommendation(
+      env,
+      { chainId, veToken, ve33 },
+      fetcher,
+      {
+        now: () => clock,
+        sleep: async (milliseconds) => {
+          clock += milliseconds;
+        },
+        refreshMaxWaitMs: 2_000,
+        refreshPollIntervalMs: 1_000,
+      },
+    ).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(ServiceError);
+    expect((error as ServiceError).code).toBe(
+      "allocation_recommendations_unavailable",
+    );
+    expect(executeRequests).toBe(1);
   });
 
   it("caps executable recommendations at 25 pools and redistributes cutoff weight", async () => {
@@ -211,6 +352,7 @@ function recommendationFetcher(
   status = 200,
   rows: Record<string, unknown>[] = recommendationRows,
   poolRows: Record<string, unknown>[] = pools,
+  submittedAt = new Date().toISOString(),
 ) {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(input.toString());
@@ -225,24 +367,35 @@ function recommendationFetcher(
         "private-test-key",
       );
       expect(url.searchParams.get("limit")).toBe("100");
-      return Response.json({
-        state: "QUERY_STATE_COMPLETED",
-        submitted_at: "2026-08-01T19:42:40.766983Z",
-        result: {
-          metadata: { total_row_count: rows.length },
-          rows,
-        },
-      });
+      return recommendationResponse(submittedAt, rows);
     }
-    return Response.json({
-      data: poolRows,
-      total_vote_weight: "1000",
-      pagination: {
-        page: 1,
-        pageSize: 200,
-        totalPages: 1,
-        totalItems: poolRows.length,
-      },
-    });
+    return poolResponse(poolRows);
   }) as typeof fetch;
+}
+
+function recommendationResponse(
+  submittedAt: string,
+  rows: Record<string, unknown>[] = recommendationRows,
+) {
+  return Response.json({
+    state: "QUERY_STATE_COMPLETED",
+    submitted_at: submittedAt,
+    result: {
+      metadata: { total_row_count: rows.length },
+      rows,
+    },
+  });
+}
+
+function poolResponse(poolRows: Record<string, unknown>[]) {
+  return Response.json({
+    data: poolRows,
+    total_vote_weight: "1000",
+    pagination: {
+      page: 1,
+      pageSize: 200,
+      totalPages: 1,
+      totalItems: poolRows.length,
+    },
+  });
 }

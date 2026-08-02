@@ -60,7 +60,9 @@ schemas after a Git-triggered deployment.
   another deployment such as testnet.
 - `ekubo_get_stonx_allocation_recommendation` — return the current
   provider-neutral recommendation plus an exact 10,000-bps executable target
-  list capped at 25 initialized canonical Ve33 pools
+  list capped at 25 initialized canonical Ve33 pools. Snapshots older than one
+  day trigger a refresh that is awaited for up to 20 seconds; stale, failed, or
+  timed-out refreshes fail closed instead of returning an executable plan
 - `ekubo_prepare_ve33_reallocation` — resolve target `pool_key_id` values and
   compile up to 25 basis-point targets into one fee-preserving atomic VeToken
   multicall. `preserve_existing_locks` apportions each expiry cohort across
@@ -160,7 +162,11 @@ exact `state_id`, the recommendation's `targets`, and
 initialized canonical pool are reported separately; their weight is
 redistributed along with weight below the 25-target priority cutoff without
 exceeding any selected row's allocation cap. The recommendation tool
-constructs no transaction.
+constructs no transaction. Each recommendation response reports `snapshot_at`,
+`snapshot_refreshed_on_request`, and `snapshot_max_age_seconds`. A completed
+snapshot older than 86,400 seconds triggers a provider refresh; the request
+waits for that execution and returns no plan if the execution fails or does not
+complete within 20 seconds.
 
 The first-phase claims are also atomic stale-state guards: if an indexed active
 vote now points at another pool or is no longer owned by the sender, its claim
