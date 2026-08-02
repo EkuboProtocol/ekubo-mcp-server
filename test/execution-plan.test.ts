@@ -1,9 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { executionPlan } from "../src/execution-plan.js";
+import {
+  executionPlan,
+  executionPlanFromSteps,
+} from "../src/execution-plan.js";
 
-const sender = "0x2222222222222222222222222222222222222222";
-const token = "0x1111111111111111111111111111111111111111";
-const router = "0x3333333333333333333333333333333333333333";
+const sender = "0x2222222222222222222222222222222222222222" as const;
+const token = "0x1111111111111111111111111111111111111111" as const;
+const router = "0x3333333333333333333333333333333333333333" as const;
 
 describe("portable execution plan", () => {
   it("orders approvals, execution, and cleanup with EIP-1193 requests", () => {
@@ -33,6 +36,7 @@ describe("portable execution plan", () => {
           value: "0",
         },
       ],
+      atomicBatchRequired: true,
     });
 
     expect(execution.caip2_chain_id).toBe("eip155:4663");
@@ -41,7 +45,9 @@ describe("portable execution plan", () => {
       "execution",
       "allowance_cleanup",
     ]);
-    expect(execution.ordered_steps.map((step) => step.submit_condition)).toEqual([
+    expect(
+      execution.ordered_steps.map((step) => step.submit_condition),
+    ).toEqual([
       "if_required_by_current_allowance",
       "after_prior_required_steps_confirm",
       "after_execution_confirms_success_if_allowance_remains",
@@ -63,6 +69,10 @@ describe("portable execution plan", () => {
     expect(
       execution.execution_policy.wait_for_successful_receipt_before_next_step,
     ).toBe(true);
+    expect(execution.execution_policy.atomic_batch_required).toBe(true);
+    expect(execution.execution_policy.atomic_batch_instruction).toContain(
+      "one wallet-level atomic batch",
+    );
   });
 
   it("rejects a transaction for a different chain", () => {
@@ -93,5 +103,41 @@ describe("portable execution plan", () => {
         },
       }),
     ).toThrow("exceeds uint256");
+  });
+
+  it("preserves multiple top-level UI transactions without wallet inference", () => {
+    const first = {
+      chain_id: "1",
+      to: token,
+      data: "0x095ea7b3" as const,
+      value: "0",
+    };
+    const second = { ...first, to: router };
+    const result = executionPlanFromSteps({
+      chainId: "1",
+      sender,
+      steps: [
+        {
+          kind: "execution",
+          transaction: first,
+          submitCondition: "after_prior_required_steps_confirm",
+        },
+        {
+          kind: "execution",
+          transaction: second,
+          submitCondition: "after_prior_required_steps_confirm",
+        },
+      ],
+    });
+
+    expect(result.ordered_steps.map((step) => step.transaction.to)).toEqual([
+      token,
+      router,
+    ]);
+    expect(result.execution_policy).toMatchObject({
+      atomic_batch_required: false,
+      sequential: true,
+      stop_on_failure: true,
+    });
   });
 });

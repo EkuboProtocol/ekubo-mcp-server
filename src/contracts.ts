@@ -1,7 +1,4 @@
-import {
-  YUL_ROUTER_ABI,
-  YUL_ROUTER_ADDRESS,
-} from "@ekubo/yul-router-sdk";
+import { YUL_ROUTER_ABI, YUL_ROUTER_ADDRESS } from "@ekubo/yul-router-sdk";
 import { type Address, getAddress } from "viem";
 import generated from "./contracts.generated.json";
 
@@ -57,8 +54,7 @@ const YUL_ROUTER_CHAIN_IDS = new Set([
 ]);
 
 export const CONTRACT_DIRECTORY_URI = "ekubo://contracts/evm";
-export const CONTRACT_CHAIN_TEMPLATE =
-  "ekubo://contracts/evm/{chain_id}";
+export const CONTRACT_CHAIN_TEMPLATE = "ekubo://contracts/evm/{chain_id}";
 export const CONTRACT_ADDRESS_TEMPLATE =
   "ekubo://contracts/evm/{chain_id}/{address}";
 
@@ -81,7 +77,7 @@ export function contractDirectory() {
     purpose:
       "Read-only contract context for actions that are not available as first-class Ekubo MCP tools.",
     usage:
-      "Prefer tools/list for supported actions. For an unsupported action, read the chain resource, then the exact chain/address resource for its ABI before constructing and simulating calldata.",
+      "Use tools/list for transaction preparation. Contract resources provide provenance and read-only ABI context; wallets and MCP clients must not construct transaction calldata or transaction lists from them.",
     provenance: contractProvenance(),
     templates: {
       chain: CONTRACT_CHAIN_TEMPLATE,
@@ -207,10 +203,11 @@ function contractProvenance() {
 }
 
 export function contractChainIds(): string[] {
-  return [...new Set([...Object.keys(catalog.chains), ...YUL_ROUTER_CHAIN_IDS])]
-    .sort((left, right) =>
-      BigInt(left) < BigInt(right) ? -1 : BigInt(left) > BigInt(right) ? 1 : 0,
-    );
+  return [
+    ...new Set([...Object.keys(catalog.chains), ...YUL_ROUTER_CHAIN_IDS]),
+  ].sort((left, right) =>
+    BigInt(left) < BigInt(right) ? -1 : BigInt(left) > BigInt(right) ? 1 : 0,
+  );
 }
 
 export function contractChainCompletions(value: string): string[] {

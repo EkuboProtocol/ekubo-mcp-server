@@ -113,9 +113,7 @@ describe("MCP service core", () => {
       fetcher as typeof fetch,
     );
 
-    expect(requested).toBe(
-      `https://quoter.test/1/-100/${token0}/${token1}`,
-    );
+    expect(requested).toBe(`https://quoter.test/1/-100/${token0}/${token1}`);
   });
 
   it("returns confirmation-gated calldata for wallet-side validation", async () => {
@@ -164,6 +162,9 @@ describe("MCP service core", () => {
       ],
     });
     expect(result.plan_id).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(result.execution_plan.execution_policy.atomic_batch_required).toBe(
+      false,
+    );
     expect(requested).toEqual([
       `https://quoter.test/1/1000/${token0}/${token1}`,
     ]);
@@ -205,11 +206,13 @@ describe("MCP service core", () => {
     expect(result.approval?.transaction.chain_id).toBe("1");
     expect(result.approval?.transaction.to).toBe(token1);
     expect(result.approval?.transaction.data).toStartWith("0x095ea7b3");
-    expect(result.execution_plan.ordered_steps.map((step) => step.kind)).toEqual([
-      "approval",
-      "execution",
-      "allowance_cleanup",
-    ]);
+    expect(
+      result.execution_plan.ordered_steps.map((step) => step.kind),
+    ).toEqual(["approval", "execution", "allowance_cleanup"]);
+    expect(result.execution_plan.execution_policy).toMatchObject({
+      atomic_batch_required: true,
+      atomic_batch_instruction: expect.stringContaining("atomic batch"),
+    });
     expect(result.client_execution.must_revalidate_before_signing).toBe(true);
   });
 });

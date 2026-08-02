@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Ekubo Protocol MCP Gateway",
-    "version": "0.14.0",
-    "description": "Discovery contract for the public, unauthenticated, non-custodial Ekubo MCP server, including LP pair-pool discovery and unsigned deposit, withdrawal, and earnings-claim plans, interface-equivalent position data and atomic eth_call plans, pool and owner-position reads, exact token metadata, provider-neutral STONX allocation recommendations, Ekubo/0x/Across quotes, and unsigned ve(3,3) call construction. MCP clients discover typed tool schemas through tools/list; GET /tools provides the same revisioned catalog to ordinary HTTP clients.",
+    "version": "0.15.0",
+    "description": "Discovery contract for the public, unauthenticated, non-custodial Ekubo MCP server. Every EVM transaction action exposed by the interface has a first-class unsigned preparation workflow that returns exact calldata and the complete ordered transaction list, including LP creation/initialization/management, price correction, TWAMM/DCA, auctions, rewards, maintenance, swaps, and ve(3,3). MCP clients discover typed tool schemas through tools/list; GET /tools provides the same revisioned catalog to ordinary HTTP clients.",
     "contact": {
       "url": "https://ekubo.org",
       "email": "eng@ekubo.org"

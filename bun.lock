@@ -5,7 +5,7 @@
     "": {
       "name": "@ekubo/mcp-worker",
       "dependencies": {
-        "@ekubo/sdk": "0.0.9-alpha.0",
+        "@ekubo/sdk": "0.0.10-alpha.0",
         "@ekubo/yul-router-sdk": "0.6.0",
         "@modelcontextprotocol/server": "2.0.0",
         "agents": "0.20.1",
@@ -93,7 +93,7 @@
 
     "@cspotcode/source-map-support": ["@cspotcode/source-map-support@0.8.1", "", { "dependencies": { "@jridgewell/trace-mapping": "0.3.9" } }, "sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw=="],
 
-    "@ekubo/sdk": ["@ekubo/sdk@0.0.9-alpha.0", "", {}, "sha512-CSNHjgS/PNRpRfbFl4Yv1R5Q/q/eAByUUdmnEjuugMP3SzXnmR/jU/9YGGjG6mhHtDgUmRupqx3CsVmp6psFEw=="],
+    "@ekubo/sdk": ["@ekubo/sdk@0.0.10-alpha.0", "", {}, "sha512-1koNXODon0kaQBX5CbYRyfvj5viEBmyxZFlOTWPlK79gItDoIEeJIUYM8IlTu3YTT8m2xb3XcvNXUCEXuCi0rw=="],
 
     "@ekubo/yul-router-sdk": ["@ekubo/yul-router-sdk@0.6.0", "", { "peerDependencies": { "viem": "^2.31.7" } }, "sha512-cDtCJ4eVkxYDu2PfEE0d6aUq4q6svfCAADiuIqX1NvjlWWvMmqzHrJ8pJnh9mhIc9lo42+gDvop8VAdwcT/jKA=="],
 

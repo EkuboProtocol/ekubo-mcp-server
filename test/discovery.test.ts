@@ -128,13 +128,33 @@ describe("Worker discovery", () => {
       "ekubo_prepare_lp_position_deposit",
       "ekubo_prepare_lp_position_earnings_claim",
       "ekubo_prepare_lp_position_withdraw",
+      "ekubo_prepare_wrap_unwrap",
+      "ekubo_prepare_lp_position_transfer",
+      "ekubo_prepare_fix_pool_price",
+      "ekubo_prepare_twamm_order",
+      "ekubo_prepare_twamm_order_collection",
+      "ekubo_prepare_twamm_order_stop",
+      "ekubo_prepare_twamm_virtual_orders",
+      "ekubo_prepare_auction_create",
+      "ekubo_prepare_auction_complete",
+      "ekubo_prepare_auction_creator_proceeds",
+      "ekubo_prepare_manual_pool_boost",
+      "ekubo_prepare_oracle_capacity_expansion",
+      "ekubo_prepare_approval_revocations",
+      "ekubo_prepare_old_gekubo_unwrap",
+      "ekubo_get_rewards_claims_by_owner",
+      "ekubo_prepare_rewards_claim",
+      "ekubo_prepare_recovery_fund_claim",
+      "ekubo_prepare_revenue_buybacks",
+      "ekubo_prepare_ve33_increase_stake",
+      "ekubo_prepare_ve33_merge",
+      "ekubo_prepare_ve33_withdraw",
     ]);
     expect(JSON.stringify(catalog)).not.toMatch(/dune|8187907|api\.dune/i);
     expect(
       catalog.tools.every(
         (tool) =>
-          tool._meta["com.ekubo/catalogRevision"] ===
-          MCP_TOOL_CATALOG_REVISION,
+          tool._meta["com.ekubo/catalogRevision"] === MCP_TOOL_CATALOG_REVISION,
       ),
     ).toBe(true);
     const batchTokens = catalog.tools.find(
@@ -204,9 +224,9 @@ describe("Worker discovery", () => {
       (tool) => tool.name === "ekubo_prepare_swap",
     );
     expect(prepareSwap?.description).toContain("connected wallet or provider");
-    expect(prepareVe33VoteSchema.shape.current_vote.safeParse(null).success).toBe(
-      false,
-    );
+    expect(
+      prepareVe33VoteSchema.shape.current_vote.safeParse(null).success,
+    ).toBe(false);
     expect(
       prepareVe33ExtendSchema.shape.current_pool_key.safeParse(null).success,
     ).toBe(false);
@@ -315,7 +335,7 @@ describe("Worker discovery", () => {
       "update my STONX allocations to the suggested allocations",
     );
     expect(initializeResult.result.instructions).toContain(
-      "Ownership and NFT transfer actions are outside",
+      "wallet must never construct calldata",
     );
     expect(initializeResult.result.instructions).toContain("execution_plan");
     expect(initializeResult.result.instructions).toContain(
@@ -359,6 +379,37 @@ describe("Worker discovery", () => {
       ),
     ).toBe(true);
 
+    const preparedWrap = await worker.fetch(
+      new Request("https://mcp.ekubo.org/mcp", {
+        method: "POST",
+        headers: { ...headers, "mcp-protocol-version": "2025-11-25" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 21,
+          method: "tools/call",
+          params: {
+            name: "ekubo_prepare_wrap_unwrap",
+            arguments: {
+              chain_id: 1,
+              sender: "0x1111111111111111111111111111111111111111",
+              direction: "wrap",
+              amount: "100",
+            },
+          },
+        }),
+      }),
+      env,
+      context,
+    );
+    expect(preparedWrap.status).toBe(200);
+    const preparedWrapResult = (await mcpJson(preparedWrap)) as {
+      result: { structuredContent: Record<string, unknown> };
+    };
+    expect(preparedWrapResult.result.structuredContent).toMatchObject({
+      action: "ekubo_wrap_native_token",
+      confirmation_ready: true,
+    });
+
     const resources = await worker.fetch(
       new Request("https://mcp.ekubo.org/mcp", {
         method: "POST",
@@ -377,21 +428,21 @@ describe("Worker discovery", () => {
     const resourceResult = (await mcpJson(resources)) as {
       result: { resources: { uri: string }[] };
     };
-    expect(resourceResult.result.resources.map((resource) => resource.uri)).toContain(
-      "ekubo://docs/quoter-api",
-    );
-    expect(resourceResult.result.resources.map((resource) => resource.uri)).toContain(
-      "ekubo://docs/ve33-workflow",
-    );
-    expect(resourceResult.result.resources.map((resource) => resource.uri)).toContain(
-      "ekubo://docs/execution-plan",
-    );
-    expect(resourceResult.result.resources.map((resource) => resource.uri)).toContain(
-      "ekubo://docs/lp-position-workflow",
-    );
-    expect(resourceResult.result.resources.map((resource) => resource.uri)).toContain(
-      "ekubo://contracts/evm",
-    );
+    expect(
+      resourceResult.result.resources.map((resource) => resource.uri),
+    ).toContain("ekubo://docs/quoter-api");
+    expect(
+      resourceResult.result.resources.map((resource) => resource.uri),
+    ).toContain("ekubo://docs/ve33-workflow");
+    expect(
+      resourceResult.result.resources.map((resource) => resource.uri),
+    ).toContain("ekubo://docs/execution-plan");
+    expect(
+      resourceResult.result.resources.map((resource) => resource.uri),
+    ).toContain("ekubo://docs/lp-position-workflow");
+    expect(
+      resourceResult.result.resources.map((resource) => resource.uri),
+    ).toContain("ekubo://contracts/evm");
 
     const templates = await worker.fetch(
       new Request("https://mcp.ekubo.org/mcp", {
@@ -487,9 +538,7 @@ describe("Worker discovery", () => {
       };
     };
     expect(veToken.name).toBe("VeToken");
-    expect(veToken.address).toBe(
-      "0x9d7008E169D040B6c0140eb92E7cA82B12643497",
-    );
+    expect(veToken.address).toBe("0x9d7008E169D040B6c0140eb92E7cA82B12643497");
     expect(veToken.abi).toContainEqual(
       expect.objectContaining({
         type: "function",
@@ -502,12 +551,8 @@ describe("Worker discovery", () => {
     expect(veToken.vetoken_safety.claim_current_pool_fees_before).toContain(
       "mergeStakes (claim the full source NFT)",
     );
-    expect(veToken.vetoken_safety.notes.join(" ")).toContain(
-      "Never call burn",
-    );
-    expect(
-      veToken.vetoken_safety.forbidden_ownership_and_nft_actions,
-    ).toEqual(
+    expect(veToken.vetoken_safety.notes.join(" ")).toContain("Never call burn");
+    expect(veToken.vetoken_safety.forbidden_ownership_and_nft_actions).toEqual(
       expect.arrayContaining([
         "transferOwnership",
         "transferFrom",

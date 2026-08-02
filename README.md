@@ -43,8 +43,8 @@ schemas after a Git-triggered deployment.
 - `ekubo_prepare_ve33_vote` — compile one active NFT's vote changes and
   deterministic splits into one multicall that always claims its current pool
   first; prefer the portfolio workflow below for complete state validation
-- `ekubo_prepare_ve33_extend` — require the active pool key and use only a
-  compound claim-and-extend call
+- `ekubo_prepare_ve33_extend` — extend an unvoted token directly, or provide
+  its active pool key to claim pending voter fees atomically before extension
 - `ekubo_prepare_ve33_stake` — create a new VeToken with an exact token
   approval; max duration is the default when no duration is supplied
 - `ekubo_prepare_ve33_split` — construct a split and predict the child token ID
@@ -82,7 +82,8 @@ schemas after a Git-triggered deployment.
   verified exact PoolKeys, v2/v3 Core generation, extension classification,
   token prices, pool statistics, and the correct position manager
 - `ekubo_prepare_lp_position_deposit` — prepare a new v3 position mint or add
-  liquidity with shared-SDK liquidity math, a nonzero slippage floor, exact
+  liquidity, including exact PoolKey derivation and `maybeInitializePool` for
+  a new pool, shared-SDK liquidity math, a nonzero slippage floor, exact
   approvals/refunds/cleanup, decoded intent, wallet-policy requirements, and a
   signer-neutral execution plan; no Cast encoding is required
 - `ekubo_prepare_lp_position_earnings_claim` — resolve an owned position and
@@ -100,6 +101,21 @@ schemas after a Git-triggered deployment.
 - `ekubo_decode_pool_config` — decode the extension, exact uint64 Q64 fee,
   v3 discriminator, and concentrated or stableswap parameters
 
+The remaining EVM interface transaction paths also have first-class tools:
+
+- wrap/unwrap and LP NFT transfer;
+- phased pool price correction, including exact reads, quote, approval, and
+  execution route;
+- TWAMM/DCA creation, collection, stop, and virtual-order execution;
+- auction creation, completion/graduation initialization, and creator proceeds;
+- manual boosts, oracle capacity, ERC-20 revocations, and old gEKUBO unwrap;
+- incentive rewards, Recovery Fund claims, and revenue buyback maintenance;
+- VeToken increase-stake, fee-safe merge, and expired withdrawal.
+
+Each `ekubo_prepare_*` result supplies the exact ordered transaction list. The
+wallet validates, signs, and submits it; it does not encode calls, select
+overloads, build multicalls, append approvals, or determine ordering.
+
 ## Resources
 
 - `ekubo://docs/lp-position-workflow` — interface-equivalent indexed/API/USD/
@@ -109,10 +125,10 @@ schemas after a Git-triggered deployment.
 - `ekubo://contracts/evm/{chain_id}/{address}` — the exact deployment metadata
   and ABI for one contract
 
-Contract resources are an escape hatch for actions that do not have a
-first-class MCP tool. Agents should check `tools/list` first. If an action is
-unsupported, they can read the chain map and then the address-specific ABI to
-construct a `cast` call. The client must still verify deployed code and
+Contract resources provide provenance and read-only ABI context. Transaction
+calldata and complete transaction lists come from first-class preparation
+tools, not from a wallet, agent, or ad hoc `cast` encoding. The client must
+still verify deployed code and
 permissions and simulate the exact calldata before requesting a signature.
 VeToken address resources include function-level warnings for operations that
 fully clear a vote, the fee-preserving compound alternatives, and the

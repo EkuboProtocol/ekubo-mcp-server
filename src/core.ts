@@ -127,8 +127,7 @@ interface AcrossTransaction {
 const ZERO_X_NATIVE_TOKEN = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 const ZERO_X_DEFAULT_URL = "https://api.0x.org";
 const ACROSS_DEFAULT_URL = "https://app.across.to/api";
-const ACROSS_PREVIEW_DEPOSITOR =
-  "0x0000000000000000000000000000000000000001";
+const ACROSS_PREVIEW_DEPOSITOR = "0x0000000000000000000000000000000000000001";
 const MAX_AUTO_EKUBO_PRICE_IMPACT = 0.002;
 
 export class ServiceError extends Error {
@@ -421,9 +420,8 @@ export async function prepareSwap(
 
   const serializedTransaction = serializeTransaction(mainTransaction);
   const serializedApprovals = approvals.map(serializeTransaction);
-  const serializedCleanupTransactions = cleanupTransactions.map(
-    serializeTransaction,
-  );
+  const serializedCleanupTransactions =
+    cleanupTransactions.map(serializeTransaction);
 
   const identity = {
     source: selected.source,
@@ -436,9 +434,8 @@ export async function prepareSwap(
     recipient,
     approvals: serializedApprovals.map(transactionIdentity),
     transaction: transactionIdentity(serializedTransaction),
-    post_execution_transactions: serializedCleanupTransactions.map(
-      transactionIdentity,
-    ),
+    post_execution_transactions:
+      serializedCleanupTransactions.map(transactionIdentity),
   };
 
   return {
@@ -487,9 +484,13 @@ export async function prepareSwap(
       approvals: serializedApprovals,
       transaction: serializedTransaction,
       postExecutionTransactions: serializedCleanupTransactions,
+      atomicBatchRequired:
+        serializedApprovals.length > 0 ||
+        serializedCleanupTransactions.length > 0,
     }),
     client_execution: {
-      wallet: "Use the user's wallet or signature tooling; never send credentials to this MCP server",
+      wallet:
+        "Use the user's wallet or signature tooling; never send credentials to this MCP server",
       provider:
         "Use the user's connected provider to validate the transaction, estimate gas, submit, and confirm receipts",
       must_revalidate_before_signing: true,
@@ -627,7 +628,10 @@ async function quoteEkubo(
     amount: intent.amount,
   });
   const quote = await fetchJson<EvmQuoterQuote>(url, fetcher);
-  const calculated = parseSignedAmount(quote.total_calculated, "total_calculated");
+  const calculated = parseSignedAmount(
+    quote.total_calculated,
+    "total_calculated",
+  );
   const requested = BigInt(intent.amount);
   const exactOutput = intent.quoteType === "exact_output";
   if ((exactOutput && calculated >= 0n) || (!exactOutput && calculated <= 0n)) {
@@ -722,12 +726,8 @@ async function quoteZeroX(
     minimumAmountOut:
       !exactOutput && quote.minBuyAmount ? BigInt(quote.minBuyAmount) : null,
     maximumAmountIn:
-      exactOutput && quote.maxSellAmount
-        ? BigInt(quote.maxSellAmount)
-        : null,
-    estimatedGas: quote.transaction?.gas
-      ? Number(quote.transaction.gas)
-      : null,
+      exactOutput && quote.maxSellAmount ? BigInt(quote.maxSellAmount) : null,
+    estimatedGas: quote.transaction?.gas ? Number(quote.transaction.gas) : null,
     priceImpact: null,
     transaction,
     approvalRequired: quote.issues?.allowance != null,
@@ -911,13 +911,13 @@ function toUnsignedTransaction(
     to: getAddress(transaction.to),
     data: transaction.data,
     value: BigInt(transaction.value ?? 0),
-    ...(transaction.gas === undefined
-      ? {}
-      : { gas: BigInt(transaction.gas) }),
+    ...(transaction.gas === undefined ? {} : { gas: BigInt(transaction.gas) }),
   };
 }
 
-function acrossTransaction(transaction: AcrossTransaction): UnsignedTransaction {
+function acrossTransaction(
+  transaction: AcrossTransaction,
+): UnsignedTransaction {
   return toUnsignedTransaction(transaction.chainId.toString(), transaction);
 }
 
@@ -1011,7 +1011,7 @@ async function fetchJson<T>(
         ? upstream.error
         : typeof upstream.message === "string"
           ? upstream.message
-        : `${response.status} ${response.statusText} from ${url}`,
+          : `${response.status} ${response.statusText} from ${url}`,
       body,
     );
   }

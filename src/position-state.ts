@@ -1,6 +1,8 @@
 import {
   encodeEvmConcentratedPoolConfig,
   encodeEvmStableswapPoolConfig,
+  encodeEvmV2ConcentratedPoolConfig,
+  encodeEvmV2StableswapPoolConfig,
 } from "@ekubo/sdk";
 import {
   type Abi,
@@ -26,9 +28,7 @@ const POSITIONS_V3_ADDRESS = getAddress(
 const VE33_POSITIONS_ADDRESS = getAddress(
   "0xdA38ac72CE7220c4dd7719d114ef94eDadb8f068",
 );
-const VE33_ADDRESS = getAddress(
-  "0xD18685a514E59b06d59824e16Db07e73345d9953",
-);
+const VE33_ADDRESS = getAddress("0xD18685a514E59b06d59824e16Db07e73345d9953");
 const TWAMM_V2_ADDRESS = getAddress(
   "0xd4279c050da1f5c5b2830558c7a08e57e12b54ec",
 );
@@ -213,7 +213,7 @@ export function buildPositionStateReadPlan(position: IndexedPosition) {
       positions_address: positionsAddress,
       token_id: BigInt(position.id).toString(),
       guidance:
-        "Use ekubo://contracts/evm/{chain_id}/{positions_address} to inspect the manager ABI and construct an eth_call for this deployment.",
+        "No first-class pending-state read is available for this manager deployment. The contract resource may be inspected for provenance, but clients and wallets must not invent calldata.",
     };
   }
 
@@ -222,7 +222,11 @@ export function buildPositionStateReadPlan(position: IndexedPosition) {
   const tokenId = BigInt(position.id);
   const calls: InnerCall[] = [];
 
-  const refresh = refreshCall(position.pool_key.extension, poolKey, managerVersion);
+  const refresh = refreshCall(
+    position.pool_key.extension,
+    poolKey,
+    managerVersion,
+  );
   if (refresh !== undefined) calls.push(refresh);
 
   if (managerVersion === "positions_v2") {
@@ -362,10 +366,12 @@ export function buildPositionStateReadPlan(position: IndexedPosition) {
 
 export function positionTokenIdentifiers(position: IndexedPosition) {
   const chainId = BigInt(position.chain_id).toString();
-  return [position.pool_key.token0, position.pool_key.token1].map((address) => ({
-    chainId,
-    address,
-  }));
+  return [position.pool_key.token0, position.pool_key.token1].map(
+    (address) => ({
+      chainId,
+      address,
+    }),
+  );
 }
 
 function refreshCall(
@@ -436,7 +442,10 @@ function encodePositionPoolKey(
   }
   const fee = unsigned(input.fee, "position pool_key.fee");
   if (fee > (1n << 64n) - 1n) {
-    throw new ServiceError("invalid_position", "position pool fee exceeds uint64");
+    throw new ServiceError(
+      "invalid_position",
+      "position pool fee exceeds uint64",
+    );
   }
   const extension = normalizeAddress(input.extension);
   const config =
@@ -451,7 +460,10 @@ function encodeV3PoolConfig(
   fee: bigint,
   extension: Address,
 ): Hex {
-  if (input.stableswap_params !== null && input.stableswap_params !== undefined) {
+  if (
+    input.stableswap_params !== null &&
+    input.stableswap_params !== undefined
+  ) {
     return encodeEvmStableswapPoolConfig({
       fee,
       centerTick: input.stableswap_params.center_tick,
@@ -481,43 +493,32 @@ function encodeV2PoolConfig(
   fee: bigint,
   extension: Address,
 ): Hex {
-  let low32: bigint;
-  if (input.stableswap_params !== null && input.stableswap_params !== undefined) {
-    const { amplification, center_tick: centerTick } = input.stableswap_params;
-    if (!Number.isInteger(amplification) || amplification < 0 || amplification > 127) {
-      throw new ServiceError(
-        "invalid_position",
-        "v2 stableswap amplification must be an integer from 0 to 127",
-      );
+  try {
+    if (
+      input.stableswap_params !== null &&
+      input.stableswap_params !== undefined
+    ) {
+      return encodeEvmV2StableswapPoolConfig({
+        fee,
+        centerTick: input.stableswap_params.center_tick,
+        amplification: input.stableswap_params.amplification,
+        extension,
+      });
     }
-    if (!Number.isInteger(centerTick) || centerTick % 16 !== 0) {
-      throw new ServiceError(
-        "invalid_position",
-        "v2 stableswap center tick must be a multiple of 16",
-      );
-    }
-    const encodedCenter = BigInt(centerTick / 16);
-    if (encodedCenter < -(1n << 23n) || encodedCenter > (1n << 23n) - 1n) {
-      throw new ServiceError(
-        "invalid_position",
-        "v2 stableswap center tick does not fit signed 24 bits",
-      );
-    }
-    low32 =
-      (BigInt(amplification) << 24n) |
-      (encodedCenter < 0n ? (1n << 24n) + encodedCenter : encodedCenter);
-  } else {
-    low32 = unsigned(
-      input.tick_spacing ?? "0",
-      "position pool_key.tick_spacing",
+    return encodeEvmV2ConcentratedPoolConfig({
+      fee,
+      tickSpacing: unsigned(
+        input.tick_spacing ?? "0",
+        "position pool_key.tick_spacing",
+      ),
+      extension,
+    });
+  } catch (error) {
+    throw new ServiceError(
+      "invalid_position",
+      error instanceof Error ? error.message : String(error),
     );
-    if (low32 > 0xffff_ffffn) {
-      throw new ServiceError("invalid_position", "v2 pool type config exceeds uint32");
-    }
   }
-  return numberToHex((BigInt(extension) << 96n) | (fee << 32n) | low32, {
-    size: 32,
-  });
 }
 
 function positionManagerVersion(address: Address): ManagerVersion | undefined {
@@ -542,8 +543,7 @@ function unsigned(value: string | number, label: string): bigint {
   if (
     (typeof value === "string" &&
       !/^(?:(?:0|[1-9][0-9]*)|0x[0-9a-fA-F]+)$/.test(value)) ||
-    (typeof value === "number" &&
-      (!Number.isSafeInteger(value) || value < 0))
+    (typeof value === "number" && (!Number.isSafeInteger(value) || value < 0))
   ) {
     throw new ServiceError(
       "invalid_position",

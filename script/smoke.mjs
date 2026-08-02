@@ -1,6 +1,6 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-const expectedServerVersion = "0.14.0";
-const expectedCatalogRevision = "2026-08-02.lp-withdrawal-plans";
+const expectedServerVersion = "0.15.0";
+const expectedCatalogRevision = "2026-08-02.evm-interface-transaction-parity";
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
 
 if (origin === undefined) {
@@ -50,6 +50,27 @@ const expectedTools = [
   "ekubo_prepare_lp_position_deposit",
   "ekubo_prepare_lp_position_earnings_claim",
   "ekubo_prepare_lp_position_withdraw",
+  "ekubo_prepare_wrap_unwrap",
+  "ekubo_prepare_lp_position_transfer",
+  "ekubo_prepare_fix_pool_price",
+  "ekubo_prepare_twamm_order",
+  "ekubo_prepare_twamm_order_collection",
+  "ekubo_prepare_twamm_order_stop",
+  "ekubo_prepare_twamm_virtual_orders",
+  "ekubo_prepare_auction_create",
+  "ekubo_prepare_auction_complete",
+  "ekubo_prepare_auction_creator_proceeds",
+  "ekubo_prepare_manual_pool_boost",
+  "ekubo_prepare_oracle_capacity_expansion",
+  "ekubo_prepare_approval_revocations",
+  "ekubo_prepare_old_gekubo_unwrap",
+  "ekubo_get_rewards_claims_by_owner",
+  "ekubo_prepare_rewards_claim",
+  "ekubo_prepare_recovery_fund_claim",
+  "ekubo_prepare_revenue_buybacks",
+  "ekubo_prepare_ve33_increase_stake",
+  "ekubo_prepare_ve33_merge",
+  "ekubo_prepare_ve33_withdraw",
 ];
 assert(
   catalog.server_version === expectedServerVersion,
@@ -78,7 +99,10 @@ const initialized = await mcpRequest(1, "initialize", {
   capabilities: {},
   clientInfo: { name: "ekubo-deployment-smoke", version: "1.0.0" },
 });
-assert(initialized.result?.capabilities?.tools, "MCP tools capability is missing");
+assert(
+  initialized.result?.capabilities?.tools,
+  "MCP tools capability is missing",
+);
 assert(
   initialized.result?.serverInfo?.version === expectedServerVersion,
   "MCP server version is stale",
@@ -162,7 +186,10 @@ const recommendationCall = await mcpRequest(6, "tools/call", {
   arguments: {},
 });
 const recommendation = recommendationCall.result?.structuredContent;
-assert(recommendation?.execution_ready === true, "recommendation is not executable");
+assert(
+  recommendation?.execution_ready === true,
+  "recommendation is not executable",
+);
 assert(
   recommendation?.target_total_weight_bps === 10_000,
   "recommendation targets do not total 10,000 bps",

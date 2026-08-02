@@ -46,18 +46,44 @@ import {
   prepareAllVe33FeeClaims,
   prepareVe33Claim,
   prepareVe33Extend,
+  prepareVe33IncreaseStake,
+  prepareVe33Merge,
   prepareVe33Reallocation,
   prepareVe33Reinvest,
   prepareVe33Split,
   prepareVe33Stake,
   prepareVe33Vote,
+  prepareVe33Withdraw,
   type Ve33PoolKeyInput,
 } from "./ve33.js";
-import { getStonxAllocationRecommendation } from "./recommendations.js";
 import {
-  MCP_SERVER_VERSION,
-  MCP_TOOL_CATALOG_REVISION,
-} from "./version.js";
+  prepareApprovalRevocations,
+  prepareExecuteTwammVirtualOrders,
+  prepareLpPositionTransfer,
+  prepareManualPoolBoost,
+  prepareOldGekuboUnwrap,
+  prepareOracleCapacityExpansion,
+  prepareWrapUnwrap,
+} from "./ui-actions.js";
+import { prepareFixPoolPrice } from "./fix-price.js";
+import {
+  prepareTwammOrder,
+  prepareTwammOrderCollection,
+  prepareTwammOrderStop,
+} from "./orders.js";
+import {
+  prepareAuctionComplete,
+  prepareAuctionCreate,
+  prepareAuctionCreatorProceeds,
+} from "./auctions.js";
+import {
+  getRewardsClaimsByOwner,
+  prepareRecoveryFundClaim,
+  prepareRevenueBuybacks,
+  prepareRewardsClaim,
+} from "./claims.js";
+import { getStonxAllocationRecommendation } from "./recommendations.js";
+import { MCP_SERVER_VERSION, MCP_TOOL_CATALOG_REVISION } from "./version.js";
 
 export const ROBINHOOD_STONX_CHAIN_ID = "4663";
 export const ROBINHOOD_STONX_VE_TOKEN = getAddress(
@@ -97,6 +123,9 @@ const tokenIdentifier = z
 const uintString = z
   .string()
   .regex(/^(?:0|[1-9][0-9]*)$/, "must be an unsigned decimal integer");
+const signedIntString = z
+  .string()
+  .regex(/^-?(?:0|[1-9][0-9]*)$/, "must be a signed decimal integer");
 const uintLikeString = z
   .string()
   .regex(
@@ -232,6 +261,12 @@ const exactPoolKeySchema = z
     "provide config, or fee, extension, and tick_spacing/stableswap_params",
   );
 
+const encodedPoolKeySchema = z.object({
+  token0: address,
+  token1: address,
+  config: bytes32,
+});
+
 export const getPositionsByOwnerSchema = z.object({
   owner: address,
   chain_id: chainId.optional(),
@@ -245,7 +280,9 @@ export const getPositionSchema = z.object({
     "Current indexed owner used to locate the exact position without ERC721 enumeration",
   ),
   chain_id: chainId,
-  positions_address: address.describe("Ekubo Positions or Ve33Positions manager"),
+  positions_address: address.describe(
+    "Ekubo Positions or Ve33Positions manager",
+  ),
   token_id: uintLikeString.describe(
     "Position NFT token ID as an exact decimal or hexadecimal integer string",
   ),
@@ -289,17 +326,39 @@ export const prepareLpPositionDepositSchema = z
     chain_id: chainId,
     sender: address,
     core_address: poolAddress.describe(
-      "Exact Core address from ekubo_get_position_pool_candidates",
+      "Exact v3 Core address from pool discovery or the interface configuration",
     ),
-    pool_id: uintLikeString.describe(
-      "Exact existing pool ID from ekubo_get_position_pool_candidates",
-    ),
+    pool_id: uintLikeString
+      .optional()
+      .describe("Exact pool ID; may be omitted when pool_key is supplied"),
+    pool_key: encodedPoolKeySchema
+      .optional()
+      .describe(
+        "Exact v3 PoolKey. Required for a new uninitialized pool because it is not yet recoverable from the index.",
+      ),
+    pool_initialized: z
+      .boolean()
+      .optional()
+      .describe(
+        "Set false only for a new pool that must be initialized in this transaction",
+      ),
     mode: z.enum(["mint_new", "add_liquidity"]).default("mint_new"),
-    token_id: uintLikeString.optional().describe(
-      "Required only for add_liquidity; omit when minting a new position NFT",
-    ),
+    token_id: uintLikeString
+      .optional()
+      .describe(
+        "Required only for add_liquidity; omit when minting a new position NFT",
+      ),
     tick_lower: z.number().int().min(-88_722_835).max(88_722_835),
     tick_upper: z.number().int().min(-88_722_835).max(88_722_835),
+    initial_tick: z
+      .number()
+      .int()
+      .min(-88_722_835)
+      .max(88_722_835)
+      .optional()
+      .describe(
+        "Required only when minting into an uninitialized pool; the MCP prepends maybeInitializePool at this exact tick",
+      ),
     max_amount0: uintString.describe(
       "Maximum token0 input in base units; use zero for a single-sided deposit",
     ),
@@ -320,6 +379,16 @@ export const prepareLpPositionDepositSchema = z
       (input.mode === "mint_new" && input.token_id === undefined) ||
       (input.mode === "add_liquidity" && input.token_id !== undefined),
     "mint_new must omit token_id; add_liquidity must provide token_id",
+  )
+  .refine(
+    (input) => input.pool_id !== undefined || input.pool_key !== undefined,
+    "provide pool_id or pool_key",
+  )
+  .refine(
+    (input) =>
+      input.pool_initialized !== false ||
+      (input.pool_key !== undefined && input.initial_tick !== undefined),
+    "an uninitialized pool requires pool_key and initial_tick",
   );
 
 export const prepareLpPositionEarningsClaimSchema = z.object({
@@ -355,6 +424,248 @@ export const prepareLpPositionWithdrawSchema = z.object({
   recipient: address
     .optional()
     .describe("Principal and earnings recipient; defaults to sender"),
+});
+
+export const prepareWrapUnwrapSchema = z.object({
+  chain_id: chainId,
+  sender: address,
+  direction: z.enum(["wrap", "unwrap"]),
+  amount,
+});
+
+export const prepareLpPositionTransferSchema = z.object({
+  chain_id: chainId,
+  sender: address,
+  positions_address: address,
+  token_id: uintLikeString,
+  recipient: address,
+});
+
+export const prepareFixPoolPriceSchema = z.object({
+  chain_id: chainId,
+  sender: address,
+  core_address: address,
+  pool_id: uintLikeString,
+  base_token: address,
+  target_price: z
+    .string()
+    .regex(
+      /^(?:(?:0|[1-9][0-9]*)(?:\.[0-9]+)?|\.[0-9]+)$/,
+      "must be a decimal price",
+    ),
+  pending_current_sqrt_ratio: uintString.optional(),
+  quote_result: z
+    .object({
+      specified_token: address,
+      calculated_token: address,
+      specified_amount: signedIntString,
+      calculated_amount: signedIntString,
+      block_number: uintLikeString.optional(),
+      block_hash: bytes32.optional(),
+    })
+    .optional(),
+});
+
+export const prepareTwammOrderSchema = z.object({
+  chain_id: chainId,
+  sender: address,
+  sell_token: address,
+  buy_token: address,
+  orders: z
+    .array(
+      z.object({
+        fee: uintString,
+        start_time: uintString,
+        end_time: uintString,
+        amount,
+      }),
+    )
+    .min(1)
+    .max(100),
+  pending_timestamp: uintString,
+  deadline_seconds: z.number().int().min(0).max(3_600).default(120),
+  salt: bytes32.optional(),
+});
+
+export const prepareTwammOrderCollectionSchema = z.object({
+  chain_id: chainId,
+  sender: address,
+  orders_address: address,
+  token_id: uintLikeString,
+  order_keys: z.array(encodedPoolKeySchema).min(1).max(100),
+});
+
+export const prepareTwammOrderStopSchema = z.object({
+  chain_id: chainId,
+  sender: address,
+  orders_address: address,
+  token_id: uintLikeString,
+  pending_timestamp: uintString,
+  orders: z
+    .array(
+      z.object({
+        order_key: encodedPoolKeySchema,
+        end_time: uintString,
+        sale_rate: uintString,
+      }),
+    )
+    .min(1)
+    .max(100),
+});
+
+export const prepareTwammVirtualOrdersSchema = z.object({
+  chain_id: chainId,
+  sender: address,
+  pool_key: encodedPoolKeySchema,
+});
+
+export const prepareAuctionCreateSchema = z.object({
+  chain_id: chainId,
+  sender: address,
+  sell_token: address,
+  buy_token: address,
+  sell_amount: amount,
+  creator_fee_q32: uintString,
+  min_boost_duration: z.number().int().min(0).max(0xff_ffff),
+  graduation_pool_fee_q64: uintString,
+  graduation_pool_tick_spacing: z.number().int().min(0).max(0xffff_ffff),
+  start_time: uintString,
+  auction_duration: z.number().int().min(0).max(0xffff_ffff),
+  salt: bytes32,
+});
+
+export const prepareAuctionCompleteSchema = z.object({
+  chain_id: chainId,
+  sender: address,
+  token_id: uintLikeString,
+  auction_key: encodedPoolKeySchema,
+  graduation_pool_initialized: z.boolean(),
+  launch_pool_tick: z
+    .number()
+    .int()
+    .min(-0x8000_0000)
+    .max(0x7fff_ffff)
+    .optional(),
+});
+
+export const prepareAuctionCreatorProceedsSchema = z.object({
+  chain_id: chainId,
+  sender: address,
+  token_id: uintLikeString,
+  auction_key: encodedPoolKeySchema,
+});
+
+export const prepareManualPoolBoostSchema = z.object({
+  chain_id: chainId,
+  sender: address,
+  pool_key: encodedPoolKeySchema,
+  start_time: uintString,
+  end_time: uintString,
+  amount0: uintString,
+  amount1: uintString,
+});
+
+export const prepareOracleCapacityExpansionSchema = z.object({
+  chain_id: chainId,
+  sender: address,
+  token: address,
+  min_capacity: z.number().int().min(0).max(0xffff_ffff),
+});
+
+export const prepareApprovalRevocationsSchema = z.object({
+  chain_id: chainId,
+  sender: address,
+  approvals: z
+    .array(z.object({ token: address, spender: address }))
+    .min(1)
+    .max(200),
+});
+
+export const prepareOldGekuboUnwrapSchema = z.object({
+  chain_id: chainId,
+  sender: address,
+  amount,
+});
+
+export const getRewardsClaimsByOwnerSchema = z.object({ owner: address });
+
+const rewardsClaimSchema = z.object({
+  drop_address: address,
+  key: z.object({ owner: address, token: address, root: bytes32 }),
+  claim: z.object({ index: uintString, account: address, amount }),
+  proof: z.array(bytes32),
+});
+
+export const prepareRewardsClaimSchema = z.object({
+  chain_id: chainId,
+  sender: address,
+  claims: z.array(rewardsClaimSchema).min(1).max(200),
+});
+
+export const prepareRecoveryFundClaimSchema = z.object({
+  chain_id: chainId,
+  sender: address,
+  claims: z
+    .array(z.object({ token: address, amount }))
+    .min(1)
+    .max(50),
+  has_signed_conditions: z.boolean(),
+  signature: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{130}$/, "must be a 65-byte signature")
+    .optional(),
+});
+
+export const prepareRevenueBuybacksSchema = z.object({
+  chain_id: chainId,
+  sender: address,
+  ended_order_collects: z
+    .array(
+      z.object({ sell_token: address, fee: uintString, end_time: uintString }),
+    )
+    .max(200),
+  protocol_fee_pairs: z
+    .array(z.object({ token0: address, token1: address }))
+    .max(200),
+  roll_tokens: z.array(address).max(200),
+});
+
+export const prepareVe33IncreaseStakeSchema = z.object({
+  chain_id: chainId,
+  ve_token: address,
+  sender: address,
+  stake_token: address,
+  ve_id: uintString,
+  amount,
+});
+
+export const prepareVe33MergeSchema = z.object({
+  chain_id: chainId,
+  ve_token: address,
+  sender: address,
+  destination_ve_id: uintString,
+  destination_pool_key: poolKeySchema.optional(),
+  sources: z
+    .array(
+      z.object({
+        ve_id: uintString,
+        current_pool_key: poolKeySchema.optional(),
+      }),
+    )
+    .min(1)
+    .max(99),
+  resulting_vote: z
+    .object({ pool_key: poolKeySchema, swap_fee: uintString })
+    .nullable()
+    .optional(),
+});
+
+export const prepareVe33WithdrawSchema = z.object({
+  chain_id: chainId,
+  ve_token: address,
+  sender: address,
+  ve_id: uintString,
+  current_pool_key: poolKeySchema.optional(),
 });
 
 const claimSchema = z.object({
@@ -402,9 +713,11 @@ export const prepareVe33ExtendSchema = z
     ve_id: uintString,
     duration_seconds: z.number().int().min(1).max(0xffff_ffff).optional(),
     max_duration: z.boolean().default(false),
-    current_pool_key: poolKeySchema.describe(
-      "Required active pool key; extension is available only through the atomic claim-and-extend methods",
-    ),
+    current_pool_key: poolKeySchema
+      .optional()
+      .describe(
+        "Active pool key when voted; the MCP claims fees atomically before extension. Omit only for an unvoted VeToken.",
+      ),
   })
   .refine(
     (input) => input.max_duration !== (input.duration_seconds !== undefined),
@@ -497,7 +810,9 @@ export const getVe33AllocationsSchema = z
 export const prepareVe33ReallocationSchema = z.object({
   chain_id: chainId,
   ve_token: address,
-  sender: address.describe("VeToken owner that will execute the atomic multicall"),
+  sender: address.describe(
+    "VeToken owner that will execute the atomic multicall",
+  ),
   current_state_id: bytes32.describe(
     "Exact state_id returned by ekubo_get_ve33_allocations; preparation fails if indexed state changed",
   ),
@@ -652,7 +967,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_ve33_extend",
     title: "Prepare a ve-token extension",
     description:
-      "Generate only a compound claim-and-extend VeToken call. An active current_pool_key is required so extension cannot discard pending voter fees.",
+      "Prepare a direct extension for an unvoted VeToken or an atomic claim-and-extend call when current_pool_key identifies an active vote, so pending voter fees are preserved.",
     inputSchema: z.toJSONSchema(prepareVe33ExtendSchema),
     _meta: toolCatalogMetadata,
   },
@@ -780,7 +1095,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_lp_position_deposit",
     title: "Prepare an LP position deposit",
     description:
-      "Prepare a new v3 position mint or add liquidity to an existing position in one first-class workflow. Resolves and verifies the indexed pool, selects Positions or Ve33Positions, computes expected and nonzero minimum liquidity from the indexed price and user slippage, encodes deposit/refund Multicall calldata, exact ERC20 approvals and cleanup, owner validation when applicable, wallet-policy requirements, and a signer-neutral execution_plan. No Cast encoding is required.",
+      "Prepare a new v3 position mint or add liquidity to an existing position in one first-class workflow. Resolves and verifies an indexed pool or derives an exact supplied PoolKey, initializes a new pool at initial_tick when requested, selects Positions or Ve33Positions, computes a nonzero minimum liquidity, and returns every approval, execution, refund, and cleanup transaction. No Cast encoding is required.",
     inputSchema: z.toJSONSchema(prepareLpPositionDepositSchema),
     _meta: toolCatalogMetadata,
   },
@@ -800,6 +1115,174 @@ export const publicToolCatalog = [
     inputSchema: z.toJSONSchema(prepareLpPositionWithdrawSchema),
     _meta: toolCatalogMetadata,
   },
+  {
+    name: "ekubo_prepare_wrap_unwrap",
+    title: "Prepare direct WETH wrap or unwrap",
+    description:
+      "Prepare the Ethereum interface's direct WETH deposit or withdrawal with exact calldata and native value.",
+    inputSchema: z.toJSONSchema(prepareWrapUnwrapSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_lp_position_transfer",
+    title: "Prepare an LP position transfer",
+    description:
+      "Prepare the exact safeTransferFrom transaction for an owned LP position and include pending ownership validation. The position, liquidity, and unclaimed earnings move together.",
+    inputSchema: z.toJSONSchema(prepareLpPositionTransferSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_fix_pool_price",
+    title: "Prepare a pool price correction",
+    description:
+      "Run the interface-equivalent phased fix-price workflow: provide exact pending pool-price read calldata, then exact router quote calldata, then approvals and target-price execution calldata. The wallet never constructs a route or transaction.",
+    inputSchema: z.toJSONSchema(prepareFixPoolPriceSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_twamm_order",
+    title: "Prepare a TWAMM or DCA order",
+    description:
+      "Prepare one or many current-interface TWAMM order splits, including deterministic minting, exact approval/native value, and the complete manager multicall.",
+    inputSchema: z.toJSONSchema(prepareTwammOrderSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_twamm_order_collection",
+    title: "Prepare TWAMM proceeds collection",
+    description:
+      "Prepare collection of every selected order key through the exact current or legacy Orders manager multicall, with pending owner validation.",
+    inputSchema: z.toJSONSchema(prepareTwammOrderCollectionSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_twamm_order_stop",
+    title: "Prepare stopping a TWAMM order",
+    description:
+      "Prepare the interface's complete stop flow: collect every selected order and decrease every still-active sale rate in one manager multicall.",
+    inputSchema: z.toJSONSchema(prepareTwammOrderStopSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_twamm_virtual_orders",
+    title: "Prepare TWAMM virtual-order execution",
+    description:
+      "Prepare the permissionless lockAndExecuteVirtualOrders maintenance call for a current or legacy TWAMM pool.",
+    inputSchema: z.toJSONSchema(prepareTwammVirtualOrdersSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_auction_create",
+    title: "Prepare auction creation",
+    description:
+      "Pack the exact interface auction config and prepare mint plus sellAmountByAuction, including approval or native value and deterministic token ID.",
+    inputSchema: z.toJSONSchema(prepareAuctionCreateSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_auction_complete",
+    title: "Prepare auction completion",
+    description:
+      "Prepare permissionless auction completion and, when necessary, graduation-pool initialization in the same manager multicall.",
+    inputSchema: z.toJSONSchema(prepareAuctionCompleteSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_auction_creator_proceeds",
+    title: "Prepare auction creator proceeds collection",
+    description:
+      "Prepare collection of creator proceeds for an auction NFT with pending owner validation.",
+    inputSchema: z.toJSONSchema(prepareAuctionCreatorProceedsSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_manual_pool_boost",
+    title: "Prepare a manual pool boost",
+    description:
+      "Compute the exact Q32 boost rates and prepare all token approvals, native value, and boost calldata used by the interface.",
+    inputSchema: z.toJSONSchema(prepareManualPoolBoostSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_oracle_capacity_expansion",
+    title: "Prepare oracle capacity expansion",
+    description:
+      "Prepare the interface's permissionless Oracle expandCapacity call for one ERC-20 token.",
+    inputSchema: z.toJSONSchema(prepareOracleCapacityExpansionSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_approval_revocations",
+    title: "Prepare ERC-20 approval revocations",
+    description:
+      "Prepare every approve(spender,0) as an exact ordered multi-transaction execution plan. The wallet must not discover or construct the transaction list.",
+    inputSchema: z.toJSONSchema(prepareApprovalRevocationsSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_old_gekubo_unwrap",
+    title: "Prepare old gEKUBO unwrapping",
+    description:
+      "Prepare the exact Ethereum HyperRouter byte route and approval used by the interface to unwrap old gEKUBO into EKUBO.",
+    inputSchema: z.toJSONSchema(prepareOldGekuboUnwrapSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_get_rewards_claims_by_owner",
+    title: "Get incentive rewards claims by owner",
+    description:
+      "Fetch canonical reward-claim records and supply the exact per-chain isClaimed/isAvailable eth_call list used by the interface before preparing claim transactions.",
+    inputSchema: z.toJSONSchema(getRewardsClaimsByOwnerSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_rewards_claim",
+    title: "Prepare incentive reward claims",
+    description:
+      "Prepare one Incentives claim or the interface's allow-failure Multicall3 aggregate for multiple claims.",
+    inputSchema: z.toJSONSchema(prepareRewardsClaimSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_recovery_fund_claim",
+    title: "Prepare a Recovery Fund claim",
+    description:
+      "Return the exact EIP-712 signature request when needed, then prepare agreement and all selected recovery claims in one multicall.",
+    inputSchema: z.toJSONSchema(prepareRecoveryFundClaimSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_revenue_buybacks",
+    title: "Prepare revenue buyback maintenance",
+    description:
+      "Prepare the exact selected ended-order collections, protocol-fee withdrawals, and token rolls in interface order within one multicall.",
+    inputSchema: z.toJSONSchema(prepareRevenueBuybacksSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_ve33_increase_stake",
+    title: "Prepare increasing a ve-token stake",
+    description:
+      "Prepare the exact approval/native value and increaseStakeAmount call while preserving the existing vote and fee accounting.",
+    inputSchema: z.toJSONSchema(prepareVe33IncreaseStakeSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_ve33_merge",
+    title: "Prepare merging ve-token stakes",
+    description:
+      "Prepare fee-safe merging of one or more source NFTs into a destination, including required claims and the selected resulting vote in one multicall.",
+    inputSchema: z.toJSONSchema(prepareVe33MergeSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_prepare_ve33_withdraw",
+    title: "Prepare expired ve-token withdrawal",
+    description:
+      "Prepare fee-safe withdrawal of an expired ve-token stake, claiming the active pool first when voted and returning pending owner/stake validation.",
+    inputSchema: z.toJSONSchema(prepareVe33WithdrawSchema),
+    _meta: toolCatalogMetadata,
+  },
 ] as const;
 
 export function createEkuboServer(env: Env) {
@@ -812,6 +1295,31 @@ export function createEkuboServer(env: Env) {
     },
     { instructions: SERVER_INSTRUCTIONS },
   );
+
+  const registerCatalogTool = <Schema extends z.ZodObject<z.ZodRawShape>>(
+    index: number,
+    inputSchema: Schema,
+    handler: (input: z.infer<Schema>) => unknown | Promise<unknown>,
+  ) => {
+    const entry = publicToolCatalog[index];
+    const registerTool = server.registerTool.bind(server) as unknown as (
+      name: string,
+      config: Record<string, unknown>,
+      callback: (input: Record<string, unknown>) => Promise<unknown>,
+    ) => void;
+    registerTool(
+      entry.name,
+      {
+        title: entry.title,
+        description: entry.description,
+        inputSchema,
+        annotations,
+        _meta: entry._meta,
+      },
+      async (input: Record<string, unknown>) =>
+        toolResult(() => handler(input as unknown as z.infer<Schema>)),
+    );
+  };
 
   server.registerTool(
     publicToolCatalog[0].name,
@@ -990,7 +1498,10 @@ export function createEkuboServer(env: Env) {
           veId: input.ve_id,
           durationSeconds: input.duration_seconds,
           maxDuration: input.max_duration,
-          currentPoolKey: mapPoolKey(input.current_pool_key),
+          currentPoolKey:
+            input.current_pool_key === undefined
+              ? undefined
+              : mapPoolKey(input.current_pool_key),
         }),
       ),
   );
@@ -1359,10 +1870,16 @@ export function createEkuboServer(env: Env) {
           sender: input.sender,
           coreAddress: input.core_address,
           poolId: input.pool_id,
+          poolKey:
+            input.pool_key === undefined
+              ? undefined
+              : mapEncodedPoolKey(input.pool_key),
+          poolInitialized: input.pool_initialized,
           mode: input.mode,
           tokenId: input.token_id,
           tickLower: input.tick_lower,
           tickUpper: input.tick_upper,
+          initialTick: input.initial_tick,
           maxAmount0: input.max_amount0,
           maxAmount1: input.max_amount1,
           slippageBps: input.slippage_bps,
@@ -1411,6 +1928,271 @@ export function createEkuboServer(env: Env) {
           recipient: input.recipient,
         }),
       ),
+  );
+
+  registerCatalogTool(25, prepareWrapUnwrapSchema, (input) =>
+    prepareWrapUnwrap({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      direction: input.direction,
+      amount: input.amount,
+    }),
+  );
+
+  registerCatalogTool(26, prepareLpPositionTransferSchema, (input) =>
+    prepareLpPositionTransfer(env, {
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      positionsAddress: input.positions_address,
+      tokenId: input.token_id,
+      recipient: input.recipient,
+    }),
+  );
+
+  registerCatalogTool(27, prepareFixPoolPriceSchema, (input) =>
+    prepareFixPoolPrice(env, {
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      coreAddress: input.core_address,
+      poolId: input.pool_id,
+      baseToken: input.base_token,
+      targetPrice: input.target_price,
+      pendingCurrentSqrtRatio: input.pending_current_sqrt_ratio,
+      quoteResult:
+        input.quote_result === undefined
+          ? undefined
+          : {
+              specifiedToken: input.quote_result.specified_token,
+              calculatedToken: input.quote_result.calculated_token,
+              specifiedAmount: input.quote_result.specified_amount,
+              calculatedAmount: input.quote_result.calculated_amount,
+              blockNumber: input.quote_result.block_number,
+              blockHash: input.quote_result.block_hash as Hex | undefined,
+            },
+    }),
+  );
+
+  registerCatalogTool(28, prepareTwammOrderSchema, (input) =>
+    prepareTwammOrder({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      sellToken: input.sell_token,
+      buyToken: input.buy_token,
+      orders: input.orders.map((order) => ({
+        fee: order.fee,
+        startTime: order.start_time,
+        endTime: order.end_time,
+        amount: order.amount,
+      })),
+      pendingTimestamp: input.pending_timestamp,
+      deadlineSeconds: input.deadline_seconds,
+      salt: input.salt as Hex | undefined,
+    }),
+  );
+
+  registerCatalogTool(29, prepareTwammOrderCollectionSchema, (input) =>
+    prepareTwammOrderCollection({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      ordersAddress: input.orders_address,
+      tokenId: input.token_id,
+      orderKeys: input.order_keys.map(mapEncodedPoolKey),
+    }),
+  );
+
+  registerCatalogTool(30, prepareTwammOrderStopSchema, (input) =>
+    prepareTwammOrderStop({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      ordersAddress: input.orders_address,
+      tokenId: input.token_id,
+      pendingTimestamp: input.pending_timestamp,
+      orders: input.orders.map((order) => ({
+        orderKey: mapEncodedPoolKey(order.order_key),
+        endTime: order.end_time,
+        saleRate: order.sale_rate,
+      })),
+    }),
+  );
+
+  registerCatalogTool(31, prepareTwammVirtualOrdersSchema, (input) =>
+    prepareExecuteTwammVirtualOrders({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      poolKey: mapEncodedPoolKey(input.pool_key),
+    }),
+  );
+
+  registerCatalogTool(32, prepareAuctionCreateSchema, (input) =>
+    prepareAuctionCreate({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      sellToken: input.sell_token,
+      buyToken: input.buy_token,
+      sellAmount: input.sell_amount,
+      creatorFeeQ32: input.creator_fee_q32,
+      minBoostDuration: input.min_boost_duration,
+      graduationPoolFeeQ64: input.graduation_pool_fee_q64,
+      graduationPoolTickSpacing: input.graduation_pool_tick_spacing,
+      startTime: input.start_time,
+      auctionDuration: input.auction_duration,
+      salt: input.salt as Hex,
+    }),
+  );
+
+  registerCatalogTool(33, prepareAuctionCompleteSchema, (input) =>
+    prepareAuctionComplete({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      tokenId: input.token_id,
+      auctionKey: mapEncodedPoolKey(input.auction_key),
+      graduationPoolInitialized: input.graduation_pool_initialized,
+      launchPoolTick: input.launch_pool_tick,
+    }),
+  );
+
+  registerCatalogTool(34, prepareAuctionCreatorProceedsSchema, (input) =>
+    prepareAuctionCreatorProceeds({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      tokenId: input.token_id,
+      auctionKey: mapEncodedPoolKey(input.auction_key),
+    }),
+  );
+
+  registerCatalogTool(35, prepareManualPoolBoostSchema, (input) =>
+    prepareManualPoolBoost({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      poolKey: mapEncodedPoolKey(input.pool_key),
+      startTime: input.start_time,
+      endTime: input.end_time,
+      amount0: input.amount0,
+      amount1: input.amount1,
+    }),
+  );
+
+  registerCatalogTool(36, prepareOracleCapacityExpansionSchema, (input) =>
+    prepareOracleCapacityExpansion({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      token: input.token,
+      minCapacity: input.min_capacity,
+    }),
+  );
+
+  registerCatalogTool(37, prepareApprovalRevocationsSchema, (input) =>
+    prepareApprovalRevocations({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      approvals: input.approvals,
+    }),
+  );
+
+  registerCatalogTool(38, prepareOldGekuboUnwrapSchema, (input) =>
+    prepareOldGekuboUnwrap({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      amount: input.amount,
+    }),
+  );
+
+  registerCatalogTool(39, getRewardsClaimsByOwnerSchema, (input) =>
+    getRewardsClaimsByOwner(env, { owner: input.owner }),
+  );
+
+  registerCatalogTool(40, prepareRewardsClaimSchema, (input) =>
+    prepareRewardsClaim({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      claims: input.claims.map((claim) => ({
+        dropAddress: claim.drop_address,
+        key: {
+          owner: claim.key.owner,
+          token: claim.key.token,
+          root: claim.key.root as Hex,
+        },
+        claim: claim.claim,
+        proof: claim.proof as Hex[],
+      })),
+    }),
+  );
+
+  registerCatalogTool(41, prepareRecoveryFundClaimSchema, (input) =>
+    prepareRecoveryFundClaim({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      claims: input.claims,
+      hasSignedConditions: input.has_signed_conditions,
+      signature: input.signature as Hex | undefined,
+    }),
+  );
+
+  registerCatalogTool(42, prepareRevenueBuybacksSchema, (input) =>
+    prepareRevenueBuybacks({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      endedOrderCollects: input.ended_order_collects.map((item) => ({
+        sellToken: item.sell_token,
+        fee: item.fee,
+        endTime: item.end_time,
+      })),
+      protocolFeePairs: input.protocol_fee_pairs,
+      rollTokens: input.roll_tokens,
+    }),
+  );
+
+  registerCatalogTool(43, prepareVe33IncreaseStakeSchema, (input) =>
+    prepareVe33IncreaseStake({
+      chainId: canonicalChainId(input.chain_id),
+      veToken: input.ve_token as Address,
+      sender: input.sender as Address,
+      stakeToken: input.stake_token as Address,
+      veId: input.ve_id,
+      amount: input.amount,
+    }),
+  );
+
+  registerCatalogTool(44, prepareVe33MergeSchema, (input) =>
+    prepareVe33Merge({
+      chainId: canonicalChainId(input.chain_id),
+      veToken: input.ve_token as Address,
+      sender: input.sender as Address,
+      destinationVeId: input.destination_ve_id,
+      destinationPoolKey:
+        input.destination_pool_key === undefined
+          ? undefined
+          : mapPoolKey(input.destination_pool_key),
+      sources: input.sources.map((source) => ({
+        veId: source.ve_id,
+        currentPoolKey:
+          source.current_pool_key === undefined
+            ? undefined
+            : mapPoolKey(source.current_pool_key),
+      })),
+      resultingVote:
+        input.resulting_vote === undefined
+          ? undefined
+          : input.resulting_vote === null
+            ? null
+            : {
+                poolKey: mapPoolKey(input.resulting_vote.pool_key),
+                swapFee: input.resulting_vote.swap_fee,
+              },
+    }),
+  );
+
+  registerCatalogTool(45, prepareVe33WithdrawSchema, (input) =>
+    prepareVe33Withdraw({
+      chainId: canonicalChainId(input.chain_id),
+      veToken: input.ve_token as Address,
+      sender: input.sender as Address,
+      veId: input.ve_id,
+      currentPoolKey:
+        input.current_pool_key === undefined
+          ? undefined
+          : mapPoolKey(input.current_pool_key),
+    }),
   );
 
   server.registerResource(
@@ -1724,6 +2506,18 @@ function mapExactPoolKey(poolKey: {
   };
 }
 
+function mapEncodedPoolKey(poolKey: {
+  token0: string;
+  token1: string;
+  config: string;
+}) {
+  return {
+    token0: poolKey.token0,
+    token1: poolKey.token1,
+    config: poolKey.config as Hex,
+  };
+}
+
 async function fetchDocumentation(url: string): Promise<string> {
   const response = await fetch(url, {
     headers: { accept: "application/json" },
@@ -1738,7 +2532,7 @@ async function fetchDocumentation(url: string): Promise<string> {
   return response.text();
 }
 
-const SERVER_INSTRUCTIONS = `Use Ekubo preparation tools only to construct unsigned plans. Never sign or submit without showing the exact plan_id and receiving explicit user confirmation. Never construct or request transferOwnership, ownership handover, ERC721 transfer/approval, or burn calldata. Ownership and NFT transfer actions are outside this server's safe workflows.
+const SERVER_INSTRUCTIONS = `Use Ekubo preparation tools only to construct unsigned plans. Never sign or submit without showing the exact plan_id and receiving explicit user confirmation. The wallet must never construct calldata, choose a contract overload, derive a route, or determine the transaction list: pass the preparation tool's exact execution_plan unchanged for validation, signing, and submission. Never construct or request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calldata. LP position transfers are supported only through ekubo_prepare_lp_position_transfer with pending ownership validation.
 
 Prepared plans expose execution_plan: one signer-neutral, ordered transaction sequence with decimal transaction fields plus exact EIP-1193 eth_call, eth_estimateGas, and eth_sendTransaction requests. Read ekubo://docs/execution-plan. For a local wallet, translate those exact fields to Cast. For an MCP wallet, pass the execution_plan to a separately trusted compatible wallet server. In both modes, verify the connected chain and account exactly match execution_plan.chain_id and sender, revalidate each step immediately before submission, preserve order, wait for each receipt, and never send wallet credentials to this Ekubo server. The plan_id commits to the chain, sender, destination, calldata, and native value of every approval, execution, and cleanup transaction.
 
@@ -1748,13 +2542,15 @@ For exact token metadata, call ekubo_get_token for one known chain/address pair 
 
 For LP discovery, use ekubo_get_positions_by_owner instead of attempting ERC721 enumeration. Its response joins canonical token metadata and USD prices and attaches an exact pending eth_call to each supported EVM position. For the interface-equivalent detail payload (metadata, history, campaigns, rewards, prices, and the atomic current-state query), call ekubo_get_position with the same owner, chain, manager, and token ID. Read ekubo://docs/lp-position-workflow. Never split TWAMM execution or Ve33 reward accumulation from the following position read: those calls must stay in the supplied single Multicall3 eth_call and must never be broadcast.
 
-For creating an LP position, call ekubo_get_position_pool_candidates with the pair. Do not browse prod-api, manually derive pool IDs, or inspect manager ABIs. Show the candidate's Core generation, exact pool key, extension, manager, TVL, depth, volume, and fees. If the wallet lacks one side, prepare and execute that funding swap separately, wait for its successful receipt, measure the actual new token balance, reserve native gas, and only then prepare the deposit from the measured available amounts; never treat a quote's expected output as a settled balance. After the user chooses an existing v3 pool, range, token maxima, and slippage, call ekubo_prepare_lp_position_deposit. It computes a nonzero minimum liquidity, approvals, native refund, allowance cleanup, decoded calls, wallet-policy requirements, and a complete execution_plan.
+For creating an LP position, call ekubo_get_position_pool_candidates with the pair. Do not browse prod-api, manually derive pool IDs, or inspect manager ABIs. Show the candidate's Core generation, exact pool key, extension, manager, TVL, depth, volume, and fees. If the user selects a new configuration not yet indexed, pass its exact pool_key with pool_initialized=false and initial_tick to ekubo_prepare_lp_position_deposit; the tool derives the pool ID and prepends maybeInitializePool. If the wallet lacks one side, prepare and execute that funding swap separately, wait for its successful receipt, measure the actual new token balance, reserve native gas, and only then prepare the deposit from the measured available amounts; never treat a quote's expected output as a settled balance. The deposit tool computes a nonzero minimum liquidity, approvals, initialization, native refund, allowance cleanup, decoded calls, wallet-policy requirements, and a complete execution_plan.
 
 For “collect my LP fees” or “claim my LP rewards”, call ekubo_prepare_lp_position_earnings_claim with the connected owner wallet, manager, and token ID from ekubo_get_positions_by_owner. It automatically uses v2 zero-liquidity fee withdrawal, v3 collectFees, or Ve33 claimRewards and never removes liquidity, burns, or transfers the NFT. Execute its current_state_query first, verify the pending owner and show the decoded fees or rewards, then pass its execution_plan to the wallet MCP for simulation and explicit confirmation. Never infer or manually encode the manager function.
 
 For a partial or full LP withdrawal, first execute the position's current_state_query and select an exact positive liquidity amount, then call ekubo_prepare_lp_position_withdraw. It automatically chooses the correct v2/v3 withdraw overload or Ve33 withdrawAndClaimRewards, collects fees or rewards exactly as the interface does, and returns the entire transaction list. Verify pending ownership and sufficient liquidity, show principal plus earnings and recipient, and give the unchanged execution_plan to the wallet MCP. The wallet must never construct calldata, choose an overload, or add a claim transaction.
 
 Pass LP execution plans to the wallet MCP for simulation and execution after explicit confirmation; never use Cast to reconstruct LP calldata. If wallet policy rejects a plan, report its exact target, spender, recipient, selector, or native-value finding and do not attempt to change wallet policy.
+
+For every other EVM action exposed by the interface, use its first-class prepare tool: wrap/unwrap, LP position transfer, pool price correction, TWAMM/DCA creation/collection/stop/virtual-order execution, auction creation/completion/creator proceeds, manual boosts, oracle capacity, approval revocation, old gEKUBO unwrap, incentive rewards, Recovery Fund claims, revenue buybacks, and direct VeToken increase/merge/withdraw. Phased tools return exact eth_call or EIP-712 requests and tell the caller which decoded values to send back. The wallet performs those reads or signatures but must not invent calldata, append approvals, build multicalls, or choose transaction ordering.
 
 Use ekubo_get_pool for one exact chain/core/pool ID and ekubo_get_pool_liquidity for tick-level depth. Use ekubo_derive_pool_id and ekubo_decode_pool_config for PoolKey construction and inspection. A pool fee is an exact uint64 Q64 integer: accept and return it only as a decimal or hexadecimal string, never a JSON number.
 
@@ -1764,7 +2560,7 @@ For "update my STONX allocations to the suggested allocations", call ekubo_get_s
 
 For "reinvest my fees", call ekubo_prepare_ve33_reinvest with phase=claim and omit claims so it discovers and claims every active allocation. Take the supplied pre-claim balance snapshots, then use phase=swap with only the exact claimed deltas so it prepares one exact-input swap per non-stake token. After receipts confirm, refresh allocations and use phase=stake_all with its exact state_id and the measured STONX output. Never swap a wallet's pre-existing balance.
 
-For a new stake, use ekubo_prepare_ve33_stake; max duration is the default when no duration is supplied. Extending an existing stake is destructive to its vote, so use ekubo_prepare_ve33_extend only with the current pool key; its compound call claims fees first, and max_duration=true must be an explicit choice.
+For a new stake, use ekubo_prepare_ve33_stake; max duration is the default when no duration is supplied. For an existing stake, pass current_pool_key when it is voted so ekubo_prepare_ve33_extend uses a compound fee claim before extension; omit it only for an unvoted VeToken. max_duration=true must be an explicit choice.
 
 Every active source vote must be claimed unconditionally before that vote is cleared or moved, even when claimable fees are currently zero. Preserve the returned compact claim-and-extend, claim-and-merge, split, and vote order in one VeToken multicall. Execute and decode onchain_validation.eth_call immediately before signing, simulate the exact transaction from sender, and discard the plan after any state change or failed expectation.`;
 
@@ -1815,7 +2611,7 @@ The indexed \`pool_state\` is appropriate for portfolio range math and discovery
 
 Call \`ekubo_get_position_pool_candidates\` with the chain and token pair. It replaces direct data-API browsing and ABI inspection by returning every indexed candidate above the requested TVL floor, including verified PoolKey/config, Core generation, extension type, exact statistics, and the correct Positions manager. The default zero TVL floor is intentional for position creation because it keeps initialized pools with negligible liquidity visible.
 
-Once the user selects an existing v3 candidate, range, maximum token amounts, and slippage, call \`ekubo_prepare_lp_position_deposit\`. The tool fetches the verified pool state, calculates expected liquidity with shared SDK math, derives a nonzero minimum liquidity, selects Positions or Ve33Positions, and returns exact approvals, deposit/refund calldata, optional allowance cleanup, owner validation, decoded intent, wallet-policy requirements, and \`execution_plan\`.
+Once the user selects a v3 pool configuration, range, maximum token amounts, and slippage, call \`ekubo_prepare_lp_position_deposit\`. For an indexed pool, provide pool_id. For a new pool, provide the exact pool_key, pool_initialized=false, and initial_tick; the tool derives the ID and prepends \`maybeInitializePool\` before minting. It calculates expected liquidity with shared SDK math, derives a nonzero minimum liquidity, selects Positions or Ve33Positions, and returns exact approvals, initialization/deposit/refund calldata, optional allowance cleanup, owner validation, decoded intent, wallet-policy requirements, and \`execution_plan\`.
 
 If the wallet needs a preliminary swap to acquire one side, use \`ekubo_prepare_swap\` as a separate plan. Simulate it through the wallet MCP, obtain explicit confirmation, submit it, and wait for a successful receipt. Then read the actual resulting balance or balance delta, preserve enough native token for gas, and call the LP preparer with the measured maxima. Do not combine the deposit with an unconfirmed swap or size it from quoted output alone.
 
@@ -1902,7 +2698,7 @@ const VE33_WORKFLOW = `# Ekubo ve(3,3) call workflow
 - The VeToken ERC721 owns the canonical Ve33 stake. The wallet must own or be approved for each ve_id.
 - splitStake must move a positive amount smaller than the source stake. The source keeps its vote with reduced weight; the new child starts unvoted.
 - Replacing or clearing a vote discards pending fee accounting unless fees are claimed first. Every compiler claims each active source unconditionally before that source vote is cleared or moved, including when claimable fees are zero.
-- Extending moves the stake to a new end time and clears its vote. The extension tool requires current_pool_key and exposes only compound claim-and-extend methods.
+- Extending moves the stake to a new end time and clears its vote. For a voted token, provide current_pool_key so the extension tool uses a compound claim-and-extend method. Omit it only for an unvoted token, where direct extension cannot discard voter fees.
 - Pool keys may use an exact bytes32 config or data-API fields: fee, tick_spacing, extension, and optional stableswap_params.
 - For claim-all, use ekubo_prepare_ve33_claim_all_fees to discover the owner's indexed active votes and obtain one VeToken multicall plus ownerOf/voteState validation calldata. Revalidate those calls through the user's provider before signing.
 - For any vote reorganization, first use ekubo_get_ve33_allocations and show the complete allocation plus state_id. Pass that exact state_id and target weight_bps values totaling 10,000 to ekubo_prepare_ve33_reallocation.

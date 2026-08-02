@@ -2,6 +2,7 @@ import {
   EVM_MAX_TICK,
   EVM_MIN_TICK,
   floatSqrtRatioToFixed,
+  fixedSqrtRatioToFloat,
   maxLiquidityForTokenAmounts,
   MAX_U128,
   toSqrtRatio,
@@ -23,7 +24,7 @@ import {
   type PreparedTransaction,
   transactionIdentity,
 } from "./execution-plan.js";
-import { decodePoolConfig, getPool } from "./pools.js";
+import { decodePoolConfig, derivePoolId, getPool } from "./pools.js";
 import {
   buildPositionStateReadPlan,
   positionTokenIdentifiers,
@@ -56,6 +57,24 @@ const POOL_KEY_COMPONENTS = [
 ] as const;
 
 const POSITIONS_DEPOSIT_ABI = [
+  {
+    type: "function",
+    name: "maybeInitializePool",
+    inputs: [
+      {
+        name: "poolKey",
+        type: "tuple",
+        internalType: "struct PoolKey",
+        components: POOL_KEY_COMPONENTS,
+      },
+      { name: "tick", type: "int32", internalType: "int32" },
+    ],
+    outputs: [
+      { name: "initialized", type: "bool", internalType: "bool" },
+      { name: "sqrtRatio", type: "uint96", internalType: "SqrtRatio" },
+    ],
+    stateMutability: "payable",
+  },
   {
     type: "function",
     name: "deposit",
@@ -237,9 +256,7 @@ const VE33_CLAIM_REWARDS_ABI = [
     type: "function",
     name: "claimRewards",
     inputs: POSITIONS_V3_COLLECT_FEES_ABI[0].inputs,
-    outputs: [
-      { name: "amount", type: "uint256", internalType: "uint256" },
-    ],
+    outputs: [{ name: "amount", type: "uint256", internalType: "uint256" }],
     stateMutability: "payable",
   },
 ] as const satisfies Abi;
@@ -260,7 +277,9 @@ export async function prepareLpPositionDeposit(
     chainId: string;
     sender: string;
     coreAddress: string;
-    poolId: string;
+    poolId?: string;
+    poolKey?: { token0: string; token1: string; config: Hex };
+    poolInitialized?: boolean;
     mode: "mint_new" | "add_liquidity";
     tokenId?: string;
     tickLower: number;
@@ -268,6 +287,7 @@ export async function prepareLpPositionDeposit(
     maxAmount0: string;
     maxAmount1: string;
     slippageBps: number;
+    initialTick?: number;
   },
   fetcher: Fetcher = fetch,
 ) {
@@ -289,7 +309,9 @@ export async function prepareLpPositionDeposit(
     );
   }
   const tokenId =
-    input.tokenId === undefined ? undefined : unsigned(input.tokenId, "token_id");
+    input.tokenId === undefined
+      ? undefined
+      : unsigned(input.tokenId, "token_id");
   if (
     (input.mode === "mint_new" && tokenId !== undefined) ||
     (input.mode === "add_liquidity" && tokenId === undefined)
@@ -300,23 +322,92 @@ export async function prepareLpPositionDeposit(
     );
   }
 
-  const pool = await getPool(
-    env,
-    {
-      chainId: input.chainId,
-      coreAddress,
-      poolId: input.poolId,
-    },
-    fetcher,
-  );
-  if (pool.pool_state === null) {
+  if (input.poolId === undefined && input.poolKey === undefined) {
     throw new ServiceError(
-      "pool_state_unavailable",
-      "The indexed pool has no state snapshot; LP slippage cannot be calculated safely",
+      "missing_pool_identity",
+      "Provide pool_id for an indexed pool or an exact pool_key for a new pool",
     );
   }
-  const sqrtRatioValue = pool.pool_state.sqrt_ratio;
-  if (typeof sqrtRatioValue !== "string") {
+  const suppliedPool =
+    input.poolKey === undefined
+      ? undefined
+      : derivePoolId({
+          token0: input.poolKey.token0,
+          token1: input.poolKey.token1,
+          config: input.poolKey.config,
+        });
+  if (
+    suppliedPool !== undefined &&
+    input.poolId !== undefined &&
+    BigInt(suppliedPool.pool_id) !== BigInt(input.poolId)
+  ) {
+    throw new ServiceError(
+      "pool_id_mismatch",
+      "The supplied pool_key does not derive to pool_id",
+      { supplied_pool_id: input.poolId, derived_pool_id: suppliedPool.pool_id },
+    );
+  }
+  if (input.poolInitialized === false && suppliedPool === undefined) {
+    throw new ServiceError(
+      "pool_key_required",
+      "An uninitialized pool requires its exact pool_key; it cannot be recovered from the index",
+    );
+  }
+  const pool =
+    suppliedPool !== undefined && input.poolInitialized === false
+      ? {
+          chain_id: input.chainId,
+          core_address: coreAddress,
+          pool_id: suppliedPool.pool_id,
+          pool_id_decimal: suppliedPool.pool_id_decimal,
+          pool_key: suppliedPool.pool_key,
+          decoded_config: suppliedPool.decoded_config,
+          pool_state: null,
+        }
+      : await getPool(
+          env,
+          {
+            chainId: input.chainId,
+            coreAddress,
+            poolId:
+              input.poolId ??
+              (suppliedPool as NonNullable<typeof suppliedPool>).pool_id,
+          },
+          fetcher,
+        );
+  if (
+    suppliedPool !== undefined &&
+    (pool.pool_key.token0 !== suppliedPool.pool_key.token0 ||
+      pool.pool_key.token1 !== suppliedPool.pool_key.token1 ||
+      pool.pool_key.config.toLowerCase() !==
+        suppliedPool.pool_key.config.toLowerCase())
+  ) {
+    throw new ServiceError(
+      "pool_key_mismatch",
+      "The indexed pool key does not match the supplied exact pool_key",
+    );
+  }
+  const isInitialized = input.poolInitialized ?? pool.pool_state !== null;
+  if (!isInitialized && input.mode !== "mint_new") {
+    throw new ServiceError(
+      "uninitialized_pool",
+      "Liquidity can only be added to an existing NFT after the pool is initialized",
+    );
+  }
+  if (
+    !isInitialized &&
+    (input.initialTick === undefined ||
+      !Number.isInteger(input.initialTick) ||
+      input.initialTick < EVM_MIN_TICK ||
+      input.initialTick > EVM_MAX_TICK)
+  ) {
+    throw new ServiceError(
+      "initial_tick_required",
+      "An uninitialized pool requires an initial_tick within the EVM tick range",
+    );
+  }
+  const sqrtRatioValue = pool.pool_state?.sqrt_ratio;
+  if (isInitialized && typeof sqrtRatioValue !== "string") {
     throw new ServiceError(
       "invalid_upstream_response",
       "Indexed pool state has no exact sqrt_ratio",
@@ -334,7 +425,9 @@ export async function prepareLpPositionDeposit(
     );
   }
 
-  const sqrtPrice = floatSqrtRatioToFixed(unsigned(sqrtRatioValue, "sqrt_ratio"));
+  const sqrtPrice = isInitialized
+    ? floatSqrtRatioToFixed(unsigned(sqrtRatioValue as string, "sqrt_ratio"))
+    : toSqrtRatio(input.initialTick as number, "evm");
   const expectedLiquidity = maxLiquidityForTokenAmounts({
     sqrtPrice,
     sqrtPriceLower: toSqrtRatio(input.tickLower, "evm"),
@@ -396,7 +489,15 @@ export async function prepareLpPositionDeposit(
       : poolKey.token1 === NATIVE_TOKEN
         ? maxAmount1
         : 0n;
+  const initializeCall = isInitialized
+    ? null
+    : encodeFunctionData({
+        abi: POSITIONS_DEPOSIT_ABI,
+        functionName: "maybeInitializePool",
+        args: [poolKey, input.initialTick as number],
+      });
   const calls = [
+    ...(initializeCall === null ? [] : [initializeCall]),
     depositCall,
     ...(nativeValue === 0n
       ? []
@@ -418,14 +519,32 @@ export async function prepareLpPositionDeposit(
   const approvals = [
     ...(poolKey.token0 === NATIVE_TOKEN
       ? []
-      : [erc20Approval(input.chainId, poolKey.token0, positionsAddress, maxAmount0)]),
+      : [
+          erc20Approval(
+            input.chainId,
+            poolKey.token0,
+            positionsAddress,
+            maxAmount0,
+          ),
+        ]),
     ...(poolKey.token1 === NATIVE_TOKEN
       ? []
-      : [erc20Approval(input.chainId, poolKey.token1, positionsAddress, maxAmount1)]),
+      : [
+          erc20Approval(
+            input.chainId,
+            poolKey.token1,
+            positionsAddress,
+            maxAmount1,
+          ),
+        ]),
   ].filter((approval) => approval.amount > 0n);
-  const approvalTransactions = approvals.map((approval) => approval.transaction);
-  const cleanupTransactions = approvals.map((approval) =>
-    erc20Approval(input.chainId, approval.token, positionsAddress, 0n).transaction,
+  const approvalTransactions = approvals.map(
+    (approval) => approval.transaction,
+  );
+  const cleanupTransactions = approvals.map(
+    (approval) =>
+      erc20Approval(input.chainId, approval.token, positionsAddress, 0n)
+        .transaction,
   );
   const transaction: PreparedTransaction = {
     chain_id: input.chainId,
@@ -522,11 +641,22 @@ export async function prepareLpPositionDeposit(
       max_amount0: maxAmount0.toString(),
       max_amount1: maxAmount1.toString(),
       slippage_bps: input.slippageBps,
+      initial_tick: input.initialTick ?? null,
     },
     pool: {
       pool_key: poolKey,
       decoded_config: decodedConfig,
       indexed_state: pool.pool_state,
+      initialized_before_plan: isInitialized,
+      initialization:
+        initializeCall === null
+          ? null
+          : {
+              initial_tick: input.initialTick,
+              expected_fixed_q128_sqrt_ratio: sqrtPrice.toString(),
+              expected_compact_sqrt_ratio:
+                fixedSqrtRatioToFloat(sqrtPrice).toString(),
+            },
       indexed_state_cache_max_age_seconds: 180,
     },
     tokens,
@@ -545,17 +675,28 @@ export async function prepareLpPositionDeposit(
       note: "Wallet simulation against current chain state is mandatory because the indexed price snapshot may be up to 180 seconds old.",
     },
     decoded_calls: [
+      ...(initializeCall === null
+        ? []
+        : [
+            {
+              order: 1,
+              function: "maybeInitializePool",
+              arguments: {
+                pool_key: poolKey,
+                tick: input.initialTick,
+              },
+            },
+          ]),
       {
-        order: 1,
-        function:
-          input.mode === "mint_new" ? "mintAndDeposit" : "deposit",
+        order: initializeCall === null ? 1 : 2,
+        function: input.mode === "mint_new" ? "mintAndDeposit" : "deposit",
         arguments: depositArguments,
       },
       ...(nativeValue === 0n
         ? []
         : [
             {
-              order: 2,
+              order: initializeCall === null ? 2 : 3,
               function: "refundNativeToken",
               arguments: {},
             },
@@ -603,11 +744,20 @@ export async function prepareLpPositionDeposit(
         },
         {
           target: positionsAddress,
-          function:
-            input.mode === "mint_new" ? "mintAndDeposit" : "deposit",
+          function: input.mode === "mint_new" ? "mintAndDeposit" : "deposit",
           selector: depositCall.slice(0, 10),
           nested_in_multicall: calls.length > 1,
         },
+        ...(initializeCall === null
+          ? []
+          : [
+              {
+                target: positionsAddress,
+                function: "maybeInitializePool",
+                selector: initializeCall.slice(0, 10),
+                nested_in_multicall: true,
+              },
+            ]),
         ...(nativeValue === 0n
           ? []
           : [
@@ -931,8 +1081,7 @@ export async function prepareLpPositionWithdraw(
         recipient,
       ],
     });
-    transactionResultFields =
-      VE33_WITHDRAW_AND_CLAIM_REWARDS_ABI[0].outputs;
+    transactionResultFields = VE33_WITHDRAW_AND_CLAIM_REWARDS_ABI[0].outputs;
   } else {
     implementationFunction = "withdraw";
     decodedArguments = {
@@ -966,7 +1115,9 @@ export async function prepareLpPositionWithdraw(
     data: transactionData,
     value: "0",
   };
-  const indexedLiquidity = exactIndexedLiquidity(owned.indexedPosition.liquidity);
+  const indexedLiquidity = exactIndexedLiquidity(
+    owned.indexedPosition.liquidity,
+  );
   const tokenIdentifiers = [
     ...positionTokenIdentifiers(owned.indexedPosition),
     ...(managerVersion === "ve33_positions_v3" && owned.chainId === "4663"
@@ -1111,8 +1262,7 @@ function unsigned(value: string | number, label: string) {
   if (
     (typeof value === "string" &&
       !/^(?:(?:0|[1-9][0-9]*)|0x[0-9a-fA-F]+)$/.test(value)) ||
-    (typeof value === "number" &&
-      (!Number.isSafeInteger(value) || value < 0))
+    (typeof value === "number" && (!Number.isSafeInteger(value) || value < 0))
   ) {
     throw new ServiceError(
       "invalid_input",

@@ -11,10 +11,13 @@ import {
   prepareAllVe33FeeClaims,
   prepareVe33Claim,
   prepareVe33Extend,
+  prepareVe33IncreaseStake,
+  prepareVe33Merge,
   prepareVe33Reinvest,
   prepareVe33Split,
   prepareVe33Stake,
   prepareVe33Vote,
+  prepareVe33Withdraw,
   saltToId,
   toPoolKeyArgument,
 } from "../src/ve33.js";
@@ -46,8 +49,7 @@ const poolB = {
 describe("ve(3,3) call generation", () => {
   it("encodes v3 pool configuration from data-API fields", () => {
     const result = toPoolKeyArgument(poolA);
-    const expected =
-      (BigInt(extension) << 96n) | (1n << 31n) | 4n;
+    const expected = (BigInt(extension) << 96n) | (1n << 31n) | 4n;
     expect(result).toEqual({
       token0,
       token1,
@@ -85,8 +87,7 @@ describe("ve(3,3) call generation", () => {
     expect(
       toPoolKeyArgument({
         token0: "0x0",
-        token1:
-          "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+        token1: "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
         fee: "0",
         tickSpacing: 1024,
         extension: "0xd18685a514e59b06d59824e16db07e73345d9953",
@@ -205,11 +206,60 @@ describe("ve(3,3) call generation", () => {
       maxDuration: true,
       currentPoolKey: poolA,
     });
-    expect(result.calls[0].type).toBe(
-      "claim_fees_and_extend_max_duration",
-    );
+    expect(result.calls[0].type).toBe("claim_fees_and_extend_max_duration");
     expect(result.claims_current_pool_fees_first).toBe(true);
     expect(result.clears_current_vote).toBe(true);
+  });
+
+  it("covers unvoted extension, stake increase, fee-safe merge, and expiry withdrawal", () => {
+    const extend = prepareVe33Extend({
+      chainId: "4663",
+      veToken,
+      sender,
+      veId: "10",
+      maxDuration: true,
+    });
+    const increase = prepareVe33IncreaseStake({
+      chainId: "4663",
+      veToken,
+      sender,
+      stakeToken: token1,
+      veId: "10",
+      amount: "100",
+    });
+    const merge = prepareVe33Merge({
+      chainId: "4663",
+      veToken,
+      sender,
+      destinationVeId: "10",
+      destinationPoolKey: poolA,
+      sources: [{ veId: "11", currentPoolKey: poolB }, { veId: "12" }],
+      resultingVote: null,
+    });
+    const withdraw = prepareVe33Withdraw({
+      chainId: "4663",
+      veToken,
+      sender,
+      veId: "10",
+      currentPoolKey: poolA,
+    });
+
+    expect(extend.calls.map((call) => call.type)).toEqual([
+      "extend_max_duration",
+    ]);
+    expect(
+      increase.execution_plan?.ordered_steps.map((step) => step.kind),
+    ).toEqual(["approval", "execution"]);
+    expect(merge.calls.map((call) => call.type)).toEqual([
+      "claim_destination_pool_fees",
+      "claim_source_fees_and_merge_stake",
+      "merge_unvoted_stake",
+      "clear_destination_vote",
+    ]);
+    expect(withdraw.calls.map((call) => call.type)).toEqual([
+      "claim_pool_fees",
+      "withdraw_expired_stake",
+    ]);
   });
 
   it("defaults new staking plans to max duration without touching an existing NFT", () => {
@@ -246,10 +296,9 @@ describe("ve(3,3) call generation", () => {
       only_allowlisted_vetoken_functions: true,
       ownership_or_nft_transfer_calls: 0,
     });
-    expect(result.execution_plan?.ordered_steps.map((step) => step.kind)).toEqual([
-      "approval",
-      "execution",
-    ]);
+    expect(
+      result.execution_plan?.ordered_steps.map((step) => step.kind),
+    ).toEqual(["approval", "execution"]);
     expect(result.execution_plan?.sender).toBe(sender);
   });
 
@@ -483,12 +532,14 @@ describe("ve(3,3) call generation", () => {
     expect(claimed.phase).toBe("claim");
     if (claimed.phase !== "claim") throw new Error("unexpected phase");
     expect(claimed.plan.calls).toHaveLength(2);
-    expect(claimed.plan.calls.every((call) => call.type === "claim_pool_fees")).toBe(
-      true,
-    );
+    expect(
+      claimed.plan.calls.every((call) => call.type === "claim_pool_fees"),
+    ).toBe(true);
     expect(claimed.fee_tokens).toEqual([token0, token1, token2]);
     expect(claimed.pre_claim_balance_snapshots).toHaveLength(3);
-    expect(claimed.next_phase).toContain("Never pass a wallet's pre-existing balance");
+    expect(claimed.next_phase).toContain(
+      "Never pass a wallet's pre-existing balance",
+    );
 
     const current = await getVe33Allocations(
       env,
@@ -512,10 +563,9 @@ describe("ve(3,3) call generation", () => {
     );
     expect(staked.phase).toBe("stake_all");
     if (staked.phase !== "stake_all") throw new Error("unexpected phase");
-    expect(staked.plan.allocations.map((allocation) => allocation.increase_amount)).toEqual([
-      "34",
-      "66",
-    ]);
+    expect(
+      staked.plan.allocations.map((allocation) => allocation.increase_amount),
+    ).toEqual(["34", "66"]);
     expect(staked.plan.calls).toHaveLength(2);
     expect(staked.plan.safety).toMatchObject({
       every_existing_active_allocation_is_increased: true,

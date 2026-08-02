@@ -86,9 +86,9 @@ describe("LP position preparation", () => {
     );
 
     expect(result.positions_manager.address).toBe(ve33Positions);
-    expect(BigInt(result.liquidity_protection.minimum_liquidity)).toBeGreaterThan(
-      0n,
-    );
+    expect(
+      BigInt(result.liquidity_protection.minimum_liquidity),
+    ).toBeGreaterThan(0n);
     expect(result.approvals).toHaveLength(1);
     expect(result.approvals[0]?.to).toBe(
       "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
@@ -116,17 +116,10 @@ describe("LP position preparation", () => {
       result.wallet_policy_requirements.calldata_selectors.map(
         (selector) => selector.function,
       ),
-    ).toEqual([
-      "approve",
-      "multicall",
-      "mintAndDeposit",
-      "refundNativeToken",
-    ]);
-    expect(result.execution_plan.ordered_steps.map((step) => step.kind)).toEqual([
-      "approval",
-      "execution",
-      "allowance_cleanup",
-    ]);
+    ).toEqual(["approve", "multicall", "mintAndDeposit", "refundNativeToken"]);
+    expect(
+      result.execution_plan.ordered_steps.map((step) => step.kind),
+    ).toEqual(["approval", "execution", "allowance_cleanup"]);
     expect(result.confirmation.no_cast_required).toContain("wallet MCP");
   });
 
@@ -145,6 +138,53 @@ describe("LP position preparation", () => {
         slippageBps: 50,
       }),
     ).rejects.toThrow("add_liquidity must provide token_id");
+  });
+
+  it("derives and initializes a new exact pool before minting", async () => {
+    const pool = derivePoolId({
+      token0: native,
+      token1: usdg,
+      fee: "0",
+      extension: ve33,
+      tickSpacing: 1024,
+    });
+    const result = await prepareLpPositionDeposit(
+      env,
+      {
+        chainId: "4663",
+        sender,
+        coreAddress: core,
+        poolKey: pool.pool_key,
+        poolInitialized: false,
+        mode: "mint_new",
+        tickLower: -20_495_360,
+        tickUpper: -19_787_776,
+        initialTick: -20_167_000,
+        maxAmount0: "100000000000000",
+        maxAmount1: "185278",
+        slippageBps: 50,
+      },
+      (async (input: RequestInfo | URL) => {
+        if (input.toString().includes("/tokens/batch?")) {
+          return Response.json([
+            { chain_id: "4663", address: native, symbol: "ETH", decimals: 18 },
+            { chain_id: "4663", address: usdg, symbol: "USDG", decimals: 6 },
+          ]);
+        }
+        return new Response("not found", { status: 404 });
+      }) as typeof fetch,
+    );
+
+    expect(result.pool.initialized_before_plan).toBe(false);
+    expect(result.pool.initialization).toMatchObject({
+      initial_tick: -20_167_000,
+    });
+    expect(result.decoded_calls.map((call) => call.function)).toEqual([
+      "maybeInitializePool",
+      "mintAndDeposit",
+      "refundNativeToken",
+    ]);
+    expect(result.transaction.data.slice(0, 10)).toBe("0xac9650d8");
   });
 
   it("prepares standard fee collection without removing liquidity", async () => {
@@ -312,11 +352,9 @@ describe("LP position preparation", () => {
       collects_fees: false,
       claims_ve33_rewards: true,
     });
-    expect(result.decoded_calls[0]?.result_fields.map((field) => field.name)).toEqual([
-      "amount0",
-      "amount1",
-      "rewardAmount",
-    ]);
+    expect(
+      result.decoded_calls[0]?.result_fields.map((field) => field.name),
+    ).toEqual(["amount0", "amount1", "rewardAmount"]);
     expect(result.onchain_validation.required_current_liquidity_at_least).toBe(
       "1000",
     );

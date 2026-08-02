@@ -2,10 +2,7 @@ import { createMcpHandler } from "agents/mcp/server";
 import openapi from "../openapi.json";
 import type { Env } from "./core.js";
 import { createEkuboServer, publicToolCatalog } from "./server.js";
-import {
-  MCP_SERVER_VERSION,
-  MCP_TOOL_CATALOG_REVISION,
-} from "./version.js";
+import { MCP_SERVER_VERSION, MCP_TOOL_CATALOG_REVISION } from "./version.js";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
@@ -69,8 +66,7 @@ export default {
             quoter_contract_resource: "ekubo://docs/quoter-api",
             ve33_workflow_resource: "ekubo://docs/ve33-workflow",
             execution_plan_resource: "ekubo://docs/execution-plan",
-            lp_position_workflow_resource:
-              "ekubo://docs/lp-position-workflow",
+            lp_position_workflow_resource: "ekubo://docs/lp-position-workflow",
             contract_directory_resource: "ekubo://contracts/evm",
             safety: {
               signs_transactions: false,
@@ -167,7 +163,10 @@ function allowedOriginHostnames(env: Env, requestHostname: string): string[] {
   return [...new Set([requestHostname, ...configured])];
 }
 
-function commaSeparatedHostnames(value: string, parseOrigins = false): string[] {
+function commaSeparatedHostnames(
+  value: string,
+  parseOrigins = false,
+): string[] {
   return value
     .split(",")
     .map((entry) => entry.trim())
@@ -235,7 +234,7 @@ EVM contract directory: ekubo://contracts/evm
 Operational semantics:
 - MCP tool results are not stored or replayed by this server.
 - No fixed request quota is guaranteed. If the deployment limiter returns HTTP 429, honor Retry-After: 60 and back off.
-- Owner positions use upstream no-cache semantics. Position tools join canonical token metadata and USD prices and provide exact atomic pending eth_call plans for current position state. Pair-pool discovery defaults to a zero TVL floor and returns verified PoolKeys plus the correct position manager. LP deposits, withdrawals, and earnings claims return complete wallet execution plans; wallet tooling never constructs or appends calls, claims preserve principal, and withdrawals preserve the NFT. Indexed pool state is cached upstream for up to 180 seconds; tick liquidity and pool keys for up to 1,800 seconds. STONX recommendations are at most 86,400 seconds old.
+- Owner positions use upstream no-cache semantics. Position tools join canonical token metadata and USD prices and provide exact atomic pending eth_call plans for current position state. Pair-pool discovery defaults to a zero TVL floor and returns verified PoolKeys plus the correct position manager. Every EVM interface transaction path has a first-class prepare tool returning complete wallet execution plans; wallet tooling never constructs or appends calls. Indexed pool state is cached upstream for up to 180 seconds; tick liquidity and pool keys for up to 1,800 seconds. STONX recommendations are at most 86,400 seconds old.
 
 STONX allocation shortcut:
 - For "my Ekubo STONX allocations" or equivalent, call ekubo_get_ve33_allocations with the user's connected EVM wallet address as owner and omit chain_id and ve_token.
@@ -257,8 +256,8 @@ Wallet handoff: every executable preparation includes execution_plan. Read ekubo
 ve(3,3): call ekubo_get_ve33_allocations before reorganizing votes, show the complete allocation and state_id, validate its read-only multicall, then pass that state_id and at most 25 target weight_bps values to ekubo_prepare_ve33_reallocation. Preserve the exact returned atomic order. Use the other dedicated tools for explicit extension, fee claims, and phased reinvestment. Read ekubo://docs/ve33-workflow before constructing a plan.
 Suggested STONX update: call ekubo_get_stonx_allocation_recommendation, require execution_ready, at most 25 targets, and exactly 10,000 target basis points, then use strategy=compact_max_lock. Show the survivor, burned source NFT IDs, max-lock extension, final one-NFT-per-pool count, and decoded calls before confirmation. The recommendation tool constructs no transaction.
 Fee reinvestment: call ekubo_prepare_ve33_reinvest phase=claim without explicit claims, snapshot exact fee-token balances, use phase=swap for claimed deltas only, refresh allocations, then use phase=stake_all to increase every existing active allocation.
-New stake: use ekubo_prepare_ve33_stake. Max duration is the default when no duration is supplied. Existing stake extension remains explicit and must use the compound fee-claim extension tool.
-Forbidden: never construct transferOwnership, ownership handover, ERC721 approval/transfer, safe transfer, or burn calldata.
-Unsupported contract actions: only after checking tools/list, read ekubo://contracts/evm/{chain_id}, then ekubo://contracts/evm/{chain_id}/{address} for the exact ABI. Verify deployed code and simulate through the user's provider before requesting a signature.
+New stake: use ekubo_prepare_ve33_stake. Max duration is the default when no duration is supplied. Existing voted-stake extension remains explicit and must use the compound fee-claim extension path; unvoted extension is supported directly.
+Forbidden: never construct transferOwnership, ownership handover, VeToken ERC721 approval/transfer, or burn calldata. LP position transfer is supported only through ekubo_prepare_lp_position_transfer.
+Contract resources are provenance and read-only ABI context. Wallets and clients must not use them to invent transaction calldata or transaction lists.
 `;
 }
