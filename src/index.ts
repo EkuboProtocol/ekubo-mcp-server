@@ -48,7 +48,7 @@ export default {
           {
             name: "Ekubo Protocol MCP",
             description:
-              "Public, unauthenticated, non-custodial agent tools for protocol and LP reads, pair-pool discovery, provider-neutral STONX allocations, and unsigned swap, bridge, LP deposit, withdrawal, earnings claim, and fee-first ve(3,3) calldata preparation",
+              "Public, unauthenticated, non-custodial agent tools for protocol and LP reads, ranked liquidity opportunities, pair-pool discovery, provider-neutral STONX allocations, and unsigned swap, bridge, LP deposit, withdrawal, earnings claim, and fee-first ve(3,3) calldata preparation",
             version: MCP_SERVER_VERSION,
             tool_catalog_revision: MCP_TOOL_CATALOG_REVISION,
             tool_count: publicToolCatalog.length,
@@ -105,6 +105,11 @@ export default {
                 pool_state_seconds: 180,
                 pool_liquidity_depth_seconds: 1800,
                 pool_key_seconds: 1800,
+                liquidity_opportunity_seconds: {
+                  pairs_and_boosted_fees: 600,
+                  campaigns: 300,
+                  ve33_pools: 30,
+                },
                 recommendation_max_age_seconds: 86400,
               },
               discovery_http_cache_seconds: {
@@ -253,7 +258,7 @@ Operational semantics:
 - MCP tool results are not stored or replayed by this server.
 - Onchain read plans carry canonical ABIs for local wallet decoding. Raw return bytes are included by default and preserved on failure. semantic_value with input_encoding=hex_bytes supports custom non-ABI payloads through locally installed allowlisted codecs; remote plans never supply executable code.
 - No fixed request quota is guaranteed. If the deployment limiter returns HTTP 429, honor Retry-After: 60 and back off.
-- Owner positions use upstream no-cache semantics. Position tools join canonical token metadata and USD prices and provide exact atomic pending eth_call plans for current position state. Pair-pool discovery defaults to a zero TVL floor and returns verified PoolKeys plus the correct position manager. Every EVM interface transaction path has a first-class prepare tool returning complete wallet execution plans; wallet tooling never constructs or appends calls. Indexed pool state is cached upstream for up to 180 seconds; tick liquidity and pool keys for up to 1,800 seconds. STONX recommendations are at most 86,400 seconds old.
+- Owner positions use upstream no-cache semantics. Position tools join canonical token metadata and USD prices and provide exact atomic pending eth_call plans for current position state. Pair-pool discovery defaults to a zero TVL floor and returns verified PoolKeys plus the correct position manager. Liquidity opportunities match the interface's boosted-fee, active-incentive, and Ve33-emission feed; pair/boost data is cached upstream for up to 600 seconds, campaigns for 300 seconds, and Ve33 pools for 30 seconds. Every EVM interface transaction path has a first-class prepare tool returning complete wallet execution plans; wallet tooling never constructs or appends calls. Indexed pool state is cached upstream for up to 180 seconds; tick liquidity and pool keys for up to 1,800 seconds. STONX recommendations are at most 86,400 seconds old.
 
 STONX allocation shortcut:
 - For "my Ekubo STONX allocations" or equivalent, call ekubo_get_ve33_allocations with the user's connected EVM wallet address as owner and omit chain_id and ve_token.
@@ -271,6 +276,8 @@ Safe swap and bridge sequence:
 8. Let the wallet present the simulated result, collect authorization or signature, and submit. Never send credentials to this server.
 
 Wallet handoff: every executable preparation includes execution_plan. Read ekubo://docs/execution-plan, bind sender before preparation, verify its chain_id and sender against the connected wallet, and preserve ordered_steps. Prefer a compatible wallet MCP or other wallet abstraction and pass it the exact plan. Use Cast only when the user selected it or no compatible wallet abstraction is available. The plan_id commits to the chain, sender, destination, calldata, and native value of all approval, execution, and cleanup calls.
+
+Liquidity discovery: call ekubo_get_liquidity_opportunities when the user asks where to provide liquidity. It matches the interface's boosted-fee, active-incentive, and projected Ve33-emission opportunity feed and returns exact pools where the opportunity is pool-specific. For a pair-level incentive, follow its ekubo_get_position_pool_candidates handoff before preparing a deposit. If ranking_complete=false, execute and decode local_read_requirement through the user's wallet and repeat the call with the locally decoded ve33_emission_state; do not treat the provisional ordering as final.
 
 ve(3,3): call ekubo_get_ve33_allocations before reorganizing votes, show the complete allocation and state_id, validate its read-only multicall, then pass that state_id and at most 25 target weight_bps values to ekubo_prepare_ve33_reallocation. Preserve the exact returned atomic order. Use the other dedicated tools for explicit extension, fee claims, and phased reinvestment. Read ekubo://docs/ve33-workflow before constructing a plan.
 Suggested STONX update: call ekubo_get_stonx_allocation_recommendation, require execution_ready, at most 25 targets, and exactly 10,000 target basis points, then use strategy=compact_max_lock. Pass the survivor, burned source NFT IDs, max-lock extension, final one-NFT-per-pool count, decoded calls, and complete plan to the wallet. The recommendation tool constructs no transaction.

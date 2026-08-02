@@ -83,6 +83,10 @@ import {
   prepareRewardsClaim,
 } from "./claims.js";
 import { getStonxAllocationRecommendation } from "./recommendations.js";
+import {
+  getLiquidityOpportunities,
+  type LiquidityOpportunityType,
+} from "./opportunities.js";
 import { MCP_SERVER_VERSION, MCP_TOOL_CATALOG_REVISION } from "./version.js";
 
 export const ROBINHOOD_STONX_CHAIN_ID = "4663";
@@ -903,6 +907,51 @@ export const prepareVe33ReinvestSchema = z
 
 export const getStonxAllocationRecommendationSchema = z.object({});
 
+export const getLiquidityOpportunitiesSchema = z.object({
+  chain_id: chainId
+    .optional()
+    .describe(
+      "Optional production chain filter; omit to match the interface's cross-chain opportunity feed",
+    ),
+  types: z
+    .array(z.enum(["boosted_fees", "incentive", "ve33_emissions"]))
+    .min(1)
+    .max(3)
+    .refine((types) => new Set(types).size === types.length, {
+      message: "types must not contain duplicates",
+    })
+    .default(["boosted_fees", "incentive", "ve33_emissions"])
+    .describe("Opportunity classes to include; defaults to all interface classes"),
+  token: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]+$/, "token must be hexadecimal")
+    .optional()
+    .describe("Optional EVM or Starknet token address appearing in the pair"),
+  min_apr: z
+    .number()
+    .finite()
+    .min(0)
+    .optional()
+    .describe("Optional APR ratio floor; 1.0 means 100%, not 1%"),
+  limit: z.number().int().min(1).max(100).default(25),
+  ve33_emission_state: z
+    .object({
+      current_timestamp: uintString.describe(
+        "Locally decoded getEmissionState state.currentTimestamp",
+      ),
+      current_emission_rate: uintString.describe(
+        "Locally decoded Q32 getEmissionState state.currentEmissionRate",
+      ),
+      total_remaining_emissions: uintString.describe(
+        "Locally decoded getEmissionState state.totalRemainingEmissions",
+      ),
+    })
+    .optional()
+    .describe(
+      "Wallet-locally decoded emission state from the tool's local_read_requirement; omit on the first call",
+    ),
+});
+
 const annotations = {
   readOnlyHint: true,
   destructiveHint: false,
@@ -1281,6 +1330,14 @@ export const publicToolCatalog = [
     description:
       "Prepare fee-safe withdrawal of an expired ve-token stake, claiming the active pool first when voted and returning pending owner/stake validation.",
     inputSchema: z.toJSONSchema(prepareVe33WithdrawSchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_get_liquidity_opportunities",
+    title: "Find Ekubo liquidity opportunities",
+    description:
+      "Return the same boosted-fee, active-incentive, and projected ve(3,3)-emission opportunities shown by the Ekubo interface, ranked by APR with canonical token metadata, exact actionable pools or pair-level pool-discovery handoffs, source freshness, and risk context. A request whose ranking includes Robinhood Ve33 projections supplies a wallet-local emission-state read; pass its locally decoded values back to complete the final ranking.",
+    inputSchema: z.toJSONSchema(getLiquidityOpportunitiesSchema),
     _meta: toolCatalogMetadata,
   },
 ] as const;
@@ -2195,6 +2252,29 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
+  registerCatalogTool(46, getLiquidityOpportunitiesSchema, (input) =>
+    getLiquidityOpportunities(env, {
+      chainId:
+        input.chain_id === undefined
+          ? undefined
+          : canonicalChainId(input.chain_id),
+      types: input.types as LiquidityOpportunityType[],
+      token: input.token,
+      minApr: input.min_apr,
+      limit: input.limit,
+      ve33EmissionState:
+        input.ve33_emission_state === undefined
+          ? undefined
+          : {
+              currentTimestamp: input.ve33_emission_state.current_timestamp,
+              currentEmissionRate:
+                input.ve33_emission_state.current_emission_rate,
+              totalRemainingEmissions:
+                input.ve33_emission_state.total_remaining_emissions,
+            },
+    }),
+  );
+
   server.registerResource(
     "ekubo-agent-workflow",
     "ekubo://docs/agent-workflow",
@@ -2543,6 +2623,8 @@ Intent shortcut: for "my Ekubo STONX allocations", "STONX vote allocations", or 
 For exact token metadata, call ekubo_get_token for one known chain/address pair and ekubo_get_tokens for multiple known pairs. The batch tool uses one prod-api batch request, accepts tokens across chains, preserves input order and duplicates, and omits identifiers that are not in the canonical list. Use ekubo_search_tokens only when resolving a name, symbol, or address fragment.
 
 For LP discovery, use ekubo_get_positions_by_owner instead of attempting ERC721 enumeration. Its response joins canonical token metadata and USD prices and attaches an exact pending eth_call to each supported EVM position. For the interface-equivalent detail payload (metadata, history, campaigns, rewards, prices, and the atomic current-state query), call ekubo_get_position with the same owner, chain, manager, and token ID. Read ekubo://docs/lp-position-workflow. Never split TWAMM execution or Ve33 reward accumulation from the following position read: those calls must stay in the supplied single Multicall3 eth_call and must never be broadcast.
+
+When the user asks where to provide liquidity, call ekubo_get_liquidity_opportunities before asking them to choose a pair. It mirrors the interface's boosted-fee, active-incentive, and projected Ve33-emission opportunity feed, ranks by APR, and returns exact actionable pools or a pair-level pool-candidate handoff. APR is an annualized snapshot, not guaranteed yield; show its components, denominator, data freshness, range and impermanent-loss risks. If ranking_complete=false, execute local_read_requirement through the user's wallet, decode it locally, and call the tool again with ve33_emission_state before presenting the ordering as final. Never ask this server to decode the raw onchain result; supply only the locally decoded decimal fields needed for projection.
 
 For creating an LP position, call ekubo_get_position_pool_candidates with the pair. Do not browse prod-api, manually derive pool IDs, or inspect manager ABIs. Show the candidate's Core generation, exact pool key, extension, manager, TVL, depth, volume, and fees. If the user selects a new configuration not yet indexed, pass its exact pool_key with pool_initialized=false and initial_tick to ekubo_prepare_lp_position_deposit; the tool derives the pool ID and prepends maybeInitializePool. If the wallet lacks one side, prepare and execute that funding swap separately, wait for its successful receipt, measure the actual new token balance, reserve native gas, and only then prepare the deposit from the measured available amounts; never treat a quote's expected output as a settled balance. The deposit tool computes a nonzero minimum liquidity, approvals, initialization, native refund, allowance cleanup, decoded calls, wallet-policy requirements, and a complete execution_plan.
 

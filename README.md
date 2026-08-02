@@ -9,7 +9,8 @@ recommendations resolved to initialized Robinhood Ve33 pools, enumerates
 indexed LP positions by owner, reproduces the interface's indexed/API/USD/RPC
 position-data pipeline, discovers pair-level position candidates, prepares
 unsigned LP deposits, withdrawals, and earnings claims, and exposes exact pool
-state and liquidity data.
+state and liquidity data. It also publishes the same ranked boosted-fee,
+incentive, and ve(3,3)-emission liquidity opportunities shown by the interface.
 
 The MCP server owns agent-facing transaction construction. `prod-api` remains
 a data API and the quoter remains a route-data service.
@@ -81,6 +82,14 @@ schemas after a Git-triggered deployment.
 - `ekubo_get_position_pool_candidates` — list existing pools for a pair with
   verified exact PoolKeys, v2/v3 Core generation, extension classification,
   token prices, pool statistics, and the correct position manager
+- `ekubo_get_liquidity_opportunities` — rank the interface's current
+  boosted-fee, active-incentive, and projected STONX-emission opportunities;
+  returns canonical tokens, exact actionable pools or a pair-level candidate
+  lookup, APR components and denominators, freshness, and risk context. The
+  Ve33 emission input is read and decoded by the user's wallet, then passed
+  back for the final interface-equivalent ranking. Starknet incentives remain
+  visible but are marked discovery-only because the current pool-candidate and
+  deposit preparation tools are EVM-specific.
 - `ekubo_prepare_lp_position_deposit` — prepare a new v3 position mint or add
   liquidity, including exact PoolKey derivation and `maybeInitializePool` for
   a new pool, shared-SDK liquidity math, a nonzero slippage floor, exact

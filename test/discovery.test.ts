@@ -166,6 +166,7 @@ describe("Worker discovery", () => {
       "ekubo_prepare_ve33_increase_stake",
       "ekubo_prepare_ve33_merge",
       "ekubo_prepare_ve33_withdraw",
+      "ekubo_get_liquidity_opportunities",
     ]);
     expect(JSON.stringify(catalog)).not.toMatch(/dune|8187907|api\.dune/i);
     expect(

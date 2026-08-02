@@ -1,6 +1,6 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-const expectedServerVersion = "0.17.0";
-const expectedCatalogRevision = "2026-08-02.wallet-local-result-decoding";
+const expectedServerVersion = "0.18.0";
+const expectedCatalogRevision = "2026-08-02.liquidity-opportunities";
 const smokeNonce = `${Date.now()}-${Math.random()}`;
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
 
@@ -72,6 +72,7 @@ const expectedTools = [
   "ekubo_prepare_ve33_increase_stake",
   "ekubo_prepare_ve33_merge",
   "ekubo_prepare_ve33_withdraw",
+  "ekubo_get_liquidity_opportunities",
 ];
 assert(
   catalog.server_version === expectedServerVersion,
