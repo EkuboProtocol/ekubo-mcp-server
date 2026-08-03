@@ -15,6 +15,18 @@ interface ExecutionPlanInput {
   transaction: PreparedTransaction;
   postExecutionTransactions?: PreparedTransaction[];
   atomicBatchRequired?: boolean;
+  simulationFailurePolicy?: SimulationFailurePolicy;
+}
+
+export interface SimulationFailurePolicy {
+  rpc_error: SimulationFailureDirective;
+  execution_reverted: SimulationFailureDirective;
+  simulation_setup_error: SimulationFailureDirective;
+}
+
+interface SimulationFailureDirective {
+  action: "retry_same_plan" | "reprepare_plan" | "user_review";
+  instruction: string;
 }
 
 export interface ExecutionPlanStepInput {
@@ -36,6 +48,7 @@ interface ExecutionPlanFromStepsInput {
   sender: Address;
   steps: ExecutionPlanStepInput[];
   atomicBatchRequired?: boolean;
+  simulationFailurePolicy?: SimulationFailurePolicy;
 }
 
 /**
@@ -51,6 +64,7 @@ export function executionPlan({
   transaction,
   postExecutionTransactions = [],
   atomicBatchRequired = false,
+  simulationFailurePolicy,
 }: ExecutionPlanInput) {
   return executionPlanFromSteps({
     chainId,
@@ -75,6 +89,7 @@ export function executionPlan({
       })),
     ],
     atomicBatchRequired,
+    simulationFailurePolicy,
   });
 }
 
@@ -89,6 +104,7 @@ export function executionPlanFromSteps({
   sender,
   steps: inputSteps,
   atomicBatchRequired = false,
+  simulationFailurePolicy = defaultSimulationFailurePolicy(),
 }: ExecutionPlanFromStepsInput) {
   if (inputSteps.length === 0) {
     throw new Error(
@@ -142,6 +158,7 @@ export function executionPlanFromSteps({
     caip2_chain_id: `eip155:${chainId}`,
     sender: normalizedSender,
     ordered_steps: steps,
+    simulation_failure_policy: simulationFailurePolicy,
     execution_policy: {
       atomic_batch_required: atomicBatchRequired,
       sequential: true,
@@ -164,6 +181,26 @@ export function executionPlanFromSteps({
         "Preferred when available: pass this complete execution_plan to the separately trusted wallet MCP's simulation and execution APIs after verifying that its connected chain and account exactly match chain_id and sender. Do not ask for a separate agent-level confirmation; the wallet presents the simulated result and collects authorization or signature.",
       cast_fallback:
         "Use only when the user selected Cast or no compatible wallet abstraction is available. For cast call use transaction.data with --data. For cast estimate and cast send pass transaction.data as the positional SIG argument. Always pass --from for preflight and the exact transaction.value with --value; select the signer only at send time.",
+    },
+  };
+}
+
+function defaultSimulationFailurePolicy(): SimulationFailurePolicy {
+  return {
+    rpc_error: {
+      action: "retry_same_plan",
+      instruction:
+        "The failure was caused by RPC or local simulation infrastructure. Retry the same plan after the transient service recovers.",
+    },
+    execution_reverted: {
+      action: "reprepare_plan",
+      instruction:
+        "The exact calldata reverted against current state. Do not retry the same plan; return to the originating Ekubo preparation tool for fresh state and calldata.",
+    },
+    simulation_setup_error: {
+      action: "user_review",
+      instruction:
+        "The wallet could not establish a trustworthy simulation environment. Check the selected wallet, network, RPC chain, and delegation before continuing.",
     },
   };
 }

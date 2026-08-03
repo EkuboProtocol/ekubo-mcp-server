@@ -79,6 +79,7 @@ interface CandidateFailure {
   source: Exclude<QuoteSource, "auto">;
   code: string;
   message: string;
+  retry_recommended: boolean;
 }
 
 interface ZeroXQuote {
@@ -128,8 +129,6 @@ const ZERO_X_NATIVE_TOKEN = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 const ZERO_X_DEFAULT_URL = "https://api.0x.org";
 const ACROSS_DEFAULT_URL = "https://app.across.to/api";
 const ACROSS_PREVIEW_DEPOSITOR = "0x0000000000000000000000000000000000000001";
-const MAX_AUTO_EKUBO_PRICE_IMPACT = 0.002;
-
 export class ServiceError extends Error {
   constructor(
     readonly code: string,
@@ -362,6 +361,7 @@ export async function getQuote(
   fetcher: Fetcher = fetch,
 ) {
   const result = await selectQuote(env, intent, fetcher);
+  const selection = quoteSelection(intent, result);
   return {
     request: quoteRequest(intent),
     source: result.selected.source,
@@ -370,6 +370,7 @@ export async function getQuote(
     normalized: serializeCandidate(result.selected),
     candidates: result.candidates.map(serializeCandidate),
     unavailable_sources: result.failures,
+    selection,
   };
 }
 
@@ -380,6 +381,7 @@ export async function prepareSwap(
 ) {
   const quoted = await selectQuote(env, intent, fetcher);
   const selected = quoted.selected;
+  const selection = quoteSelection(intent, quoted);
   const recipient = getAddress(intent.recipient ?? intent.sender);
   let mainTransaction: UnsignedTransaction;
   let approvals: UnsignedTransaction[];
@@ -475,10 +477,12 @@ export async function prepareSwap(
         : "ekubo_bridge",
     source: selected.source,
     plan_id: keccak256(stringToHex(JSON.stringify(identity))),
-    execution_plan_ready: true,
+    execution_plan_ready: !selection.retry_recommended,
     agent_confirmation_required: false,
     wallet_validation_required: true,
     request: quoteRequest(intent),
+    selection,
+    unavailable_sources: quoted.failures,
     quote_source_url: selected.sourceUrl,
     quote: {
       amount_in: selected.amountIn.toString(),
@@ -503,7 +507,9 @@ export async function prepareSwap(
         : null,
     wallet_handoff: {
       instruction:
-        "Pass this complete plan to the wallet's simulation and authorization flow. Do not ask the user for a separate agent-level approval; the wallet presents the simulated result and collects authorization or signature. Re-prepare after any change or stale quote.",
+        selection.retry_recommended
+          ? "Do not submit this plan: an Ekubo or 0x comparison quote failed. Tell the user to retry, then re-prepare and use only a result whose selection.retry_recommended is false."
+          : "Pass this complete plan to the wallet's simulation and authorization flow. Do not ask the user for a separate agent-level approval; the wallet presents the simulated result and collects authorization or signature. Re-prepare after any change or stale quote.",
       recipient,
       sender: getAddress(intent.sender),
     },
@@ -516,6 +522,23 @@ export async function prepareSwap(
       atomicBatchRequired:
         serializedApprovals.length > 0 ||
         serializedCleanupTransactions.length > 0,
+      simulationFailurePolicy: {
+        rpc_error: {
+          action: "retry_same_plan",
+          instruction:
+            "The quote and calldata remain usable after a transient RPC or local simulation infrastructure failure. Retry the same wallet plan once the service recovers, provided the quote has not expired.",
+        },
+        execution_reverted: {
+          action: "reprepare_plan",
+          instruction:
+            "The swap or bridge reverted against current state, including slippage or price movement. Do not retry these bytes; request a fresh quote and prepare new calldata.",
+        },
+        simulation_setup_error: {
+          action: "user_review",
+          instruction:
+            "Check that the wallet and network match this plan and that the wallet simulation environment is healthy before requesting new calldata.",
+        },
+      },
     }),
     client_execution: {
       wallet:
@@ -523,21 +546,25 @@ export async function prepareSwap(
       provider:
         "Use the user's connected provider to validate the transaction, estimate gas, submit, and confirm receipts",
       must_revalidate_before_signing: true,
-      steps: [
-        ...(approvals.length === 0
-          ? []
-          : [
-              "Check current allowance so the wallet can omit an approval transaction that is no longer required",
-            ]),
-        "Validate the exact swap transaction against current state through the user's connected wallet or provider",
-        "Pass the complete execution_plan to the wallet; do not request a separate agent-level confirmation",
-        "Have the wallet present the simulated result, collect authorization or signature, and submit; this MCP server must not receive a private key or seed phrase",
-        ...(cleanupTransactions.length === 0
-          ? []
-          : [
-              "After the exact-output swap succeeds, clear the remaining router allowance with the supplied post-execution transaction",
-            ]),
-      ],
+      steps: selection.retry_recommended
+        ? [
+            "Stop before wallet submission, tell the user that an Ekubo or 0x quote failed, and retry the preparation so both configured same-chain sources can be compared",
+          ]
+        : [
+            ...(approvals.length === 0
+              ? []
+              : [
+                  "Check current allowance so the wallet can omit an approval transaction that is no longer required",
+                ]),
+            "Validate the exact swap transaction against current state through the user's connected wallet or provider",
+            "Pass the complete execution_plan to the wallet; do not request a separate agent-level confirmation",
+            "Have the wallet present the simulated result, collect authorization or signature, and submit; this MCP server must not receive a private key or seed phrase",
+            ...(cleanupTransactions.length === 0
+              ? []
+              : [
+                  "After the exact-output swap succeeds, clear the remaining router allowance with the supplied post-execution transaction",
+                ]),
+          ],
     },
   };
 }
@@ -604,43 +631,64 @@ async function selectQuote(
         result.reason instanceof Error
           ? result.reason.message
           : String(result.reason),
+      retry_recommended:
+        requestedSource === "ekubo" || requestedSource === "0x",
     });
   });
 
   if (candidates.length === 0) {
     throw new ServiceError(
       "quote_unavailable",
-      "No requested quote source returned a usable route",
+      failures.some((failure) => failure.retry_recommended)
+        ? "No requested quote source returned a usable route; tell the user to retry because an Ekubo or 0x quote failed"
+        : "No requested quote source returned a usable route",
       failures,
     );
   }
 
   let selected = candidates[0];
   if (source === "auto" && !isCrossChain) {
-    const ekubo = candidates.find((candidate) => candidate.source === "ekubo");
-    if (
-      ekubo &&
-      ekubo.priceImpact !== null &&
-      ekubo.priceImpact <= MAX_AUTO_EKUBO_PRICE_IMPACT
-    ) {
-      selected = ekubo;
-    } else {
-      selected = candidates.reduce((best, candidate) => {
-        if (intent.quoteType === "exact_output") {
-          if (candidate.amountIn < best.amountIn) return candidate;
-        } else if (candidate.amountOut > best.amountOut) {
-          return candidate;
-        }
-        return candidate.amountIn === best.amountIn &&
-          candidate.amountOut === best.amountOut &&
-          candidate.source === "ekubo"
-          ? candidate
-          : best;
-      });
-    }
+    selected = candidates.reduce((best, candidate) => {
+      if (intent.quoteType === "exact_output") {
+        if (candidate.amountIn < best.amountIn) return candidate;
+      } else if (candidate.amountOut > best.amountOut) {
+        return candidate;
+      }
+      return candidate.amountIn === best.amountIn &&
+        candidate.amountOut === best.amountOut &&
+        candidate.source === "ekubo"
+        ? candidate
+        : best;
+    });
   }
 
   return { selected, candidates, failures };
+}
+
+function quoteSelection(
+  intent: QuoteIntent,
+  result: {
+    selected: QuoteCandidate;
+    candidates: QuoteCandidate[];
+    failures: CandidateFailure[];
+  },
+) {
+  const retryRecommended = result.failures.some(
+    (failure) => failure.retry_recommended,
+  );
+  return {
+    comparison_basis:
+      intent.quoteType === "exact_output"
+        ? "lowest_calculated_amount_in"
+        : "highest_calculated_amount_out",
+    compared_sources: result.candidates.map((candidate) => candidate.source),
+    comparison_complete: result.failures.length === 0,
+    selected_source: result.selected.source,
+    retry_recommended: retryRecommended,
+    retry_instruction: retryRecommended
+      ? "Tell the user that an Ekubo or 0x quote failed and retry before relying on or executing this result."
+      : null,
+  };
 }
 
 async function quoteEkubo(

@@ -27,6 +27,78 @@ const env: Env = {
 };
 
 describe("aggregated quote providers", () => {
+  it("always chooses the higher calculated output for exact-input auto quotes", async () => {
+    const result = await getQuote(
+      env,
+      {
+        chainId: "4663",
+        tokenIn: tokenA,
+        tokenOut: tokenB,
+        quoteType: "exact_input",
+        amount: "1000",
+        source: "auto",
+      },
+      (async (input: RequestInfo | URL) =>
+        input.toString().startsWith("https://quoter.test/")
+          ? Response.json({
+              block_number: 1,
+              block_hash: "0x01",
+              total_calculated: "900",
+              estimated_gas_cost: 1,
+              price_impact: 0,
+              splits: [],
+            })
+          : Response.json({
+              liquidityAvailable: true,
+              sellAmount: "1000",
+              buyAmount: "950",
+              issues: { allowance: null },
+            })) as typeof fetch,
+    );
+
+    expect(result.source).toBe("0x");
+    expect(result.selection).toMatchObject({
+      comparison_basis: "highest_calculated_amount_out",
+      comparison_complete: true,
+      retry_recommended: false,
+    });
+  });
+
+  it("always chooses the lower calculated input for exact-output auto quotes", async () => {
+    const result = await getQuote(
+      env,
+      {
+        chainId: "4663",
+        tokenIn: tokenA,
+        tokenOut: tokenB,
+        quoteType: "exact_output",
+        amount: "100",
+        source: "auto",
+      },
+      (async (input: RequestInfo | URL) =>
+        input.toString().startsWith("https://quoter.test/")
+          ? Response.json({
+              block_number: 1,
+              block_hash: "0x01",
+              total_calculated: "-210",
+              estimated_gas_cost: 1,
+              price_impact: 0,
+              splits: [],
+            })
+          : Response.json({
+              liquidityAvailable: true,
+              buyAmount: "100",
+              estimatedNetSellAmount: "200",
+              issues: { allowance: null },
+            })) as typeof fetch,
+    );
+
+    expect(result.source).toBe("0x");
+    expect(result.selection.comparison_basis).toBe(
+      "lowest_calculated_amount_in",
+    );
+  });
+
   it("sorts ambiguous token matches by descending visibility priority", async () => {
     const requested: string[] = [];
     const result = await searchTokens(
@@ -265,7 +337,49 @@ describe("aggregated quote providers", () => {
 
     expect(result.source).toBe("0x");
     expect(result.unavailable_sources).toEqual([
-      { source: "ekubo", code: "no_route", message: "No Ekubo route" },
+      {
+        source: "ekubo",
+        code: "no_route",
+        message: "No Ekubo route",
+        retry_recommended: true,
+      },
     ]);
+    expect(result.selection).toMatchObject({
+      comparison_complete: false,
+      retry_recommended: true,
+    });
+    expect(result.selection.retry_instruction).toContain("retry");
+  });
+
+  it("marks prepared calldata unusable when the same-chain comparison is incomplete", async () => {
+    const result = await prepareSwap(
+      env,
+      {
+        chainId: "4663",
+        tokenIn: tokenA,
+        tokenOut: tokenB,
+        quoteType: "exact_input",
+        amount: "1000",
+        source: "auto",
+        slippageBps: 50,
+        sender,
+      },
+      (async (input: RequestInfo | URL) => {
+        if (input.toString().startsWith("https://quoter.test/")) {
+          return Response.json({ code: "no_route", error: "No Ekubo route" }, { status: 404 });
+        }
+        return Response.json({
+          liquidityAvailable: true,
+          sellAmount: "1000",
+          buyAmount: "950",
+          issues: { allowance: null },
+          transaction: { to: swapTarget, data: "0x1234", value: "0" },
+        });
+      }) as typeof fetch,
+    );
+
+    expect(result.execution_plan_ready).toBe(false);
+    expect(result.client_execution.steps).toHaveLength(1);
+    expect(result.wallet_handoff.instruction).toContain("Do not submit");
   });
 });

@@ -22,6 +22,7 @@ import { localFunctionResultMetadata } from "./abi-decode.js";
 import { type Env, getTokens, ServiceError } from "./core.js";
 import {
   executionPlan,
+  executionPlanFromSteps,
   type PreparedTransaction,
   transactionIdentity,
 } from "./execution-plan.js";
@@ -1157,16 +1158,165 @@ export async function prepareLpPositionEarningsClaim(
   };
 }
 
+interface SingleLpPositionWithdrawInput {
+  chainId: string;
+  sender: string;
+  positionsAddress: string;
+  tokenId: string;
+  liquidity: string;
+  recipient?: string;
+}
+
+interface BatchLpPositionWithdrawInput {
+  chainId: string;
+  sender: string;
+  withdrawals: Array<Omit<SingleLpPositionWithdrawInput, "chainId" | "sender">>;
+}
+
+export function prepareLpPositionWithdraw(
+  env: Env,
+  input: SingleLpPositionWithdrawInput,
+  fetcher?: Fetcher,
+): ReturnType<typeof prepareSingleLpPositionWithdraw>;
+export function prepareLpPositionWithdraw(
+  env: Env,
+  input: BatchLpPositionWithdrawInput,
+  fetcher?: Fetcher,
+): Promise<Record<string, unknown>>;
 export async function prepareLpPositionWithdraw(
   env: Env,
-  input: {
-    chainId: string;
-    sender: string;
-    positionsAddress: string;
-    tokenId: string;
-    liquidity: string;
-    recipient?: string;
-  },
+  input: SingleLpPositionWithdrawInput | BatchLpPositionWithdrawInput,
+  fetcher: Fetcher = fetch,
+) {
+  if (!("withdrawals" in input)) {
+    return prepareSingleLpPositionWithdraw(env, input, fetcher);
+  }
+  if (input.withdrawals.length === 0 || input.withdrawals.length > 100) {
+    throw new ServiceError(
+      "invalid_withdrawals",
+      "Provide between 1 and 100 LP position withdrawals",
+    );
+  }
+
+  const sender = normalizeAddress(input.sender);
+  const positionIds = new Set<string>();
+  for (const withdrawal of input.withdrawals) {
+    const id = `${normalizeAddress(withdrawal.positionsAddress)}:${unsigned(withdrawal.tokenId, "token_id")}`;
+    if (positionIds.has(id)) {
+      throw new ServiceError(
+        "duplicate_withdrawal",
+        "A many-at-a-time withdrawal request may include each position only once",
+        { positions_address: withdrawal.positionsAddress, token_id: withdrawal.tokenId },
+      );
+    }
+    positionIds.add(id);
+  }
+
+  const prepared = await Promise.all(
+    input.withdrawals.map((withdrawal) =>
+      prepareSingleLpPositionWithdraw(
+        env,
+        { chainId: input.chainId, sender, ...withdrawal },
+        fetcher,
+      ),
+    ),
+  );
+  const transactions = prepared.map((withdrawal) => withdrawal.transaction);
+  const identity = {
+    action: "withdraw_liquidity_batch",
+    chain_id: input.chainId,
+    sender,
+    withdrawals: prepared.map((withdrawal) => ({
+      plan_id: withdrawal.plan_id,
+      transaction: transactionIdentity(withdrawal.transaction),
+    })),
+  };
+
+  return {
+    schema_version: "1",
+    action: "ekubo_withdraw_lp_positions",
+    plan_id: keccak256(stringToHex(JSON.stringify(identity))),
+    execution_plan_ready: true,
+    agent_confirmation_required: false,
+    wallet_validation_required: true,
+    request: {
+      chain_id: input.chainId,
+      sender,
+      withdrawals: prepared.map((withdrawal) => withdrawal.request),
+    },
+    withdrawals: prepared.map((withdrawal, index) => ({
+      order: index + 1,
+      plan_id: withdrawal.plan_id,
+      request: withdrawal.request,
+      withdrawal: withdrawal.withdrawal,
+      output_protection: withdrawal.output_protection,
+      position: withdrawal.position,
+      tokens: withdrawal.tokens,
+      decoded_call: withdrawal.decoded_calls[0],
+      transaction: withdrawal.transaction,
+      onchain_validation: withdrawal.onchain_validation,
+    })),
+    transactions,
+    execution_plan: executionPlanFromSteps({
+      chainId: input.chainId,
+      sender,
+      steps: transactions.map((transaction) => ({
+        kind: "execution" as const,
+        transaction,
+        submitCondition:
+          "after_prior_required_steps_have_successful_receipts" as const,
+      })),
+      atomicBatchRequired: transactions.length > 1,
+      simulationFailurePolicy: withdrawalSimulationFailurePolicy(),
+    }),
+    onchain_validation: {
+      status: "not_executed",
+      current_state_queries: prepared.map((withdrawal, index) => ({
+        order: index + 1,
+        plan_id: withdrawal.plan_id,
+        ...withdrawal.onchain_validation,
+      })),
+      instruction:
+        "Execute every current_state_query at pending and require every individual ownership, liquidity, and earnings check to pass. Then simulate the exact complete execution_plan as one batch immediately before authorization and submission; discard the whole plan if any value changed.",
+    },
+    wallet_policy_requirements: {
+      allowed_chain_id: input.chainId,
+      allowed_targets: [
+        ...new Set(
+          prepared.flatMap(
+            (withdrawal) =>
+              withdrawal.wallet_policy_requirements.allowed_targets,
+          ),
+        ),
+      ],
+      allowed_transfer_recipients: [
+        ...new Set(
+          prepared.flatMap(
+            (withdrawal) =>
+              withdrawal.wallet_policy_requirements
+                .allowed_transfer_recipients,
+          ),
+        ),
+      ],
+      native_value_in_plan: "0",
+      calldata_selectors: prepared.flatMap(
+        (withdrawal) =>
+          withdrawal.wallet_policy_requirements.calldata_selectors,
+      ),
+      note: "The wallet owns policy authorization and may batch all supplied calls into one transaction even though they withdraw unrelated positions. This Ekubo server cannot modify wallet policy.",
+    },
+    wallet_handoff: {
+      instruction:
+        "Pass every validated withdrawal and the complete multi-call execution_plan to the wallet. The calls may target unrelated positions or managers; the wallet is allowed to batch them into one transaction. Do not ask for separate agent-level confirmation.",
+      calldata_complete:
+        "All calldata and the complete ordered transaction list are supplied. Pass execution_plan directly to wallet tooling; do not reconstruct, omit, or add calls.",
+    },
+  };
+}
+
+async function prepareSingleLpPositionWithdraw(
+  env: Env,
+  input: SingleLpPositionWithdrawInput,
   fetcher: Fetcher = fetch,
 ) {
   const sender = normalizeAddress(input.sender);
@@ -1360,6 +1510,7 @@ export async function prepareLpPositionWithdraw(
       chainId: owned.chainId,
       sender,
       transaction,
+      simulationFailurePolicy: withdrawalSimulationFailurePolicy(),
     }),
     onchain_validation: {
       status: "not_executed",
@@ -1387,6 +1538,26 @@ export async function prepareLpPositionWithdraw(
         "Pass requested liquidity, its share of current liquidity, expected principal and earnings, recipient, manager, exact call, plan_id, and the complete plan to the wallet. Do not ask for separate agent-level confirmation.",
       calldata_complete:
         "All calldata and the complete transaction list are supplied. Pass execution_plan directly to wallet tooling; do not reconstruct or add calls with Cast or another encoder.",
+    },
+  };
+}
+
+function withdrawalSimulationFailurePolicy() {
+  return {
+    rpc_error: {
+      action: "retry_same_plan" as const,
+      instruction:
+        "Retry the same withdrawal plan after a transient RPC or local simulation infrastructure failure, but only if its pending validation is still current.",
+    },
+    execution_reverted: {
+      action: "reprepare_plan" as const,
+      instruction:
+        "The withdrawal reverted against current ownership, liquidity, earnings, or recipient state. Do not retry these bytes; rerun pending validation and prepare a fresh withdrawal plan.",
+    },
+    simulation_setup_error: {
+      action: "user_review" as const,
+      instruction:
+        "Check the wallet, chain, RPC, and delegation configuration before preparing or submitting another withdrawal.",
     },
   };
 }

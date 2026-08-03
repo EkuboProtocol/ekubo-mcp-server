@@ -430,6 +430,79 @@ describe("LP position preparation", () => {
     );
   });
 
+  it("prepares unrelated position withdrawals as one atomic wallet batch", async () => {
+    const fetcher = (async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/positions/")) {
+        return Response.json({
+          data: [
+            {
+              chain_id: "4663",
+              id: "42",
+              positions_address: positionsV3,
+              pool_key: {
+                token0: native,
+                token1: usdg,
+                fee: "1844674407370955",
+                tick_spacing: "1024",
+                extension: native,
+                stableswap_params: null,
+              },
+              bounds: { lower: -20_495_360, upper: -19_787_776 },
+              liquidity: "1000",
+            },
+            {
+              chain_id: "4663",
+              id: "44",
+              positions_address: positionsV2,
+              pool_key: {
+                token0: native,
+                token1: usdg,
+                fee: "1844674407370955",
+                tick_spacing: "1024",
+                extension: native,
+                stableswap_params: null,
+              },
+              bounds: { lower: -20_495_360, upper: -19_787_776 },
+              liquidity: "1000",
+            },
+          ],
+          pagination: { totalPages: 1 },
+        });
+      }
+      if (url.includes("/tokens/batch?")) {
+        return Response.json([
+          { chain_id: "4663", address: native, symbol: "ETH", decimals: 18 },
+          { chain_id: "4663", address: usdg, symbol: "USDG", decimals: 6 },
+        ]);
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const result = (await prepareLpPositionWithdraw(
+      env,
+      {
+        chainId: "4663",
+        sender,
+        withdrawals: [
+          { positionsAddress: positionsV3, tokenId: "42", liquidity: "400" },
+          { positionsAddress: positionsV2, tokenId: "44", liquidity: "250" },
+        ],
+      },
+      fetcher,
+    )) as any;
+
+    expect(result.action).toBe("ekubo_withdraw_lp_positions");
+    expect(result.withdrawals).toHaveLength(2);
+    expect(result.execution_plan.ordered_steps).toHaveLength(2);
+    expect(result.execution_plan.execution_policy.atomic_batch_required).toBe(true);
+    expect(result.execution_plan.simulation_failure_policy.execution_reverted).toMatchObject({
+      action: "reprepare_plan",
+      instruction: expect.stringContaining("fresh withdrawal"),
+    });
+    expect(result.wallet_handoff.instruction).toContain("unrelated");
+  });
+
   it("prepares the explicit v2 withdrawal overload with fees", async () => {
     const result = await prepareLpPositionWithdraw(
       env,

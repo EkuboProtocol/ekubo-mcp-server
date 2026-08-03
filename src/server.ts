@@ -449,11 +449,7 @@ export const prepareLpPositionEarningsClaimSchema = z.object({
     .describe("Fee or reward recipient; defaults to sender"),
 });
 
-export const prepareLpPositionWithdrawSchema = z.object({
-  chain_id: chainId,
-  sender: address.describe(
-    "Current position owner and wallet that will submit the transaction",
-  ),
+const lpPositionWithdrawalSchema = z.object({
   positions_address: address.describe(
     "Exact Positions or Ve33Positions manager from the owned position",
   ),
@@ -467,6 +463,32 @@ export const prepareLpPositionWithdrawSchema = z.object({
     .optional()
     .describe("Principal and earnings recipient; defaults to sender"),
 });
+
+export const prepareLpPositionWithdrawSchema = z.union([
+  z
+    .object({
+      chain_id: chainId,
+      sender: address.describe(
+        "Current owner of every position and wallet that will submit the transaction",
+      ),
+      withdrawals: z
+        .array(lpPositionWithdrawalSchema)
+        .min(1)
+        .max(100)
+        .describe(
+          "One or more position withdrawals to prepare in one wallet-batch-capable execution plan",
+        ),
+    })
+    .strict(),
+  lpPositionWithdrawalSchema
+    .extend({
+      chain_id: chainId,
+      sender: address.describe(
+        "Current position owner and wallet that will submit the transaction",
+      ),
+    })
+    .strict(),
+]);
 
 export const prepareWrapUnwrapSchema = z.object({
   chain_id: chainId,
@@ -1030,7 +1052,7 @@ export const publicToolCatalog = [
     name: "ekubo_get_quote",
     title: "Get a swap or bridge quote",
     description:
-      "Compare Ekubo and 0x for same-chain swaps or use Across for cross-chain swaps. Supports exact input/output and EIP-155 token identifiers.",
+      "Compare Ekubo and 0x for same-chain swaps by strict calculated amounts: maximize amount_out for exact input and minimize amount_in for exact output. Uses Across for cross-chain swaps. If a requested Ekubo or 0x quote fails, the result explicitly instructs the user to retry before relying on the incomplete comparison. Supports EIP-155 token identifiers.",
     inputSchema: z.toJSONSchema(getQuoteSchema),
     _meta: toolCatalogMetadata,
   },
@@ -1038,7 +1060,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_swap",
     title: "Prepare a swap or bridge",
     description:
-      "Fetch a firm Ekubo, 0x, or Across quote and generate unsigned approval plus execution calldata. Returns one ordered execution_plan for a connected wallet or provider, preferably through a separately trusted compatible wallet MCP; Cast remains an optional fallback.",
+      "Fetch firm Ekubo and 0x quotes, strictly choose the better calculated amount for same-chain swaps, or use Across for a bridge, then generate unsigned approval plus execution calldata for a connected wallet or provider. If Ekubo or 0x fails, execution_plan_ready is false and the user is told to retry. Returns a simulation failure policy that permits identical-plan retries for transient RPC errors but requires a fresh quote after reverts such as slippage. Prefer a separately trusted compatible wallet MCP; Cast remains an optional fallback.",
     inputSchema: z.toJSONSchema(prepareSwapSchema),
     _meta: toolCatalogMetadata,
   },
@@ -1196,9 +1218,9 @@ export const publicToolCatalog = [
   },
   {
     name: "ekubo_prepare_lp_position_withdraw",
-    title: "Prepare an LP position withdrawal",
+    title: "Prepare one or more LP position withdrawals",
     description:
-      "Prepare a partial or full liquidity withdrawal from an owned EVM position with one complete wallet plan. Resolves the indexed PoolKey and bounds, uses the exact requested uint128 liquidity, automatically collects standard-position fees or Ve33 rewards as the interface does, supports an explicit recipient, preserves the NFT, and supplies pending ownership/liquidity/earnings validation, exact decoded calldata and result fields, and wallet-policy requirements. The wallet never constructs calldata or adds transactions.",
+      "Prepare partial or full liquidity withdrawals from one or more owned EVM positions with one complete wallet-batch-capable plan. Pass withdrawals for a many-at-a-time request; the legacy single-position fields remain supported. Resolves each indexed PoolKey and bounds, uses each exact requested uint128 liquidity, automatically collects standard-position fees or Ve33 rewards as the interface does, supports explicit recipients, preserves the NFTs, and supplies pending ownership/liquidity/earnings validation, exact decoded calldata and result fields, and wallet-policy requirements. The wallet never constructs calldata.",
     inputSchema: z.toJSONSchema(prepareLpPositionWithdrawSchema),
     _meta: toolCatalogMetadata,
   },
@@ -2030,14 +2052,25 @@ export function createEkuboServer(env: Env) {
     },
     async (input) =>
       toolResult(() =>
-        prepareLpPositionWithdraw(env, {
-          chainId: canonicalChainId(input.chain_id),
-          sender: input.sender,
-          positionsAddress: input.positions_address,
-          tokenId: input.token_id,
-          liquidity: input.liquidity,
-          recipient: input.recipient,
-        }),
+        "withdrawals" in input
+          ? prepareLpPositionWithdraw(env, {
+                chainId: canonicalChainId(input.chain_id),
+                sender: input.sender,
+                withdrawals: input.withdrawals.map((withdrawal) => ({
+                  positionsAddress: withdrawal.positions_address,
+                  tokenId: withdrawal.token_id,
+                  liquidity: withdrawal.liquidity,
+                  recipient: withdrawal.recipient,
+                })),
+              })
+          : prepareLpPositionWithdraw(env, {
+                chainId: canonicalChainId(input.chain_id),
+                sender: input.sender,
+                positionsAddress: input.positions_address,
+                tokenId: input.token_id,
+                liquidity: input.liquidity,
+                recipient: input.recipient,
+              }),
       ),
   );
 
@@ -2704,7 +2737,7 @@ For creating an LP position, call ekubo_get_position_pool_candidates with the pa
 
 For “collect my LP fees” or “claim my LP rewards”, call ekubo_prepare_lp_position_earnings_claim with the connected owner wallet, manager, and token ID from ekubo_get_positions_by_owner. It automatically uses v2 zero-liquidity fee withdrawal, v3 collectFees, or Ve33 claimRewards and never removes liquidity, burns, or transfers the NFT. Execute its current_state_query and local_decode_plan through wallet call tooling on the user's device. Require every inner call to succeed, compare the decoded owner with expected_owner, retain raw return data, and pass the decoded fees or rewards plus execution_plan to the wallet for simulation and authorization. Never infer or manually encode the manager function.
 
-For a partial or full LP withdrawal, execute and decode the position's current_state_query locally with its supplied result_decoder, then select an exact positive liquidity amount no greater than the decoded liquidity. Require every inner call to succeed, compare decoded owner with expected_owner, and retain raw return data. Then call ekubo_prepare_lp_position_withdraw. It automatically chooses the correct v2/v3 withdraw overload or Ve33 withdrawAndClaimRewards, collects fees or rewards exactly as the interface does, and returns the entire transaction list. Include principal plus earnings and recipient in the wallet handoff, and give the unchanged execution_plan to the wallet MCP. The wallet must never construct calldata, choose an overload, or add a claim transaction.
+For partial or full LP withdrawals, execute and decode each position's current_state_query locally with its supplied result_decoder, then select an exact positive liquidity amount no greater than that position's decoded liquidity. Require every inner call to succeed, compare decoded owner with expected_owner, and retain raw return data. Then call ekubo_prepare_lp_position_withdraw with one legacy withdrawal or a withdrawals array for up to 100 positions. It automatically chooses each correct v2/v3 withdraw overload or Ve33 withdrawAndClaimRewards, collects fees or rewards exactly as the interface does, and returns the entire transaction list. Include every principal/earnings estimate and recipient in the wallet handoff, and give the unchanged execution_plan to the wallet MCP. The wallet may batch unrelated position calls into one transaction but must never construct calldata, choose an overload, or add a claim transaction.
 
 Pass LP execution plans to the wallet MCP for simulation, wallet-owned authorization, and execution; never use Cast to reconstruct LP calldata. Do not insert a separate agent confirmation step. If wallet policy rejects a plan, report its exact target, spender, recipient, selector, or native-value finding and do not attempt to change wallet policy.
 
@@ -2727,12 +2760,12 @@ const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 1. Search the token list when resolving a name or symbol. For exact identifiers, use ekubo_get_token for one chain/address pair or ekubo_get_tokens for up to 1,000 pairs in one batch. Show the chosen chains and addresses to the user.
 2. Convert the user amount to base units without floating-point arithmetic.
 3. Set destination_chain_id explicitly for a bridge. Raw addresses and eip155:<chain>:<address> token IDs are accepted.
-4. Request an exact-input or exact-output quote. source=auto compares Ekubo and 0x on one chain and selects Across across chains.
+4. Request an exact-input or exact-output quote. source=auto compares calculated Ekubo and 0x amounts on one chain: choose the highest amount_out for exact input or lowest amount_in for exact output. It selects Across across chains. Never use price impact to override the amount comparison. If either configured same-chain source fails, tell the user to retry and do not execute the incomplete comparison.
 5. Prepare executable calldata with the user's chosen slippage tolerance and sender.
 6. Include the provider, exact plan ID, token amounts, chains, slippage bound, recipient, approvals, execution transaction, and any allowance reset in the wallet handoff.
 7. Pass the complete plan to the user's wallet tooling for balance, allowance, policy, and exact-transaction simulation. Do not ask for separate agent-level confirmation.
 8. Let the wallet present the simulated result, collect authorization or signature, and submit. Never send credentials to this server.
-9. Re-quote and revalidate after any change, expiry, or stale block.
+9. Inspect a wallet simulation's structured failure. Retry identical calldata only when recommended_action=retry_same_plan, normally for a transient RPC failure. For reprepare_plan, including slippage or any execution revert, request a fresh quote and calldata. Re-quote and revalidate after any change, expiry, or stale block.
 `;
 
 const LP_POSITION_WORKFLOW = `# Ekubo LP position data and onchain state
@@ -2786,7 +2819,7 @@ Execute the returned \`onchain_validation.current_state_query\` exactly as suppl
 
 ## Withdraw liquidity
 
-Execute the position's current-state query and choose an exact positive uint128 liquidity amount, then call \`ekubo_prepare_lp_position_withdraw\`. The preparer resolves PoolKey and bounds from the owner index and mirrors the interface: standard v2/v3 withdrawals collect fees, while Ve33 uses \`withdrawAndClaimRewards\`. Partial and full withdrawals use the same tool; compare the requested liquidity with the decoded pending liquidity, not only the informational indexed snapshot.
+Execute each position's current-state query and choose an exact positive uint128 liquidity amount, then call \`ekubo_prepare_lp_position_withdraw\` once with either one position or a withdrawals array for up to 100 positions. The preparer resolves every PoolKey and bounds from the owner index and mirrors the interface: standard v2/v3 withdrawals collect fees, while Ve33 uses \`withdrawAndClaimRewards\`. The wallet may atomically batch unrelated position calls. Compare every requested liquidity with its decoded pending liquidity, not only the informational indexed snapshot.
 
 The returned execution plan contains the complete transaction list. The wallet must not select a function overload, reconstruct calldata, append a separate fee/reward claim, or burn the NFT. Use the locally decoded result to verify the owner equals \`expected_owner\`, sufficient liquidity, principal, and earnings; include the recipient and exact manager call, then pass the complete context and plan to the wallet for simulation and authorization. Discard and rebuild the plan after any position-state change.
 `;
@@ -2810,6 +2843,8 @@ Each step contains the same unsigned call in two encodings:
 
 Process steps sequentially. Check whether an approval is still required from current allowance; if submitted, wait for its successful receipt. Revalidate and estimate the execution immediately before signing it. Submit allowance_cleanup only after the main execution receipt succeeds. Stop on any rejection, revert, failed receipt, chain/account change, expired quote, or changed plan.
 
+Every plan includes simulation_failure_policy. Follow the wallet's returned simulation.failure.recommended_action: retry the identical plan only for retry_same_plan; for reprepare_plan, return to the originating Ekubo preparation tool for fresh state and calldata. Swap and bridge reverts, including slippage, always require a fresh quote. The wallet may atomically batch multiple related or unrelated ordered calls.
+
 ## Wallet tooling adapter
 
 Treat wallet tooling as a separate trust boundary from this public Ekubo server. When a wallet MCP or wallet API exposes call, simulation, authorization, and submission abstractions, use those directly and pass the exact execution_plan unchanged. Do not translate the plan into Cast or manually issue RPC calls when the wallet already wraps those operations. Do not ask the user for a separate agent-level confirmation; the wallet must simulate the exact plan, present the simulated result, collect authorization or signature, and submit it. Never provide a private key, mnemonic, or wallet credential to either MCP server.
@@ -2822,6 +2857,10 @@ Use Cast only when the user explicitly selected it or no compatible wallet abstr
 const QUOTER_API = `# Ekubo aggregated quote contract
 
 Same-chain source=auto requests compare the Ekubo quoter and 0x Swap API v2.
+Exact-input comparisons select the greatest calculated amount_out; exact-output
+comparisons select the least calculated amount_in. Price impact is informational
+and never overrides this strict amount comparison. If either requested provider
+fails, the result marks the comparison incomplete and instructs the user to retry.
 Cross-chain requests use Across Swap API /swap/approval. Provider API keys are
 server-side and are never accepted as tool arguments.
 

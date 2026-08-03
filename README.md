@@ -44,7 +44,9 @@ schemas after a Git-triggered deployment.
   one exact pending TokenDataFetcher call and local decode plan for all nonzero
   owner balances and allowances to the requested spender contracts
 - `ekubo_get_quote` — compare Ekubo and 0x for same-chain exact-input or
-  exact-output swaps, or use Across when `destination_chain_id` differs
+  exact-output swaps by strictly choosing the better calculated token amount,
+  or use Across when `destination_chain_id` differs; an Ekubo or 0x failure
+  marks the comparison incomplete and tells the user to retry
 - `ekubo_prepare_swap` — return firm unsigned Ekubo, 0x, or Across approval
   and execution calldata
 - `ekubo_prepare_ve33_vote` — compile one active NFT's vote changes and
@@ -110,8 +112,9 @@ schemas after a Git-triggered deployment.
   liquidity or touching the NFT, including pending ownership/earnings reads,
   decoded calldata, wallet-policy requirements, and a wallet execution plan
 - `ekubo_prepare_lp_position_withdraw` — prepare a partial or full position
-  withdrawal from an exact liquidity amount, automatically collecting ordinary
-  fees or Ve33 rewards and returning the complete wallet transaction list
+  withdrawal from an exact liquidity amount, or pass up to 100 withdrawals for
+  one atomic wallet-batch-capable plan; each withdrawal automatically collects
+  ordinary fees or Ve33 rewards and includes its own pending validation
 - `ekubo_get_pool` — resolve an exact chain/core/pool ID to a verified PoolKey,
   decoded config, and indexed state snapshot when available
 - `ekubo_get_pool_liquidity` — return tick-level net liquidity deltas for one
@@ -166,11 +169,14 @@ unavailable. The Yul router address and public quote ABI come from
 Refresh the contract snapshot after contract deployments or ABI changes with
 `bun run contracts:generate` from this repository.
 
-`source=auto` is the normal quote mode. Same-chain requests try Ekubo and 0x;
-an acceptable Ekubo price-impact quote is preferred as in the interface,
-otherwise the better raw token amount wins. Cross-chain requests route through
-Across. Set `source=ekubo`, `source=0x`, or `source=across` to require one
-provider. Token arguments accept raw EVM addresses or
+`source=auto` is the normal quote mode. Same-chain requests try Ekubo and 0x
+and always select the better calculated token amount: the greatest output for
+exact input or least input for exact output. Price impact remains informational
+and never overrides this comparison. If either configured provider fails, the
+response marks the comparison incomplete, tells the user to retry, and any
+prepared plan is marked not ready for execution. Cross-chain requests route
+through Across. Set `source=ekubo`, `source=0x`, or `source=across` to require
+one provider. Token arguments accept raw EVM addresses or
 `eip155:<chain_id>:<address>` identifiers. The output token's EIP-155 chain
 must match `destination_chain_id`.
 
@@ -234,13 +240,14 @@ decoded owner against `expected_owner`, and include the current claim with its
 unchanged execution plan in the wallet MCP handoff. The prepared call does not
 remove liquidity, burn the NFT, or transfer it.
 
-For a partial or full withdrawal, execute and decode the position's pending
-current-state query, choose an exact positive liquidity amount no greater than
-the decoded liquidity, and call
-`ekubo_prepare_lp_position_withdraw`. It resolves the PoolKey, bounds, manager
-overload, recipient, and fee/reward behavior and returns the only transaction
-the wallet should simulate and submit. Wallet tooling must not construct or add
-calls. The position NFT is preserved.
+For partial or full withdrawals, execute and decode every position's pending
+current-state query and choose an exact positive liquidity amount no greater
+than its decoded liquidity. Call `ekubo_prepare_lp_position_withdraw` with the
+legacy single-position fields or a `withdrawals` array of up to 100 positions.
+It resolves every PoolKey, bounds, manager overload, recipient, and fee/reward
+behavior. A multi-position request returns one atomic wallet plan; the wallet
+may batch these unrelated position calls into one EIP-7702 transaction. Wallet
+tooling must not construct or alter calls. Each position NFT is preserved.
 
 Every chain input accepts a JSON integer, decimal string, or hexadecimal
 string. Responses use canonical decimal chain-ID strings. Pool fees are uint64
