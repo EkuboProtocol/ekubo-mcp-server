@@ -1,8 +1,8 @@
-export const MCP_SERVER_VERSION = "0.21.2";
+export const MCP_SERVER_VERSION = "0.21.3";
 
 // Change this whenever public MCP tool schemas or response contracts change.
 // It is exposed in HTTP discovery and each MCP tool's metadata so clients and
 // smoke tests can detect a cached catalog independently of the application
 // version.
 export const MCP_TOOL_CATALOG_REVISION =
-  "2026-08-03.wallet-compatibility";
+  "2026-08-03.lp-liquidity-protection";
