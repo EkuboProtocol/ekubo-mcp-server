@@ -231,17 +231,16 @@ describe("liquidity opportunities", () => {
       },
       result_decoder: {
         trust_boundary: "execute_and_decode_on_user_device",
-        preferred_tool: { name: "wallet_batch_eth_call" },
       },
       resume: {
         arguments: {
           ve33_emission_state: {
             current_timestamp:
-              "<preferred_tool.results[0].decoded.currentTimestamp>",
+              "<wallet_batch_eth_call.results[0].decoded.currentTimestamp>",
             current_emission_rate:
-              "<preferred_tool.results[0].decoded.currentEmissionRate>",
+              "<wallet_batch_eth_call.results[0].decoded.currentEmissionRate>",
             total_remaining_emissions:
-              "<preferred_tool.results[0].decoded.totalRemainingEmissions>",
+              "<wallet_batch_eth_call.results[0].decoded.totalRemainingEmissions>",
           },
         },
       },

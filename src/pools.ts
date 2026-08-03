@@ -186,6 +186,42 @@ export async function getPositionsByOwner(
       buildPositionStateReadPlan(position, owner),
     ]),
   );
+  // Every position of the same manager version produces a byte-identical
+  // decode plan and identical read semantics. Inlining them per position made
+  // this response grow by several kilobytes per position while carrying no
+  // additional information, so they are emitted once and referenced.
+  const sharedDecodePlans = new Map<string, unknown>();
+  const sharedSemantics = new Map<string, unknown>();
+  const dedupe = (
+    store: Map<string, unknown>,
+    prefix: string,
+    value: unknown,
+  ) => {
+    const serialized = JSON.stringify(value);
+    for (const [key, existing] of store) {
+      if (JSON.stringify(existing) === serialized) return key;
+    }
+    const key = `${prefix}_${store.size + 1}`;
+    store.set(key, value);
+    return key;
+  };
+  const compactPlan = (plan: ReturnType<typeof buildPositionStateReadPlan>) => {
+    if (plan.available !== true) return plan;
+    const {
+      local_decode_plan: localDecodePlan,
+      semantics,
+      ...rest
+    } = plan;
+    return {
+      ...rest,
+      local_decode_plan_ref: dedupe(
+        sharedDecodePlans,
+        "decode_plan",
+        localDecodePlan,
+      ),
+      semantics_ref: dedupe(sharedSemantics, "semantics", semantics),
+    };
+  };
   return {
     owner,
     chain_id: input.chainId ?? null,
@@ -194,15 +230,21 @@ export async function getPositionsByOwner(
       isIndexedPosition(position)
         ? {
             ...position,
-            current_state_query: readPlans.get(positionIdentity(position)),
+            current_state_query: compactPlan(
+              readPlans.get(positionIdentity(position))!,
+            ),
           }
         : position,
     ),
+    shared_decode_plans: Object.fromEntries(sharedDecodePlans),
+    shared_read_semantics: Object.fromEntries(sharedSemantics),
+    shared_reference_note:
+      "Each current_state_query names its decode plan and read semantics instead of repeating them. Resolve local_decode_plan_ref against shared_decode_plans and pass the resolved plan to the wallet unchanged; resolve semantics_ref against shared_read_semantics.",
     tokens,
     token_metadata_note:
       "Canonical token metadata and current USD prices used by the Ekubo interface. Join by canonical chain_id and numeric address; usd_price may be null.",
     current_state_note:
-      "Indexed liquidity and pool_state are discovery snapshots. Execute and decode each available current_state_query locally with its supplied result_decoder. Require every inner call to succeed, retain raw eth_call return data, and compare the decoded owner with expected_owner before using pending principal, fees or Ve33 rewards.",
+      "Indexed liquidity and pool_state are discovery snapshots. Execute and decode each available current_state_query locally, resolving local_decode_plan_ref against shared_decode_plans and following its result_decoder. Require every inner call to succeed, retain raw eth_call return data, and compare the decoded owner with expected_owner before using pending principal, fees or Ve33 rewards.",
     pagination: response.pagination,
     cache: {
       mcp_result_storage: "none",

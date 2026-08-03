@@ -461,13 +461,12 @@ describe("EVM interface action preparation", () => {
           ],
         },
         result_decoder: {
-          preferred_tool: { name: "wallet_batch_eth_call" },
-          standalone_tool: { name: "wallet_decode_abi_result" },
+          trust_boundary: "execute_and_decode_on_user_device",
         },
         resume: {
           arguments: {
             pending_current_sqrt_ratio:
-              "<preferred_tool.results[0].decoded.sqrtRatio.abi_value>",
+              "<wallet_batch_eth_call.results[0].decoded.sqrtRatio.abi_value>",
           },
         },
       },
@@ -490,14 +489,14 @@ describe("EVM interface action preparation", () => {
           arguments: {
             quote_result: {
               specified_token:
-                "<preferred_tool.results[0].decoded.specifiedToken>",
+                "<wallet_batch_eth_call.results[0].decoded.specifiedToken>",
               calculated_token:
-                "<preferred_tool.results[0].decoded.calculatedToken>",
+                "<wallet_batch_eth_call.results[0].decoded.calculatedToken>",
               specified_amount:
-                "<preferred_tool.results[0].decoded.specifiedAmount>",
+                "<wallet_batch_eth_call.results[0].decoded.specifiedAmount>",
               calculated_amount:
-                "<preferred_tool.results[0].decoded.calculatedAmount>",
-              block_number: "<preferred_tool.block_number>",
+                "<wallet_batch_eth_call.results[0].decoded.calculatedAmount>",
+              block_number: "<wallet_batch_eth_call.block_number>",
             },
           },
         },

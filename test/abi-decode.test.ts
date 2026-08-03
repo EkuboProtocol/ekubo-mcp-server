@@ -30,23 +30,36 @@ describe("local ABI decode plans", () => {
     });
     expect(handoff).toMatchObject({
       trust_boundary: "execute_and_decode_on_user_device",
+      call_id: "state",
       network: { chain_id: "4663", caip2_chain_id: "eip155:4663" },
-      preferred_tool: {
-        name: "wallet_batch_eth_call",
-        arguments: {
-          chain_id: "4663",
-          block_parameter: "pending",
-          calls: [{ include_raw: true }],
-        },
-      },
-      standalone_tool: {
-        name: "wallet_decode_abi_result",
-        arguments_template: {
-          return_data_source: "preferred_tool.results[0].return_data",
-          include_raw: true,
-        },
-      },
     });
+    expect(handoff.instruction).toContain("wallet_batch_eth_call");
+    expect(handoff.instruction).toContain("local_decode_plan");
+  });
+
+  it("never restates the calldata or ABI it was built from", () => {
+    const abi = [
+      {
+        type: "function",
+        name: "state",
+        inputs: [],
+        outputs: [{ name: "value", type: "uint256" }],
+        stateMutability: "view",
+      },
+    ] as const;
+    const decode = functionResultDecodePlan(abi, "state");
+    const handoff = localWalletDecoderHandoff({
+      chainId: "4663",
+      id: "state",
+      to: "0x0000000000000000000000000000000000000001",
+      data: "0x12345678",
+      decode,
+    });
+    // The caller already emits rpc_request and local_decode_plan. Repeating
+    // either one here is what made multi-position responses unreadable.
+    const serialized = JSON.stringify(handoff);
+    expect(serialized).not.toContain("0x12345678");
+    expect(serialized).not.toContain("function_result");
   });
 
   it("pins npm explicitly while keeping semantic codec identity portable", () => {

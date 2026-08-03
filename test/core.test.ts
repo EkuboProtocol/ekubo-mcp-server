@@ -154,9 +154,6 @@ describe("MCP service core", () => {
         {
           kind: "execution",
           transaction: { chain_id: "1", from: sender },
-          eip1193: {
-            submit: { method: "eth_sendTransaction" },
-          },
         },
       ],
     });

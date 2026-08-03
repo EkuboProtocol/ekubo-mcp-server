@@ -99,6 +99,85 @@ describe("TokenDataFetcher read preparation", () => {
     });
   });
 
+  it("restricts the read and the join table to requested tokens", async () => {
+    const fetcher = async (_input: RequestInfo | URL) =>
+      Response.json([
+        {
+          chain_id: 1,
+          address: "0x0",
+          symbol: "ETH",
+          decimals: 18,
+          visibility_priority: 1,
+          logo_url: "https://logos.test/eth",
+          total_supply: 1234,
+          bridgeInfos: { some: "metadata" },
+        },
+        {
+          chain_id: 1,
+          address: token,
+          symbol: "TEST",
+          decimals: 6,
+          visibility_priority: 1,
+          logo_url: "https://logos.test/test",
+          total_supply: 5678,
+          bridgeInfos: { some: "metadata" },
+        },
+      ]);
+
+    const result = await prepareTokenBalancesAndAllowances(
+      env,
+      { chainId: "1", owner, spenders: [], tokens: [token] },
+      fetcher as typeof fetch,
+    );
+
+    expect(result.token_universe).toMatchObject({
+      scope: "requested_tokens",
+      canonical_token_count: 2,
+      token_count: 1,
+    });
+    expect(result.token_universe.tokens).toEqual([
+      { chain_id: "1", address: token, symbol: "TEST", decimals: 6, usd_price: undefined },
+    ]);
+
+    // Reading one balance before a swap must not drag in the whole chain list.
+    const contract = tokenDataFetcherContract("1");
+    const transaction = result.rpc_request.params[0];
+    if (typeof transaction === "string") {
+      throw new Error("expected an eth_call transaction object");
+    }
+    expect(
+      decodeFunctionData({ abi: contract!.abi, data: transaction.data }),
+    ).toEqual({
+      functionName: "getNonzeroBalancesAndAllowances",
+      args: [owner, [token], []],
+    });
+
+    // Display metadata is not part of a balance read's join table.
+    const serialized = JSON.stringify(result.token_universe);
+    expect(serialized).not.toContain("logo_url");
+    expect(serialized).not.toContain("bridgeInfos");
+    expect(serialized).not.toContain("total_supply");
+  });
+
+  it("fails closed when a requested token is not canonical for the chain", async () => {
+    const fetcher = async (_input: RequestInfo | URL) =>
+      Response.json([
+        { chain_id: 1, address: token, symbol: "TEST", decimals: 6 },
+      ]);
+    await expect(
+      prepareTokenBalancesAndAllowances(
+        env,
+        {
+          chainId: "1",
+          owner,
+          spenders: [],
+          tokens: ["0x4444444444444444444444444444444444444444"],
+        },
+        fetcher as typeof fetch,
+      ),
+    ).rejects.toMatchObject({ code: "unknown_token" });
+  });
+
   it("fails closed when a chain has no TokenDataFetcher deployment", async () => {
     await expect(
       prepareTokenBalancesAndAllowances(env, {

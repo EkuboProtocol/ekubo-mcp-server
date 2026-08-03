@@ -177,6 +177,71 @@ describe("pool and position reads", () => {
     });
   });
 
+  it("emits one shared decode plan for positions of the same manager", async () => {
+    const indexedPosition = (id: string) => ({
+      id,
+      chain_id: "0x1237",
+      positions_address: "0x02D9876A21AF7545f8632C3af76eC90b5ad4b66D",
+      owner: token1,
+      pool_key: {
+        token0,
+        token1,
+        fee: "0x0",
+        tick_spacing: "0x400",
+        extension: token0,
+        stableswap_params: null,
+      },
+      bounds: { lower: -1024, upper: 1024 },
+      liquidity: "100",
+      pool_state: { sqrt_ratio: "1", tick: 0, liquidity: "100" },
+    });
+
+    const result = await getPositionsByOwner(
+      env,
+      {
+        owner: token1,
+        chainId: "4663",
+        state: "opened",
+        pageSize: 25,
+        page: 1,
+      },
+      (async (input: RequestInfo | URL) => {
+        if (input.toString().includes("/tokens/batch?")) {
+          return Response.json([]);
+        }
+        return Response.json({
+          data: [indexedPosition("0x1"), indexedPosition("0x2")],
+          pagination: { page: 1, pageSize: 25, totalPages: 1, totalItems: 2 },
+        });
+      }) as typeof fetch,
+    );
+
+    const queries = result.positions.map(
+      (position: any) => position.current_state_query,
+    );
+    // Both positions use the same manager, so the byte-identical decode plan
+    // and read semantics are emitted once rather than per position.
+    expect(queries[0].local_decode_plan_ref).toBe(
+      queries[1].local_decode_plan_ref,
+    );
+    expect(queries[0].semantics_ref).toBe(queries[1].semantics_ref);
+    expect(Object.keys(result.shared_decode_plans)).toHaveLength(1);
+    expect(Object.keys(result.shared_read_semantics)).toHaveLength(1);
+    expect(
+      result.shared_decode_plans[queries[0].local_decode_plan_ref],
+    ).toMatchObject({ kind: "multicall3", function_name: "aggregate3" });
+
+    // The plan itself must not be inlined again per position.
+    for (const query of queries) {
+      expect(query).not.toHaveProperty("local_decode_plan");
+      expect(query).not.toHaveProperty("semantics");
+    }
+    // Each position still carries its own distinct call.
+    expect(queries[0].rpc_request.params[0].data).not.toBe(
+      queries[1].rpc_request.params[0].data,
+    );
+  });
+
   it("resolves and verifies an exact pool key and indexed state", async () => {
     const derived = derivePoolId({
       token0,

@@ -63,9 +63,13 @@ describe("position interface parity", () => {
       "position_state",
       "current_owner",
     ]);
-    expect(plan.decode.position_state_result_fields.map((field) => field.name)).toEqual(
-      ["liquidity", "principal0", "principal1", "rewardAmount"],
-    );
+    expect(plan.result_indexes).toMatchObject({
+      position_state: 1,
+      current_owner: 2,
+    });
+    // Inner calls are described, not re-encoded: their bytes already exist
+    // inside the aggregate in rpc_request.
+    expect(plan.inner_calls.every((call) => !("call_data" in call))).toBe(true);
     expect(plan.local_decode_plan).toMatchObject({
       kind: "multicall3",
       function_name: "aggregate3",
@@ -103,15 +107,11 @@ describe("position interface parity", () => {
     ]);
     expect(plan.result_decoder).toMatchObject({
       trust_boundary: "execute_and_decode_on_user_device",
-      preferred_tool: {
-        name: "wallet_batch_eth_call",
-        arguments: {
-          chain_id: "4663",
-          block_parameter: "pending",
-          calls: [{ include_raw: true }],
-        },
+      call_id: `ekubo-position-state-${plan.token_id}`,
+      network: {
+        chain_id: "4663",
+        caip2_chain_id: "eip155:4663",
       },
-      standalone_tool: { name: "wallet_decode_abi_result" },
     });
 
     const aggregate = decodeFunctionData({

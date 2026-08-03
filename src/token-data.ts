@@ -16,6 +16,7 @@ export async function prepareTokenBalancesAndAllowances(
     chainId: string;
     owner: string;
     spenders: string[];
+    tokens?: string[];
   },
   fetcher: typeof fetch = fetch,
 ) {
@@ -35,15 +36,50 @@ export async function prepareTokenBalancesAndAllowances(
     { chainId: input.chainId },
     fetcher,
   );
-  const tokenAddresses = uniqueAddresses(
-    upstreamTokens.map((token, index) =>
-      tokenAddress(token.address, `tokens[${index}].address`),
-    ),
-  );
-  const tokens = upstreamTokens.map((token, index) => ({
+  const canonicalTokens = upstreamTokens.map((token, index) => ({
     ...token,
     address: tokenAddress(token.address, `tokens[${index}].address`),
   }));
+  const requested =
+    input.tokens === undefined
+      ? undefined
+      : new Set(uniqueAddresses(input.tokens).map((value) => value.toLowerCase()));
+  if (requested !== undefined) {
+    const known = new Set(
+      canonicalTokens.map((token) => token.address.toLowerCase()),
+    );
+    const unknown = [...requested].filter((value) => !known.has(value));
+    if (unknown.length > 0) {
+      throw new ServiceError(
+        "unknown_token",
+        `No canonical token on EVM chain ${input.chainId} matches ${unknown.join(", ")}`,
+        { chain_id: input.chainId, unknown_tokens: unknown },
+      );
+    }
+  }
+  const selectedTokens =
+    requested === undefined
+      ? canonicalTokens
+      : canonicalTokens.filter((token) =>
+          requested.has(token.address.toLowerCase()),
+        );
+  const tokenAddresses = uniqueAddresses(
+    selectedTokens.map((token) => token.address),
+  );
+  // Only the fields needed to join a returned balance back to a token. The
+  // full upstream record carries logos, supply, and bridge metadata that this
+  // read never uses, and at several hundred tokens that is the bulk of the
+  // response. Callers wanting the rest have ekubo_get_token(s).
+  const tokens = selectedTokens.map((token) => {
+    const record = token as Record<string, unknown>;
+    return {
+      chain_id: record.chain_id,
+      address: token.address,
+      symbol: record.symbol,
+      decimals: record.decimals,
+      usd_price: record.usd_price,
+    };
+  });
   const data = encodeFunctionData({
     abi: contract.abi,
     functionName: FUNCTION_NAME,
@@ -61,7 +97,11 @@ export async function prepareTokenBalancesAndAllowances(
       source_url: sourceUrl,
       minimum_visibility_priority: 0,
       interface_equivalent_page_size: 10_000,
+      scope: requested === undefined ? "entire_chain_list" : "requested_tokens",
+      canonical_token_count: canonicalTokens.length,
       token_count: tokenAddresses.length,
+      fields:
+        "Join fields only. Call ekubo_get_token or ekubo_get_tokens for names, logos, supply, or bridge metadata.",
       tokens,
     },
     contract: {

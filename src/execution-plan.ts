@@ -1,4 +1,11 @@
-import { type Address, getAddress, type Hex, numberToHex } from "viem";
+import {
+  type Address,
+  getAddress,
+  type Hex,
+  keccak256,
+  numberToHex,
+  stringToHex,
+} from "viem";
 import { assertWalletExecutionPlan } from "./wallet-compatibility.js";
 
 type RevertDecodePlan = Record<string, unknown>;
@@ -123,38 +130,19 @@ export function executionPlanFromSteps({
     ({ kind, transaction, submitCondition, revertDecode }, index) => {
       const prepared = transaction;
       assertPreparedTransaction(chainId, prepared);
-      const eip1193Transaction = {
+      const stepTransaction = {
+        chain_id: chainId,
         from: normalizedSender,
         to: getAddress(prepared.to),
         data: prepared.data,
-        value: rpcQuantity(prepared.value, "value"),
+        value: prepared.value,
+        ...(prepared.gas === undefined ? {} : { gas: prepared.gas }),
       };
       return {
         step: index + 1,
         kind,
         submit_condition: submitCondition,
-        transaction: {
-          chain_id: chainId,
-          from: normalizedSender,
-          to: getAddress(prepared.to),
-          data: prepared.data,
-          value: prepared.value,
-          ...(prepared.gas === undefined ? {} : { gas: prepared.gas }),
-        },
-        eip1193: {
-          simulate: {
-            method: "eth_call",
-            params: [eip1193Transaction, "latest"],
-          },
-          estimate_gas: {
-            method: "eth_estimateGas",
-            params: [eip1193Transaction],
-          },
-          submit: {
-            method: "eth_sendTransaction",
-            params: [eip1193Transaction],
-          },
-        },
+        transaction: stepTransaction,
         ...(revertDecode === undefined
           ? {}
           : { revert_decode: revertDecode }),
@@ -186,15 +174,68 @@ export function executionPlanFromSteps({
           }
         : {}),
     },
-    adapters: {
-      mcp_wallet:
-        "Preferred when available: pass chain_id as the wallet MCP's decimal chain_id and this complete execution_plan to its simulation and execution APIs after verifying that its account exactly matches sender. The wallet may execute all ordered calls as one atomic batch. Do not ask for a separate agent-level confirmation; the wallet presents the simulated result and collects authorization or signature.",
-      cast_fallback:
-        "Use only when the user selected Cast or no compatible wallet abstraction is available. For cast call use transaction.data with --data. For cast estimate and cast send pass transaction.data as the positional SIG argument. Always pass --from for preflight and the exact transaction.value with --value; select the signer only at send time.",
-    },
   };
   assertWalletExecutionPlan(plan);
   return plan;
+}
+
+/**
+ * Content digest of one prepared step. This is a pure function of the exact
+ * bytes that will be broadcast, so the Ekubo server and an unrelated wallet
+ * server can compute it independently without sharing any state: there is no
+ * registry to look up and no plan identifier to reconcile across the two.
+ *
+ * The digest is deliberately per-step rather than per-plan. A wallet is free to
+ * combine several prepared plans into one atomic batch, which would invalidate
+ * any whole-plan identifier, but leaves every individual step digest intact.
+ * A combining agent may also drop a later step whose digest exactly equals an
+ * earlier one, which safely collapses repeated identical approvals without ever
+ * rewriting calldata.
+ */
+export function stepDigest(transaction: {
+  chain_id: string;
+  from: string;
+  to: string;
+  data: string;
+  value: string;
+}): Hex {
+  const canonical = [
+    transaction.chain_id,
+    getAddress(transaction.from).toLowerCase(),
+    getAddress(transaction.to).toLowerCase(),
+    transaction.value,
+    transaction.data.toLowerCase(),
+  ].join("|");
+  return keccak256(stringToHex(canonical));
+}
+
+/**
+ * Integrity block for a prepared plan. Callers place this next to
+ * `execution_plan`, never inside it: the wallet boundary schema is strict about
+ * step fields, so unknown keys must not travel within the plan itself.
+ */
+export function executionPlanIntegrity(plan: {
+  ordered_steps: readonly {
+    step: number;
+    transaction: {
+      chain_id: string;
+      from: string;
+      to: string;
+      data: string;
+      value: string;
+    };
+  }[];
+}) {
+  return {
+    digest_algorithm:
+      'keccak256(utf8("<chain_id>|<from>|<to>|<value>|<0x-data>")) with lowercase hex addresses and data, and decimal chain_id and value',
+    steps: plan.ordered_steps.map((step) => ({
+      step: step.step,
+      step_digest: stepDigest(step.transaction),
+    })),
+    verification:
+      "Recompute each digest from the plan actually delivered to the wallet. A mismatch means the plan was altered in transit and must not be signed. Digests are per-step so they survive a wallet combining several prepared plans into one atomic batch.",
+  };
 }
 
 function defaultSimulationFailurePolicy(): SimulationFailurePolicy {

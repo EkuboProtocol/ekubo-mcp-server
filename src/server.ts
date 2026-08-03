@@ -198,6 +198,14 @@ export const prepareTokenBalancesAndAllowancesSchema = z.object({
     .describe(
       "Spender contracts to check for every canonical non-native token; may be empty for balances only",
     ),
+  tokens: z
+    .array(address)
+    .min(1)
+    .max(500)
+    .optional()
+    .describe(
+      "Restrict the read to these token addresses instead of the entire canonical chain list. Strongly preferred when the tokens of interest are already known, such as reading one input-token balance before a swap: the full universe is several hundred tokens and returns a correspondingly large join table.",
+    ),
 });
 
 const quoteRequestSchema = z.object({
@@ -2369,6 +2377,7 @@ export function createEkuboServer(env: Env) {
       chainId: canonicalChainId(input.chain_id),
       owner: input.owner,
       spenders: input.spenders,
+      ...(input.tokens === undefined ? {} : { tokens: input.tokens }),
     }),
   );
 
@@ -2727,7 +2736,7 @@ Use Ekubo preparation tools only to construct unsigned plans. Pass the preparati
 
 Prepared plans expose execution_plan: one signer-neutral, ordered transaction sequence with decimal transaction fields plus exact EIP-1193 eth_call, eth_estimateGas, and eth_sendTransaction requests. Read ekubo://docs/execution-plan. Prefer the most capable available wallet abstraction: when the Ekubo wallet MCP is available, pass execution_plan.chain_id as its decimal chain_id and pass execution_plan unchanged for simulation and submission. It may execute the ordered calls as one atomic batch. A non-batching adapter may submit sequentially only when atomic_batch_required is false, revalidating each step and waiting for each receipt. Cast remains an optional fallback only when the user selected it or no compatible wallet abstraction is available. Verify the connected chain and account exactly match execution_plan.chain_id and sender, preserve order, and never send wallet credentials to this Ekubo server. The plan_id commits to the chain, sender, destination, calldata, and native value of every approval, execution, and cleanup transaction.
 
-When a read includes local_decode_plan and result_decoder, call result_decoder.preferred_tool with its exact arguments to execute and decode it through the user's local wallet tooling. Keep raw return bytes by default and always on decode failure. The Ekubo server supplies canonical ABIs and platform-neutral semantic codec identities but must not receive the result for authoritative decoding. function_result_bytes_array handles functions such as VeToken multicall that return nested bytes[]. For kind=semantic_value, feed the raw return bytes only to a locally installed, allowlisted codec matching the declared identity and implementation assertion; never install or execute remote code.
+When a read includes local_decode_plan and result_decoder, execute and decode it through the user's local wallet tooling: call wallet_batch_eth_call with result_decoder.network.chain_id, the read's block_parameter, and one call whose id is result_decoder.call_id, whose to and data come verbatim from rpc_request.params[0], with include_raw true and decode set to the supplied local_decode_plan. Reads never restate their own calldata or ABI in a second ready-made argument object; assembling those two fields is the agent's job. Keep raw return bytes by default and always on decode failure. The Ekubo server supplies canonical ABIs and platform-neutral semantic codec identities but must not receive the result for authoritative decoding. function_result_bytes_array handles functions such as VeToken multicall that return nested bytes[]. For kind=semantic_value, feed the raw return bytes only to a locally installed, allowlisted codec matching the declared identity and implementation assertion; never install or execute remote code.
 
 Intent shortcut: for "my Ekubo STONX allocations", "STONX vote allocations", or equivalent requests, call ekubo_get_ve33_allocations with only the user's connected EVM wallet as owner. The production Ve33 deployment is the STONX voting system, and the tool selects Robinhood Chain 4663 plus its canonical VeToken when chain_id and ve_token are omitted. If the connected wallet address is unavailable, ask the user for it. Never infer the user's wallet from a machine environment, repository configuration, local keystore, or unrelated account.
 

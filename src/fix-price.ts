@@ -192,7 +192,7 @@ export async function prepareFixPoolPrice(
           preserve_original_arguments: true,
           arguments: {
             pending_current_sqrt_ratio:
-              "<preferred_tool.results[0].decoded.sqrtRatio.abi_value>",
+              "<wallet_batch_eth_call.results[0].decoded.sqrtRatio.abi_value>",
           },
         },
       },
@@ -271,14 +271,14 @@ export async function prepareFixPoolPrice(
           arguments: {
             quote_result: {
               specified_token:
-                "<preferred_tool.results[0].decoded.specifiedToken>",
+                "<wallet_batch_eth_call.results[0].decoded.specifiedToken>",
               calculated_token:
-                "<preferred_tool.results[0].decoded.calculatedToken>",
+                "<wallet_batch_eth_call.results[0].decoded.calculatedToken>",
               specified_amount:
-                "<preferred_tool.results[0].decoded.specifiedAmount>",
+                "<wallet_batch_eth_call.results[0].decoded.specifiedAmount>",
               calculated_amount:
-                "<preferred_tool.results[0].decoded.calculatedAmount>",
-              block_number: "<preferred_tool.block_number>",
+                "<wallet_batch_eth_call.results[0].decoded.calculatedAmount>",
+              block_number: "<wallet_batch_eth_call.block_number>",
             },
           },
           instruction:

@@ -297,33 +297,19 @@ export function buildPositionStateReadPlan(
       method: "eth_call",
       params: [{ to: MULTICALL3_ADDRESS, data: aggregateData }, "pending"],
     },
+    // Every inner call's bytes are already encoded inside the aggregate in
+    // rpc_request, so they are described here rather than repeated. The result
+    // field lists live in local_decode_plan and are not restated either.
     inner_calls: calls.map((call, index) => ({
       index,
       purpose: call.purpose,
       target: call.target,
       function: call.functionName,
       state_mutability: call.stateMutability,
-      call_data: call.callData,
-      result_fields: call.resultFields,
     })),
-    decode: {
-      outer_function: "aggregate3((address,bool,bytes)[])",
-      outer_result:
-        "Decode as (bool success, bytes returnData)[] in inner_calls order.",
-      outer_result_abi: [
-        {
-          name: "returnData",
-          type: "tuple[]",
-          components: [
-            { name: "success", type: "bool" },
-            { name: "returnData", type: "bytes" },
-          ],
-        },
-      ],
-      position_state_result_index: stateResultIndex,
-      position_state_result_fields: calls[stateResultIndex]?.resultFields ?? [],
-      owner_result_index: ownerResultIndex,
-      owner_result_fields: calls[ownerResultIndex]?.resultFields ?? [],
+    result_indexes: {
+      position_state: stateResultIndex,
+      current_owner: ownerResultIndex,
       integer_serialization:
         "Serialize every decoded integer as a decimal string before returning it through JSON.",
     },
