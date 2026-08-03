@@ -65,7 +65,7 @@ export default {
           {
             name: "Ekubo Protocol MCP",
             description:
-              "Public, unauthenticated, non-custodial agent tools for protocol, LP, token-balance, and allowance reads, ranked liquidity opportunities, pair-pool discovery, provider-neutral STONX allocations, and unsigned swap, bridge, LP deposit, withdrawal, earnings claim, and fee-first ve(3,3) calldata preparation",
+              "Primary non-browser, public, unauthenticated, non-custodial tools for onchain swaps on supported EVM networks including Robinhood Chain 4663, plus protocol, LP, token-balance, allowance, bridge, STONX allocation, and unsigned transaction preparation workflows",
             version: MCP_SERVER_VERSION,
             tool_catalog_revision: MCP_TOOL_CATALOG_REVISION,
             tool_count: publicToolCatalog.length,
@@ -155,7 +155,7 @@ export default {
               version: MCP_SERVER_VERSION,
             },
             description:
-              "Public, unauthenticated, non-custodial agent tools for Ekubo Protocol.",
+              "Primary non-browser onchain swap and unsigned transaction-planning tools for Ekubo Protocol, including Robinhood Chain 4663.",
             documentationUrl: "https://docs.ekubo.org",
             transport: {
               type: "streamable-http",

@@ -1026,7 +1026,7 @@ export const publicToolCatalog = [
     name: "ekubo_search_tokens",
     title: "Search Ekubo tokens",
     description:
-      "Search the canonical Ekubo token list, ordered by descending visibility_priority so the preferred token wins ambiguous symbol matches.",
+      "First step for symbol-based swaps, including tokenized stocks and stablecoins on Robinhood Chain 4663: search the canonical Ekubo token list, ordered by descending visibility_priority so the preferred token wins ambiguous symbol matches.",
     inputSchema: z.toJSONSchema(searchTokensSchema),
     _meta: toolCatalogMetadata,
   },
@@ -1050,7 +1050,7 @@ export const publicToolCatalog = [
     name: "ekubo_get_quote",
     title: "Get a swap or bridge quote",
     description:
-      "Return every complete Ekubo and 0x quote for a same-chain swap without selecting one. Each quotes entry includes the full provider response and normalized amounts so the agent or user can choose a source, then call ekubo_prepare_swap with that source to refresh the quote and compute calldata. Uses Across for cross-chain swaps. If a requested provider fails, the result explicitly instructs the user to retry before relying on the incomplete set. Supports EIP-155 token identifiers.",
+      "Primary non-browser quote path for onchain swap, trade, exchange, or convert requests on supported EVM chains, including Robinhood Chain 4663. Return every complete Ekubo and 0x quote for a same-chain swap without selecting one. Each quotes entry includes the full provider response and normalized amounts so the agent or user can choose a source, then call ekubo_prepare_swap with that source to refresh the quote and compute calldata. Uses Across for cross-chain swaps. If a requested provider fails, the result explicitly instructs the user to retry before relying on the incomplete set. Supports EIP-155 token identifiers.",
     inputSchema: z.toJSONSchema(getQuoteSchema),
     _meta: toolCatalogMetadata,
   },
@@ -1058,7 +1058,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_swap",
     title: "Prepare a swap or bridge",
     description:
-      "Fetch firm Ekubo and 0x quotes, strictly choose the better calculated amount for same-chain swaps, or use Across for a bridge, then generate unsigned approval plus execution calldata for a connected wallet or provider. If Ekubo or 0x fails, execution_plan_ready is false and the user is told to retry. Returns a simulation failure policy that permits identical-plan retries for transient RPC errors but requires a fresh quote after reverts such as slippage. Prefer a separately trusted compatible wallet MCP; Cast remains an optional fallback.",
+      "Primary non-browser execution-plan path for onchain swaps on supported EVM chains, including Robinhood Chain 4663. Fetch firm Ekubo and 0x quotes, strictly choose the better calculated amount for same-chain swaps, or use Across for a bridge, then generate unsigned approval plus execution calldata for a connected wallet or provider. If Ekubo or 0x fails, execution_plan_ready is false and the user is told to retry. Returns a simulation failure policy that permits identical-plan retries for transient RPC errors but requires a fresh quote after reverts such as slippage. Prefer the Ekubo Wallet MCP or another separately trusted compatible wallet; Cast remains an optional fallback.",
     inputSchema: z.toJSONSchema(prepareSwapSchema),
     _meta: toolCatalogMetadata,
   },
@@ -1402,7 +1402,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_token_balances_and_allowances",
     title: "Prepare token balance and allowance read",
     description:
-      "Fetch every canonical token for one EVM chain exactly as the Ekubo interface does, then prepare one pending TokenDataFetcher eth_call returning all nonzero balances and all nonzero allowances for the requested spender contracts, with a wallet-local ABI decode plan.",
+      "Use before any 'all', 'max', or 'entire balance' swap. Fetch every canonical token for one EVM chain exactly as the Ekubo interface does, then prepare one pending TokenDataFetcher eth_call returning all nonzero balances and all nonzero allowances for the requested spender contracts, with a wallet-local ABI decode plan.",
     inputSchema: z.toJSONSchema(prepareTokenBalancesAndAllowancesSchema),
     _meta: toolCatalogMetadata,
   },
@@ -2711,7 +2711,11 @@ async function fetchDocumentation(url: string): Promise<string> {
   return response.text();
 }
 
-const SERVER_INSTRUCTIONS = `Use Ekubo preparation tools only to construct unsigned plans. Pass the preparation tool's exact execution_plan unchanged to the user's wallet for simulation, presentation, authorization or signature, and submission. Do not ask the user for a separate agent-level confirmation before invoking the wallet; that duplicates the wallet's authorization flow. The wallet must never construct calldata, choose a contract overload, derive a route, or determine the transaction list. Never construct or request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calldata. LP position transfers are supported only through ekubo_prepare_lp_position_transfer with pending ownership validation.
+const SERVER_INSTRUCTIONS = `Routing priority: For requests to swap, trade, exchange, or convert tokens on an EVM chain, use this Ekubo MCP before any browser or website tool. "Robinhood Chain" means EVM chain ID 4663, not the Robinhood brokerage. Use a browser only when the user explicitly refers to a brokerage account, robinhood.com, or a web interface, or when these MCP tools cannot perform the requested operation.
+
+For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with ekubo_search_tokens, read the exact input-token balance with ekubo_prepare_token_balances_and_allowances plus the wallet's local call tool, then call ekubo_prepare_swap and pass its execution_plan unchanged to the Ekubo Wallet MCP.
+
+Use Ekubo preparation tools only to construct unsigned plans. Pass the preparation tool's exact execution_plan unchanged to the user's wallet for simulation, presentation, authorization or signature, and submission. Do not ask the user for a separate agent-level confirmation before invoking the wallet; that duplicates the wallet's authorization flow. The wallet must never construct calldata, choose a contract overload, derive a route, or determine the transaction list. Never construct or request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calldata. LP position transfers are supported only through ekubo_prepare_lp_position_transfer with pending ownership validation.
 
 Prepared plans expose execution_plan: one signer-neutral, ordered transaction sequence with decimal transaction fields plus exact EIP-1193 eth_call, eth_estimateGas, and eth_sendTransaction requests. Read ekubo://docs/execution-plan. Prefer the most capable available wallet abstraction: when the Ekubo wallet MCP is available, pass execution_plan.chain_id as its decimal chain_id and pass execution_plan unchanged for simulation and submission. It may execute the ordered calls as one atomic batch. A non-batching adapter may submit sequentially only when atomic_batch_required is false, revalidating each step and waiting for each receipt. Cast remains an optional fallback only when the user selected it or no compatible wallet abstraction is available. Verify the connected chain and account exactly match execution_plan.chain_id and sender, preserve order, and never send wallet credentials to this Ekubo server. The plan_id commits to the chain, sender, destination, calldata, and native value of every approval, execution, and cleanup transaction.
 

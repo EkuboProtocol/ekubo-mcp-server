@@ -310,6 +310,12 @@ describe("Worker discovery", () => {
     const getQuote = catalog.tools.find(
       (tool) => tool.name === "ekubo_get_quote",
     );
+    const searchTokens = catalog.tools.find(
+      (tool) => tool.name === "ekubo_search_tokens",
+    );
+    const tokenBalances = catalog.tools.find(
+      (tool) => tool.name === "ekubo_prepare_token_balances_and_allowances",
+    );
     expect(
       (getQuote?.inputSchema as { properties?: Record<string, unknown> })
         .properties,
@@ -331,6 +337,12 @@ describe("Worker discovery", () => {
         .properties,
     ).toHaveProperty("source");
     expect(prepareSwap?.description).toContain("connected wallet or provider");
+    expect(searchTokens?.description).toContain("Robinhood Chain 4663");
+    expect(getQuote?.description).toContain("Primary non-browser quote path");
+    expect(prepareSwap?.description).toContain(
+      "Primary non-browser execution-plan path",
+    );
+    expect(tokenBalances?.description).toContain("'all', 'max'");
     expect(
       prepareVe33VoteSchema.shape.current_vote.safeParse(null).success,
     ).toBe(false);
@@ -427,6 +439,15 @@ describe("Worker discovery", () => {
     expect(initializeResult.result.serverInfo.version).toBe(MCP_SERVER_VERSION);
     expect(initializeResult.result.instructions).toContain(
       "ekubo_get_ve33_allocations",
+    );
+    expect(initializeResult.result.instructions).toContain(
+      "use this Ekubo MCP before any browser or website tool",
+    );
+    expect(initializeResult.result.instructions).toContain(
+      '"Robinhood Chain" means EVM chain ID 4663',
+    );
+    expect(initializeResult.result.instructions).toContain(
+      'For "all", "max", or "entire balance" swaps',
     );
     expect(initializeResult.result.instructions).toContain("ekubo_get_tokens");
     expect(initializeResult.result.instructions).toContain(
