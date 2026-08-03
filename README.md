@@ -174,11 +174,11 @@ Same-chain requests return every complete Ekubo and 0x provider response in
 `quotes`, together with its source URL and normalized amounts, so the agent or
 user can choose. The chosen source is then passed to `ekubo_prepare_swap`, which
 refreshes that provider's quote and computes the executable calldata.
-If either configured provider fails, the response marks the comparison
-incomplete, tells the user to retry, and any prepared plan is marked not ready
-for execution. Cross-chain requests route through Across. `ekubo_prepare_swap`
-still accepts `source=ekubo`, `source=0x`, or `source=across` to require one
-provider. Token arguments accept raw EVM addresses or
+If a configured provider fails, the response reports it in
+`unavailable_sources` without invalidating successful quote options.
+Cross-chain requests route through Across. `ekubo_prepare_swap` requires one
+source returned by `ekubo_get_quote`: `ekubo`, `0x`, or `across`. Token
+arguments accept raw EVM addresses or
 `eip155:<chain_id>:<address>` identifiers. The output token's EIP-155 chain
 must match `destination_chain_id`.
 

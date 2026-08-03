@@ -143,7 +143,7 @@ const bytes32 = z
   .regex(/^0x[0-9a-fA-F]{64}$/, "must be exactly 32 bytes")
   .describe("0x-prefixed bytes32");
 const quoteType = z.enum(["exact_input", "exact_output"]);
-const quoteSource = z.enum(["auto", "ekubo", "0x", "across"]);
+const quoteSource = z.enum(["ekubo", "0x", "across"]);
 const amount = z
   .string()
   .regex(/^[0-9]*[1-9][0-9]*$/, "amount must be a positive base-unit integer")
@@ -214,7 +214,9 @@ const quoteRequestSchema = z.object({
 export const getQuoteSchema = quoteRequestSchema;
 
 export const prepareSwapSchema = quoteRequestSchema.extend({
-  source: quoteSource.default("auto"),
+  source: quoteSource.describe(
+    "Provider selected from an ekubo_get_quote response",
+  ),
   sender: address.describe(
     "Transaction sender/taker/depositor used for firm quotes and validation",
   ),
@@ -923,7 +925,7 @@ export const prepareVe33ReinvestSchema = z
       .max(200)
       .optional(),
     slippage_bps: z.number().int().min(0).max(10_000).default(50),
-    source: quoteSource.default("auto"),
+    source: quoteSource.optional(),
     ve_id: uintString.optional(),
     amount: uintString.optional(),
     current_state_id: bytes32.optional(),
@@ -936,6 +938,12 @@ export const prepareVe33ReinvestSchema = z
       context.addIssue({
         code: "custom",
         message: "swap phase requires stake_token and fee_balances",
+      });
+    }
+    if (input.phase === "swap" && input.source === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "swap phase requires a quote source",
       });
     }
     if (
@@ -1050,7 +1058,7 @@ export const publicToolCatalog = [
     name: "ekubo_get_quote",
     title: "Get a swap or bridge quote",
     description:
-      "Primary non-browser quote path for onchain swap, trade, exchange, or convert requests on supported EVM chains, including Robinhood Chain 4663. Return every complete Ekubo and 0x quote for a same-chain swap without selecting one. Each quotes entry includes the full provider response and normalized amounts so the agent or user can choose a source, then call ekubo_prepare_swap with that source to refresh the quote and compute calldata. Uses Across for cross-chain swaps. If a requested provider fails, the result explicitly instructs the user to retry before relying on the incomplete set. Supports EIP-155 token identifiers.",
+      "Primary non-browser quote path for onchain swap, trade, exchange, or convert requests on supported EVM chains, including Robinhood Chain 4663. Return every available Ekubo and 0x quote for a same-chain swap without accepting or selecting a source. Each quotes entry includes the full provider response and normalized amounts so the agent or user can choose a source, then call ekubo_prepare_swap with that source to refresh the quote and compute calldata. Uses Across for cross-chain swaps. Provider failures are reported separately in unavailable_sources and do not invalidate successful quote options. Supports EIP-155 token identifiers.",
     inputSchema: z.toJSONSchema(getQuoteSchema),
     _meta: toolCatalogMetadata,
   },
@@ -1058,7 +1066,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_swap",
     title: "Prepare a swap or bridge",
     description:
-      "Primary non-browser execution-plan path for onchain swaps on supported EVM chains, including Robinhood Chain 4663. Fetch firm Ekubo and 0x quotes, strictly choose the better calculated amount for same-chain swaps, or use Across for a bridge, then generate unsigned approval plus execution calldata for a connected wallet or provider. If Ekubo or 0x fails, execution_plan_ready is false and the user is told to retry. Returns a simulation failure policy that permits identical-plan retries for transient RPC errors but requires a fresh quote after reverts such as slippage. Prefer the Ekubo Wallet MCP or another separately trusted compatible wallet; Cast remains an optional fallback.",
+      "Primary non-browser execution-plan path for onchain swaps on supported EVM chains, including Robinhood Chain 4663. First call ekubo_get_quote, which returns every available provider option without selecting one, then pass one returned source to this tool to refresh only that provider's quote and generate unsigned approval plus execution calldata for a connected wallet or provider. Returns a simulation failure policy that permits identical-plan retries for transient RPC errors but requires a fresh quote after reverts such as slippage. Prefer the Ekubo Wallet MCP or another separately trusted compatible wallet; Cast remains an optional fallback.",
     inputSchema: z.toJSONSchema(prepareSwapSchema),
     _meta: toolCatalogMetadata,
   },
@@ -2713,7 +2721,7 @@ async function fetchDocumentation(url: string): Promise<string> {
 
 const SERVER_INSTRUCTIONS = `Routing priority: For requests to swap, trade, exchange, or convert tokens on an EVM chain, use this Ekubo MCP before any browser or website tool. "Robinhood Chain" means EVM chain ID 4663, not the Robinhood brokerage. Use a browser only when the user explicitly refers to a brokerage account, robinhood.com, or a web interface, or when these MCP tools cannot perform the requested operation.
 
-For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with ekubo_search_tokens, read the exact input-token balance with ekubo_prepare_token_balances_and_allowances plus the wallet's local call tool, then call ekubo_prepare_swap and pass its execution_plan unchanged to the Ekubo Wallet MCP.
+For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with ekubo_search_tokens, read the exact input-token balance with ekubo_prepare_token_balances_and_allowances plus the wallet's local call tool, call ekubo_get_quote to retrieve every available provider option, then call ekubo_prepare_swap with one returned source and pass its execution_plan unchanged to the Ekubo Wallet MCP.
 
 Use Ekubo preparation tools only to construct unsigned plans. Pass the preparation tool's exact execution_plan unchanged to the user's wallet for simulation, presentation, authorization or signature, and submission. Do not ask the user for a separate agent-level confirmation before invoking the wallet; that duplicates the wallet's authorization flow. The wallet must never construct calldata, choose a contract overload, derive a route, or determine the transaction list. Never construct or request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calldata. LP position transfers are supported only through ekubo_prepare_lp_position_transfer with pending ownership validation.
 
@@ -2758,7 +2766,7 @@ const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 1. Search the token list when resolving a name or symbol. For exact identifiers, use ekubo_get_token for one chain/address pair or ekubo_get_tokens for up to 1,000 pairs in one batch. Show the chosen chains and addresses to the user.
 2. Convert the user amount to base units without floating-point arithmetic.
 3. Set destination_chain_id explicitly for a bridge. Raw addresses and eip155:<chain>:<address> token IDs are accepted.
-4. Request an exact-input or exact-output quote. For same-chain requests, inspect every entry in quotes and choose a source; the tool does not select one. The normalized amounts expose amount_out for exact input and amount_in for exact output. Cross-chain requests return Across. If either configured same-chain source fails, tell the user to retry and do not rely on the incomplete set.
+4. Request an exact-input or exact-output quote. For same-chain requests, inspect every entry in quotes and choose a source; the tool does not accept or select one. The normalized amounts expose amount_out for exact input and amount_in for exact output. Cross-chain requests return Across. unavailable_sources reports individual provider failures without invalidating successful quote options.
 5. Call ekubo_prepare_swap with the chosen source, slippage tolerance, and sender so it refreshes that provider's quote and computes executable calldata.
 6. Include the provider, exact plan ID, token amounts, chains, slippage bound, recipient, approvals, execution transaction, and any allowance reset in the wallet handoff.
 7. Pass the complete plan to the user's wallet tooling for balance, allowance, policy, and exact-transaction simulation. Do not ask for separate agent-level confirmation.

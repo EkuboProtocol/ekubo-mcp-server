@@ -271,7 +271,7 @@ export type PrepareVe33ReinvestIntent =
       stakeToken: Address;
       feeBalances: { token: Address; amount: string }[];
       slippageBps: number;
-      source?: QuoteSource;
+      source: QuoteSource;
     }
   | {
       phase: "stake";
@@ -2001,7 +2001,7 @@ export async function prepareVe33Reinvest(
             tokenOut: stakeToken,
             quoteType: "exact_input",
             amount,
-            source: intent.source ?? "auto",
+            source: intent.source,
             slippageBps: intent.slippageBps,
             sender: getAddress(intent.sender),
             recipient: getAddress(intent.sender),

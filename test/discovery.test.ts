@@ -5,9 +5,11 @@ import {
   getStonxAllocationRecommendationSchema,
   getVe33AllocationsSchema,
   prepareVe33ExtendSchema,
+  prepareVe33ReinvestSchema,
   prepareVe33ReallocationSchema,
   prepareVe33StakeSchema,
   prepareVe33VoteSchema,
+  prepareSwapSchema,
   prepareTokenBalancesAndAllowancesSchema,
   publicToolCatalog,
   ROBINHOOD_STONX_CHAIN_ID,
@@ -336,6 +338,36 @@ describe("Worker discovery", () => {
       (prepareSwap?.inputSchema as { properties?: Record<string, unknown> })
         .properties,
     ).toHaveProperty("source");
+    expect(
+      (prepareSwap?.inputSchema as { required?: string[] }).required,
+    ).toContain("source");
+    expect(
+      prepareSwapSchema.safeParse({
+        chain_id: "4663",
+        token_in: "0x1111111111111111111111111111111111111111",
+        token_out: "0x2222222222222222222222222222222222222222",
+        quote_type: "exact_input",
+        amount: "1",
+        source: "auto",
+        sender: "0x3333333333333333333333333333333333333333",
+        slippage_bps: 50,
+      }).success,
+    ).toBe(false);
+    expect(
+      prepareVe33ReinvestSchema.safeParse({
+        phase: "swap",
+        chain_id: "4663",
+        ve_token: "0x1111111111111111111111111111111111111111",
+        sender: "0x2222222222222222222222222222222222222222",
+        stake_token: "0x3333333333333333333333333333333333333333",
+        fee_balances: [
+          {
+            token: "0x4444444444444444444444444444444444444444",
+            amount: "1",
+          },
+        ],
+      }).success,
+    ).toBe(false);
     expect(prepareSwap?.description).toContain("connected wallet or provider");
     expect(searchTokens?.description).toContain("Robinhood Chain 4663");
     expect(getQuote?.description).toContain("Primary non-browser quote path");

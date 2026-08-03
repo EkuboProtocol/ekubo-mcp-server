@@ -27,7 +27,9 @@ export type Env = Cloudflare.Env & {
   RATE_LIMITER?: RateLimit;
 };
 
-export type QuoteSource = "auto" | "ekubo" | "0x" | "across";
+export type QuoteSource = "ekubo" | "0x" | "across";
+
+type QuoteCollectionSource = QuoteSource | "all";
 
 export interface QuoteIntent {
   chainId: string;
@@ -39,14 +41,14 @@ export interface QuoteIntent {
 }
 
 export interface PrepareSwapIntent extends QuoteIntent {
-  source?: QuoteSource;
+  source: QuoteSource;
   slippageBps: number;
   recipient?: Address;
   sender: Address;
 }
 
 type QuoteSelectionIntent = QuoteIntent & {
-  source?: QuoteSource;
+  source: QuoteCollectionSource;
   slippageBps?: number;
   sender?: Address;
   recipient?: Address;
@@ -61,7 +63,7 @@ interface UnsignedTransaction {
 }
 
 interface QuoteCandidate {
-  source: Exclude<QuoteSource, "auto">;
+  source: QuoteSource;
   sourceUrl: string;
   raw: unknown;
   amountIn: bigint;
@@ -80,7 +82,7 @@ interface QuoteCandidate {
 }
 
 interface CandidateFailure {
-  source: Exclude<QuoteSource, "auto">;
+  source: QuoteSource;
   code: string;
   message: string;
   retry_recommended: boolean;
@@ -366,7 +368,7 @@ export async function getQuote(
 ) {
   const result = await collectQuotes(
     env,
-    { ...intent, source: "auto" },
+    { ...intent, source: "all" },
     fetcher,
   );
   return {
@@ -480,10 +482,10 @@ export async function prepareSwap(
         : "ekubo_bridge",
     source: selected.source,
     plan_id: keccak256(stringToHex(JSON.stringify(identity))),
-    execution_plan_ready: !selection.retry_recommended,
+    execution_plan_ready: true,
     agent_confirmation_required: false,
     wallet_validation_required: true,
-    request: quoteRequest(intent, intent.source ?? "auto"),
+    request: quoteRequest(intent, intent.source),
     selection,
     unavailable_sources: quoted.failures,
     quote_source_url: selected.sourceUrl,
@@ -510,9 +512,7 @@ export async function prepareSwap(
         : null,
     wallet_handoff: {
       instruction:
-        selection.retry_recommended
-          ? "Do not submit this plan: an Ekubo or 0x comparison quote failed. Tell the user to retry, then re-prepare and use only a result whose selection.retry_recommended is false."
-          : "Pass this complete plan to the wallet's simulation and authorization flow. Do not ask the user for a separate agent-level approval; the wallet presents the simulated result and collects authorization or signature. Re-prepare after any change or stale quote.",
+        "Pass this complete plan to the wallet's simulation and authorization flow. Do not ask the user for a separate agent-level approval; the wallet presents the simulated result and collects authorization or signature. Re-prepare after any change or stale quote.",
       recipient,
       sender: getAddress(intent.sender),
     },
@@ -549,32 +549,28 @@ export async function prepareSwap(
       provider:
         "Use the user's connected provider to validate the transaction, estimate gas, submit, and confirm receipts",
       must_revalidate_before_signing: true,
-      steps: selection.retry_recommended
-        ? [
-            "Stop before wallet submission, tell the user that an Ekubo or 0x quote failed, and retry the preparation so both configured same-chain sources can be compared",
-          ]
-        : [
-            ...(approvals.length === 0
-              ? []
-              : [
-                  "Check current allowance so the wallet can omit an approval transaction that is no longer required",
-                ]),
-            "Validate the exact swap transaction against current state through the user's connected wallet or provider",
-            "Pass the complete execution_plan to the wallet; do not request a separate agent-level confirmation",
-            "Have the wallet present the simulated result, collect authorization or signature, and submit; this MCP server must not receive a private key or seed phrase",
-            ...(cleanupTransactions.length === 0
-              ? []
-              : [
-                  "After the exact-output swap succeeds, clear the remaining router allowance with the supplied post-execution transaction",
-                ]),
-          ],
+      steps: [
+        ...(approvals.length === 0
+          ? []
+          : [
+              "Check current allowance so the wallet can omit an approval transaction that is no longer required",
+            ]),
+        "Validate the exact swap transaction against current state through the user's connected wallet or provider",
+        "Pass the complete execution_plan to the wallet; do not request a separate agent-level confirmation",
+        "Have the wallet present the simulated result, collect authorization or signature, and submit; this MCP server must not receive a private key or seed phrase",
+        ...(cleanupTransactions.length === 0
+          ? []
+          : [
+              "After the exact-output swap succeeds, clear the remaining router allowance with the supplied post-execution transaction",
+            ]),
+      ],
     },
   };
 }
 
 async function selectQuote(
   env: Env,
-  intent: QuoteSelectionIntent,
+  intent: PrepareSwapIntent,
   fetcher: Fetcher,
 ): Promise<{
   selected: QuoteCandidate;
@@ -582,26 +578,7 @@ async function selectQuote(
   failures: CandidateFailure[];
 }> {
   const result = await collectQuotes(env, intent, fetcher);
-  const destinationChainId = intent.destinationChainId ?? intent.chainId;
-  const source = intent.source ?? "auto";
-  const isCrossChain = destinationChainId !== intent.chainId;
-  let selected = result.candidates[0];
-  if (source === "auto" && !isCrossChain) {
-    selected = result.candidates.reduce((best, candidate) => {
-      if (intent.quoteType === "exact_output") {
-        if (candidate.amountIn < best.amountIn) return candidate;
-      } else if (candidate.amountOut > best.amountOut) {
-        return candidate;
-      }
-      return candidate.amountIn === best.amountIn &&
-        candidate.amountOut === best.amountOut &&
-        candidate.source === "ekubo"
-        ? candidate
-        : best;
-    });
-  }
-
-  return { ...result, selected };
+  return { ...result, selected: result.candidates[0] };
 }
 
 async function collectQuotes(
@@ -613,13 +590,13 @@ async function collectQuotes(
   failures: CandidateFailure[];
 }> {
   const destinationChainId = intent.destinationChainId ?? intent.chainId;
-  const source = intent.source ?? "auto";
+  const source = intent.source;
   const isCrossChain = destinationChainId !== intent.chainId;
 
-  if (isCrossChain && source !== "auto" && source !== "across") {
+  if (isCrossChain && source !== "all" && source !== "across") {
     throw new ServiceError(
       "invalid_quote_source",
-      `cross-chain requests require source=across or source=auto, received ${source}`,
+      `cross-chain requests require source=across, received ${source}`,
     );
   }
   if (!isCrossChain && source === "across") {
@@ -629,9 +606,9 @@ async function collectQuotes(
     );
   }
 
-  const requestedSources: Exclude<QuoteSource, "auto">[] = isCrossChain
+  const requestedSources: QuoteSource[] = isCrossChain
     ? ["across"]
-    : source === "auto"
+    : source === "all"
       ? ["ekubo", ...(env.ZERO_X_API_KEY ? (["0x"] as const) : [])]
       : [source];
 
@@ -690,9 +667,9 @@ function quoteComparison(
     failures: CandidateFailure[];
   },
 ) {
-  const retryRecommended = result.failures.some(
-    (failure) => failure.retry_recommended,
-  );
+  const retryRecommended =
+    result.candidates.length === 0 &&
+    result.failures.some((failure) => failure.retry_recommended);
   return {
     comparison_basis:
       intent.quoteType === "exact_output"
@@ -702,7 +679,7 @@ function quoteComparison(
     comparison_complete: result.failures.length === 0,
     retry_recommended: retryRecommended,
     retry_instruction: retryRecommended
-      ? "Tell the user that an Ekubo or 0x quote failed and retry before relying on or executing this result."
+      ? "No provider returned a usable quote; retry before relying on this result."
       : null,
   };
 }

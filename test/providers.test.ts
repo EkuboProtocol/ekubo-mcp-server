@@ -288,7 +288,7 @@ describe("aggregated quote providers", () => {
         tokenOut: tokenB,
         quoteType: "exact_output",
         amount: "100000000000000000",
-        source: "auto",
+        source: "across",
         slippageBps: 50,
         sender,
         recipient,
@@ -337,7 +337,7 @@ describe("aggregated quote providers", () => {
     expect(result.quote.expected_fill_time_seconds).toBe(12);
   });
 
-  it("falls back to 0x when an auto Ekubo quote is unavailable", async () => {
+  it("returns an available 0x option when Ekubo is unavailable", async () => {
     const result = await getQuote(
       env,
       {
@@ -376,12 +376,13 @@ describe("aggregated quote providers", () => {
     ]);
     expect(result.comparison).toMatchObject({
       comparison_complete: false,
-      retry_recommended: true,
+      retry_recommended: false,
     });
-    expect(result.comparison.retry_instruction).toContain("retry");
+    expect(result.comparison.retry_instruction).toBeNull();
   });
 
-  it("marks prepared calldata unusable when the same-chain comparison is incomplete", async () => {
+  it("prepares only the explicitly selected provider", async () => {
+    const requestedUrls: string[] = [];
     const result = await prepareSwap(
       env,
       {
@@ -390,14 +391,12 @@ describe("aggregated quote providers", () => {
         tokenOut: tokenB,
         quoteType: "exact_input",
         amount: "1000",
-        source: "auto",
+        source: "0x",
         slippageBps: 50,
         sender,
       },
       (async (input: RequestInfo | URL) => {
-        if (input.toString().startsWith("https://quoter.test/")) {
-          return Response.json({ code: "no_route", error: "No Ekubo route" }, { status: 404 });
-        }
+        requestedUrls.push(input.toString());
         return Response.json({
           liquidityAvailable: true,
           sellAmount: "1000",
@@ -408,8 +407,10 @@ describe("aggregated quote providers", () => {
       }) as typeof fetch,
     );
 
-    expect(result.execution_plan_ready).toBe(false);
-    expect(result.client_execution.steps).toHaveLength(1);
-    expect(result.wallet_handoff.instruction).toContain("Do not submit");
+    expect(requestedUrls).toHaveLength(1);
+    expect(requestedUrls[0]).toStartWith("https://zero-x.test/");
+    expect(result.source).toBe("0x");
+    expect(result.execution_plan_ready).toBe(true);
+    expect(result.wallet_handoff.instruction).toContain("Pass this complete plan");
   });
 });
