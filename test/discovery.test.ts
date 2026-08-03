@@ -31,6 +31,63 @@ const env = {
 const context = {} as unknown as ExecutionContext;
 
 describe("Worker discovery", () => {
+  it("publishes an MCP server card at the well-known manifest paths", async () => {
+    for (const path of [
+      "/.well-known/mcp.json",
+      "/.well-known/mcp/server-card.json",
+    ]) {
+      const response = await worker.fetch(
+        new Request(`https://mcp.ekubo.org${path}`),
+        env,
+        context,
+      );
+      expect(response.headers.get("content-type")).toContain(
+        "application/json",
+      );
+      expect(response.headers.get("cache-control")).toBe(
+        "public, max-age=3600",
+      );
+      expect(response.headers.get("access-control-allow-origin")).toBe("*");
+      expect(response.headers.get("access-control-allow-methods")).toBe(
+        "GET, HEAD, OPTIONS",
+      );
+
+      const preflight = await worker.fetch(
+        new Request(`https://mcp.ekubo.org${path}`, { method: "OPTIONS" }),
+        env,
+        context,
+      );
+      expect(preflight.status).toBe(200);
+      expect(preflight.headers.get("access-control-allow-origin")).toBe("*");
+
+      const card = (await response.json()) as {
+        $schema: string;
+        version: string;
+        protocolVersion: string;
+        serverInfo: { name: string; title: string; version: string };
+        transport: { type: string; endpoint: string };
+        authentication: { required: boolean; schemes: string[] };
+        tools: string;
+        resources: string;
+      };
+      expect(card.$schema).toContain("mcp-server-card/v1.json");
+      expect(card.version).toBe("1.0");
+      expect(card.protocolVersion).toBe("2025-06-18");
+      expect(card.serverInfo).toEqual({
+        name: "ekubo-mcp",
+        title: "Ekubo Protocol MCP",
+        version: MCP_SERVER_VERSION,
+      });
+      expect(card.transport).toEqual({
+        type: "streamable-http",
+        endpoint: "/mcp",
+      });
+      expect(card.authentication).toEqual({ required: false, schemes: [] });
+      expect(card.tools).toBe("dynamic");
+      expect(card.resources).toBe("dynamic");
+    }
+  });
+
   it("publishes root metadata, OpenAPI, and a deterministic tool catalog", async () => {
     const root = await worker.fetch(
       new Request("https://mcp.ekubo.org/"),

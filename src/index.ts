@@ -34,6 +34,23 @@ export default {
       return response;
     }
 
+    if (
+      (url.pathname === "/.well-known/mcp.json" ||
+        url.pathname === "/.well-known/mcp/server-card.json") &&
+      request.method === "OPTIONS"
+    ) {
+      return withSecurityHeaders(
+        new Response(null, {
+          headers: {
+            "access-control-allow-origin": "*",
+            "access-control-allow-methods": "GET, HEAD, OPTIONS",
+            "access-control-allow-headers": "content-type",
+            ...cacheHeaders(3600),
+          },
+        }),
+      );
+    }
+
     if (request.method !== "GET" && request.method !== "HEAD") {
       return json(
         { error: { code: "method_not_allowed", message: "Use GET" } },
@@ -122,6 +139,44 @@ export default {
           },
           200,
           cacheHeaders(300),
+        );
+      case "/.well-known/mcp.json":
+      case "/.well-known/mcp/server-card.json":
+        return json(
+          {
+            $schema:
+              "https://static.modelcontextprotocol.io/schemas/mcp-server-card/v1.json",
+            version: "1.0",
+            protocolVersion: "2025-06-18",
+            serverInfo: {
+              name: "ekubo-mcp",
+              title: "Ekubo Protocol MCP",
+              version: MCP_SERVER_VERSION,
+            },
+            description:
+              "Public, unauthenticated, non-custodial agent tools for Ekubo Protocol.",
+            documentationUrl: "https://docs.ekubo.org",
+            transport: {
+              type: "streamable-http",
+              endpoint: "/mcp",
+            },
+            capabilities: {
+              tools: {},
+              resources: {},
+            },
+            authentication: {
+              required: false,
+              schemes: [],
+            },
+            tools: "dynamic",
+            resources: "dynamic",
+          },
+          200,
+          {
+            ...cacheHeaders(3600),
+            "access-control-allow-methods": "GET, HEAD, OPTIONS",
+            "access-control-allow-headers": "content-type",
+          },
         );
       case "/tools":
         return json(
