@@ -138,7 +138,7 @@ overloads, build multicalls, append approvals, or determine ordering.
 - `ekubo://contracts/evm` — supported chain IDs and contract-resource links
 - `ekubo://contracts/evm/{chain_id}` — address-to-contract map for one chain
 - `ekubo://contracts/evm/{chain_id}/{address}` — the exact deployment metadata
-  and ABI for one contract
+  and, when present in the current contracts checkout, ABI for one contract
 
 Contract resources provide provenance and read-only ABI context. Transaction
 calldata and complete transaction lists come from first-class preparation
@@ -151,11 +151,14 @@ stake-orphaning risk of `burn`. Ownership handovers, ERC721 approvals and
 transfers, safe transfers, and burns are explicitly outside every safe MCP
 workflow even though the complete ABI resource describes them.
 
-The checked-in snapshot is generated from `../evm-contracts` Foundry
-broadcasts and artifacts. Every contract resource includes the source commit,
-nearest tag, snapshot worktree state, and per-ABI hash. The Yul router address
-and public quote ABI come from `@ekubo/yul-router-sdk`, so the MCP server follows
-the SDK version it ships.
+The checked-in snapshot merges the latest `../evm-contracts` GitHub release
+deployment tables with all non-dry-run Foundry broadcasts and current
+artifacts. Every contract resource includes the source release, source commit,
+nearest tag, snapshot worktree state, and per-ABI hash. A release or broadcast
+address remains discoverable when a legacy contract no longer has an artifact
+in the current checkout; its address resource explicitly marks the ABI as
+unavailable. The Yul router address and public quote ABI come from
+`@ekubo/yul-router-sdk`, so the MCP server follows the SDK version it ships.
 Refresh the contract snapshot after contract deployments or ABI changes with
 `bun run contracts:generate` from this repository.
 

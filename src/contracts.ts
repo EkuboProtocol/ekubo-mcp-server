@@ -20,11 +20,16 @@ interface GeneratedCatalog {
   source: string;
   source_commit: string;
   source_tag: string;
+  source_release: {
+    tag: string;
+    commit: string;
+    url: string;
+  };
   source_worktree_dirty: boolean;
   chains: Record<string, Record<Address, GeneratedDeployment>>;
   artifacts: Record<string, GeneratedArtifact>;
   abis: Record<string, Abi>;
-  omitted_deployments_without_current_abi: string[];
+  deployment_names_without_current_abi: string[];
 }
 
 interface ResolvedContract {
@@ -32,10 +37,10 @@ interface ResolvedContract {
   name: string;
   deploymentScripts: readonly string[];
   addressSource: string;
-  abiSource: string;
+  abiSource: string | null;
   source: string | null;
   abiSha256: string | null;
-  abi: Abi;
+  abi: Abi | null;
 }
 
 const catalog = generated as unknown as GeneratedCatalog;
@@ -102,6 +107,7 @@ export function contractChainResource(chainId: string) {
           name: contract.name,
           abi_resource_uri: contractAddressUri(chainId, address),
           address_source: contract.addressSource,
+          abi_available: contract.abi !== null,
         },
       ]),
     ),
@@ -125,11 +131,17 @@ export function contractAddressResource(chainId: string, address: string) {
       scripts: contract.deploymentScripts,
     },
     abi_snapshot: {
+      available: contract.abi !== null,
       source: contract.abiSource,
       solidity_source: contract.source,
       sha256: contract.abiSha256,
     },
-    abi: contract.abi,
+    ...(contract.abi === null
+      ? {
+          abi_unavailable:
+            "This release or broadcast deployment has no ABI artifact in the current evm-contracts checkout.",
+        }
+      : { abi: contract.abi }),
     safety:
       "Before signing, use the user's RPC/provider to verify deployed code and permissions and simulate the exact transaction. The MCP server never signs or submits it.",
     ...(contract.name === "VeToken"
@@ -195,6 +207,7 @@ function contractProvenance() {
     source_repository: "evm-contracts",
     source_commit: catalog.source_commit,
     source_tag: catalog.source_tag,
+    source_release: catalog.source_release,
     source_worktree_dirty_at_snapshot: catalog.source_worktree_dirty,
     note: catalog.source_worktree_dirty
       ? "The generated address/artifact snapshot included uncommitted source-repository changes; use source_commit plus ABI sha256 and deployment scripts for verification."
@@ -239,6 +252,7 @@ export function tokenDataFetcherContract(chainId: string) {
     (candidate) => candidate.name === "TokenDataFetcher",
   );
   if (contract === undefined) return undefined;
+  if (contract.abi === null) return undefined;
   return {
     address: contract.address,
     abi: contract.abi as ViemAbi,
@@ -252,17 +266,17 @@ function contractsForChain(chainId: string): Record<Address, ResolvedContract> {
     catalog.chains[chainId] ?? {},
   )) {
     const artifact = catalog.artifacts[deployment.name];
-    const abi = catalog.abis[deployment.name];
-    if (artifact === undefined || abi === undefined) continue;
+    const abi = catalog.abis[deployment.name] ?? null;
     const normalized = getAddress(address);
     contracts.set(normalized.toLowerCase(), {
       address: normalized,
       name: deployment.name,
       deploymentScripts: deployment.deployment_scripts,
       addressSource: catalog.source,
-      abiSource: `evm-contracts/${artifact.artifact}`,
-      source: artifact.source,
-      abiSha256: artifact.abi_sha256,
+      abiSource:
+        artifact === undefined ? null : `evm-contracts/${artifact.artifact}`,
+      source: artifact?.source ?? null,
+      abiSha256: artifact?.abi_sha256 ?? null,
       abi,
     });
   }

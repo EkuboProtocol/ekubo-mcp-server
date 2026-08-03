@@ -1,9 +1,14 @@
 {
-  "schema_version": 1,
-  "source": "evm-contracts Foundry broadcast and artifact snapshot",
-  "source_commit": "8e70f7c763b1ae0752514d29170c703f5cf71de2",
+  "schema_version": 2,
+  "source": "evm-contracts release deployment tables, Foundry broadcasts, and artifact snapshot",
+  "source_commit": "58eef0a2ba7581ad58c66996c2f5b15b39a0722e",
   "source_tag": "v3.2.0",
-  "source_worktree_dirty": true,
+  "source_release": {
+    "tag": "v3.2.0",
+    "commit": "de94c77a665c54f4c848185872b8a55b2c28c1bc",
+    "url": "https://github.com/EkuboProtocol/evm-contracts/releases/tag/v3.2.0"
+  },
+  "source_worktree_dirty": false,
   "chains": {
     "1": {
       "0x00000000000014aA86C5d3c41765bb24e11bd701": {
@@ -108,6 +113,12 @@
           "DeployAuctions.s.sol"
         ]
       },
+      "0xd26f20001a72a18C002b00e6710000d68700ce00": {
+        "name": "MEVCaptureRouter",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0xd47f1B1eDCfEaBb08F6eBd8FC337c27E636C75BA": {
         "name": "TWAMM",
         "deployment_scripts": [
@@ -170,6 +181,12 @@
           "DeployAll.s.sol"
         ]
       },
+      "0x50DabB063ab0B62a33abf49f1357f0981cec241F": {
+        "name": "BoostedFeesDataFetcher",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0x517E506700271AEa091b02f42756F5E174Af5230": {
         "name": "Oracle",
         "deployment_scripts": [
@@ -200,6 +217,12 @@
           "DeployAll.s.sol"
         ]
       },
+      "0x898956fc2Aed01D5F81F556FF5dcB10534285718": {
+        "name": "PoolKeyIndex",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0x948b9C2C99718034954110cB61a6e08e107745f9": {
         "name": "BoostedFees",
         "deployment_scripts": [
@@ -224,6 +247,18 @@
           "DeployAll.s.sol"
         ]
       },
+      "0xd26f20001a72a18C002b00e6710000d68700ce00": {
+        "name": "MEVCaptureRouter",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0xd47f1B1eDCfEaBb08F6eBd8FC337c27E636C75BA": {
+        "name": "TWAMM",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0xd4B54d0ca6979Da05F25895E6e269E678ba00f9e": {
         "name": "BoostedFees",
         "deployment_scripts": [
@@ -238,6 +273,12 @@
       },
       "0xddb1758118F65e13a91497015B8cB26801402761": {
         "name": "ManualPoolBooster",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0xDEFe25E56a7891CC4c0E1401879f3dC81F1Cc4A6": {
+        "name": "TWAMMDataFetcher",
         "deployment_scripts": [
           "DeployAll.s.sol"
         ]
@@ -268,6 +309,12 @@
           "DeployAll.s.sol"
         ]
       },
+      "0x50DabB063ab0B62a33abf49f1357f0981cec241F": {
+        "name": "BoostedFeesDataFetcher",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0x517E506700271AEa091b02f42756F5E174Af5230": {
         "name": "Oracle",
         "deployment_scripts": [
@@ -322,6 +369,18 @@
           "DeployAll.s.sol"
         ]
       },
+      "0xd26f20001a72a18C002b00e6710000d68700ce00": {
+        "name": "MEVCaptureRouter",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0xd47f1B1eDCfEaBb08F6eBd8FC337c27E636C75BA": {
+        "name": "TWAMM",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0xd4B54d0ca6979Da05F25895E6e269E678ba00f9e": {
         "name": "BoostedFees",
         "deployment_scripts": [
@@ -336,6 +395,12 @@
       },
       "0xddb1758118F65e13a91497015B8cB26801402761": {
         "name": "ManualPoolBooster",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0xDEFe25E56a7891CC4c0E1401879f3dC81F1Cc4A6": {
+        "name": "TWAMMDataFetcher",
         "deployment_scripts": [
           "DeployAll.s.sol"
         ]
@@ -366,6 +431,12 @@
           "DeployAll.s.sol"
         ]
       },
+      "0x50DabB063ab0B62a33abf49f1357f0981cec241F": {
+        "name": "BoostedFeesDataFetcher",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0x517E506700271AEa091b02f42756F5E174Af5230": {
         "name": "Oracle",
         "deployment_scripts": [
@@ -420,6 +491,18 @@
           "DeployAll.s.sol"
         ]
       },
+      "0xd26f20001a72a18C002b00e6710000d68700ce00": {
+        "name": "MEVCaptureRouter",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0xd47f1B1eDCfEaBb08F6eBd8FC337c27E636C75BA": {
+        "name": "TWAMM",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0xd4B54d0ca6979Da05F25895E6e269E678ba00f9e": {
         "name": "BoostedFees",
         "deployment_scripts": [
@@ -434,6 +517,12 @@
       },
       "0xddb1758118F65e13a91497015B8cB26801402761": {
         "name": "ManualPoolBooster",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0xDEFe25E56a7891CC4c0E1401879f3dC81F1Cc4A6": {
+        "name": "TWAMMDataFetcher",
         "deployment_scripts": [
           "DeployAll.s.sol"
         ]
@@ -464,6 +553,12 @@
           "DeployAll.s.sol"
         ]
       },
+      "0x50DabB063ab0B62a33abf49f1357f0981cec241F": {
+        "name": "BoostedFeesDataFetcher",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0x517E506700271AEa091b02f42756F5E174Af5230": {
         "name": "Oracle",
         "deployment_scripts": [
@@ -518,6 +613,18 @@
           "DeployAll.s.sol"
         ]
       },
+      "0xd26f20001a72a18C002b00e6710000d68700ce00": {
+        "name": "MEVCaptureRouter",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0xd47f1B1eDCfEaBb08F6eBd8FC337c27E636C75BA": {
+        "name": "TWAMM",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0xd4B54d0ca6979Da05F25895E6e269E678ba00f9e": {
         "name": "BoostedFees",
         "deployment_scripts": [
@@ -532,6 +639,12 @@
       },
       "0xddb1758118F65e13a91497015B8cB26801402761": {
         "name": "ManualPoolBooster",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0xDEFe25E56a7891CC4c0E1401879f3dC81F1Cc4A6": {
+        "name": "TWAMMDataFetcher",
         "deployment_scripts": [
           "DeployAll.s.sol"
         ]
@@ -618,6 +731,12 @@
       },
       "0xC52D2656cb8C634263E6A15469588beB9C3Bb738": {
         "name": "Incentives",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0xd26f20001a72a18C002b00e6710000d68700ce00": {
+        "name": "MEVCaptureRouter",
         "deployment_scripts": [
           "DeployAll.s.sol"
         ]
@@ -830,6 +949,12 @@
           "DeployAll.s.sol"
         ]
       },
+      "0xd26f20001a72a18C002b00e6710000d68700ce00": {
+        "name": "MEVCaptureRouter",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0xd47f1B1eDCfEaBb08F6eBd8FC337c27E636C75BA": {
         "name": "TWAMM",
         "deployment_scripts": [
@@ -976,6 +1101,12 @@
           "DeployVe33.s.sol"
         ]
       },
+      "0xd26f20001a72a18C002b00e6710000d68700ce00": {
+        "name": "MEVCaptureRouter",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0xd47f1B1eDCfEaBb08F6eBd8FC337c27E636C75BA": {
         "name": "TWAMM",
         "deployment_scripts": [
@@ -1020,10 +1151,22 @@
       }
     },
     "8453": {
+      "0x00000000000014aA86C5d3c41765bb24e11bd701": {
+        "name": "Core",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0x02D9876A21AF7545f8632C3af76eC90b5ad4b66D": {
         "name": "Positions",
         "deployment_scripts": [
           "DeployManagers.s.sol"
+        ]
+      },
+      "0x305Cf9A34dCb265522780D1D64544d3f7C450407": {
+        "name": "TokenDataFetcher",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
         ]
       },
       "0x3325428adB409c239E88ca472F50b0efe00E98B4": {
@@ -1038,14 +1181,62 @@
           "DeployAll.s.sol"
         ]
       },
+      "0x517E506700271AEa091b02f42756F5E174Af5230": {
+        "name": "Oracle",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0x5555fF9Ff2757500BF4EE020DcfD0210CFfa41Be": {
+        "name": "MEVCapture",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0x5a3F0F1dA4Ac0c4b937d5685f330704c8e8303f1": {
+        "name": "QuoteDataFetcher",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0x69F9eCfa84CF0C41bE9F68b557b07b6b89d71eD0": {
+        "name": "IncentivesDataFetcher",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0x7A2fF5819Dc71Bb99133a97c38dA512E60c30475": {
         "name": "BoostedFeesDataFetcher",
         "deployment_scripts": [
           "DeployAll.s.sol"
         ]
       },
+      "0x898956fc2Aed01D5F81F556FF5dcB10534285718": {
+        "name": "PoolKeyIndex",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0x948b9C2C99718034954110cB61a6e08e107745f9": {
         "name": "BoostedFees",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0xAA166592922C4020cEfA23448054AD070211790a": {
+        "name": "TokenWrapperFactory",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0xC52D2656cb8C634263E6A15469588beB9C3Bb738": {
+        "name": "Incentives",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0xd26f20001a72a18C002b00e6710000d68700ce00": {
+        "name": "MEVCaptureRouter",
         "deployment_scripts": [
           "DeployAll.s.sol"
         ]
@@ -1070,6 +1261,18 @@
       },
       "0xDEFe25E56a7891CC4c0E1401879f3dC81F1Cc4A6": {
         "name": "TWAMMDataFetcher",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0xF68F25CA6C817733b7B15a42191AE72A34d56a2B": {
+        "name": "CoreDataFetcher",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0xFE0Aa09c1CC2bA299b3AaFA52716bE00f40F1D6d": {
+        "name": "PriceFetcher",
         "deployment_scripts": [
           "DeployAll.s.sol"
         ]
@@ -1136,6 +1339,12 @@
           "DeployAll.s.sol"
         ]
       },
+      "0x898956fc2Aed01D5F81F556FF5dcB10534285718": {
+        "name": "PoolKeyIndex",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0x948b9C2C99718034954110cB61a6e08e107745f9": {
         "name": "BoostedFees",
         "deployment_scripts": [
@@ -1170,6 +1379,12 @@
         "name": "Auctions",
         "deployment_scripts": [
           "DeployAuctions.s.sol"
+        ]
+      },
+      "0xd26f20001a72a18C002b00e6710000d68700ce00": {
+        "name": "MEVCaptureRouter",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
         ]
       },
       "0xd47f1B1eDCfEaBb08F6eBd8FC337c27E636C75BA": {
@@ -1260,6 +1475,12 @@
       },
       "0xAA166592922C4020cEfA23448054AD070211790a": {
         "name": "TokenWrapperFactory",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0xd26f20001a72a18C002b00e6710000d68700ce00": {
+        "name": "MEVCaptureRouter",
         "deployment_scripts": [
           "DeployAll.s.sol"
         ]
@@ -1404,6 +1625,12 @@
           "DeployVe33.s.sol"
         ]
       },
+      "0xd26f20001a72a18C002b00e6710000d68700ce00": {
+        "name": "MEVCaptureRouter",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0xd4B54d0ca6979Da05F25895E6e269E678ba00f9e": {
         "name": "BoostedFees",
         "deployment_scripts": [
@@ -1456,6 +1683,12 @@
       },
       "0x305Cf9A34dCb265522780D1D64544d3f7C450407": {
         "name": "TokenDataFetcher",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0x50DabB063ab0B62a33abf49f1357f0981cec241F": {
+        "name": "BoostedFeesDataFetcher",
         "deployment_scripts": [
           "DeployAll.s.sol"
         ]
@@ -1514,6 +1747,18 @@
           "DeployAll.s.sol"
         ]
       },
+      "0xd26f20001a72a18C002b00e6710000d68700ce00": {
+        "name": "MEVCaptureRouter",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0xd47f1B1eDCfEaBb08F6eBd8FC337c27E636C75BA": {
+        "name": "TWAMM",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0xd4B54d0ca6979Da05F25895E6e269E678ba00f9e": {
         "name": "BoostedFees",
         "deployment_scripts": [
@@ -1528,6 +1773,12 @@
       },
       "0xddb1758118F65e13a91497015B8cB26801402761": {
         "name": "ManualPoolBooster",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0xDEFe25E56a7891CC4c0E1401879f3dC81F1Cc4A6": {
+        "name": "TWAMMDataFetcher",
         "deployment_scripts": [
           "DeployAll.s.sol"
         ]
@@ -1662,6 +1913,12 @@
           "DeployAll.s.sol"
         ]
       },
+      "0x898956fc2Aed01D5F81F556FF5dcB10534285718": {
+        "name": "PoolKeyIndex",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0x948b9C2C99718034954110cB61a6e08e107745f9": {
         "name": "BoostedFees",
         "deployment_scripts": [
@@ -1792,6 +2049,12 @@
       },
       "0x7A2fF5819Dc71Bb99133a97c38dA512E60c30475": {
         "name": "BoostedFeesDataFetcher",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0x898956fc2Aed01D5F81F556FF5dcB10534285718": {
+        "name": "PoolKeyIndex",
         "deployment_scripts": [
           "DeployAll.s.sol"
         ]
@@ -2120,6 +2383,12 @@
           "DeployAll.s.sol"
         ]
       },
+      "0x50DabB063ab0B62a33abf49f1357f0981cec241F": {
+        "name": "BoostedFeesDataFetcher",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0x517E506700271AEa091b02f42756F5E174Af5230": {
         "name": "Oracle",
         "deployment_scripts": [
@@ -2150,6 +2419,12 @@
           "DeployAll.s.sol"
         ]
       },
+      "0x898956fc2Aed01D5F81F556FF5dcB10534285718": {
+        "name": "PoolKeyIndex",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0x948b9C2C99718034954110cB61a6e08e107745f9": {
         "name": "BoostedFees",
         "deployment_scripts": [
@@ -2174,6 +2449,12 @@
           "DeployAll.s.sol"
         ]
       },
+      "0xd47f1B1eDCfEaBb08F6eBd8FC337c27E636C75BA": {
+        "name": "TWAMM",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0xd4B54d0ca6979Da05F25895E6e269E678ba00f9e": {
         "name": "BoostedFees",
         "deployment_scripts": [
@@ -2188,6 +2469,12 @@
       },
       "0xddb1758118F65e13a91497015B8cB26801402761": {
         "name": "ManualPoolBooster",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
+      "0xDEFe25E56a7891CC4c0E1401879f3dC81F1Cc4A6": {
+        "name": "TWAMMDataFetcher",
         "deployment_scripts": [
           "DeployAll.s.sol"
         ]
@@ -2266,6 +2553,11 @@
       "source": "src/Orders.sol",
       "artifact": "out/Orders.sol/Orders.json",
       "abi_sha256": "263a0785a263068e6a1dc4ce28ee9d4087cb9f91bd61bd8fb79bfdc47832d213"
+    },
+    "PoolKeyIndex": {
+      "source": "src/PoolKeyIndex.sol",
+      "artifact": "out/PoolKeyIndex.sol/PoolKeyIndex.json",
+      "abi_sha256": "af05399cdf71a0b59287de736303ffbecc98e100230491b0b98f9b7bbe2a5372"
     },
     "Positions": {
       "source": "src/Positions.sol",
@@ -9402,6 +9694,414 @@
       {
         "type": "error",
         "name": "Unauthorized",
+        "inputs": []
+      }
+    ],
+    "PoolKeyIndex": [
+      {
+        "type": "constructor",
+        "inputs": [
+          {
+            "name": "core",
+            "type": "address",
+            "internalType": "contract ICore"
+          }
+        ],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "type": "function",
+        "name": "extensionPoolIdCount",
+        "inputs": [
+          {
+            "name": "extension",
+            "type": "address",
+            "internalType": "address"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "extensionPoolIds",
+        "inputs": [
+          {
+            "name": "extension",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "poolIds",
+            "type": "bytes32",
+            "internalType": "PoolId"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "getPoolIds",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "",
+            "type": "bytes32[]",
+            "internalType": "PoolId[]"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "getPoolIdsByExtension",
+        "inputs": [
+          {
+            "name": "extension",
+            "type": "address",
+            "internalType": "address"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "",
+            "type": "bytes32[]",
+            "internalType": "PoolId[]"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "getPoolIdsByToken",
+        "inputs": [
+          {
+            "name": "token",
+            "type": "address",
+            "internalType": "address"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "",
+            "type": "bytes32[]",
+            "internalType": "PoolId[]"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "getPoolKeys",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "poolKeys",
+            "type": "tuple[]",
+            "internalType": "struct PoolKey[]",
+            "components": [
+              {
+                "name": "token0",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "token1",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "config",
+                "type": "bytes32",
+                "internalType": "PoolConfig"
+              }
+            ]
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "getPoolKeysByExtension",
+        "inputs": [
+          {
+            "name": "extension",
+            "type": "address",
+            "internalType": "address"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "poolKeys",
+            "type": "tuple[]",
+            "internalType": "struct PoolKey[]",
+            "components": [
+              {
+                "name": "token0",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "token1",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "config",
+                "type": "bytes32",
+                "internalType": "PoolConfig"
+              }
+            ]
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "getPoolKeysByToken",
+        "inputs": [
+          {
+            "name": "token",
+            "type": "address",
+            "internalType": "address"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "poolKeys",
+            "type": "tuple[]",
+            "internalType": "struct PoolKey[]",
+            "components": [
+              {
+                "name": "token0",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "token1",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "config",
+                "type": "bytes32",
+                "internalType": "PoolConfig"
+              }
+            ]
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "isRegistered",
+        "inputs": [
+          {
+            "name": "poolId",
+            "type": "bytes32",
+            "internalType": "PoolId"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "poolIdCount",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "poolIds",
+        "inputs": [
+          {
+            "name": "",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "",
+            "type": "bytes32",
+            "internalType": "PoolId"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "poolKeyById",
+        "inputs": [
+          {
+            "name": "poolId",
+            "type": "bytes32",
+            "internalType": "PoolId"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "token0",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "token1",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "config",
+            "type": "bytes32",
+            "internalType": "PoolConfig"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "register",
+        "inputs": [
+          {
+            "name": "poolKey",
+            "type": "tuple",
+            "internalType": "struct PoolKey",
+            "components": [
+              {
+                "name": "token0",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "token1",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "config",
+                "type": "bytes32",
+                "internalType": "PoolConfig"
+              }
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "inserted",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "type": "function",
+        "name": "registerMultiple",
+        "inputs": [
+          {
+            "name": "poolKeys",
+            "type": "tuple[]",
+            "internalType": "struct PoolKey[]",
+            "components": [
+              {
+                "name": "token0",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "token1",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "config",
+                "type": "bytes32",
+                "internalType": "PoolConfig"
+              }
+            ]
+          }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "type": "function",
+        "name": "tokenPoolIdCount",
+        "inputs": [
+          {
+            "name": "token",
+            "type": "address",
+            "internalType": "address"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "tokenPoolIds",
+        "inputs": [
+          {
+            "name": "token",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "poolIds",
+            "type": "bytes32",
+            "internalType": "PoolId"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "error",
+        "name": "CoreOnly",
+        "inputs": []
+      },
+      {
+        "type": "error",
+        "name": "PoolNotInitialized",
         "inputs": []
       }
     ],
@@ -17644,7 +18344,7 @@
       }
     ]
   },
-  "omitted_deployments_without_current_abi": [
+  "deployment_names_without_current_abi": [
     "MEVCaptureRouter"
   ]
 }
