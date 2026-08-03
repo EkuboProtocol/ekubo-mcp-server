@@ -176,7 +176,10 @@ export default {
           },
           200,
           {
-            ...cacheHeaders(3600),
+            // Server cards are the discovery entry point. Keep them
+            // uncached so clients see endpoint and version changes
+            // immediately after deployment.
+            "cache-control": "no-store",
             "access-control-allow-methods": "GET, HEAD, OPTIONS",
             "access-control-allow-headers": "content-type",
           },
