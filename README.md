@@ -98,9 +98,13 @@ schemas after a Git-triggered deployment.
   deposit preparation tools are EVM-specific.
 - `ekubo_prepare_lp_position_deposit` — prepare a new v3 position mint or add
   liquidity, including exact PoolKey derivation and `maybeInitializePool` for
-  a new pool, shared-SDK liquidity math, a nonzero slippage floor, exact
+  a new pool atomically before the deployed `mintAndDeposit` call in one
+  multicall, shared-SDK liquidity math, a nonzero slippage floor, exact
   approvals/refunds/cleanup, decoded intent, wallet-policy requirements, and a
   signer-neutral execution plan; no Cast encoding is required
+- `ekubo_prepare_pool_initialization` — prepare a standalone, idempotent
+  `maybeInitializePool` transaction for an exact v3 PoolKey and initial tick
+  when initialization should not be bundled with the first position mint
 - `ekubo_prepare_lp_position_earnings_claim` — resolve an owned position and
   prepare collection of standard LP fees or Ve33 LP rewards without removing
   liquidity or touching the NFT, including pending ownership/earnings reads,
@@ -119,8 +123,8 @@ schemas after a Git-triggered deployment.
 The remaining EVM interface transaction paths also have first-class tools:
 
 - wrap/unwrap and LP NFT transfer;
-- phased pool price correction, including exact reads, quote, approval, and
-  execution route;
+- standalone pool initialization and phased pool price correction, including
+  exact reads, quote, approval, and execution route;
 - TWAMM/DCA creation, collection, stop, and virtual-order execution;
 - auction creation, completion/graduation initialization, and creator proceeds;
 - manual boosts, oracle capacity, ERC-20 revocations, and old gEKUBO unwrap;

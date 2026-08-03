@@ -80,7 +80,7 @@ describe("Worker discovery", () => {
       });
       expect(card.transport).toEqual({
         type: "streamable-http",
-        endpoint: "/mcp",
+        endpoint: "https://mcp.ekubo.org/mcp",
       });
       expect(card.authentication).toEqual({ required: false, schemes: [] });
       expect(card.tools).toBe("dynamic");
@@ -226,6 +226,7 @@ describe("Worker discovery", () => {
       "ekubo_prepare_ve33_withdraw",
       "ekubo_get_liquidity_opportunities",
       "ekubo_prepare_token_balances_and_allowances",
+      "ekubo_prepare_pool_initialization",
     ]);
     expect(JSON.stringify(catalog)).not.toMatch(/dune|8187907|api\.dune/i);
     expect(

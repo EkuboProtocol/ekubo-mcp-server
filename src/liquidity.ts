@@ -272,6 +272,140 @@ const STAKE_TOKEN_ABI = [
   },
 ] as const satisfies Abi;
 
+export function preparePoolInitialization(input: {
+  chainId: string;
+  sender: string;
+  coreAddress: string;
+  poolKey: { token0: string; token1: string; config: Hex };
+  initialTick: number;
+}) {
+  const sender = normalizeAddress(input.sender);
+  const coreAddress = normalizeAddress(input.coreAddress);
+  if (coreAddress !== V3_CORE_ADDRESS) {
+    throw new ServiceError(
+      "unsupported_core",
+      "First-class pool initialization preparation currently supports the v3 Core only",
+    );
+  }
+  if (
+    !Number.isInteger(input.initialTick) ||
+    input.initialTick < EVM_MIN_TICK ||
+    input.initialTick > EVM_MAX_TICK
+  ) {
+    throw new ServiceError(
+      "invalid_initial_tick",
+      "initial_tick must be an integer within the EVM tick range",
+    );
+  }
+
+  const pool = derivePoolId(input.poolKey);
+  const decodedConfig = decodePoolConfig(pool.pool_key.config);
+  const positionsAddress = positionsAddressForExtension(
+    decodedConfig.extension,
+  );
+  const expectedSqrtRatio = toSqrtRatio(input.initialTick, "evm");
+  const data = encodeFunctionData({
+    abi: POSITIONS_DEPOSIT_ABI,
+    functionName: "maybeInitializePool",
+    args: [pool.pool_key, input.initialTick],
+  });
+  const transaction: PreparedTransaction = {
+    chain_id: input.chainId,
+    to: positionsAddress,
+    data,
+    value: "0",
+  };
+  const identity = {
+    action: "initialize_pool",
+    chain_id: input.chainId,
+    sender,
+    core_address: coreAddress,
+    pool_id: pool.pool_id,
+    initial_tick: input.initialTick,
+    transaction: transactionIdentity(transaction),
+  };
+
+  return {
+    schema_version: "1",
+    action: "ekubo_initialize_pool",
+    plan_id: keccak256(stringToHex(JSON.stringify(identity))),
+    execution_plan_ready: true,
+    agent_confirmation_required: false,
+    wallet_validation_required: true,
+    request: {
+      chain_id: input.chainId,
+      sender,
+      core_address: coreAddress,
+      pool_id: pool.pool_id,
+      pool_key: pool.pool_key,
+      initial_tick: input.initialTick,
+    },
+    pool: {
+      pool_id: pool.pool_id,
+      pool_id_decimal: pool.pool_id_decimal,
+      pool_key: pool.pool_key,
+      decoded_config: decodedConfig,
+      initialization: {
+        function: "maybeInitializePool",
+        idempotent_if_already_initialized: true,
+        expected_fixed_q128_sqrt_ratio: expectedSqrtRatio.toString(),
+        expected_compact_sqrt_ratio:
+          fixedSqrtRatioToFloat(expectedSqrtRatio).toString(),
+        note: "If the pool is already initialized, maybeInitializePool preserves its existing price. If it is not initialized, this tick fixes its initial price.",
+      },
+    },
+    positions_manager: {
+      address: positionsAddress,
+      contract:
+        positionsAddress === VE33_POSITIONS_ADDRESS
+          ? "Ve33Positions"
+          : "Positions",
+      resource_uri: `ekubo://contracts/evm/${input.chainId}/${positionsAddress}`,
+    },
+    decoded_calls: [
+      {
+        order: 1,
+        function: "maybeInitializePool",
+        target: positionsAddress,
+        arguments: {
+          pool_key: pool.pool_key,
+          tick: input.initialTick,
+        },
+      },
+    ],
+    transaction,
+    execution_plan: executionPlan({
+      chainId: input.chainId,
+      sender,
+      approvals: [],
+      transaction,
+      postExecutionTransactions: [],
+    }),
+    wallet_policy_requirements: {
+      allowed_chain_id: input.chainId,
+      allowed_targets: [positionsAddress],
+      allowed_approval_spenders: [],
+      native_value_in_plan: "0",
+      required_max_native_value_per_batch_at_least: "0",
+      calldata_selectors: [
+        {
+          target: positionsAddress,
+          function: "maybeInitializePool",
+          selector: data.slice(0, 10),
+          nested_in_multicall: false,
+        },
+      ],
+      note: "The wallet must simulate immediately before submission because the first successful initializer fixes the pool's initial price.",
+    },
+    wallet_handoff: {
+      instruction:
+        "Pass this complete plan to the wallet for current-state simulation, presentation, authorization, and submission. Verify the initial tick because the first successful initialization fixes the pool price.",
+      calldata_complete:
+        "All calldata is complete. Pass execution_plan directly to wallet tooling; do not reconstruct maybeInitializePool with Cast or another encoder.",
+    },
+  };
+}
+
 export async function prepareLpPositionDeposit(
   env: Env,
   input: {
@@ -451,11 +585,9 @@ export async function prepareLpPositionDeposit(
     );
   }
 
-  const extension = normalizeAddress(decodedConfig.extension);
-  const positionsAddress =
-    extension === VE33_EXTENSION_ADDRESS
-      ? VE33_POSITIONS_ADDRESS
-      : V3_POSITIONS_ADDRESS;
+  const positionsAddress = positionsAddressForExtension(
+    decodedConfig.extension,
+  );
   const poolKey = pool.pool_key;
   const depositCall =
     input.mode === "mint_new"
@@ -791,6 +923,12 @@ export async function prepareLpPositionDeposit(
         "All calldata is complete. Pass execution_plan directly to wallet tooling; do not reconstruct it with Cast or another encoder.",
     },
   };
+}
+
+function positionsAddressForExtension(extension: string) {
+  return normalizeAddress(extension) === VE33_EXTENSION_ADDRESS
+    ? VE33_POSITIONS_ADDRESS
+    : V3_POSITIONS_ADDRESS;
 }
 
 export async function prepareLpPositionEarningsClaim(

@@ -158,7 +158,10 @@ export default {
             documentationUrl: "https://docs.ekubo.org",
             transport: {
               type: "streamable-http",
-              endpoint: "/mcp",
+              // Discovery clients may consume the server card without first
+              // resolving it relative to the request URL. Advertise the
+              // canonical absolute endpoint so connection is immediate.
+              endpoint: `${url.origin}/mcp`,
             },
             capabilities: {
               tools: {},

@@ -4,6 +4,7 @@ import {
   prepareLpPositionDeposit,
   prepareLpPositionEarningsClaim,
   prepareLpPositionWithdraw,
+  preparePoolInitialization,
 } from "../src/liquidity.js";
 import { derivePoolId } from "../src/pools.js";
 
@@ -26,6 +27,75 @@ const positionsV2 = "0xA37cc341634AFD9E0919D334606E676dbAb63E17";
 const sender = "0xaf42bF32648740e62A754413EFFDEB1782ce5443";
 
 describe("LP position preparation", () => {
+  it("prepares standalone idempotent pool initialization", () => {
+    const pool = derivePoolId({
+      token0: native,
+      token1: usdg,
+      fee: "0",
+      extension: ve33,
+      tickSpacing: 1024,
+    });
+    const result = preparePoolInitialization({
+      chainId: "4663",
+      sender,
+      coreAddress: core,
+      poolKey: pool.pool_key,
+      initialTick: -20_167_000,
+    });
+
+    expect(result).toMatchObject({
+      action: "ekubo_initialize_pool",
+      execution_plan_ready: true,
+      request: {
+        chain_id: "4663",
+        pool_id: pool.pool_id,
+        pool_key: pool.pool_key,
+        initial_tick: -20_167_000,
+      },
+      positions_manager: {
+        address: ve33Positions,
+        contract: "Ve33Positions",
+      },
+      decoded_calls: [
+        {
+          function: "maybeInitializePool",
+          target: ve33Positions,
+        },
+      ],
+      transaction: { to: ve33Positions, value: "0" },
+    });
+    expect(result.pool.initialization.idempotent_if_already_initialized).toBe(
+      true,
+    );
+    expect(result.execution_plan.ordered_steps).toHaveLength(1);
+    expect(result.execution_plan.ordered_steps[0]?.kind).toBe("execution");
+    expect(result.wallet_policy_requirements.calldata_selectors).toEqual([
+      {
+        target: ve33Positions,
+        function: "maybeInitializePool",
+        selector: result.transaction.data.slice(0, 10),
+        nested_in_multicall: false,
+      },
+    ]);
+
+    const standardPool = derivePoolId({
+      token0: native,
+      token1: usdg,
+      fee: "1",
+      extension: native,
+      tickSpacing: 1,
+    });
+    expect(
+      preparePoolInitialization({
+        chainId: "1",
+        sender,
+        coreAddress: core,
+        poolKey: standardPool.pool_key,
+        initialTick: 0,
+      }).positions_manager,
+    ).toMatchObject({ address: positionsV3, contract: "Positions" });
+  });
+
   it("builds approvals, a nonzero liquidity floor, native refund, and wallet plan", async () => {
     const pool = derivePoolId({
       token0: native,
