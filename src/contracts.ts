@@ -1,5 +1,5 @@
 import { YUL_ROUTER_ABI, YUL_ROUTER_ADDRESS } from "@ekubo/yul-router-sdk";
-import { type Address, getAddress } from "viem";
+import { type Abi as ViemAbi, type Address, getAddress } from "viem";
 import generated from "./contracts.generated.json";
 
 type Abi = readonly Record<string, unknown>[];
@@ -232,6 +232,18 @@ export function contractChainUri(chainId: string): string {
 
 export function contractAddressUri(chainId: string, address: string): string {
   return `ekubo://contracts/evm/${chainId}/${address}`;
+}
+
+export function tokenDataFetcherContract(chainId: string) {
+  const contract = Object.values(contractsForChain(chainId)).find(
+    (candidate) => candidate.name === "TokenDataFetcher",
+  );
+  if (contract === undefined) return undefined;
+  return {
+    address: contract.address,
+    abi: contract.abi as ViemAbi,
+    resourceUri: contractAddressUri(chainId, contract.address),
+  };
 }
 
 function contractsForChain(chainId: string): Record<Address, ResolvedContract> {

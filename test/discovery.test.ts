@@ -8,6 +8,7 @@ import {
   prepareVe33ReallocationSchema,
   prepareVe33StakeSchema,
   prepareVe33VoteSchema,
+  prepareTokenBalancesAndAllowancesSchema,
   publicToolCatalog,
   ROBINHOOD_STONX_CHAIN_ID,
   ROBINHOOD_STONX_VE_TOKEN,
@@ -167,6 +168,7 @@ describe("Worker discovery", () => {
       "ekubo_prepare_ve33_merge",
       "ekubo_prepare_ve33_withdraw",
       "ekubo_get_liquidity_opportunities",
+      "ekubo_prepare_token_balances_and_allowances",
     ]);
     expect(JSON.stringify(catalog)).not.toMatch(/dune|8187907|api\.dune/i);
     expect(
@@ -192,6 +194,13 @@ describe("Worker discovery", () => {
       }).success,
     ).toBe(true);
     expect(getTokensSchema.safeParse({ tokens: [] }).success).toBe(false);
+    expect(
+      prepareTokenBalancesAndAllowancesSchema.safeParse({
+        chain_id: 1,
+        owner: "0x1111111111111111111111111111111111111111",
+        spenders: ["0x2222222222222222222222222222222222222222"],
+      }).success,
+    ).toBe(true);
     expect(
       searchTokensSchema.safeParse({
         chain_id: 4663,

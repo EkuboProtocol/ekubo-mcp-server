@@ -48,7 +48,7 @@ export default {
           {
             name: "Ekubo Protocol MCP",
             description:
-              "Public, unauthenticated, non-custodial agent tools for protocol and LP reads, ranked liquidity opportunities, pair-pool discovery, provider-neutral STONX allocations, and unsigned swap, bridge, LP deposit, withdrawal, earnings claim, and fee-first ve(3,3) calldata preparation",
+              "Public, unauthenticated, non-custodial agent tools for protocol, LP, token-balance, and allowance reads, ranked liquidity opportunities, pair-pool discovery, provider-neutral STONX allocations, and unsigned swap, bridge, LP deposit, withdrawal, earnings claim, and fee-first ve(3,3) calldata preparation",
             version: MCP_SERVER_VERSION,
             tool_catalog_revision: MCP_TOOL_CATALOG_REVISION,
             tool_count: publicToolCatalog.length,

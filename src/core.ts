@@ -201,6 +201,35 @@ export async function getTokens(
   return normalizeResponseChainIds(tokens);
 }
 
+export async function getChainTokens(
+  env: Env,
+  input: { chainId: string },
+  fetcher: Fetcher = fetch,
+) {
+  const url = new URL("/tokens", normalizedBase(env.EKUBO_API_URL));
+  url.searchParams.set("chainId", input.chainId);
+  url.searchParams.set("pageSize", "10000");
+  url.searchParams.set("minVisibilityPriority", "0");
+  const tokens = await fetchJson<unknown>(url.toString(), fetcher);
+  if (!Array.isArray(tokens) || !tokens.every(isRecord)) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      "Chain token response must be an array of objects",
+    );
+  }
+  if (tokens.length === 10_000) {
+    throw new ServiceError(
+      "token_list_too_large",
+      "The canonical token list reached the interface page-size limit, so a complete TokenDataFetcher call cannot be prepared",
+      { chain_id: input.chainId, page_size: 10_000 },
+    );
+  }
+  return {
+    tokens: normalizeResponseChainIds(tokens),
+    sourceUrl: url.toString(),
+  };
+}
+
 export async function getOwnedVe33Tokens(
   env: Env,
   input: { chainId: string; veToken: Address; owner: Address },

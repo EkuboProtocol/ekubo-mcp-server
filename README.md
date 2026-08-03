@@ -9,8 +9,10 @@ recommendations resolved to initialized Robinhood Ve33 pools, enumerates
 indexed LP positions by owner, reproduces the interface's indexed/API/USD/RPC
 position-data pipeline, discovers pair-level position candidates, prepares
 unsigned LP deposits, withdrawals, and earnings claims, and exposes exact pool
-state and liquidity data. It also publishes the same ranked boosted-fee,
-incentive, and ve(3,3)-emission liquidity opportunities shown by the interface.
+state and liquidity data. It prepares interface-equivalent TokenDataFetcher
+reads across each chain's canonical token list for wallet balances and selected
+contract allowances. It also publishes the same ranked boosted-fee, incentive,
+and ve(3,3)-emission liquidity opportunities shown by the interface.
 
 The MCP server owns agent-facing transaction construction. `prod-api` remains
 a data API and the quoter remains a route-data service.
@@ -37,6 +39,10 @@ schemas after a Git-triggered deployment.
 - `ekubo_get_token` — fetch token metadata by chain and address
 - `ekubo_get_tokens` — fetch metadata for 1–1,000 exact token identifiers,
   across chains, through one `prod-api` batch request
+- `ekubo_prepare_token_balances_and_allowances` — fetch every canonical token
+  on one EVM chain with the same token-list query as the interface, then return
+  one exact pending TokenDataFetcher call and local decode plan for all nonzero
+  owner balances and allowances to the requested spender contracts
 - `ekubo_get_quote` — compare Ekubo and 0x for same-chain exact-input or
   exact-output swaps, or use Across when `destination_chain_id` differs
 - `ekubo_prepare_swap` — return firm unsigned Ekubo, 0x, or Across approval
