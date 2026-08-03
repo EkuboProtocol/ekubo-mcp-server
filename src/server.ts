@@ -2845,6 +2845,8 @@ Preserve ordered_steps exactly. The Ekubo wallet MCP accepts the plan's decimal 
 
 Every plan includes simulation_failure_policy. Follow the wallet's returned simulation.failure.recommended_action: retry the identical plan only for retry_same_plan; for reprepare_plan, return to the originating Ekubo preparation tool for fresh state and calldata. Swap and bridge reverts, including slippage, always require a fresh quote. The wallet may atomically batch multiple related or unrelated ordered calls.
 
+Execution steps may include a portable revert_decode plan with kind=error_result and the target contract's canonical custom-error ABI. Pass it through unchanged. The wallet owns any batch-wrapper decoding, recursively unwraps its own execution-layer errors, preserves outer and innermost revert bytes, and applies the step error ABI locally. The Ekubo MCP does not know or describe wallet-specific wrappers.
+
 ## Wallet tooling adapter
 
 Treat wallet tooling as a separate trust boundary from this public Ekubo server. When a wallet MCP or wallet API exposes call, simulation, authorization, and submission abstractions, use those directly and pass the exact execution_plan unchanged. Do not translate the plan into Cast or manually issue RPC calls when the wallet already wraps those operations. Do not ask the user for a separate agent-level confirmation; the wallet must simulate the exact plan, present the simulated result, collect authorization or signature, and submit it. Never provide a private key, mnemonic, or wallet credential to either MCP server.

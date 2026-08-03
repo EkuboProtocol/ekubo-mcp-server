@@ -47,6 +47,16 @@ export function functionResultDecodePlan(
   return plan;
 }
 
+export function errorResultDecodePlan(abi: Abi) {
+  const plan = {
+    kind: "error_result" as const,
+    abi,
+    required: false,
+  };
+  assertWalletAbiDecodePlan(plan);
+  return plan;
+}
+
 export function functionResultBytesArrayDecodePlan(
   abi: Abi,
   functionName: string,

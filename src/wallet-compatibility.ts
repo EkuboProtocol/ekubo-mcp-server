@@ -78,6 +78,11 @@ export const walletAbiDecodePlanSchema: z.ZodType<Record<string, unknown>> = z.l
     ...sharedDecodeFields,
   }).strict(),
   z.object({
+    kind: z.literal("error_result"),
+    abi: z.array(abiEntry).min(1).max(128),
+    ...sharedDecodeFields,
+  }).strict(),
+  z.object({
     kind: z.literal("semantic_value"),
     ...semanticCodecIdentityFields,
     ...sharedDecodeFields,
@@ -152,6 +157,7 @@ export const walletExecutionPlanSchema = z.object({
       gas: decimalQuantity.optional(),
     }).strict(),
     eip1193: z.record(z.string(), z.unknown()).optional(),
+    revert_decode: walletAbiDecodePlanSchema.optional(),
   }).strict()).min(1).max(4_096),
   execution_policy: z.record(z.string(), z.unknown()).optional(),
   adapters: z.record(z.string(), z.unknown()).optional(),

@@ -17,7 +17,10 @@ import {
   numberToHex,
   stringToHex,
 } from "viem";
-import { localFunctionResultMetadata } from "./abi-decode.js";
+import {
+  errorResultDecodePlan,
+  localFunctionResultMetadata,
+} from "./abi-decode.js";
 import { type Env, getTokens, ServiceError } from "./core.js";
 import {
   executionPlan,
@@ -58,6 +61,26 @@ const POOL_KEY_COMPONENTS = [
 ] as const;
 
 const POSITIONS_DEPOSIT_ABI = [
+  {
+    type: "error",
+    name: "DepositFailedDueToSlippage",
+    inputs: [
+      { name: "liquidity", type: "uint128", internalType: "uint128" },
+      { name: "minLiquidity", type: "uint128", internalType: "uint128" },
+    ],
+  },
+  {
+    type: "error",
+    name: "DepositFailedDueToPriceMovement",
+    inputs: [],
+  },
+  { type: "error", name: "DepositOverflow", inputs: [] },
+  {
+    type: "error",
+    name: "InvalidTick",
+    inputs: [{ name: "tick", type: "int32", internalType: "int32" }],
+  },
+  { type: "error", name: "InvalidPoolExtension", inputs: [] },
   {
     type: "function",
     name: "maybeInitializePool",
@@ -886,6 +909,7 @@ export async function prepareLpPositionDeposit(
       approvals: approvalTransactions,
       transaction,
       postExecutionTransactions: cleanupTransactions,
+      revertDecode: errorResultDecodePlan(POSITIONS_DEPOSIT_ABI),
     }),
     wallet_policy_requirements: {
       allowed_chain_id: input.chainId,

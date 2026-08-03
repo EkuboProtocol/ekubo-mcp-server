@@ -262,6 +262,16 @@ describe("LP position preparation", () => {
     expect(
       BigInt(result.liquidity_protection.minimum_liquidity),
     ).toBeGreaterThan(0n);
+    expect(result.execution_plan.ordered_steps[2]?.revert_decode).toMatchObject({
+      kind: "error_result",
+      required: false,
+      abi: expect.arrayContaining([
+        expect.objectContaining({
+          type: "error",
+          name: "DepositFailedDueToSlippage",
+        }),
+      ]),
+    });
   });
 
   it("rejects zero-slippage-floor patterns and mismatched modes", async () => {

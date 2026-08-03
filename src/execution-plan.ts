@@ -1,6 +1,8 @@
 import { type Address, getAddress, type Hex, numberToHex } from "viem";
 import { assertWalletExecutionPlan } from "./wallet-compatibility.js";
 
+type RevertDecodePlan = Record<string, unknown>;
+
 export interface PreparedTransaction {
   chain_id: string;
   to: Address;
@@ -17,6 +19,7 @@ interface ExecutionPlanInput {
   postExecutionTransactions?: PreparedTransaction[];
   atomicBatchRequired?: boolean;
   simulationFailurePolicy?: SimulationFailurePolicy;
+  revertDecode?: RevertDecodePlan;
 }
 
 export interface SimulationFailurePolicy {
@@ -37,6 +40,7 @@ export interface ExecutionPlanStepInput {
     | "allowance_cleanup"
     | "signature_dependent_execution";
   transaction: PreparedTransaction;
+  revertDecode?: RevertDecodePlan;
   submitCondition:
     | "if_required_by_current_allowance"
     | "after_prior_required_steps_have_successful_receipts"
@@ -66,6 +70,7 @@ export function executionPlan({
   postExecutionTransactions = [],
   atomicBatchRequired = false,
   simulationFailurePolicy,
+  revertDecode,
 }: ExecutionPlanInput) {
   return executionPlanFromSteps({
     chainId,
@@ -79,6 +84,7 @@ export function executionPlan({
       {
         kind: "execution" as const,
         transaction,
+        ...(revertDecode === undefined ? {} : { revertDecode }),
         submitCondition:
           "after_prior_required_steps_have_successful_receipts" as const,
       },
@@ -114,7 +120,7 @@ export function executionPlanFromSteps({
   }
   const normalizedSender = getAddress(sender);
   const steps = inputSteps.map(
-    ({ kind, transaction, submitCondition }, index) => {
+    ({ kind, transaction, submitCondition, revertDecode }, index) => {
       const prepared = transaction;
       assertPreparedTransaction(chainId, prepared);
       const eip1193Transaction = {
@@ -149,6 +155,9 @@ export function executionPlanFromSteps({
             params: [eip1193Transaction],
           },
         },
+        ...(revertDecode === undefined
+          ? {}
+          : { revert_decode: revertDecode }),
       };
     },
   );
