@@ -209,7 +209,6 @@ export const getQuoteSchema = z.object({
   token_out: tokenIdentifier,
   quote_type: quoteType,
   amount,
-  source: quoteSource.default("auto"),
   slippage_bps: z.number().int().min(0).max(10_000).default(50),
   sender: address
     .optional()
@@ -220,6 +219,7 @@ export const getQuoteSchema = z.object({
 });
 
 export const prepareSwapSchema = getQuoteSchema.extend({
+  source: quoteSource.default("auto"),
   slippage_bps: z
     .number()
     .int()
@@ -1537,7 +1537,7 @@ export function createEkuboServer(env: Env) {
           ),
           quoteType: input.quote_type,
           amount: input.amount,
-          source: input.source,
+          source: "auto",
           slippageBps: input.slippage_bps,
           sender: input.sender as Address | undefined,
           recipient: input.recipient as Address | undefined,

@@ -307,6 +307,17 @@ describe("Worker discovery", () => {
     const prepareSwap = catalog.tools.find(
       (tool) => tool.name === "ekubo_prepare_swap",
     );
+    const getQuote = catalog.tools.find(
+      (tool) => tool.name === "ekubo_get_quote",
+    );
+    expect(
+      (getQuote?.inputSchema as { properties?: Record<string, unknown> })
+        .properties,
+    ).not.toHaveProperty("source");
+    expect(
+      (prepareSwap?.inputSchema as { properties?: Record<string, unknown> })
+        .properties,
+    ).toHaveProperty("source");
     expect(prepareSwap?.description).toContain("connected wallet or provider");
     expect(
       prepareVe33VoteSchema.shape.current_vote.safeParse(null).success,
@@ -744,7 +755,6 @@ describe("Worker discovery", () => {
               token_out: "0x2222222222222222222222222222222222222222",
               quote_type: "exact_input",
               amount: "1",
-              source: "ekubo",
             },
           },
         }),
