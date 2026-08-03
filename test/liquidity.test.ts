@@ -19,6 +19,7 @@ const env = {
 
 const native = "0x0000000000000000000000000000000000000000";
 const usdg = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
+const aapl = "0xaf3d76f1834a1d425780943c99ea8a608f8a93f9";
 const core = "0x00000000000014aA86C5d3c41765bb24e11bd701";
 const ve33 = "0xD18685a514E59b06d59824e16Db07e73345d9953";
 const ve33Positions = "0xdA38ac72CE7220c4dd7719d114ef94eDadb8f068";
@@ -191,6 +192,76 @@ describe("LP position preparation", () => {
       result.execution_plan.ordered_steps.map((step) => step.kind),
     ).toEqual(["approval", "execution", "allowance_cleanup"]);
     expect(result.wallet_handoff.calldata_complete).toContain("wallet tooling");
+  });
+
+  it("uses indexed Q128 prices and protects imbalanced deposits at slippage endpoints", async () => {
+    const pool = derivePoolId({
+      token0: usdg,
+      token1: aapl,
+      fee: "0",
+      extension: ve33,
+      tickSpacing: 1024,
+    });
+    const result = await prepareLpPositionDeposit(
+      env,
+      {
+        chainId: "4663",
+        sender,
+        coreAddress: core,
+        poolId: pool.pool_id,
+        mode: "mint_new",
+        tickLower: 21_835_776,
+        tickUpper: 21_987_328,
+        maxAmount0: "58775049870",
+        maxAmount1: "24688761276276600317",
+        slippageBps: 100,
+      },
+      (async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith("/key")) {
+          return Response.json({
+            pool_key: {
+              token0: usdg,
+              token1: aapl,
+              fee: "0x0",
+              tick_spacing: "0x400",
+              extension: ve33,
+              stableswap_params: null,
+            },
+          });
+        }
+        if (url.includes("/positions?limit=1")) {
+          return Response.json({
+            data: [
+              {
+                pool_state: {
+                  sqrt_ratio: "19517224466909814455579508667699864543428608",
+                  tick: 21_914_075,
+                  liquidity: "578492742679486189",
+                },
+              },
+            ],
+          });
+        }
+        if (url.includes("/tokens/batch?")) {
+          return Response.json([
+            { chain_id: "4663", address: usdg, symbol: "USDG", decimals: 6 },
+            { chain_id: "4663", address: aapl, symbol: "AAPL", decimals: 18 },
+          ]);
+        }
+        return new Response("not found", { status: 404 });
+      }) as typeof fetch,
+    );
+
+    expect(result.liquidity_protection.expected_liquidity_at_indexed_price).toBe(
+      "11211571085399720",
+    );
+    expect(
+      BigInt(result.liquidity_protection.minimum_liquidity),
+    ).toBeLessThanOrEqual(11_211_571_085_399_720n);
+    expect(
+      BigInt(result.liquidity_protection.minimum_liquidity),
+    ).toBeGreaterThan(0n);
   });
 
   it("rejects zero-slippage-floor patterns and mismatched modes", async () => {

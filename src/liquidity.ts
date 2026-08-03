@@ -1,7 +1,6 @@
 import {
   EVM_MAX_TICK,
   EVM_MIN_TICK,
-  floatSqrtRatioToFixed,
   fixedSqrtRatioToFloat,
   maxLiquidityForTokenAmounts,
   MAX_U128,
@@ -562,23 +561,49 @@ export async function prepareLpPositionDeposit(
   }
 
   const sqrtPrice = isInitialized
-    ? floatSqrtRatioToFixed(unsigned(sqrtRatioValue as string, "sqrt_ratio"))
+    ? unsigned(sqrtRatioValue as string, "sqrt_ratio")
     : toSqrtRatio(input.initialTick as number, "evm");
-  const expectedLiquidity = maxLiquidityForTokenAmounts({
+  const liquidityAtIndexedPrice = maxLiquidityForTokenAmounts({
     sqrtPrice,
     sqrtPriceLower: toSqrtRatio(input.tickLower, "evm"),
     sqrtPriceUpper: toSqrtRatio(input.tickUpper, "evm"),
     amountBase: maxAmount0,
     amountQuote: maxAmount1,
   });
-  if (expectedLiquidity <= 0n || expectedLiquidity > MAX_U128) {
+  if (liquidityAtIndexedPrice <= 0n || liquidityAtIndexedPrice > MAX_U128) {
     throw new ServiceError(
       "invalid_liquidity",
       "The supplied amounts and range do not produce positive uint128 liquidity at the indexed price",
     );
   }
+  const sqrtPriceLower = toSqrtRatio(input.tickLower, "evm");
+  const sqrtPriceUpper = toSqrtRatio(input.tickUpper, "evm");
+  const priceSlippageFactor = BigInt(10_000 + input.slippageBps);
+  const sqrtPriceSquared = sqrtPrice * sqrtPrice;
+  const minSlippageSqrtPrice = integerSqrt(
+    (sqrtPriceSquared * 10_000n) / priceSlippageFactor,
+  );
+  const maxSlippageSqrtPrice = integerSqrt(
+    (sqrtPriceSquared * priceSlippageFactor) / 10_000n,
+  );
+  const liquidityAtMinSlippagePrice = maxLiquidityForTokenAmounts({
+    sqrtPrice: minSlippageSqrtPrice,
+    sqrtPriceLower,
+    sqrtPriceUpper,
+    amountBase: maxAmount0,
+    amountQuote: maxAmount1,
+  });
+  const liquidityAtMaxSlippagePrice = maxLiquidityForTokenAmounts({
+    sqrtPrice: maxSlippageSqrtPrice,
+    sqrtPriceLower,
+    sqrtPriceUpper,
+    amountBase: maxAmount0,
+    amountQuote: maxAmount1,
+  });
   const minLiquidity =
-    (expectedLiquidity * BigInt(10_000 - input.slippageBps)) / 10_000n;
+    liquidityAtMinSlippagePrice < liquidityAtMaxSlippagePrice
+      ? liquidityAtMinSlippagePrice
+      : liquidityAtMaxSlippagePrice;
   if (minLiquidity <= 0n) {
     throw new ServiceError(
       "invalid_liquidity",
@@ -815,7 +840,7 @@ export async function prepareLpPositionDeposit(
       resource_uri: `ekubo://contracts/evm/${input.chainId}/${positionsAddress}`,
     },
     liquidity_protection: {
-      expected_liquidity_at_indexed_price: expectedLiquidity.toString(),
+      expected_liquidity_at_indexed_price: liquidityAtIndexedPrice.toString(),
       minimum_liquidity: minLiquidity.toString(),
       slippage_bps: input.slippageBps,
       note: "Wallet simulation against current chain state is mandatory because the indexed price snapshot may be up to 180 seconds old.",
@@ -1593,6 +1618,19 @@ function normalizeAddress(value: string): Address {
       `address must fit in 20 bytes: ${value}`,
     );
   }
+}
+
+function integerSqrt(value: bigint) {
+  if (value < 0n) throw new Error("square root input must be nonnegative");
+  if (value < 2n) return value;
+  let left = 1n;
+  let right = 1n << BigInt(Math.ceil(value.toString(2).length / 2));
+  while (left < right) {
+    const midpoint = (left + right + 1n) >> 1n;
+    if (midpoint <= value / midpoint) left = midpoint;
+    else right = midpoint - 1n;
+  }
+  return left;
 }
 
 function unsigned(value: string | number, label: string) {
