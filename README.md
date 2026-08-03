@@ -169,14 +169,16 @@ unavailable. The Yul router address and public quote ABI come from
 Refresh the contract snapshot after contract deployments or ABI changes with
 `bun run contracts:generate` from this repository.
 
-`ekubo_get_quote` always uses automatic quote selection. Same-chain requests try Ekubo and 0x
-and always select the better calculated token amount: the greatest output for
-exact input or least input for exact output. Price impact remains informational
-and never overrides this comparison. If either configured provider fails, the
-response marks the comparison incomplete, tells the user to retry, and any
-prepared plan is marked not ready for execution. Cross-chain requests route
-through Across. `ekubo_prepare_swap` still accepts `source=ekubo`, `source=0x`,
-or `source=across` to require one provider. Token arguments accept raw EVM addresses or
+`ekubo_get_quote` has no provider-selection input and does not select a quote.
+Same-chain requests return every complete Ekubo and 0x provider response in
+`quotes`, together with its source URL and normalized amounts, so the agent or
+user can choose. The chosen source is then passed to `ekubo_prepare_swap`, which
+refreshes that provider's quote and computes the executable calldata.
+If either configured provider fails, the response marks the comparison
+incomplete, tells the user to retry, and any prepared plan is marked not ready
+for execution. Cross-chain requests route through Across. `ekubo_prepare_swap`
+still accepts `source=ekubo`, `source=0x`, or `source=across` to require one
+provider. Token arguments accept raw EVM addresses or
 `eip155:<chain_id>:<address>` identifiers. The output token's EIP-155 chain
 must match `destination_chain_id`.
 

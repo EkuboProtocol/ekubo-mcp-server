@@ -27,7 +27,23 @@ const env: Env = {
 };
 
 describe("aggregated quote providers", () => {
-  it("always chooses the higher calculated output for exact-input auto quotes", async () => {
+  it("returns every complete exact-input quote without selecting one", async () => {
+    const ekuboQuote = {
+      block_number: 1,
+      block_hash: "0x01",
+      total_calculated: "900",
+      estimated_gas_cost: 1,
+      price_impact: 0,
+      splits: [],
+      provider_metadata: { route: "full-ekubo-quote" },
+    };
+    const zeroXQuote = {
+      liquidityAvailable: true,
+      sellAmount: "1000",
+      buyAmount: "950",
+      issues: { allowance: null },
+      providerMetadata: { route: "full-zero-x-quote" },
+    };
     const result = await getQuote(
       env,
       {
@@ -36,35 +52,39 @@ describe("aggregated quote providers", () => {
         tokenOut: tokenB,
         quoteType: "exact_input",
         amount: "1000",
-        source: "auto",
       },
       (async (input: RequestInfo | URL) =>
         input.toString().startsWith("https://quoter.test/")
-          ? Response.json({
-              block_number: 1,
-              block_hash: "0x01",
-              total_calculated: "900",
-              estimated_gas_cost: 1,
-              price_impact: 0,
-              splits: [],
-            })
-          : Response.json({
-              liquidityAvailable: true,
-              sellAmount: "1000",
-              buyAmount: "950",
-              issues: { allowance: null },
-            })) as typeof fetch,
+          ? Response.json(ekuboQuote)
+          : Response.json(zeroXQuote)) as typeof fetch,
     );
 
-    expect(result.source).toBe("0x");
-    expect(result.selection).toMatchObject({
+    expect(result.quotes).toHaveLength(2);
+    expect(result.quotes[0]).toMatchObject({
+      source: "ekubo",
+      source_url: "https://quoter.test/4663/1000/0x1111111111111111111111111111111111111111/0x2222222222222222222222222222222222222222",
+      normalized: { amount_in: "1000", amount_out: "900" },
+    });
+    expect(result.quotes[0].quote).toEqual(ekuboQuote);
+    expect(result.quotes[1]).toMatchObject({
+      source: "0x",
+      normalized: { amount_in: "1000", amount_out: "950" },
+    });
+    expect(result.quotes[1].quote).toEqual(zeroXQuote);
+    expect(result).not.toHaveProperty("source");
+    expect(result).not.toHaveProperty("quote");
+    expect(result).not.toHaveProperty("selection");
+    expect(result.request).not.toHaveProperty("source");
+    expect(result.request).not.toHaveProperty("sender");
+    expect(result.request).not.toHaveProperty("recipient");
+    expect(result.comparison).toMatchObject({
       comparison_basis: "highest_calculated_amount_out",
       comparison_complete: true,
       retry_recommended: false,
     });
   });
 
-  it("always chooses the lower calculated input for exact-output auto quotes", async () => {
+  it("normalizes all exact-output quotes without selecting one", async () => {
     const result = await getQuote(
       env,
       {
@@ -73,7 +93,6 @@ describe("aggregated quote providers", () => {
         tokenOut: tokenB,
         quoteType: "exact_output",
         amount: "100",
-        source: "auto",
       },
       (async (input: RequestInfo | URL) =>
         input.toString().startsWith("https://quoter.test/")
@@ -93,8 +112,8 @@ describe("aggregated quote providers", () => {
             })) as typeof fetch,
     );
 
-    expect(result.source).toBe("0x");
-    expect(result.selection.comparison_basis).toBe(
+    expect(result.quotes.map((quote) => quote.source)).toEqual(["ekubo", "0x"]);
+    expect(result.comparison.comparison_basis).toBe(
       "lowest_calculated_amount_in",
     );
   });
@@ -192,9 +211,18 @@ describe("aggregated quote providers", () => {
         tokenOut: tokenB,
         quoteType: "exact_input",
         amount: "1000",
-        source: "0x",
       },
       (async (input: RequestInfo | URL) => {
+        if (input.toString().startsWith("https://quoter.test/")) {
+          return Response.json({
+            block_number: 1,
+            block_hash: "0x01",
+            total_calculated: "800",
+            estimated_gas_cost: 1,
+            price_impact: 0,
+            splits: [],
+          });
+        }
         requestUrl = input.toString();
         return Response.json({
           liquidityAvailable: true,
@@ -209,8 +237,10 @@ describe("aggregated quote providers", () => {
     expect(new URL(requestUrl).searchParams.get("sellToken")).toBe(
       "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
     );
-    expect(result.source).toBe("0x");
-    expect(result.normalized.amount_out).toBe("900");
+    expect(
+      result.quotes.find((quote) => quote.source === "0x")?.normalized
+        .amount_out,
+    ).toBe("900");
   });
 
   it("does not alter a sufficient pre-existing 0x allowance", async () => {
@@ -316,7 +346,6 @@ describe("aggregated quote providers", () => {
         tokenOut: tokenB,
         quoteType: "exact_input",
         amount: "1000",
-        source: "auto",
       },
       (async (input: RequestInfo | URL) => {
         if (input.toString().startsWith("https://quoter.test/")) {
@@ -335,7 +364,8 @@ describe("aggregated quote providers", () => {
       }) as typeof fetch,
     );
 
-    expect(result.source).toBe("0x");
+    expect(result.quotes).toHaveLength(1);
+    expect(result.quotes[0].source).toBe("0x");
     expect(result.unavailable_sources).toEqual([
       {
         source: "ekubo",
@@ -344,11 +374,11 @@ describe("aggregated quote providers", () => {
         retry_recommended: true,
       },
     ]);
-    expect(result.selection).toMatchObject({
+    expect(result.comparison).toMatchObject({
       comparison_complete: false,
       retry_recommended: true,
     });
-    expect(result.selection.retry_instruction).toContain("retry");
+    expect(result.comparison.retry_instruction).toContain("retry");
   });
 
   it("marks prepared calldata unusable when the same-chain comparison is incomplete", async () => {

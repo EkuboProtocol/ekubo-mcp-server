@@ -36,17 +36,21 @@ export interface QuoteIntent {
   tokenOut: Address;
   quoteType: EvmQuoterQuoteType;
   amount: string;
-  source?: QuoteSource;
-  slippageBps?: number;
-  sender?: Address;
-  recipient?: Address;
 }
 
 export interface PrepareSwapIntent extends QuoteIntent {
+  source?: QuoteSource;
   slippageBps: number;
   recipient?: Address;
   sender: Address;
 }
+
+type QuoteSelectionIntent = QuoteIntent & {
+  source?: QuoteSource;
+  slippageBps?: number;
+  sender?: Address;
+  recipient?: Address;
+};
 
 interface UnsignedTransaction {
   chainId: string;
@@ -360,17 +364,16 @@ export async function getQuote(
   intent: QuoteIntent,
   fetcher: Fetcher = fetch,
 ) {
-  const result = await selectQuote(env, intent, fetcher);
-  const selection = quoteSelection(intent, result);
+  const result = await collectQuotes(
+    env,
+    { ...intent, source: "auto" },
+    fetcher,
+  );
   return {
-    request: quoteRequest(intent),
-    source: result.selected.source,
-    source_url: result.selected.sourceUrl,
-    quote: result.selected.raw,
-    normalized: serializeCandidate(result.selected),
-    candidates: result.candidates.map(serializeCandidate),
+    request: quoteDiscoveryRequest(intent),
+    quotes: result.candidates.map(serializeCompleteQuote),
     unavailable_sources: result.failures,
-    selection,
+    comparison: quoteComparison(intent, result),
   };
 }
 
@@ -480,7 +483,7 @@ export async function prepareSwap(
     execution_plan_ready: !selection.retry_recommended,
     agent_confirmation_required: false,
     wallet_validation_required: true,
-    request: quoteRequest(intent),
+    request: quoteRequest(intent, intent.source ?? "auto"),
     selection,
     unavailable_sources: quoted.failures,
     quote_source_url: selected.sourceUrl,
@@ -571,10 +574,41 @@ export async function prepareSwap(
 
 async function selectQuote(
   env: Env,
-  intent: QuoteIntent,
+  intent: QuoteSelectionIntent,
   fetcher: Fetcher,
 ): Promise<{
   selected: QuoteCandidate;
+  candidates: QuoteCandidate[];
+  failures: CandidateFailure[];
+}> {
+  const result = await collectQuotes(env, intent, fetcher);
+  const destinationChainId = intent.destinationChainId ?? intent.chainId;
+  const source = intent.source ?? "auto";
+  const isCrossChain = destinationChainId !== intent.chainId;
+  let selected = result.candidates[0];
+  if (source === "auto" && !isCrossChain) {
+    selected = result.candidates.reduce((best, candidate) => {
+      if (intent.quoteType === "exact_output") {
+        if (candidate.amountIn < best.amountIn) return candidate;
+      } else if (candidate.amountOut > best.amountOut) {
+        return candidate;
+      }
+      return candidate.amountIn === best.amountIn &&
+        candidate.amountOut === best.amountOut &&
+        candidate.source === "ekubo"
+        ? candidate
+        : best;
+    });
+  }
+
+  return { ...result, selected };
+}
+
+async function collectQuotes(
+  env: Env,
+  intent: QuoteSelectionIntent,
+  fetcher: Fetcher,
+): Promise<{
   candidates: QuoteCandidate[];
   failures: CandidateFailure[];
 }> {
@@ -646,29 +680,12 @@ async function selectQuote(
     );
   }
 
-  let selected = candidates[0];
-  if (source === "auto" && !isCrossChain) {
-    selected = candidates.reduce((best, candidate) => {
-      if (intent.quoteType === "exact_output") {
-        if (candidate.amountIn < best.amountIn) return candidate;
-      } else if (candidate.amountOut > best.amountOut) {
-        return candidate;
-      }
-      return candidate.amountIn === best.amountIn &&
-        candidate.amountOut === best.amountOut &&
-        candidate.source === "ekubo"
-        ? candidate
-        : best;
-    });
-  }
-
-  return { selected, candidates, failures };
+  return { candidates, failures };
 }
 
-function quoteSelection(
+function quoteComparison(
   intent: QuoteIntent,
   result: {
-    selected: QuoteCandidate;
     candidates: QuoteCandidate[];
     failures: CandidateFailure[];
   },
@@ -683,11 +700,24 @@ function quoteSelection(
         : "highest_calculated_amount_out",
     compared_sources: result.candidates.map((candidate) => candidate.source),
     comparison_complete: result.failures.length === 0,
-    selected_source: result.selected.source,
     retry_recommended: retryRecommended,
     retry_instruction: retryRecommended
       ? "Tell the user that an Ekubo or 0x quote failed and retry before relying on or executing this result."
       : null,
+  };
+}
+
+function quoteSelection(
+  intent: QuoteIntent,
+  result: {
+    selected: QuoteCandidate;
+    candidates: QuoteCandidate[];
+    failures: CandidateFailure[];
+  },
+) {
+  return {
+    ...quoteComparison(intent, result),
+    selected_source: result.selected.source,
   };
 }
 
@@ -740,7 +770,7 @@ async function quoteEkubo(
 
 async function quoteZeroX(
   env: Env,
-  intent: QuoteIntent,
+  intent: QuoteSelectionIntent,
   fetcher: Fetcher,
 ): Promise<QuoteCandidate> {
   if (!env.ZERO_X_API_KEY) {
@@ -821,7 +851,7 @@ async function quoteZeroX(
 
 async function quoteAcross(
   env: Env,
-  intent: QuoteIntent,
+  intent: QuoteSelectionIntent,
   fetcher: Fetcher,
 ): Promise<QuoteCandidate> {
   if (!env.ACROSS_API_KEY || !env.ACROSS_INTEGRATOR_ID) {
@@ -887,7 +917,7 @@ async function quoteAcross(
   };
 }
 
-function quoteRequest(intent: QuoteIntent) {
+function quoteDiscoveryRequest(intent: QuoteIntent) {
   return {
     chain_id: intent.chainId,
     destination_chain_id: intent.destinationChainId ?? intent.chainId,
@@ -895,9 +925,24 @@ function quoteRequest(intent: QuoteIntent) {
     token_out: getAddress(intent.tokenOut),
     quote_type: intent.quoteType,
     amount: intent.amount,
-    source: intent.source ?? "auto",
+  };
+}
+
+function quoteRequest(intent: QuoteSelectionIntent, source: QuoteSource) {
+  return {
+    ...quoteDiscoveryRequest(intent),
+    source,
     sender: intent.sender ? getAddress(intent.sender) : null,
     recipient: intent.recipient ? getAddress(intent.recipient) : null,
+  };
+}
+
+function serializeCompleteQuote(candidate: QuoteCandidate) {
+  return {
+    source: candidate.source,
+    source_url: candidate.sourceUrl,
+    quote: candidate.raw,
+    normalized: serializeCandidate(candidate),
   };
 }
 

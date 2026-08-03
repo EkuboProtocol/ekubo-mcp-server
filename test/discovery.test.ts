@@ -315,6 +315,18 @@ describe("Worker discovery", () => {
         .properties,
     ).not.toHaveProperty("source");
     expect(
+      (getQuote?.inputSchema as { properties?: Record<string, unknown> })
+        .properties,
+    ).not.toHaveProperty("sender");
+    expect(
+      (getQuote?.inputSchema as { properties?: Record<string, unknown> })
+        .properties,
+    ).not.toHaveProperty("recipient");
+    expect(
+      (getQuote?.inputSchema as { properties?: Record<string, unknown> })
+        .properties,
+    ).not.toHaveProperty("slippage_bps");
+    expect(
       (prepareSwap?.inputSchema as { properties?: Record<string, unknown> })
         .properties,
     ).toHaveProperty("source");

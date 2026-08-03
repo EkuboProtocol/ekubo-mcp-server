@@ -101,13 +101,12 @@ describe("MCP service core", () => {
       });
     };
     await getQuote(
-      env,
+      { ...env, ZERO_X_API_KEY: "" },
       {
         chainId: "1",
         tokenIn: token1,
         tokenOut: token0,
         quoteType: "exact_output",
-        source: "ekubo",
         amount: "100",
       },
       fetcher as typeof fetch,

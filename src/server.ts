@@ -200,7 +200,7 @@ export const prepareTokenBalancesAndAllowancesSchema = z.object({
     ),
 });
 
-export const getQuoteSchema = z.object({
+const quoteRequestSchema = z.object({
   chain_id: chainId,
   destination_chain_id: chainId
     .optional()
@@ -209,26 +209,24 @@ export const getQuoteSchema = z.object({
   token_out: tokenIdentifier,
   quote_type: quoteType,
   amount,
-  slippage_bps: z.number().int().min(0).max(10_000).default(50),
-  sender: address
-    .optional()
-    .describe("Optional taker/depositor; makes 0x or Across quotes firm"),
+});
+
+export const getQuoteSchema = quoteRequestSchema;
+
+export const prepareSwapSchema = quoteRequestSchema.extend({
+  source: quoteSource.default("auto"),
+  sender: address.describe(
+    "Transaction sender/taker/depositor used for firm quotes and validation",
+  ),
   recipient: address
     .optional()
     .describe("Optional output recipient; defaults to sender when preparing"),
-});
-
-export const prepareSwapSchema = getQuoteSchema.extend({
-  source: quoteSource.default("auto"),
   slippage_bps: z
     .number()
     .int()
     .min(0)
     .max(10_000)
     .describe("User-selected slippage tolerance in basis points"),
-  sender: address.describe(
-    "Transaction sender/taker/depositor used for firm quotes and validation",
-  ),
 });
 
 const stableswapParamsSchema = z.object({
@@ -1052,7 +1050,7 @@ export const publicToolCatalog = [
     name: "ekubo_get_quote",
     title: "Get a swap or bridge quote",
     description:
-      "Compare Ekubo and 0x for same-chain swaps by strict calculated amounts: maximize amount_out for exact input and minimize amount_in for exact output. Uses Across for cross-chain swaps. If a requested Ekubo or 0x quote fails, the result explicitly instructs the user to retry before relying on the incomplete comparison. Supports EIP-155 token identifiers.",
+      "Return every complete Ekubo and 0x quote for a same-chain swap without selecting one. Each quotes entry includes the full provider response and normalized amounts so the agent or user can choose a source, then call ekubo_prepare_swap with that source to refresh the quote and compute calldata. Uses Across for cross-chain swaps. If a requested provider fails, the result explicitly instructs the user to retry before relying on the incomplete set. Supports EIP-155 token identifiers.",
     inputSchema: z.toJSONSchema(getQuoteSchema),
     _meta: toolCatalogMetadata,
   },
@@ -1537,10 +1535,6 @@ export function createEkuboServer(env: Env) {
           ),
           quoteType: input.quote_type,
           amount: input.amount,
-          source: "auto",
-          slippageBps: input.slippage_bps,
-          sender: input.sender as Address | undefined,
-          recipient: input.recipient as Address | undefined,
         });
       }),
   );
@@ -2760,8 +2754,8 @@ const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 1. Search the token list when resolving a name or symbol. For exact identifiers, use ekubo_get_token for one chain/address pair or ekubo_get_tokens for up to 1,000 pairs in one batch. Show the chosen chains and addresses to the user.
 2. Convert the user amount to base units without floating-point arithmetic.
 3. Set destination_chain_id explicitly for a bridge. Raw addresses and eip155:<chain>:<address> token IDs are accepted.
-4. Request an exact-input or exact-output quote. source=auto compares calculated Ekubo and 0x amounts on one chain: choose the highest amount_out for exact input or lowest amount_in for exact output. It selects Across across chains. Never use price impact to override the amount comparison. If either configured same-chain source fails, tell the user to retry and do not execute the incomplete comparison.
-5. Prepare executable calldata with the user's chosen slippage tolerance and sender.
+4. Request an exact-input or exact-output quote. For same-chain requests, inspect every entry in quotes and choose a source; the tool does not select one. The normalized amounts expose amount_out for exact input and amount_in for exact output. Cross-chain requests return Across. If either configured same-chain source fails, tell the user to retry and do not rely on the incomplete set.
+5. Call ekubo_prepare_swap with the chosen source, slippage tolerance, and sender so it refreshes that provider's quote and computes executable calldata.
 6. Include the provider, exact plan ID, token amounts, chains, slippage bound, recipient, approvals, execution transaction, and any allowance reset in the wallet handoff.
 7. Pass the complete plan to the user's wallet tooling for balance, allowance, policy, and exact-transaction simulation. Do not ask for separate agent-level confirmation.
 8. Let the wallet present the simulated result, collect authorization or signature, and submit. Never send credentials to this server.
@@ -2858,11 +2852,11 @@ Use Cast only when the user explicitly selected it or no compatible wallet abstr
 
 const QUOTER_API = `# Ekubo aggregated quote contract
 
-Same-chain source=auto requests compare the Ekubo quoter and 0x Swap API v2.
-Exact-input comparisons select the greatest calculated amount_out; exact-output
-comparisons select the least calculated amount_in. Price impact is informational
-and never overrides this strict amount comparison. If either requested provider
-fails, the result marks the comparison incomplete and instructs the user to retry.
+ekubo_get_quote returns every complete Ekubo and 0x response for same-chain
+requests without selecting one. Each entry includes normalized amounts for the
+agent or user to compare. Pass the chosen source to ekubo_prepare_swap; that tool
+refreshes the provider quote and computes executable calldata. If either requested
+provider fails, the result marks the set incomplete and instructs the user to retry.
 Cross-chain requests use Across Swap API /swap/approval. Provider API keys are
 server-side and are never accepted as tool arguments.
 
