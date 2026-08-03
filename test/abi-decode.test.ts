@@ -22,26 +22,29 @@ describe("local ABI decode plans", () => {
       decode,
     });
 
-    expect(decode).toMatchObject({
+    expect(decode).toEqual({
       kind: "function_result",
+      abi,
       function_name: "state",
       required: true,
-      output_serialization: {
-        integers: "decimal_strings",
-        bytes: "0x_prefixed_hex",
-        addresses: "checksum",
-      },
     });
     expect(handoff).toMatchObject({
       trust_boundary: "execute_and_decode_on_user_device",
       network: { chain_id: "4663", caip2_chain_id: "eip155:4663" },
       preferred_tool: {
         name: "wallet_batch_eth_call",
-        call: { include_raw: true },
+        arguments: {
+          chain_id: "4663",
+          block_parameter: "pending",
+          calls: [{ include_raw: true }],
+        },
       },
       standalone_tool: {
         name: "wallet_decode_abi_result",
-        arguments: { include_raw: true },
+        arguments_template: {
+          return_data_source: "preferred_tool.results[0].return_data",
+          include_raw: true,
+        },
       },
     });
   });
@@ -64,25 +67,20 @@ describe("local ABI decode plans", () => {
         ],
       },
     });
-    expect(sqrtRatioFloatSemanticCodec("sqrtRatio")).toMatchObject({
+    expect(sqrtRatioFloatSemanticCodec("sqrtRatio")).toEqual({
       path: "sqrtRatio",
-      preserve_abi_value: true,
+      required: true,
+      ...EKUBO_SQRT_RATIO_FLOAT_CODEC,
     });
   });
 
   it("can send a non-ABI byte payload directly to an allowlisted codec", () => {
     expect(
-      semanticValueDecodePlan({
-        semantic_type: "ekubo.example_bytes",
-        codec: { id: "ekubo.example_bytes_v1", version: 1 },
-      }),
+      semanticValueDecodePlan(EKUBO_SQRT_RATIO_FLOAT_CODEC),
     ).toEqual({
       kind: "semantic_value",
-      input_encoding: "hex_bytes",
       required: true,
-      preserve_input: true,
-      semantic_type: "ekubo.example_bytes",
-      codec: { id: "ekubo.example_bytes_v1", version: 1 },
+      ...EKUBO_SQRT_RATIO_FLOAT_CODEC,
     });
   });
 });

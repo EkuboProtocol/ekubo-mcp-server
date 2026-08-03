@@ -19,6 +19,7 @@ import {
   stringToHex,
 } from "viem";
 import {
+  functionResultBytesArrayDecodePlan,
   functionResultDecodePlan,
   localFunctionResultMetadata,
   localWalletDecoderHandoff,
@@ -2637,7 +2638,10 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
     function_name: "balanceOf" | "ownerOf" | "stakes" | "voteState" | "votingPower";
     ve_id?: string;
     data: Hex;
-    expected: Record<string, unknown>;
+    expectation:
+      | { comparison: "equals"; path: "$"; value: string }
+      | { comparison: "fields_equal"; fields: Record<string, string> }
+      | { comparison: "observe_dynamic"; note: string };
   }[] = [
     {
       type: "balance_of",
@@ -2647,7 +2651,11 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
         functionName: "balanceOf",
         args: [portfolio.owner],
       }),
-      expected: { balance: portfolio.totalItems.toString() },
+      expectation: {
+        comparison: "equals",
+        path: "$",
+        value: portfolio.totalItems.toString(),
+      },
     },
   ];
   for (const token of portfolio.tokens) {
@@ -2661,7 +2669,11 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
           functionName: "ownerOf",
           args: [token.veId],
         }),
-        expected: { owner: portfolio.owner },
+        expectation: {
+          comparison: "equals",
+          path: "$",
+          value: portfolio.owner,
+        },
       },
       {
         type: "stakes",
@@ -2672,9 +2684,12 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
           functionName: "stakes",
           args: [token.veId],
         }),
-        expected: {
-          amount: token.amount.toString(),
-          end_time: token.endTime.toString(),
+        expectation: {
+          comparison: "fields_equal",
+          fields: {
+            amount: token.amount.toString(),
+            endTime: token.endTime.toString(),
+          },
         },
       },
       {
@@ -2686,10 +2701,13 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
           functionName: "voteState",
           args: [token.veId],
         }),
-        expected: {
-          pool_id: token.vote?.poolId ?? numberToHex(0n, { size: 32 }),
-          weight: token.vote?.appliedWeight.toString() ?? "0",
-          voted_swap_fee: token.vote?.swapFee.toString() ?? "0",
+        expectation: {
+          comparison: "fields_equal",
+          fields: {
+            poolId: token.vote?.poolId ?? numberToHex(0n, { size: 32 }),
+            weight: token.vote?.appliedWeight.toString() ?? "0",
+            votedSwapFee: token.vote?.swapFee.toString() ?? "0",
+          },
         },
       },
       {
@@ -2701,7 +2719,8 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
           functionName: "votingPower",
           args: [token.veId],
         }),
-        expected: {
+        expectation: {
+          comparison: "observe_dynamic",
           note: "Dynamic at the provider block; use this value for the final displayed projection.",
         },
       },
@@ -2712,23 +2731,15 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
     functionName: "multicall",
     args: [calls.map(({ data }) => data)],
   });
-  const localDecodePlan = {
-    ...functionResultDecodePlan(VE_TOKEN_ABI, "multicall"),
-    nested_results: {
-      path: "results",
-      expected_result_count: calls.length,
-      results: calls.map((call, index) => ({
-        index,
-        id: call.type,
-        required: true,
-        decode: functionResultDecodePlan(
-          VE_TOKEN_ABI,
-          call.function_name,
-        ),
-        expected: call.expected,
-      })),
-    },
-  };
+  const localDecodePlan = functionResultBytesArrayDecodePlan(
+    VE_TOKEN_ABI,
+    "multicall",
+    calls.map((call, index) => ({
+      index,
+      decode: functionResultDecodePlan(VE_TOKEN_ABI, call.function_name),
+    })),
+    { expectedResultCount: calls.length },
+  );
   return {
     status: "not_executed" as const,
     required_before_signing: true,
@@ -2747,7 +2758,7 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
     }),
     calls,
     instruction:
-      "Execute and decode eth_call on the user's device with local_decode_plan, retain raw outer and child bytes, and compare every expectation immediately before signing.",
+      "Execute and decode eth_call on the user's device with local_decode_plan, retain raw outer and child bytes, and apply every static call expectation to the corresponding decoded child immediately before signing.",
   };
 }
 

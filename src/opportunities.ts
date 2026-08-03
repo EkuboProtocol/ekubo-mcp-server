@@ -522,11 +522,12 @@ function ve33EmissionStateReadRequirement() {
         preserve_original_arguments: true,
         arguments: {
           ve33_emission_state: {
-            current_timestamp: "<decoded state.currentTimestamp decimal string>",
+            current_timestamp:
+              "<preferred_tool.results[0].decoded.currentTimestamp>",
             current_emission_rate:
-              "<decoded state.currentEmissionRate decimal string>",
+              "<preferred_tool.results[0].decoded.currentEmissionRate>",
             total_remaining_emissions:
-              "<decoded state.totalRemainingEmissions decimal string>",
+              "<preferred_tool.results[0].decoded.totalRemainingEmissions>",
           },
         },
       },

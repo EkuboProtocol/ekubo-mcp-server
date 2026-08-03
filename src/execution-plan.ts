@@ -1,4 +1,5 @@
 import { type Address, getAddress, type Hex, numberToHex } from "viem";
+import { assertWalletExecutionPlan } from "./wallet-compatibility.js";
 
 export interface PreparedTransaction {
   chain_id: string;
@@ -152,7 +153,7 @@ export function executionPlanFromSteps({
     },
   );
 
-  return {
+  const plan = {
     schema_version: "1",
     chain_id: chainId,
     caip2_chain_id: `eip155:${chainId}`,
@@ -161,11 +162,11 @@ export function executionPlanFromSteps({
     simulation_failure_policy: simulationFailurePolicy,
     execution_policy: {
       atomic_batch_required: atomicBatchRequired,
-      sequential: true,
+      ordered_execution_required: true,
+      wallet_atomic_batch_allowed: true,
       stop_on_failure: true,
-      revalidate_and_estimate_immediately_before_each_submission: true,
-      wait_for_successful_receipt_before_next_step: true,
-      do_not_submit_cleanup_before_execution_success: true,
+      sequential_adapter_requires_revalidation_and_successful_receipts: true,
+      cleanup_must_follow_successful_execution: true,
       agent_confirmation_required: false,
       wallet_must_simulate_before_authorization: true,
       wallet_collects_authorization_on_simulated_result: true,
@@ -178,11 +179,13 @@ export function executionPlanFromSteps({
     },
     adapters: {
       mcp_wallet:
-        "Preferred when available: pass this complete execution_plan to the separately trusted wallet MCP's simulation and execution APIs after verifying that its connected chain and account exactly match chain_id and sender. Do not ask for a separate agent-level confirmation; the wallet presents the simulated result and collects authorization or signature.",
+        "Preferred when available: pass chain_id as the wallet MCP's decimal chain_id and this complete execution_plan to its simulation and execution APIs after verifying that its account exactly matches sender. The wallet may execute all ordered calls as one atomic batch. Do not ask for a separate agent-level confirmation; the wallet presents the simulated result and collects authorization or signature.",
       cast_fallback:
         "Use only when the user selected Cast or no compatible wallet abstraction is available. For cast call use transaction.data with --data. For cast estimate and cast send pass transaction.data as the positional SIG argument. Always pass --from for preflight and the exact transaction.value with --value; select the signer only at send time.",
     },
   };
+  assertWalletExecutionPlan(plan);
+  return plan;
 }
 
 function defaultSimulationFailurePolicy(): SimulationFailurePolicy {

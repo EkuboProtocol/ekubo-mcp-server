@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { decodeFunctionData, getAddress, multicall3Abi } from "viem";
+import { decodeFunctionData, multicall3Abi } from "viem";
 import type { Env } from "../src/core.js";
 import {
   buildPositionStateReadPlan,
@@ -73,13 +73,10 @@ describe("position interface parity", () => {
       results: [
         {
           index: 0,
-          id: "accumulate_ve33_rewards_in_simulation",
           required_success: true,
-          expected_return_data: "0x",
         },
         {
           index: 1,
-          id: "position_state",
           decode: {
             kind: "function_result",
             function_name: "getPositionRewardsAndLiquidity",
@@ -87,17 +84,32 @@ describe("position interface parity", () => {
         },
         {
           index: 2,
-          id: "current_owner",
           decode: { kind: "function_result", function_name: "ownerOf" },
-          expected: { equals_address: getAddress(indexedPosition.owner) },
         },
       ],
     });
+    expect(Object.keys(plan.local_decode_plan).sort()).toEqual([
+      "abi",
+      "expected_result_count",
+      "function_name",
+      "kind",
+      "required",
+      "results",
+    ]);
+    expect(plan.local_decode_plan.results.map((result) => Object.keys(result).sort())).toEqual([
+      ["index", "required_success"],
+      ["decode", "index", "required_success"],
+      ["decode", "index", "required_success"],
+    ]);
     expect(plan.result_decoder).toMatchObject({
       trust_boundary: "execute_and_decode_on_user_device",
       preferred_tool: {
         name: "wallet_batch_eth_call",
-        call: { include_raw: true },
+        arguments: {
+          chain_id: "4663",
+          block_parameter: "pending",
+          calls: [{ include_raw: true }],
+        },
       },
       standalone_tool: { name: "wallet_decode_abi_result" },
     });
@@ -147,14 +159,14 @@ describe("position interface parity", () => {
           expected_result_count: 2,
           results: [
             {
-              id: "position_state",
+              index: 0,
               decode: {
                 kind: "function_result",
                 function_name: "getPositionFeesAndLiquidity",
               },
             },
             {
-              id: "current_owner",
+              index: 1,
               decode: { function_name: "ownerOf" },
             },
           ],

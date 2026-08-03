@@ -187,8 +187,14 @@ export async function prepareFixPoolPrice(
         decode_as: "(uint96 sqrtRatio,int32 tick)",
         local_decode_plan: currentPriceDecodePlan,
         result_decoder: currentPriceResultDecoder,
-        resume:
-          "Call this tool again with pending_current_sqrt_ratio set to decoded sqrtRatio.",
+        resume: {
+          tool: "ekubo_prepare_fix_price",
+          preserve_original_arguments: true,
+          arguments: {
+            pending_current_sqrt_ratio:
+              "<preferred_tool.results[0].decoded.sqrtRatio.abi_value>",
+          },
+        },
       },
       next_phase: "quote",
       wallet_handoff: {
@@ -259,8 +265,25 @@ export async function prepareFixPoolPrice(
           "(address specifiedToken,address calculatedToken,int256 specifiedAmount,int256 calculatedAmount)",
         local_decode_plan: quoteDecodePlan,
         result_decoder: quoteResultDecoder,
-        resume:
-          "Call this tool again with the exact decoded quote_result. Do not alter token addresses or signed amounts.",
+        resume: {
+          tool: "ekubo_prepare_fix_price",
+          preserve_original_arguments: true,
+          arguments: {
+            quote_result: {
+              specified_token:
+                "<preferred_tool.results[0].decoded.specifiedToken>",
+              calculated_token:
+                "<preferred_tool.results[0].decoded.calculatedToken>",
+              specified_amount:
+                "<preferred_tool.results[0].decoded.specifiedAmount>",
+              calculated_amount:
+                "<preferred_tool.results[0].decoded.calculatedAmount>",
+              block_number: "<preferred_tool.block_number>",
+            },
+          },
+          instruction:
+            "Copy the wallet-decoded values without altering token addresses or signed amounts.",
+        },
       },
       next_phase: "execute",
       wallet_handoff: {

@@ -347,11 +347,19 @@ export function prepareRecoveryFundClaim(input: {
         })),
       },
       signature_request: recoverySignatureRequest(sender),
+      wallet_mcp_compatibility: {
+        compatible: false,
+        missing_capability: "eth_signTypedData_v4",
+        reason:
+          "The Ekubo wallet MCP intentionally does not expose arbitrary typed-data signing.",
+        next_step:
+          "Use a separately selected connected wallet that supports EIP-712, then return its 65-byte signature to this preparation tool. Do not ask the Ekubo wallet MCP to sign it.",
+      },
       resume:
-        "Pass this exact typed-data request to the wallet's signing flow. After the wallet presents it and collects the signature, call this tool again with signature. The MCP will then construct the complete multicall.",
+        "Pass this exact typed-data request to a separately selected connected wallet that supports eth_signTypedData_v4. After it presents the request and collects the signature, call this tool again with signature. The Ekubo wallet MCP does not expose arbitrary typed-data signing.",
       wallet_handoff: {
         instruction:
-          "Do not ask for a separate agent-level approval. The wallet owns presentation and authorization of this typed-data signature.",
+          "Do not send this signature request to the Ekubo wallet MCP. Use a connected wallet with explicit EIP-712 support; that wallet owns presentation and authorization of the signature.",
         calldata_complete:
           "The MCP supplies both the exact typed-data request and, after signing, all transaction calldata.",
       },

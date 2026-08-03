@@ -100,12 +100,13 @@ export default {
               decode_kinds: [
                 "function_result",
                 "multicall3",
+                "function_result_bytes_array",
                 "semantic_value",
               ],
               custom_bytes: {
                 kind: "semantic_value",
-                input_encoding: "hex_bytes",
-                preserves_input: true,
+                input: "raw_return_data",
+                raw_return_data_preserved: true,
               },
               semantic_codec_policy:
                 "Platform-neutral codec IDs with explicit implementation assertions; wallets execute only locally installed allowlisted codecs and never fetch code from a plan.",
@@ -317,7 +318,7 @@ EVM contract directory: ekubo://contracts/evm
 
 Operational semantics:
 - MCP tool results are not stored or replayed by this server.
-- Onchain read plans carry canonical ABIs for local wallet decoding. Raw return bytes are included by default and preserved on failure. semantic_value with input_encoding=hex_bytes supports custom non-ABI payloads through locally installed allowlisted codecs; remote plans never supply executable code.
+- Onchain read plans carry canonical ABIs for local wallet decoding. Raw return bytes are included by default and preserved on failure. semantic_value passes a custom non-ABI raw result through a locally installed allowlisted codec; remote plans never supply executable code.
 - No fixed request quota is guaranteed. If the deployment limiter returns HTTP 429, honor Retry-After: 60 and back off.
 - Owner positions use upstream no-cache semantics. Position tools join canonical token metadata and USD prices and provide exact atomic pending eth_call plans for current position state. Pair-pool discovery defaults to a zero TVL floor and returns verified PoolKeys plus the correct position manager. Liquidity opportunities match the interface's boosted-fee, active-incentive, and Ve33-emission feed; pair/boost data is cached upstream for up to 600 seconds, campaigns for 300 seconds, and Ve33 pools for 30 seconds. Every EVM interface transaction path has a first-class prepare tool returning complete wallet execution plans; wallet tooling never constructs or appends calls. Indexed pool state is cached upstream for up to 180 seconds; tick liquidity and pool keys for up to 1,800 seconds. STONX recommendations are at most 86,400 seconds old.
 

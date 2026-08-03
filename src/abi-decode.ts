@@ -1,12 +1,12 @@
 import type { Abi } from "viem";
+import {
+  assertWalletAbiDecodePlan,
+  assertWalletBatchEthCallInput,
+  type WalletSemanticCodec,
+  type WalletSemanticCodecIdentity,
+} from "./wallet-compatibility.js";
 
 const EKUBO_SDK_VERSION = "0.0.10-alpha.0";
-
-export const JSON_SAFE_ABI_OUTPUT = {
-  integers: "decimal_strings",
-  bytes: "0x_prefixed_hex",
-  addresses: "checksum",
-} as const;
 
 export const EKUBO_SQRT_RATIO_FLOAT_CODEC = {
   semantic_type: "ekubo.sqrt_ratio_float",
@@ -31,47 +31,63 @@ export function functionResultDecodePlan(
   functionName: string,
   options: {
     required?: boolean;
-    semanticCodecs?: readonly Record<string, unknown>[];
+    semanticCodecs?: readonly WalletSemanticCodec[];
   } = {},
 ) {
-  return {
+  const plan = {
     kind: "function_result" as const,
     abi,
     function_name: functionName,
     required: options.required ?? true,
-    output_serialization: JSON_SAFE_ABI_OUTPUT,
     ...(options.semanticCodecs === undefined
       ? {}
       : { semantic_codecs: options.semanticCodecs }),
   };
+  assertWalletAbiDecodePlan(plan);
+  return plan;
+}
+
+export function functionResultBytesArrayDecodePlan(
+  abi: Abi,
+  functionName: string,
+  results: readonly { index: number; decode?: Record<string, unknown> }[],
+  options: { required?: boolean; expectedResultCount?: number } = {},
+) {
+  const plan = {
+    kind: "function_result_bytes_array" as const,
+    abi,
+    function_name: functionName,
+    required: options.required ?? true,
+    ...(options.expectedResultCount === undefined
+      ? {}
+      : { expected_result_count: options.expectedResultCount }),
+    results,
+  };
+  assertWalletAbiDecodePlan(plan);
+  return plan;
 }
 
 export function sqrtRatioFloatSemanticCodec(path: string) {
   return {
     path,
     required: true,
-    preserve_abi_value: true,
     ...EKUBO_SQRT_RATIO_FLOAT_CODEC,
   } as const;
 }
 
 export function semanticValueDecodePlan(
-  semanticCodec: {
-    semantic_type: string;
-    codec: Record<string, unknown>;
-  },
+  semanticCodec: WalletSemanticCodecIdentity,
   options: {
-    inputEncoding?: "hex_bytes";
     required?: boolean;
   } = {},
 ) {
-  return {
+  const plan = {
     kind: "semantic_value" as const,
-    input_encoding: options.inputEncoding ?? "hex_bytes",
     required: options.required ?? true,
-    preserve_input: true,
     ...semanticCodec,
   };
+  assertWalletAbiDecodePlan(plan);
+  return plan;
 }
 
 export function localWalletDecoderHandoff(input: {
@@ -80,7 +96,21 @@ export function localWalletDecoderHandoff(input: {
   to: string;
   data: string;
   decode: Record<string, unknown>;
+  blockParameter?: "latest" | "pending" | "safe" | "finalized" | "earliest" | `0x${string}`;
 }) {
+  assertWalletAbiDecodePlan(input.decode);
+  const preferredArguments = {
+    chain_id: input.chainId,
+    block_parameter: input.blockParameter ?? "pending",
+    calls: [{
+      id: input.id,
+      to: input.to,
+      data: input.data,
+      include_raw: true,
+      decode: input.decode,
+    }],
+  };
+  assertWalletBatchEthCallInput(preferredArguments);
   return {
     trust_boundary: "execute_and_decode_on_user_device",
     network: {
@@ -91,18 +121,12 @@ export function localWalletDecoderHandoff(input: {
     },
     preferred_tool: {
       name: "wallet_batch_eth_call",
-      call: {
-        id: input.id,
-        to: input.to,
-        data: input.data,
-        include_raw: true,
-        decode: input.decode,
-      },
+      arguments: preferredArguments,
     },
     standalone_tool: {
       name: "wallet_decode_abi_result",
-      arguments: {
-        return_data: "<raw return_data from the local eth_call>",
+      arguments_template: {
+        return_data_source: "preferred_tool.results[0].return_data",
         include_raw: true,
         decode: input.decode,
       },
@@ -121,7 +145,8 @@ export function localFunctionResultMetadata(input: {
   data: string;
   abi: Abi;
   functionName: string;
-  semanticCodecs?: readonly Record<string, unknown>[];
+  semanticCodecs?: readonly WalletSemanticCodec[];
+  blockParameter?: "latest" | "pending" | "safe" | "finalized" | "earliest" | `0x${string}`;
 }) {
   const localDecodePlan = functionResultDecodePlan(
     input.abi,
@@ -138,6 +163,9 @@ export function localFunctionResultMetadata(input: {
       to: input.to,
       data: input.data,
       decode: localDecodePlan,
+      ...(input.blockParameter === undefined
+        ? {}
+        : { blockParameter: input.blockParameter }),
     }),
   };
 }

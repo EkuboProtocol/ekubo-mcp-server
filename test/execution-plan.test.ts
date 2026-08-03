@@ -67,7 +67,8 @@ describe("portable execution plan", () => {
       "latest",
     );
     expect(
-      execution.execution_policy.wait_for_successful_receipt_before_next_step,
+      execution.execution_policy
+        .sequential_adapter_requires_revalidation_and_successful_receipts,
     ).toBe(true);
     expect(execution.execution_policy.agent_confirmation_required).toBe(false);
     expect(
@@ -145,7 +146,8 @@ describe("portable execution plan", () => {
     ]);
     expect(result.execution_policy).toMatchObject({
       atomic_batch_required: false,
-      sequential: true,
+      ordered_execution_required: true,
+      wallet_atomic_batch_allowed: true,
       stop_on_failure: true,
     });
   });

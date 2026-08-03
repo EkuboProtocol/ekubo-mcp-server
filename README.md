@@ -207,11 +207,12 @@ installs or executes codec code named by the remote plan.
 
 Decode plans distinguish Solidity ABI decoding from protocol semantics.
 Standard results use `function_result`; atomic position queries use
-`multicall3` with an ABI and required child-result specification. A semantic
+`multicall3` with an ABI and required child-result specification, or
+`function_result_bytes_array` for a function returning nested `bytes[]`. A semantic
 codec attached to an ABI output preserves the ABI-decoded value and adds the
 interpreted value. A custom payload with no ABI envelope may instead use
-`semantic_value` with `input_encoding: hex_bytes`, which preserves the input
-bytes and passes them directly to the identified codec. Codec IDs are
+`semantic_value`, which consumes the raw return bytes while the wallet retains
+those bytes in the result. Codec IDs are
 platform-neutral. Implementations explicitly identify their ecosystem; for
 example, Ekubo's compact `SqrtRatio` codec names the pinned npm package URL,
 export, version, and integrity for `@ekubo/sdk`. Wallets must run only a locally
@@ -223,7 +224,7 @@ browse `prod-api` or infer a manager from an ABI resource. Its default
 `min_tvl_usd=0` keeps initialized pools with negligible liquidity visible.
 After the user selects an existing v3 pool, range, token maxima, and slippage,
 call `ekubo_prepare_lp_position_deposit`. Pass its exact `execution_plan` to the
-wallet MCP for policy checking and sequential simulation. The wallet—not this
+wallet MCP for policy checking and exact-plan simulation. The wallet—not this
 server—controls target, spender, selector, native-value, signing, and submission
 authorization.
 
@@ -266,12 +267,15 @@ approval, execution, and cleanup transaction in the sequence.
 
 Bind the actual wallet address as `sender` before preparation. Prefer the
 connected account and call/simulate/submit abstractions exposed by wallet
-tooling. Verify the observed chain and account against
-`execution_plan.chain_id` and `sender`, revalidate and estimate every ordered
-step immediately before submission, and wait for a successful receipt before
-advancing. Use Cast only when the user selected it or no compatible wallet
-abstraction is available; the execution-plan resource retains its exact
-fallback syntax without making Cast the default.
+tooling. Pass `execution_plan.chain_id` directly as the wallet MCP's decimal
+`chain_id`, verify the observed chain and account against it and `sender`, and
+preserve the ordered calls. A capable wallet may simulate and submit the whole
+sequence as one atomic batch. A non-batching adapter may process a plan
+sequentially only when `atomic_batch_required` is false, revalidating each step
+and waiting for its successful receipt before advancing. Use Cast only when the
+user selected it or no compatible wallet abstraction is available; the
+execution-plan resource retains its exact fallback syntax without making Cast
+the default.
 
 `execution_plan_ready` means the quote, bounds, and unsigned calldata are
 complete enough to hand to the wallet. `agent_confirmation_required` is false:
@@ -288,6 +292,11 @@ The boundary mirrors the Ekubo interface: the public services provide token
 data and route quotes, transaction construction applies the user's slippage,
 and the user's connected wallet or provider handles balances, allowances,
 current-state validation, gas estimation, signing, submission, and receipts.
+The Recovery Fund's initial EIP-712 agreement is the one explicit exception to
+the Ekubo wallet MCP handoff: that wallet intentionally exposes no arbitrary
+typed-data signing tool. Its preparation result marks the incompatibility and
+requires a separately selected connected wallet with `eth_signTypedData_v4`;
+the resulting execution plan remains compatible with the Ekubo wallet MCP.
 
 For STONX allocation requests, clients should call
 `ekubo_get_ve33_allocations` with only the connected EVM wallet address as

@@ -15,10 +15,10 @@ import {
 } from "viem";
 import {
   functionResultDecodePlan,
-  JSON_SAFE_ABI_OUTPUT,
   localWalletDecoderHandoff,
 } from "./abi-decode.js";
 import { ServiceError } from "./core.js";
+import { assertWalletAbiDecodePlan } from "./wallet-compatibility.js";
 
 export const MULTICALL3_ADDRESS = getAddress(
   "0xcA11bde05977b3631167028862bE2a173976CA11",
@@ -271,26 +271,15 @@ export function buildPositionStateReadPlan(
     function_name: "aggregate3",
     required: true,
     expected_result_count: calls.length,
-    output_serialization: JSON_SAFE_ABI_OUTPUT,
     results: calls.map((call, index) => ({
       index,
-      id: call.purpose,
       required_success: true,
       ...(call.resultFields.length === 0
-        ? { expected_return_data: "0x" }
-        : {
-            decode: functionResultDecodePlan(call.abi, call.functionName),
-          }),
-      ...(index === ownerResultIndex && normalizedExpectedOwner !== null
-        ? {
-            expected: {
-              path: "owner",
-              equals_address: normalizedExpectedOwner,
-            },
-          }
-        : {}),
+        ? {}
+        : { decode: functionResultDecodePlan(call.abi, call.functionName) }),
     })),
   };
+  assertWalletAbiDecodePlan(decodePlan);
 
   return {
     available: true as const,

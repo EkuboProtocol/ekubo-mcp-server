@@ -233,6 +233,18 @@ describe("liquidity opportunities", () => {
         trust_boundary: "execute_and_decode_on_user_device",
         preferred_tool: { name: "wallet_batch_eth_call" },
       },
+      resume: {
+        arguments: {
+          ve33_emission_state: {
+            current_timestamp:
+              "<preferred_tool.results[0].decoded.currentTimestamp>",
+            current_emission_rate:
+              "<preferred_tool.results[0].decoded.currentEmissionRate>",
+            total_remaining_emissions:
+              "<preferred_tool.results[0].decoded.totalRemainingEmissions>",
+          },
+        },
+      },
     });
     expect(requests.some((url) => url.includes("/tokens/batch?"))).toBe(true);
   });

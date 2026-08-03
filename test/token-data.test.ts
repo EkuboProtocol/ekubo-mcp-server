@@ -91,10 +91,11 @@ describe("TokenDataFetcher read preparation", () => {
       functionName: "getNonzeroBalancesAndAllowances",
       args: [owner, [nativeToken, token], [spender]],
     });
-    expect(result.local_decode_plan).toMatchObject({
+    expect(result.local_decode_plan).toEqual({
       kind: "function_result",
+      abi: contract!.abi,
       function_name: "getNonzeroBalancesAndAllowances",
-      output_serialization: { integers: "decimal_strings" },
+      required: true,
     });
   });
 

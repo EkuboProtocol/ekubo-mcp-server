@@ -107,7 +107,7 @@ describe("Worker discovery", () => {
       local_result_decoding: {
         trust_boundary: string;
         decode_kinds: string[];
-        custom_bytes: { input_encoding: string; preserves_input: boolean };
+        custom_bytes: { input: string; raw_return_data_preserved: boolean };
       };
       operational_semantics: {
         rate_limit_contract: string;
@@ -132,11 +132,12 @@ describe("Worker discovery", () => {
       decode_kinds: [
         "function_result",
         "multicall3",
+        "function_result_bytes_array",
         "semantic_value",
       ],
       custom_bytes: {
-        input_encoding: "hex_bytes",
-        preserves_input: true,
+        input: "raw_return_data",
+        raw_return_data_preserved: true,
       },
     });
     expect(metadata.operational_semantics.rate_limit_contract).toContain(

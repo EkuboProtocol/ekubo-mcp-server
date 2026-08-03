@@ -229,6 +229,32 @@ describe("safe VeToken allocation workflows", () => {
     });
     expect(result.onchain_validation.calls).toHaveLength(13);
     expect(result.onchain_validation.eth_call.data).toStartWith("0xac9650d8");
+    expect(result.onchain_validation.calls.slice(0, 5).map((call) => call.expectation)).toEqual([
+      { comparison: "equals", path: "$", value: "3" },
+      { comparison: "equals", path: "$", value: owner },
+      { comparison: "fields_equal", fields: { amount: "600", endTime: endA.toString() } },
+      {
+        comparison: "fields_equal",
+        fields: { poolId: poolId(poolA), weight: "590", votedSwapFee: "10" },
+      },
+      {
+        comparison: "observe_dynamic",
+        note: "Dynamic at the provider block; use this value for the final displayed projection.",
+      },
+    ]);
+    expect(result.onchain_validation.local_decode_plan).toMatchObject({
+      kind: "function_result_bytes_array",
+      function_name: "multicall",
+      expected_result_count: 13,
+      required: true,
+    });
+    expect(
+      result.onchain_validation.local_decode_plan.results.every(
+        (entry) =>
+          Object.keys(entry).sort().join(",") === "decode,index" &&
+          entry.decode?.kind === "function_result",
+      ),
+    ).toBe(true);
   });
 
   it("claims every active NFT first, including zero-fee states, then splits and votes atomically", async () => {

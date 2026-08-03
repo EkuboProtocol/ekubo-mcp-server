@@ -338,6 +338,14 @@ describe("EVM interface action preparation", () => {
       agent_confirmation_required: false,
     });
     expect(recovery.signature_request?.method).toBe("eth_signTypedData_v4");
+    expect(recovery.wallet_mcp_compatibility).toEqual({
+      compatible: false,
+      missing_capability: "eth_signTypedData_v4",
+      reason:
+        "The Ekubo wallet MCP intentionally does not expose arbitrary typed-data signing.",
+      next_step:
+        "Use a separately selected connected wallet that supports EIP-712, then return its 65-byte signature to this preparation tool. Do not ask the Ekubo wallet MCP to sign it.",
+    });
     expect(reward.exact_transaction_list).toHaveLength(1);
     expect(reward.decoded_calls[0]?.function).toBe("claim");
   });
@@ -456,6 +464,12 @@ describe("EVM interface action preparation", () => {
           preferred_tool: { name: "wallet_batch_eth_call" },
           standalone_tool: { name: "wallet_decode_abi_result" },
         },
+        resume: {
+          arguments: {
+            pending_current_sqrt_ratio:
+              "<preferred_tool.results[0].decoded.sqrtRatio.abi_value>",
+          },
+        },
       },
     });
     expect(
@@ -471,6 +485,21 @@ describe("EVM interface action preparation", () => {
         local_decode_plan: {
           kind: "function_result",
           function_name: "quote",
+        },
+        resume: {
+          arguments: {
+            quote_result: {
+              specified_token:
+                "<preferred_tool.results[0].decoded.specifiedToken>",
+              calculated_token:
+                "<preferred_tool.results[0].decoded.calculatedToken>",
+              specified_amount:
+                "<preferred_tool.results[0].decoded.specifiedAmount>",
+              calculated_amount:
+                "<preferred_tool.results[0].decoded.calculatedAmount>",
+              block_number: "<preferred_tool.block_number>",
+            },
+          },
         },
       },
     });
