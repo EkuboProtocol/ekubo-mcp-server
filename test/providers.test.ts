@@ -3,8 +3,8 @@ import { decodeFunctionData, erc20Abi } from "viem";
 import {
   type Env,
   getQuote,
+  listTokens,
   prepareSwap,
-  searchTokens,
 } from "../src/core.js";
 
 const native = "0x0000000000000000000000000000000000000000";
@@ -120,9 +120,9 @@ describe("aggregated quote providers", () => {
 
   it("sorts ambiguous token matches by descending visibility priority", async () => {
     const requested: string[] = [];
-    const result = await searchTokens(
+    const result = await listTokens(
       env,
-      { chainId: "1", query: "NVDA", pageSize: 20 },
+      { chainId: "1", search: "NVDA", pageSize: 20, minVisibilityPriority: 0 },
       (async (input: RequestInfo | URL) => {
         requested.push(input.toString());
         return Response.json([
@@ -139,6 +139,35 @@ describe("aggregated quote providers", () => {
       tokenA,
     ]);
     expect(requested[0]).toContain("search=NVDA");
+    expect(requested[0]).toContain("chainId=1");
+    expect(requested[0]).toContain("minVisibilityPriority=0");
+  });
+
+  it("lists tokens without a search term and forwards every filter", async () => {
+    const requested: string[] = [];
+    const result = await listTokens(
+      env,
+      {
+        pageSize: 50,
+        minVisibilityPriority: -100,
+        afterToken: `4663:${tokenA}`,
+      },
+      (async (input: RequestInfo | URL) => {
+        requested.push(input.toString());
+        return Response.json([
+          { symbol: "AAA", visibility_priority: 0, address: tokenA },
+          { symbol: "BBB", visibility_priority: 5, address: tokenB },
+        ]);
+      }) as typeof fetch,
+    );
+
+    expect(result.map((token) => token.address)).toEqual([tokenB, tokenA]);
+    const url = new URL(requested[0]);
+    expect(url.searchParams.get("search")).toBeNull();
+    expect(url.searchParams.get("chainId")).toBeNull();
+    expect(url.searchParams.get("pageSize")).toBe("50");
+    expect(url.searchParams.get("minVisibilityPriority")).toBe("-100");
+    expect(url.searchParams.get("afterToken")).toBe(`4663:${tokenA}`);
   });
 
   it("prepares a 0x exact-output swap and approves maxSellAmount", async () => {

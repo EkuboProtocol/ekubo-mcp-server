@@ -1,6 +1,6 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-const expectedServerVersion = "0.22.0";
-const expectedCatalogRevision = "2026-08-03.non-redundant-payloads";
+const expectedServerVersion = "0.23.0";
+const expectedCatalogRevision = "2026-08-04.list-tokens";
 const smokeNonce = `${Date.now()}-${Math.random()}`;
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
 
@@ -26,7 +26,7 @@ assert(openapi.openapi === "3.1.0", "OpenAPI endpoint is invalid");
 
 const catalog = await getJson("/tools");
 const expectedTools = [
-  "ekubo_search_tokens",
+  "ekubo_list_tokens",
   "ekubo_get_token",
   "ekubo_get_tokens",
   "ekubo_get_quote",
@@ -215,6 +215,37 @@ assert(
 assert(
   !privateRecommendationSourcePattern.test(JSON.stringify(recommendationCall)),
   "recommendation result exposes the private recommendation source",
+);
+
+const listTokensCall = await mcpRequest(7, "tools/call", {
+  name: "ekubo_list_tokens",
+  arguments: { chain_id: "4663", search: "NVDA" },
+});
+const listedTokens = listTokensCall.result?.structuredContent?.tokens;
+assert(
+  Array.isArray(listedTokens) && listedTokens.length > 0,
+  "ekubo_list_tokens returned no tokens for a known symbol",
+);
+assert(
+  listedTokens.every((token) => token.chain_id === "4663"),
+  "ekubo_list_tokens ignored chain_id",
+);
+assert(
+  listedTokens.every(
+    (token, index) =>
+      index === 0 ||
+      token.visibility_priority <= listedTokens[index - 1].visibility_priority,
+  ),
+  "ekubo_list_tokens is not ordered by descending visibility priority",
+);
+
+const unfilteredTokensCall = await mcpRequest(8, "tools/call", {
+  name: "ekubo_list_tokens",
+  arguments: {},
+});
+assert(
+  (unfilteredTokensCall.result?.structuredContent?.tokens ?? []).length > 0,
+  "ekubo_list_tokens requires arguments it should default",
 );
 
 console.log(`Ekubo MCP deployment smoke checks passed at ${origin}/mcp`);

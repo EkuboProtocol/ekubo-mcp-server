@@ -328,7 +328,7 @@ STONX allocation shortcut:
 - If no connected wallet address is available, ask the user. Never infer it from a machine environment, repository, or local keystore.
 
 Safe swap and bridge sequence:
-1. Use ekubo_search_tokens when resolving a name or symbol. Use ekubo_get_token for one known chain/address pair, or ekubo_get_tokens for 1–1,000 known pairs in one batch request. Batch results preserve input order and duplicates while omitting unknown identifiers. Show the selected chains and addresses.
+1. Use ekubo_list_tokens with search when resolving a symbol. Use ekubo_get_token for one known chain/address pair, or ekubo_get_tokens for 1–1,000 known pairs in one batch request. Batch results preserve input order and duplicates while omitting unknown identifiers. Show the selected chains and addresses.
 2. Convert the amount to base units using token decimals.
 3. Use ekubo_get_quote or ekubo_prepare_swap with exact input/output intent and destination_chain_id.
 4. Choose slippage before generating calldata.

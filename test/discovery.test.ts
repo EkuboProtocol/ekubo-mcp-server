@@ -14,7 +14,7 @@ import {
   publicToolCatalog,
   ROBINHOOD_STONX_CHAIN_ID,
   ROBINHOOD_STONX_VE_TOKEN,
-  searchTokensSchema,
+  listTokensSchema,
 } from "../src/server.js";
 import {
   MCP_SERVER_VERSION,
@@ -179,7 +179,7 @@ describe("Worker discovery", () => {
     expect(catalog.catalog_revision).toBe(MCP_TOOL_CATALOG_REVISION);
     expect(catalog.tool_count).toBe(publicToolCatalog.length);
     expect(catalog.tools.map((tool) => tool.name)).toEqual([
-      "ekubo_search_tokens",
+      "ekubo_list_tokens",
       "ekubo_get_token",
       "ekubo_get_tokens",
       "ekubo_get_quote",
@@ -261,19 +261,31 @@ describe("Worker discovery", () => {
       }).success,
     ).toBe(true);
     expect(
-      searchTokensSchema.safeParse({
+      listTokensSchema.safeParse({
         chain_id: 4663,
-        query: "STONX",
+        search: "STONX",
         page_size: 20,
       }).success,
     ).toBe(true);
     expect(
-      searchTokensSchema.safeParse({
+      listTokensSchema.safeParse({
         chain_id: "0x1237",
-        query: "STONX",
+        search: "STONX",
         page_size: 20,
       }).success,
     ).toBe(true);
+    expect(listTokensSchema.safeParse({}).success).toBe(true);
+    expect(
+      listTokensSchema.safeParse({ min_visibility_priority: -101 }).success,
+    ).toBe(false);
+    expect(
+      listTokensSchema.safeParse({
+        after_token: "4663:0x1111111111111111111111111111111111111111",
+      }).success,
+    ).toBe(true);
+    expect(
+      listTokensSchema.safeParse({ after_token: "4663" }).success,
+    ).toBe(false);
     expect(
       getTokensSchema.safeParse({
         tokens: Array.from({ length: 1_001 }, () => ({
@@ -312,8 +324,8 @@ describe("Worker discovery", () => {
     const getQuote = catalog.tools.find(
       (tool) => tool.name === "ekubo_get_quote",
     );
-    const searchTokens = catalog.tools.find(
-      (tool) => tool.name === "ekubo_search_tokens",
+    const listTokens = catalog.tools.find(
+      (tool) => tool.name === "ekubo_list_tokens",
     );
     const tokenBalances = catalog.tools.find(
       (tool) => tool.name === "ekubo_prepare_token_balances_and_allowances",
@@ -369,7 +381,18 @@ describe("Worker discovery", () => {
       }).success,
     ).toBe(false);
     expect(prepareSwap?.description).toContain("connected wallet or provider");
-    expect(searchTokens?.description).toContain("Robinhood Chain 4663");
+    expect(listTokens?.description).toContain("Robinhood Chain 4663");
+    expect(
+      (listTokens?.inputSchema as { required?: string[] }).required,
+    ).toBeUndefined();
+    expect(
+      (listTokens?.inputSchema as { properties?: Record<string, unknown> })
+        .properties,
+    ).toHaveProperty("search");
+    expect(
+      (listTokens?.inputSchema as { properties?: Record<string, unknown> })
+        .properties,
+    ).toHaveProperty("min_visibility_priority");
     expect(getQuote?.description).toContain("Primary non-browser quote path");
     expect(prepareSwap?.description).toContain(
       "Primary non-browser execution-plan path",

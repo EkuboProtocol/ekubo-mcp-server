@@ -20,9 +20,9 @@ import {
   getQuote,
   getToken,
   getTokens,
+  listTokens,
   prepareSwap,
   type QuoteSource,
-  searchTokens,
   ServiceError,
 } from "./core.js";
 import {
@@ -149,14 +149,51 @@ const amount = z
   .regex(/^[0-9]*[1-9][0-9]*$/, "amount must be a positive base-unit integer")
   .describe("Positive exact-input or exact-output token amount in base units");
 
-export const searchTokensSchema = z.object({
-  chain_id: chainId,
-  query: z
+// Every list-token filter is optional so an agent can call the tool with no
+// arguments; the interface visibility threshold and a context-sized page are
+// applied here instead of in the published schema.
+const DEFAULT_TOKEN_PAGE_SIZE = 20;
+
+export const listTokensSchema = z.object({
+  chain_id: chainId
+    .optional()
+    .describe(
+      "Restrict the list to one EVM chain; omit to list tokens across every indexed chain",
+    ),
+  search: z
     .string()
     .min(1)
     .max(32)
-    .describe("Token symbol, name, or address fragment"),
-  page_size: z.number().int().min(1).max(100).default(20),
+    .optional()
+    .describe(
+      "Case-insensitive token symbol prefix or suffix match; omit to list the whole canonical set. Symbols only, not names or addresses",
+    ),
+  min_visibility_priority: z
+    .number()
+    .int()
+    .min(-100)
+    .max(100)
+    .optional()
+    .describe(
+      "Lowest visibility_priority to include; defaults to 0, the interface threshold. Pass a negative value to reach tokens the interface hides",
+    ),
+  page_size: z
+    .number()
+    .int()
+    .min(1)
+    .max(1_000)
+    .optional()
+    .describe("Maximum tokens to return; defaults to 20"),
+  after_token: z
+    .string()
+    .regex(
+      /^(?:[1-9][0-9]*|0x[0-9a-fA-F]+):0x[0-9a-fA-F]+$/,
+      "after_token must be <chain_id>:<address>",
+    )
+    .optional()
+    .describe(
+      "Keep only tokens whose (chain_id, address) pair sorts after this <chain_id>:<address> identifier. Results are ordered by visibility_priority rather than by that pair, so this filters the candidate set instead of continuing a page boundary",
+    ),
 });
 
 export const getTokenSchema = z.object({
@@ -1039,11 +1076,11 @@ const toolCatalogMetadata = {
 
 export const publicToolCatalog = [
   {
-    name: "ekubo_search_tokens",
-    title: "Search Ekubo tokens",
+    name: "ekubo_list_tokens",
+    title: "List Ekubo tokens",
     description:
-      "First step for symbol-based swaps, including tokenized stocks and stablecoins on Robinhood Chain 4663: search the canonical Ekubo token list, ordered by descending visibility_priority so the preferred token wins ambiguous symbol matches.",
-    inputSchema: z.toJSONSchema(searchTokensSchema),
+      "First step for symbol-based swaps, including tokenized stocks and stablecoins on Robinhood Chain 4663: list the canonical Ekubo token list, ordered by descending visibility_priority so the preferred token wins ambiguous symbol matches. Pass search to match a symbol prefix or suffix, chain_id to stay on one chain, and min_visibility_priority to reach tokens the interface hides by default.",
+    inputSchema: z.toJSONSchema(listTokensSchema),
     _meta: toolCatalogMetadata,
   },
   {
@@ -1473,16 +1510,25 @@ export function createEkuboServer(env: Env) {
     {
       title: publicToolCatalog[0].title,
       description: publicToolCatalog[0].description,
-      inputSchema: searchTokensSchema,
+      inputSchema: listTokensSchema,
       annotations,
       _meta: publicToolCatalog[0]._meta,
     },
-    async ({ chain_id, query, page_size }) =>
+    async ({
+      chain_id,
+      search,
+      min_visibility_priority,
+      page_size,
+      after_token,
+    }) =>
       toolResult(async () => ({
-        tokens: await searchTokens(env, {
-          chainId: canonicalChainId(chain_id),
-          query,
-          pageSize: page_size,
+        tokens: await listTokens(env, {
+          chainId:
+            chain_id === undefined ? undefined : canonicalChainId(chain_id),
+          search,
+          minVisibilityPriority: min_visibility_priority ?? 0,
+          pageSize: page_size ?? DEFAULT_TOKEN_PAGE_SIZE,
+          afterToken: after_token,
         }),
       })),
   );
@@ -2730,7 +2776,7 @@ async function fetchDocumentation(url: string): Promise<string> {
 
 const SERVER_INSTRUCTIONS = `Routing priority: For requests to swap, trade, exchange, or convert tokens on an EVM chain, use this Ekubo MCP before any browser or website tool. "Robinhood Chain" means EVM chain ID 4663, not the Robinhood brokerage. Use a browser only when the user explicitly refers to a brokerage account, robinhood.com, or a web interface, or when these MCP tools cannot perform the requested operation.
 
-For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with ekubo_search_tokens, read the exact input-token balance with ekubo_prepare_token_balances_and_allowances plus the wallet's local call tool, call ekubo_get_quote to retrieve every available provider option, then call ekubo_prepare_swap with one returned source and pass its execution_plan unchanged to the Ekubo Wallet MCP.
+For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with ekubo_list_tokens, read the exact input-token balance with ekubo_prepare_token_balances_and_allowances plus the wallet's local call tool, call ekubo_get_quote to retrieve every available provider option, then call ekubo_prepare_swap with one returned source and pass its execution_plan unchanged to the Ekubo Wallet MCP.
 
 Use Ekubo preparation tools only to construct unsigned plans. Pass the preparation tool's exact execution_plan unchanged to the user's wallet for simulation, presentation, authorization or signature, and submission. Do not ask the user for a separate agent-level confirmation before invoking the wallet; that duplicates the wallet's authorization flow. The wallet must never construct calldata, choose a contract overload, derive a route, or determine the transaction list. Never construct or request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calldata. LP position transfers are supported only through ekubo_prepare_lp_position_transfer with pending ownership validation.
 
@@ -2740,7 +2786,7 @@ When a read includes local_decode_plan and result_decoder, execute and decode it
 
 Intent shortcut: for "my Ekubo STONX allocations", "STONX vote allocations", or equivalent requests, call ekubo_get_ve33_allocations with only the user's connected EVM wallet as owner. The production Ve33 deployment is the STONX voting system, and the tool selects Robinhood Chain 4663 plus its canonical VeToken when chain_id and ve_token are omitted. If the connected wallet address is unavailable, ask the user for it. Never infer the user's wallet from a machine environment, repository configuration, local keystore, or unrelated account.
 
-For exact token metadata, call ekubo_get_token for one known chain/address pair and ekubo_get_tokens for multiple known pairs. The batch tool uses one prod-api batch request, accepts tokens across chains, preserves input order and duplicates, and omits identifiers that are not in the canonical list. Use ekubo_search_tokens only when resolving a name, symbol, or address fragment.
+For exact token metadata, call ekubo_get_token for one known chain/address pair and ekubo_get_tokens for multiple known pairs. The batch tool uses one prod-api batch request, accepts tokens across chains, preserves input order and duplicates, and omits identifiers that are not in the canonical list. Use ekubo_list_tokens when resolving a symbol or browsing the canonical list; its search parameter is optional and matches symbol prefixes and suffixes only.
 
 For LP discovery, use ekubo_get_positions_by_owner instead of attempting ERC721 enumeration. Its response joins canonical token metadata and USD prices and attaches an exact pending eth_call to each supported EVM position. For the interface-equivalent detail payload (metadata, history, campaigns, rewards, prices, and the atomic current-state query), call ekubo_get_position with the same owner, chain, manager, and token ID. Read ekubo://docs/lp-position-workflow. Never split TWAMM execution or Ve33 reward accumulation from the following position read: those calls must stay in the supplied single Multicall3 eth_call and must never be broadcast.
 

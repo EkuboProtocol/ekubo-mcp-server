@@ -34,8 +34,9 @@ schemas after a Git-triggered deployment.
 
 ## Tools
 
-- `ekubo_search_tokens` — search the canonical token list, ordered by
-  descending `visibility_priority`
+- `ekubo_list_tokens` — list the canonical token list, ordered by descending
+  `visibility_priority`, with optional symbol `search`, `chain_id`,
+  `min_visibility_priority`, `page_size`, and `after_token` filters
 - `ekubo_get_token` — fetch token metadata by chain and address
 - `ekubo_get_tokens` — fetch metadata for 1–1,000 exact token identifiers,
   across chains, through one `prod-api` batch request
@@ -457,7 +458,7 @@ initialization, protocol-native tools, and the contract resource templates.
 
 Connect MCP Inspector to
 `https://mcp.<account-subdomain>.workers.dev/mcp`, initialize the server,
-list tools, search tokens, request same-chain and cross-chain quotes, and
+list tools, list tokens, request same-chain and cross-chain quotes, and
 prepare unsigned execution plans. Validate every plan through the user's
 connected wallet or provider before signing.
 

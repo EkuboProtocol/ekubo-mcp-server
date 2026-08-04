@@ -147,27 +147,48 @@ export class ServiceError extends Error {
 
 type Fetcher = typeof fetch;
 
-export async function searchTokens(
+export async function listTokens(
   env: Env,
-  input: { chainId: string; query: string; pageSize: number },
+  input: {
+    chainId?: string;
+    search?: string;
+    pageSize: number;
+    afterToken?: string;
+    minVisibilityPriority: number;
+  },
   fetcher: Fetcher = fetch,
 ) {
   const url = new URL("/tokens", normalizedBase(env.EKUBO_API_URL));
-  url.searchParams.set("chainId", input.chainId);
-  url.searchParams.set("search", input.query);
+  if (input.chainId !== undefined) {
+    url.searchParams.set("chainId", input.chainId);
+  }
+  if (input.search !== undefined) {
+    url.searchParams.set("search", input.search);
+  }
   url.searchParams.set("pageSize", input.pageSize.toString());
+  if (input.afterToken !== undefined) {
+    url.searchParams.set("afterToken", input.afterToken);
+  }
+  url.searchParams.set(
+    "minVisibilityPriority",
+    input.minVisibilityPriority.toString(),
+  );
   const tokens = normalizeResponseChainIds(
     await fetchJson<Record<string, unknown>[]>(url.toString(), fetcher),
   );
-  const normalizedQuery = input.query.trim().toLowerCase();
+  const normalizedQuery = input.search?.trim().toLowerCase() ?? "";
   return [...tokens].sort((left, right) => {
     const priorityDifference =
       visibilityPriority(right) - visibilityPriority(left);
     if (priorityDifference !== 0) return priorityDifference;
 
-    const leftExact = tokenSymbol(left) === normalizedQuery ? 1 : 0;
-    const rightExact = tokenSymbol(right) === normalizedQuery ? 1 : 0;
-    if (leftExact !== rightExact) return rightExact - leftExact;
+    // Exact symbol matches outrank prefix and suffix matches at equal
+    // visibility priority; with no search term every symbol is a non-match.
+    if (normalizedQuery.length > 0) {
+      const leftExact = tokenSymbol(left) === normalizedQuery ? 1 : 0;
+      const rightExact = tokenSymbol(right) === normalizedQuery ? 1 : 0;
+      if (leftExact !== rightExact) return rightExact - leftExact;
+    }
 
     return tokenSymbol(left).localeCompare(tokenSymbol(right));
   });
