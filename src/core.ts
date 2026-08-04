@@ -116,7 +116,7 @@ interface AcrossQuote {
   expectedFillTime?: number;
   quoteExpiryTimestamp?: number;
   checks?: {
-    allowance?: { token: Address; spender: Address };
+    allowance?: { token: Address; spender: Address; actual?: string };
   };
   approvalTxns?: AcrossTransaction[];
   swapTx: AcrossTransaction;
@@ -910,8 +910,14 @@ async function quoteAcross(
     approvalRequired:
       (quote.approvalTxns?.length ?? 0) > 0 || quote.checks?.allowance != null,
     approvalSpender: quote.checks?.allowance?.spender ?? null,
-    approvalActual: null,
-    approvalTransactions: (quote.approvalTxns ?? []).map(acrossTransaction),
+    approvalActual:
+      quote.checks?.allowance?.actual != null
+        ? BigInt(quote.checks.allowance.actual)
+        : null,
+    // Across returns an unlimited (uint256 max) approval. Drop it so
+    // buildApprovalTransactions issues an exact-amount approval instead,
+    // matching the ekubo and 0x paths, which both return [] here.
+    approvalTransactions: [],
     quoteExpiryTimestamp: quote.quoteExpiryTimestamp ?? null,
     expectedFillTime: quote.expectedFillTime ?? null,
   };

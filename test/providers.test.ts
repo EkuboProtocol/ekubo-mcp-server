@@ -305,7 +305,7 @@ describe("aggregated quote providers", () => {
     expect(result.post_execution_transactions).toEqual([]);
   });
 
-  it("prepares an Across exact-output bridge with returned approvals", async () => {
+  it("replaces the Across unlimited approval with an exact-amount approval", async () => {
     let requestUrl = "";
     let authorization = "";
     const result = await prepareSwap(
@@ -362,6 +362,15 @@ describe("aggregated quote providers", () => {
     expect(result.action).toBe("ekubo_bridge");
     expect(result.source).toBe("across");
     expect(result.approvals).toHaveLength(1);
+    // Across returns an unlimited approval (0xaaaa here); it must be discarded
+    // in favour of an exact-amount approve for maxInputAmount.
+    expect(result.approvals[0].data).not.toBe("0xaaaa");
+    const acrossApproval = decodeFunctionData({
+      abi: erc20Abi,
+      data: result.approvals[0].data,
+    });
+    expect(acrossApproval.functionName).toBe("approve");
+    expect(acrossApproval.args).toEqual([spender, 205n]);
     expect(result.transaction.value).toBe("3");
     expect(result.quote.expected_fill_time_seconds).toBe(12);
   });
