@@ -862,8 +862,10 @@ async function quoteAcross(
   const depositor = intent.sender
     ? getAddress(intent.sender)
     : ACROSS_PREVIEW_DEPOSITOR;
+  // Relative, not root-relative: the Across base carries a path (/api), and a
+  // leading slash would discard it and hit the app's HTML router instead.
   const url = new URL(
-    "/swap/approval",
+    "swap/approval",
     normalizedBase(env.ACROSS_API_URL ?? ACROSS_DEFAULT_URL),
   );
   url.searchParams.set(
