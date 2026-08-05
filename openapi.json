@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Ekubo Protocol MCP Gateway",
-    "version": "0.25.0",
+    "version": "0.25.1",
     "description": "Discovery contract for the public, unauthenticated, non-custodial Ekubo MCP server. It exposes interface-equivalent token balance and allowance reads, the ranked liquidity-opportunity feed, and every EVM transaction action exposed by the interface has a first-class unsigned preparation workflow that returns exact calldata and the complete ordered transaction list, including LP creation/initialization/management, price correction, TWAMM/DCA, auctions, rewards, maintenance, swaps, and ve(3,3). MCP clients discover typed tool schemas through tools/list; GET /tools provides the same revisioned catalog to ordinary HTTP clients.",
     "contact": {
       "url": "https://ekubo.org",
