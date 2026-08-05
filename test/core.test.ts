@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { type Env, getQuote, getTokens, prepareSwap } from "../src/core.js";
+import { type Env, getQuotesWithPlans, getTokens, prepareSwap } from "../src/core.js";
 
 const token0 = "0x0000000000000000000000000000000000000000";
 const token1 = "0x1111111111111111111111111111111111111111";
@@ -100,7 +100,7 @@ describe("MCP service core", () => {
         ],
       });
     };
-    await getQuote(
+    await getQuotesWithPlans(
       { ...env, ZERO_X_API_KEY: "" },
       {
         chainId: "1",

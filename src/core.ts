@@ -40,11 +40,46 @@ export interface QuoteIntent {
   amount: string;
 }
 
-export interface PrepareSwapIntent extends QuoteIntent {
-  source: QuoteSource;
+/**
+ * Everything needed to turn one quote into calldata, minus the choice of which
+ * provider produced it. `prepareSwap` adds that choice; `getQuotesWithPlans` applies this
+ * to every option it already fetched.
+ */
+export interface SwapPreparationIntent extends QuoteIntent {
   slippageBps: number;
   recipient?: Address;
   sender: Address;
+}
+
+export interface PrepareSwapIntent extends SwapPreparationIntent {
+  source: QuoteSource;
+}
+
+/**
+ * A quote request that may already know who will sign it.
+ *
+ * A quote is only worth what it can still execute for, and every second spent
+ * between fetching one and broadcasting against it is a second the price can
+ * move. Supplying a sender and a slippage tolerance up front lets discovery
+ * return the calldata for each option it fetched, so the agent hands one
+ * straight to the wallet instead of spending a second round trip — and a whole
+ * agent turn — asking a provider to repeat what it just said.
+ *
+ * Both fields are optional together: without them this is the indicative
+ * comparison it has always been, which is the right shape for "what would I
+ * get" questions that are not going anywhere near a signature.
+ */
+export interface QuoteDiscoveryIntent extends QuoteIntent {
+  slippageBps?: number;
+  recipient?: Address;
+  sender?: Address;
+  /**
+   * Echo each provider's untouched response back alongside the normalized
+   * amounts. Off by default: the raw blobs are the largest thing here and the
+   * smallest thing an agent needs, since every field a choice turns on is
+   * already normalized. They stay available for diagnosing a provider.
+   */
+  includeRawQuotes?: boolean;
 }
 
 type QuoteSelectionIntent = QuoteIntent & {
@@ -79,6 +114,22 @@ interface QuoteCandidate {
   approvalTransactions: UnsignedTransaction[];
   quoteExpiryTimestamp: number | null;
   expectedFillTime: number | null;
+}
+
+/** One quote rendered as the exact transactions that would execute it. */
+interface PreparedCandidate {
+  planId: Hex;
+  recipient: Address;
+  transaction: PreparedTransaction;
+  approvals: PreparedTransaction[];
+  postExecutionTransactions: PreparedTransaction[];
+  minimumAmountOut: bigint | null;
+  maximumAmountIn: bigint | null;
+  blockNumber: string | null;
+  blockHash: Hex | null;
+  estimatedRouteGas: number | null;
+  priceImpact: number | null;
+  executionPlan: ReturnType<typeof executionPlan>;
 }
 
 interface CandidateFailure {
@@ -382,11 +433,26 @@ export async function getVe33Pools(
   };
 }
 
-export async function getQuote(
+/**
+ * Every available quote, each already carrying the calldata that executes it.
+ *
+ * This is the whole swap path: one call fetches every provider's quote and
+ * turns each one into an execution plan, so the agent picks an option and
+ * hands its plan to a wallet without going back to any provider. The quote the
+ * user compares is therefore the quote that executes, which a second
+ * preparation round trip could never promise — it would fetch a different
+ * quote after the user had already agreed to the first.
+ */
+export async function getQuotesWithPlans(
   env: Env,
-  intent: QuoteIntent,
+  intent: QuoteDiscoveryIntent,
   fetcher: Fetcher = fetch,
 ) {
+  // Naming the signer up front changes what the providers are asked for, not
+  // just what is done with the answer: 0x returns a firm quote with calldata
+  // instead of an indicative price, and Across estimates the real origin
+  // transaction for the real depositor.
+  const preparation = swapPreparationIntent(intent);
   const result = await collectQuotes(
     env,
     { ...intent, source: "all" },
@@ -394,10 +460,55 @@ export async function getQuote(
   );
   return {
     request: quoteDiscoveryRequest(intent),
-    quotes: result.candidates.map(serializeCompleteQuote),
+    quotes: result.candidates.map((candidate) =>
+      serializeCompleteQuote(candidate, preparation, intent.includeRawQuotes),
+    ),
     unavailable_sources: result.failures,
     comparison: quoteComparison(intent, result),
+    execution: quoteExecutionGuidance(preparation),
   };
+}
+
+/**
+ * The preparation intent hiding inside a discovery request, or null when this
+ * request is only asking what a swap would be worth.
+ *
+ * Both fields are required together because neither is meaningful alone: a
+ * sender without a slippage tolerance has no bound to write into the calldata,
+ * and a tolerance without a sender has nothing to write calldata for.
+ */
+function swapPreparationIntent(
+  intent: QuoteDiscoveryIntent,
+): SwapPreparationIntent | null {
+  if (intent.sender === undefined && intent.slippageBps === undefined) {
+    return null;
+  }
+  if (intent.sender === undefined || intent.slippageBps === undefined) {
+    throw new ServiceError(
+      "incomplete_execution_request",
+      "sender and slippage_bps must be supplied together: a sender has no bound to write into calldata without a tolerance, and a tolerance has no calldata to write without a sender. Supply both to receive execution plans, or neither for an indicative comparison.",
+    );
+  }
+  return { ...intent, sender: intent.sender, slippageBps: intent.slippageBps };
+}
+
+function quoteExecutionGuidance(preparation: SwapPreparationIntent | null) {
+  return preparation === null
+    ? {
+        execution_plans_included: false,
+        instruction:
+          "These quotes are indicative and carry no calldata, because this request named no sender. Once the user has settled on swapping, call this tool again with sender and slippage_bps and every option arrives with the execution_plan that executes it.",
+        client_execution: null,
+      }
+    : {
+        execution_plans_included: true,
+        instruction:
+          "Each quote carries the execution_plan that executes it. Choose one option and pass that quote's execution.execution_plan unchanged to the wallet. Do not call this tool again for the option you just chose: it would buy a fresh quote and restart the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the amount, tokens, sender, recipient, or slippage.",
+        sender: getAddress(preparation.sender),
+        recipient: getAddress(preparation.recipient ?? preparation.sender),
+        slippage_bps: preparation.slippageBps.toString(),
+        client_execution: clientExecution(),
+      };
 }
 
 export async function prepareSwap(
@@ -408,6 +519,56 @@ export async function prepareSwap(
   const quoted = await selectQuote(env, intent, fetcher);
   const selected = quoted.selected;
   const selection = quoteSelection(intent, quoted);
+  const prepared = prepareCandidate(intent, selected);
+  return {
+    schema_version: "2",
+    action:
+      (intent.destinationChainId ?? intent.chainId) === intent.chainId
+        ? "ekubo_swap"
+        : "ekubo_bridge",
+    source: selected.source,
+    plan_id: prepared.planId,
+    execution_plan_ready: true,
+    agent_confirmation_required: false,
+    wallet_validation_required: true,
+    request: quoteRequest(intent, intent.source),
+    selection,
+    unavailable_sources: quoted.failures,
+    quote_source_url: selected.sourceUrl,
+    quote: {
+      ...preparedQuote(intent, selected, prepared),
+      raw: selected.raw,
+    },
+    transaction: prepared.transaction,
+    approvals: prepared.approvals,
+    post_execution_transactions: prepared.postExecutionTransactions,
+    approval:
+      prepared.approvals.length === 1
+        ? { transaction: prepared.approvals[0] }
+        : null,
+    wallet_handoff: {
+      instruction:
+        "Pass this complete plan to the wallet's simulation and authorization flow. Do not ask the user for a separate agent-level approval; the wallet presents the simulated result and collects authorization or signature. Simulate once and send that simulation rather than simulating the same plan twice. Re-prepare after any change or stale quote.",
+      recipient: prepared.recipient,
+      sender: getAddress(intent.sender),
+    },
+    execution_plan: prepared.executionPlan,
+    client_execution: clientExecution(),
+  };
+}
+
+/**
+ * Turn one already-fetched quote into the exact bytes that would execute it.
+ *
+ * This is deliberately pure and free of network access. Every provider round
+ * trip has already happened by the time it is called, so the same quote can be
+ * made executable at the moment it is fetched — which is the only moment at
+ * which it is fully worth what it says.
+ */
+function prepareCandidate(
+  intent: SwapPreparationIntent,
+  selected: QuoteCandidate,
+): PreparedCandidate {
   const recipient = getAddress(intent.recipient ?? intent.sender);
   let mainTransaction: UnsignedTransaction;
   let approvals: UnsignedTransaction[];
@@ -496,48 +657,18 @@ export async function prepareSwap(
   };
 
   return {
-    schema_version: "2",
-    action:
-      (intent.destinationChainId ?? intent.chainId) === intent.chainId
-        ? "ekubo_swap"
-        : "ekubo_bridge",
-    source: selected.source,
-    plan_id: keccak256(stringToHex(JSON.stringify(identity))),
-    execution_plan_ready: true,
-    agent_confirmation_required: false,
-    wallet_validation_required: true,
-    request: quoteRequest(intent, intent.source),
-    selection,
-    unavailable_sources: quoted.failures,
-    quote_source_url: selected.sourceUrl,
-    quote: {
-      amount_in: selected.amountIn.toString(),
-      amount_out: selected.amountOut.toString(),
-      minimum_amount_out: minimumAmountOut?.toString() ?? null,
-      maximum_amount_in: maximumAmountIn?.toString() ?? null,
-      slippage_bps: intent.slippageBps.toString(),
-      price_impact: priceImpact,
-      estimated_route_gas: estimatedRouteGas,
-      block_number: blockNumber,
-      block_hash: blockHash,
-      quote_expiry_timestamp: selected.quoteExpiryTimestamp,
-      expected_fill_time_seconds: selected.expectedFillTime,
-      raw: selected.raw,
-    },
+    planId: keccak256(stringToHex(JSON.stringify(identity))),
+    recipient,
     transaction: serializedTransaction,
     approvals: serializedApprovals,
-    post_execution_transactions: serializedCleanupTransactions,
-    approval:
-      approvals.length === 1
-        ? { transaction: serializeTransaction(approvals[0]) }
-        : null,
-    wallet_handoff: {
-      instruction:
-        "Pass this complete plan to the wallet's simulation and authorization flow. Do not ask the user for a separate agent-level approval; the wallet presents the simulated result and collects authorization or signature. Re-prepare after any change or stale quote.",
-      recipient,
-      sender: getAddress(intent.sender),
-    },
-    execution_plan: executionPlan({
+    postExecutionTransactions: serializedCleanupTransactions,
+    minimumAmountOut,
+    maximumAmountIn,
+    blockNumber,
+    blockHash,
+    estimatedRouteGas,
+    priceImpact,
+    executionPlan: executionPlan({
       chainId: intent.chainId,
       sender: intent.sender,
       approvals: serializedApprovals,
@@ -564,28 +695,49 @@ export async function prepareSwap(
         },
       },
     }),
-    client_execution: {
-      wallet:
-        "Use the user's wallet or signature tooling; never send credentials to this MCP server",
-      provider:
-        "Use the user's connected provider to validate the transaction, estimate gas, submit, and confirm receipts",
-      must_revalidate_before_signing: true,
-      steps: [
-        ...(approvals.length === 0
-          ? []
-          : [
-              "Check current allowance so the wallet can omit an approval transaction that is no longer required",
-            ]),
-        "Validate the exact swap transaction against current state through the user's connected wallet or provider",
-        "Pass the complete execution_plan to the wallet; do not request a separate agent-level confirmation",
-        "Have the wallet present the simulated result, collect authorization or signature, and submit; this MCP server must not receive a private key or seed phrase",
-        ...(cleanupTransactions.length === 0
-          ? []
-          : [
-              "After the exact-output swap succeeds, clear the remaining router allowance with the supplied post-execution transaction",
-            ]),
-      ],
-    },
+  };
+}
+
+/** One quote's fetched amounts joined to the bounds its calldata enforces. */
+function preparedQuote(
+  intent: SwapPreparationIntent,
+  selected: QuoteCandidate,
+  prepared: PreparedCandidate,
+) {
+  return {
+    amount_in: selected.amountIn.toString(),
+    amount_out: selected.amountOut.toString(),
+    minimum_amount_out: prepared.minimumAmountOut?.toString() ?? null,
+    maximum_amount_in: prepared.maximumAmountIn?.toString() ?? null,
+    slippage_bps: intent.slippageBps.toString(),
+    price_impact: prepared.priceImpact,
+    estimated_route_gas: prepared.estimatedRouteGas,
+    block_number: prepared.blockNumber,
+    block_hash: prepared.blockHash,
+    quote_expiry_timestamp: selected.quoteExpiryTimestamp,
+    expected_fill_time_seconds: selected.expectedFillTime,
+  };
+}
+
+/**
+ * How to execute any of these plans. Stated once for the whole response rather
+ * than copied onto each option: it is the same text every time, and an agent
+ * pays to read it once per copy. It is phrased against whatever the chosen
+ * plan happens to contain so that it does not need to vary per option.
+ */
+function clientExecution() {
+  return {
+    wallet:
+      "Use the user's wallet or signature tooling; never send credentials to this MCP server",
+    provider:
+      "Use the user's connected provider to validate the transaction, estimate gas, submit, and confirm receipts",
+    must_revalidate_before_signing: true,
+    steps: [
+      "Pass the chosen option's complete execution_plan to the wallet and let its own simulation establish current state, including whether an approval step is still required; a separate allowance read or validation call beforehand buys nothing the simulation does not already cover and spends time this quote does not have",
+      "Simulate once, present that simulated result, and submit that same simulation rather than paying for an identical one immediately before signing; do not request a separate agent-level confirmation",
+      "Have the wallet collect authorization or signature and submit; this MCP server must not receive a private key or seed phrase",
+      "If the plan carries an allowance_cleanup step, submit it only after the execution step has a successful receipt",
+    ],
   };
 }
 
@@ -943,12 +1095,63 @@ function quoteRequest(intent: QuoteSelectionIntent, source: QuoteSource) {
   };
 }
 
-function serializeCompleteQuote(candidate: QuoteCandidate) {
+function serializeCompleteQuote(
+  candidate: QuoteCandidate,
+  preparation: SwapPreparationIntent | null,
+  includeRawQuotes = false,
+) {
+  // Both execution fields are always present, so every option has one shape
+  // whether or not this request asked for calldata. A caller reads
+  // `execution` and finds either a plan or null; it never has to know which
+  // kind of response it is holding to know how to look.
   return {
     source: candidate.source,
     source_url: candidate.sourceUrl,
-    quote: candidate.raw,
     normalized: serializeCandidate(candidate),
+    ...(includeRawQuotes ? { quote: candidate.raw } : {}),
+    ...(preparation === null
+      ? { execution: null, execution_unavailable: null }
+      : executableQuote(preparation, candidate)),
+  };
+}
+
+/**
+ * The execution half of one discovered option.
+ *
+ * A provider that cannot be made executable must not cost the user the ones
+ * that can, so the failure is reported beside its own quote and every other
+ * option still stands. That matters most for the provider whose quote is
+ * indicative by construction: it stays visible for comparison and simply
+ * cannot be handed to a wallet.
+ */
+function executableQuote(
+  intent: SwapPreparationIntent,
+  candidate: QuoteCandidate,
+) {
+  let prepared: PreparedCandidate;
+  try {
+    prepared = prepareCandidate(intent, candidate);
+  } catch (error) {
+    return {
+      execution: null,
+      execution_unavailable: {
+        code: error instanceof ServiceError ? error.code : "unexpected_error",
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+  // The transactions are deliberately not restated beside the plan. They used
+  // to appear twice, byte for byte, and the copy outside the plan is the one
+  // nothing consumes: a wallet is handed execution_plan whole, and its
+  // ordered_steps already carry every approval, execution, and cleanup call.
+  return {
+    execution: {
+      plan_id: prepared.planId,
+      execution_plan_ready: true,
+      quote: preparedQuote(intent, candidate, prepared),
+      execution_plan: prepared.executionPlan,
+    },
+    execution_unavailable: null,
   };
 }
 
@@ -967,7 +1170,7 @@ function serializeCandidate(candidate: QuoteCandidate) {
 }
 
 function buildApprovalTransactions(
-  intent: PrepareSwapIntent,
+  intent: SwapPreparationIntent,
   candidate: QuoteCandidate,
 ): UnsignedTransaction[] {
   if (

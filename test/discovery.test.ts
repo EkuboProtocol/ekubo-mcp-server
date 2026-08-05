@@ -182,8 +182,7 @@ describe("Worker discovery", () => {
       "ekubo_list_tokens",
       "ekubo_get_token",
       "ekubo_get_tokens",
-      "ekubo_get_quote",
-      "ekubo_prepare_swap",
+      "ekubo_get_quotes_with_plans",
       "ekubo_prepare_ve33_vote",
       "ekubo_prepare_ve33_extend",
       "ekubo_prepare_ve33_stake",
@@ -318,11 +317,8 @@ describe("Worker discovery", () => {
     expect(ROBINHOOD_STONX_VE_TOKEN).toBe(
       "0x9d7008E169D040B6c0140eb92E7cA82B12643497",
     );
-    const prepareSwap = catalog.tools.find(
-      (tool) => tool.name === "ekubo_prepare_swap",
-    );
-    const getQuote = catalog.tools.find(
-      (tool) => tool.name === "ekubo_get_quote",
+    const swap = catalog.tools.find(
+      (tool) => tool.name === "ekubo_get_quotes_with_plans",
     );
     const listTokens = catalog.tools.find(
       (tool) => tool.name === "ekubo_list_tokens",
@@ -330,41 +326,34 @@ describe("Worker discovery", () => {
     const tokenBalances = catalog.tools.find(
       (tool) => tool.name === "ekubo_prepare_token_balances_and_allowances",
     );
+    // Swapping is one tool. Nothing takes a source, because there is no
+    // second step left for a caller to have already chosen one for.
     expect(
-      (getQuote?.inputSchema as { properties?: Record<string, unknown> })
+      catalog.tools.map((tool) => tool.name).filter((name) =>
+        ["ekubo_get_quote", "ekubo_prepare_swap"].includes(name),
+      ),
+    ).toBeEmpty();
+    expect(
+      (swap?.inputSchema as { properties?: Record<string, unknown> })
         .properties,
     ).not.toHaveProperty("source");
-    expect(
-      (getQuote?.inputSchema as { properties?: Record<string, unknown> })
-        .properties,
-    ).not.toHaveProperty("sender");
-    expect(
-      (getQuote?.inputSchema as { properties?: Record<string, unknown> })
-        .properties,
-    ).not.toHaveProperty("recipient");
-    expect(
-      (getQuote?.inputSchema as { properties?: Record<string, unknown> })
-        .properties,
-    ).not.toHaveProperty("slippage_bps");
-    expect(
-      (prepareSwap?.inputSchema as { properties?: Record<string, unknown> })
-        .properties,
-    ).toHaveProperty("source");
-    expect(
-      (prepareSwap?.inputSchema as { required?: string[] }).required,
-    ).toContain("source");
-    expect(
-      prepareSwapSchema.safeParse({
-        chain_id: "4663",
-        token_in: "0x1111111111111111111111111111111111111111",
-        token_out: "0x2222222222222222222222222222222222222222",
-        quote_type: "exact_input",
-        amount: "1",
-        source: "auto",
-        sender: "0x3333333333333333333333333333333333333333",
-        slippage_bps: 50,
-      }).success,
-    ).toBe(false);
+    // It does accept who will sign, so a quote arrives executable rather than
+    // costing a second provider round trip to become so. Every one of these is
+    // optional: an indicative comparison asks for none of them.
+    for (const field of [
+      "sender",
+      "recipient",
+      "slippage_bps",
+      "include_raw_quotes",
+    ]) {
+      expect(
+        (swap?.inputSchema as { properties?: Record<string, unknown> })
+          .properties,
+      ).toHaveProperty(field);
+      expect(
+        (swap?.inputSchema as { required?: string[] }).required ?? [],
+      ).not.toContain(field);
+    }
     expect(
       prepareVe33ReinvestSchema.safeParse({
         phase: "swap",
@@ -380,8 +369,7 @@ describe("Worker discovery", () => {
         ],
       }).success,
     ).toBe(false);
-    expect(prepareSwap?.description).toContain("connected wallet or provider");
-    expect(listTokens?.description).toContain("Robinhood Chain 4663");
+    expect(listTokens?.description).toContain("tokenized stocks and stablecoins");
     expect(
       (listTokens?.inputSchema as { required?: string[] }).required,
     ).toBeUndefined();
@@ -393,9 +381,11 @@ describe("Worker discovery", () => {
       (listTokens?.inputSchema as { properties?: Record<string, unknown> })
         .properties,
     ).toHaveProperty("min_visibility_priority");
-    expect(getQuote?.description).toContain("Primary non-browser quote path");
-    expect(prepareSwap?.description).toContain(
-      "Primary non-browser execution-plan path",
+    expect(swap?.description).toContain("The whole non-browser swap path");
+    // The description has to keep the agent from spending a round trip
+    // re-quoting an option it was already handed a plan for.
+    expect(swap?.description).toContain(
+      "Do not call this tool again for an option it already prepared",
     );
     expect(tokenBalances?.description).toContain("'all', 'max'");
     expect(
@@ -498,8 +488,10 @@ describe("Worker discovery", () => {
     expect(initializeResult.result.instructions).toContain(
       "use this Ekubo MCP before any browser or website tool",
     );
+    // The instructions route by capability, not by naming individual chains.
+    expect(initializeResult.result.instructions).not.toContain("Robinhood");
     expect(initializeResult.result.instructions).toContain(
-      '"Robinhood Chain" means EVM chain ID 4663',
+      "A quote is only worth what it can still execute for",
     );
     expect(initializeResult.result.instructions).toContain(
       'For "all", "max", or "entire balance" swaps',
@@ -835,7 +827,7 @@ describe("Worker discovery", () => {
           id: 6,
           method: "tools/call",
           params: {
-            name: "ekubo_get_quote",
+            name: "ekubo_get_quotes_with_plans",
             arguments: {
               chain_id: "1",
               token_in:

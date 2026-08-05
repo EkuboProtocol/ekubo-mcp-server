@@ -17,7 +17,7 @@ import {
 } from "./contracts.js";
 import {
   type Env,
-  getQuote,
+  getQuotesWithPlans,
   getToken,
   getTokens,
   listTokens,
@@ -256,11 +256,11 @@ const quoteRequestSchema = z.object({
   amount,
 });
 
-export const getQuoteSchema = quoteRequestSchema.extend({
+export const getQuotesWithPlansSchema = quoteRequestSchema.extend({
   sender: address
     .optional()
     .describe(
-      "Transaction sender/taker/depositor. Supply it together with slippage_bps as soon as the user has decided to swap: providers are then asked for firm quotes with calldata rather than indicative prices, and every returned option carries the execution_plan that executes it, so the chosen one goes straight to the wallet. That removes a second provider round trip and an agent turn from the window in which the quote is still good. Omit both fields for an indicative comparison.",
+      "Transaction sender/taker/depositor. Supply it together with slippage_bps as soon as the user has decided to swap: providers are then asked for firm quotes with calldata rather than indicative prices, and every returned option carries the execution_plan that executes it, so the chosen one goes straight to the wallet with no second round trip. Omit both fields for an indicative comparison.",
     ),
   recipient: address
     .optional()
@@ -276,12 +276,16 @@ export const getQuoteSchema = quoteRequestSchema.extend({
     .describe(
       "User-selected slippage tolerance in basis points. Required alongside sender, and only meaningful with it, because it is the bound written into the returned calldata.",
     ),
+  include_raw_quotes: z
+    .boolean()
+    .optional()
+    .describe(
+      "Echo each provider's untouched response beside the normalized amounts. Off by default: these blobs are the largest part of a response and the least useful, since every field a choice turns on is already normalized. Turn it on to diagnose a provider.",
+    ),
 });
 
 export const prepareSwapSchema = quoteRequestSchema.extend({
-  source: quoteSource.describe(
-    "Provider selected from an ekubo_get_quote response",
-  ),
+  source: quoteSource.describe("Provider selected from a quote response"),
   sender: address.describe(
     "Transaction sender/taker/depositor used for firm quotes and validation",
   ),
@@ -1120,19 +1124,11 @@ export const publicToolCatalog = [
     _meta: toolCatalogMetadata,
   },
   {
-    name: "ekubo_get_quote",
-    title: "Get a swap or bridge quote",
+    name: "ekubo_get_quotes_with_plans",
+    title: "Get swap or bridge quotes with execution plans",
     description:
-      "Primary non-browser quote path, and with sender and slippage_bps the primary non-browser execution-plan path, for onchain swap, trade, exchange, or convert requests on supported EVM chains. Return every available Ekubo and 0x quote for a same-chain swap without accepting or selecting a source. Each quotes entry includes the full provider response and normalized amounts so the agent or user can choose a source. Pass sender and slippage_bps whenever the user has decided to swap: every option then arrives with the execution_plan that executes it, ready to hand to the wallet, and the quote the user compares is the quote that executes rather than a different one fetched after they agreed. Reserve ekubo_prepare_swap for refreshing a single already-chosen source after an expiry or revert. Uses Across for cross-chain swaps. Provider failures are reported separately in unavailable_sources and do not invalidate successful quote options. Supports EIP-155 token identifiers.",
-    inputSchema: z.toJSONSchema(getQuoteSchema),
-    _meta: toolCatalogMetadata,
-  },
-  {
-    name: "ekubo_prepare_swap",
-    title: "Prepare a swap or bridge",
-    description:
-      "Refresh one already-chosen provider's quote and generate unsigned approval plus execution calldata for a connected wallet or provider, on any supported EVM chain. This tool always fetches a new quote, so use it when the plan in hand is no longer good: after an expiry, a revert, or a change to the amount, tokens, sender, recipient, or slippage. To execute a quote you already have, do not call this tool; call ekubo_get_quote with sender and slippage_bps and hand the chosen option's execution_plan straight to the wallet, which spends one provider round trip instead of two and keeps the compared quote and the executed quote the same. Returns a simulation failure policy that permits identical-plan retries for transient RPC errors but requires a fresh quote after reverts such as slippage. Prefer the Ekubo Wallet MCP or another separately trusted compatible wallet; Cast remains an optional fallback.",
-    inputSchema: z.toJSONSchema(prepareSwapSchema),
+      "The whole non-browser swap path for onchain swap, trade, exchange, or convert requests on supported EVM chains: one call returns every available Ekubo and 0x quote for a same-chain swap, each already carrying the execution_plan that executes it, without accepting or selecting a source. Choose an option and pass its execution.execution_plan unchanged to a wallet; there is no second preparation step, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Do not call this tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the request. Omit sender and slippage_bps for an indicative comparison that fetches no calldata; supply both for plans. Uses Across for cross-chain swaps. Provider failures are reported separately in unavailable_sources, and an option that could not be made executable reports its own execution_unavailable while the rest stand. Set include_raw_quotes only to diagnose a provider; the normalized amounts already carry every field a choice turns on. Supports EIP-155 token identifiers.",
+    inputSchema: z.toJSONSchema(getQuotesWithPlansSchema),
     _meta: toolCatalogMetadata,
   },
   {
@@ -1607,71 +1603,31 @@ export function createEkuboServer(env: Env) {
       })),
   );
 
-  server.registerTool(
-    catalogEntry("ekubo_get_quote").name,
-    {
-      title: catalogEntry("ekubo_get_quote").title,
-      description: catalogEntry("ekubo_get_quote").description,
-      inputSchema: getQuoteSchema,
-      annotations,
-      _meta: catalogEntry("ekubo_get_quote")._meta,
-    },
-    async (input) =>
-      toolResult(() => {
-        const inputChainId = canonicalChainId(input.chain_id);
-        const destinationChainId = canonicalChainId(
-          input.destination_chain_id ?? input.chain_id,
-        );
-        return getQuote(env, {
-          chainId: inputChainId,
+  registerCatalogTool(
+    "ekubo_get_quotes_with_plans",
+    getQuotesWithPlansSchema,
+    (input) => {
+      const inputChainId = canonicalChainId(input.chain_id);
+      const destinationChainId = canonicalChainId(
+        input.destination_chain_id ?? input.chain_id,
+      );
+      return getQuotesWithPlans(env, {
+        chainId: inputChainId,
+        destinationChainId,
+        tokenIn: tokenAddress(input.token_in, inputChainId, "token_in"),
+        tokenOut: tokenAddress(
+          input.token_out,
           destinationChainId,
-          tokenIn: tokenAddress(input.token_in, inputChainId, "token_in"),
-          tokenOut: tokenAddress(
-            input.token_out,
-            destinationChainId,
-            "token_out",
-          ),
-          quoteType: input.quote_type,
-          amount: input.amount,
-          slippageBps: input.slippage_bps,
-          recipient: input.recipient as Address | undefined,
-          sender: input.sender as Address | undefined,
-        });
-      }),
-  );
-
-  server.registerTool(
-    catalogEntry("ekubo_prepare_swap").name,
-    {
-      title: catalogEntry("ekubo_prepare_swap").title,
-      description: catalogEntry("ekubo_prepare_swap").description,
-      inputSchema: prepareSwapSchema,
-      annotations,
-      _meta: catalogEntry("ekubo_prepare_swap")._meta,
+          "token_out",
+        ),
+        quoteType: input.quote_type,
+        amount: input.amount,
+        slippageBps: input.slippage_bps,
+        recipient: input.recipient as Address | undefined,
+        sender: input.sender as Address | undefined,
+        includeRawQuotes: input.include_raw_quotes,
+      });
     },
-    async (input) =>
-      toolResult(() => {
-        const inputChainId = canonicalChainId(input.chain_id);
-        const destinationChainId = canonicalChainId(
-          input.destination_chain_id ?? input.chain_id,
-        );
-        return prepareSwap(env, {
-          chainId: inputChainId,
-          destinationChainId,
-          tokenIn: tokenAddress(input.token_in, inputChainId, "token_in"),
-          tokenOut: tokenAddress(
-            input.token_out,
-            destinationChainId,
-            "token_out",
-          ),
-          quoteType: input.quote_type,
-          amount: input.amount,
-          source: input.source,
-          slippageBps: input.slippage_bps,
-          recipient: input.recipient as Address | undefined,
-          sender: input.sender as Address,
-        });
-      }),
   );
 
   server.registerTool(
@@ -2815,9 +2771,9 @@ async function fetchDocumentation(url: string): Promise<string> {
 
 const SERVER_INSTRUCTIONS = `Routing priority: For requests to swap, trade, exchange, or convert tokens on an EVM chain, use this Ekubo MCP before any browser or website tool. Use a browser only when the user explicitly refers to a brokerage account or a web interface, or when these MCP tools cannot perform the requested operation.
 
-A quote is only worth what it can still execute for, so treat the interval between fetching one and broadcasting against it as the thing to minimize. Call ekubo_get_quote with sender and slippage_bps as soon as the user has decided to swap: each returned option then carries the execution_plan that executes it, and the chosen one goes straight to the wallet. That is one provider round trip rather than two, it removes an agent turn from the critical window, and it means the quote the user compared is the quote that executes instead of a different one fetched after they agreed. Then simulate that plan once with the wallet, show the user the simulated result, and send that same simulation rather than paying for an identical one immediately before signing. Do not call ekubo_prepare_swap for an option ekubo_get_quote already prepared; it exists to refresh a single chosen source after an expiry, a revert, or a change to the request.
+A quote is only worth what it can still execute for, so treat the interval between fetching one and broadcasting against it as the thing to minimize. ekubo_get_quotes_with_plans is the entire swap path: call it once with sender and slippage_bps as soon as the user has decided to swap, and each returned option already carries the execution_plan that executes it. Choose one and hand its plan straight to the wallet. There is no preparation step to follow, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Then simulate that plan once with the wallet, show the user the simulated result, and send that same simulation rather than paying for an identical one immediately before signing. Do not call the tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold.
 
-For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with ekubo_list_tokens, read the exact input-token balance with ekubo_prepare_token_balances_and_allowances plus the wallet's local call tool, then call ekubo_get_quote with that exact amount plus sender and slippage_bps and pass the chosen option's execution_plan unchanged to the Ekubo Wallet MCP.
+For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with ekubo_list_tokens, read the exact input-token balance with ekubo_prepare_token_balances_and_allowances plus the wallet's local call tool, then call ekubo_get_quotes_with_plans with that exact amount plus sender and slippage_bps and pass the chosen option's execution_plan unchanged to the Ekubo Wallet MCP.
 
 Use Ekubo preparation tools only to construct unsigned plans. Pass the preparation tool's exact execution_plan unchanged to the user's wallet for simulation, presentation, authorization or signature, and submission. Do not ask the user for a separate agent-level confirmation before invoking the wallet; that duplicates the wallet's authorization flow. The wallet must never construct calldata, choose a contract overload, derive a route, or determine the transaction list. Never construct or request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calldata. LP position transfers are supported only through ekubo_prepare_lp_position_transfer with pending ownership validation.
 
@@ -2863,7 +2819,7 @@ const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 2. Convert the user amount to base units without floating-point arithmetic.
 3. Set destination_chain_id explicitly for a bridge. Raw addresses and eip155:<chain>:<address> token IDs are accepted.
 4. Request an exact-input or exact-output quote. Once the user has decided to swap, pass sender and slippage_bps so every option arrives with the calldata that executes it; omit both only for an indicative "what would I get" comparison. For same-chain requests, inspect every entry in quotes and choose a source; the tool does not accept or select one. The normalized amounts expose amount_out for exact input and amount_in for exact output. Cross-chain requests return Across. unavailable_sources reports individual provider failures without invalidating successful quote options, and a single option that could not be made executable reports its own execution_unavailable while the rest stand.
-5. Take the chosen option's execution.execution_plan as it is. Do not call ekubo_prepare_swap to obtain a plan you were already given: it fetches another quote, which spends a second round trip and an agent turn inside the window where the first quote is still good, and leaves the user having approved a quote that is not the one executed. Call it only to refresh a chosen source after an expiry, a revert, or a change to the amount, tokens, sender, recipient, or slippage.
+5. Take the chosen option's execution.execution_plan as it is. Do not call the tool again to obtain a plan you were already given: it fetches fresh quotes, which spends a round trip and an agent turn inside the window where the plan in hand is still good, and leaves the user having approved a quote that is not the one executed. Call it again only after an expiry, a revert, or a change to the amount, tokens, sender, recipient, or slippage.
 6. Include the provider, exact plan ID, token amounts, chains, slippage bound, recipient, approvals, execution transaction, and any allowance reset in the wallet handoff.
 7. Pass the complete plan to the user's wallet tooling and let its own simulation establish balances, allowances, policy, and the exact transaction outcome. Do not read allowances or validate the transaction separately first, and do not ask for separate agent-level confirmation; both only spend the quote's remaining life.
 8. Simulate once. Let the wallet present that simulated result, collect authorization or signature, and submit that same simulation rather than simulating the identical plan again immediately before signing. A wallet that re-simulates to show a human the current state at approval time is a different matter and is expected. Never send credentials to this server.
@@ -2909,7 +2865,7 @@ Once the user selects a v3 pool configuration, range, maximum token amounts, and
 
 When initialization must be its own transaction, call \`ekubo_prepare_pool_initialization\` with the exact PoolKey and initial tick. It selects Positions or Ve33Positions from the pool extension and returns one complete \`maybeInitializePool\` execution plan. The function is idempotent for an already initialized pool, but the first successful initializer fixes the pool's initial price, so simulate against pending state and verify the tick immediately before submission. Pool initialization does not correct an existing pool's price; use the phased \`ekubo_prepare_fix_pool_price\` workflow for that.
 
-If the wallet needs a preliminary swap to acquire one side, use \`ekubo_prepare_swap\` as a separate plan. Pass it to the wallet MCP so the wallet simulates it, presents the simulated result, collects authorization or signature, submits it, and returns a successful receipt. Then read the actual resulting balance or balance delta, preserve enough native token for gas, and call the LP preparer with the measured maxima. Do not combine the deposit with an unsettled swap or size it from quoted output alone.
+If the wallet needs a preliminary swap to acquire one side, use \`ekubo_get_quotes_with_plans\` and take one option's plan as a separate step. Pass it to the wallet MCP so the wallet simulates it, presents the simulated result, collects authorization or signature, submits it, and returns a successful receipt. Then read the actual resulting balance or balance delta, preserve enough native token for gas, and call the LP preparer with the measured maxima. Do not combine the deposit with an unsettled swap or size it from quoted output alone.
 
 Do not encode \`mintAndDeposit\`, \`deposit\`, \`multicall\`, or \`refundNativeToken\` with Cast. Give the returned execution plan unchanged to the user's wallet MCP for exact-plan simulation, wallet-owned authorization, and submission. Do not insert a separate agent confirmation step. The wallet remains authoritative for allowed targets, approval spenders, native-value limits, known selectors, connected account, and chain. This server cannot loosen wallet policy.
 
@@ -2960,10 +2916,12 @@ Use Cast only when the user explicitly selected it or no compatible wallet abstr
 
 const QUOTER_API = `# Ekubo aggregated quote contract
 
-ekubo_get_quote returns every complete Ekubo and 0x response for same-chain
-requests without selecting one. Each entry includes normalized amounts for the
-agent or user to compare. Pass the chosen source to ekubo_prepare_swap; that tool
-refreshes the provider quote and computes executable calldata. If either requested
+ekubo_get_quotes_with_plans returns every Ekubo and 0x quote for same-chain
+requests without selecting one, each already carrying the execution plan that
+executes it. Each entry includes normalized amounts for the agent or user to
+compare; set include_raw_quotes to add the untouched provider responses. There is
+no second preparation call, so no quote is fetched twice and the compared quote is
+the executed one. If either requested
 provider fails, the result marks the set incomplete and instructs the user to retry.
 Cross-chain requests use Across Swap API /swap/approval. Provider API keys are
 server-side and are never accepted as tool arguments.
@@ -2990,8 +2948,8 @@ Across:
 - exact_input maps to tradeType=exactInput; exact_output maps to tradeType=exactOutput.
 - Returned approvalTxns and swapTx are preserved as unsigned transactions.
 
-MCP callers should use ekubo_get_quote or ekubo_prepare_swap instead of
-constructing provider URLs themselves.
+MCP callers should use ekubo_get_quotes_with_plans instead of constructing
+provider URLs themselves.
 `;
 
 const VE33_WORKFLOW = `# Ekubo ve(3,3) call workflow

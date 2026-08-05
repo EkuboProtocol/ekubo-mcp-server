@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { decodeFunctionData, erc20Abi } from "viem";
 import {
   type Env,
-  getQuote,
+  getQuotesWithPlans,
   listTokens,
   prepareSwap,
 } from "../src/core.js";
@@ -44,7 +44,7 @@ describe("aggregated quote providers", () => {
       issues: { allowance: null },
       providerMetadata: { route: "full-zero-x-quote" },
     };
-    const result = await getQuote(
+    const result = await getQuotesWithPlans(
       env,
       {
         chainId: "4663",
@@ -52,6 +52,7 @@ describe("aggregated quote providers", () => {
         tokenOut: tokenB,
         quoteType: "exact_input",
         amount: "1000",
+        includeRawQuotes: true,
       },
       (async (input: RequestInfo | URL) =>
         input.toString().startsWith("https://quoter.test/")
@@ -85,7 +86,7 @@ describe("aggregated quote providers", () => {
   });
 
   it("normalizes all exact-output quotes without selecting one", async () => {
-    const result = await getQuote(
+    const result = await getQuotesWithPlans(
       env,
       {
         chainId: "4663",
@@ -170,6 +171,216 @@ describe("aggregated quote providers", () => {
     expect(url.searchParams.get("afterToken")).toBe(`4663:${tokenA}`);
   });
 
+  // A quote is only good for as long as the price behind it holds, so the
+  // window between fetching one and broadcasting against it is the thing these
+  // tests are protecting. Discovery that already knows the signer closes that
+  // window by a whole provider round trip and a whole agent turn.
+  describe("executable discovery", () => {
+    const config = `0x${"00".repeat(32)}`;
+    const ekuboQuote = {
+      block_number: 123,
+      block_hash: "0x01",
+      total_calculated: "900",
+      estimated_gas_cost: 25_000,
+      price_impact: 0.001,
+      splits: [
+        {
+          amount_specified: "1000",
+          amount_calculated: "900",
+          route: [
+            {
+              swap: {
+                type: "core",
+                pool_key: { token0: native, token1: tokenA, config },
+                sqrt_ratio_limit: "0x000000000000000000000000",
+                skip_ahead: 0,
+              },
+            },
+          ],
+        },
+      ],
+    } as const;
+    const zeroXQuote = {
+      liquidityAvailable: true,
+      sellAmount: "1000",
+      buyAmount: "950",
+      minBuyAmount: "940",
+      issues: { allowance: null },
+      transaction: { to: swapTarget, data: "0x1234", value: "0" },
+    } as const;
+
+    const intent = {
+      chainId: "4663",
+      tokenIn: native,
+      tokenOut: tokenA,
+      quoteType: "exact_input",
+      amount: "1000",
+    } as const;
+
+    const respond = (zeroX: unknown = zeroXQuote) =>
+      (async (input: RequestInfo | URL) =>
+        input.toString().startsWith("https://quoter.test/")
+          ? Response.json(ekuboQuote)
+          : Response.json(zeroX)) as typeof fetch;
+
+    it("returns calldata for every option from one round trip each", async () => {
+      const requested: string[] = [];
+      const result = await getQuotesWithPlans(
+        env,
+        { ...intent, sender, slippageBps: 50 },
+        (async (input: RequestInfo | URL) => {
+          requested.push(input.toString());
+          return respond()(input);
+        }) as typeof fetch,
+      );
+
+      // One request per provider: discovery buys the quote, and nothing buys
+      // it again.
+      expect(requested).toHaveLength(2);
+      expect(result.execution).toMatchObject({
+        execution_plans_included: true,
+        sender,
+        recipient: sender,
+        slippage_bps: "50",
+      });
+      for (const quote of result.quotes) {
+        expect(quote.execution_unavailable).toBeNull();
+        expect(quote.execution?.execution_plan).toMatchObject({
+          chain_id: "4663",
+          caip2_chain_id: "eip155:4663",
+          sender,
+        });
+        expect(quote.execution?.plan_id).toMatch(/^0x[0-9a-f]{64}$/);
+        expect(quote.execution?.quote.slippage_bps).toBe("50");
+      }
+      // Naming the signer also changes what 0x is asked for: a firm quote
+      // carrying calldata rather than an indicative price.
+      const zeroXUrl = new URL(
+        requested.find((url) => url.startsWith("https://zero-x.test"))!,
+      );
+      expect(zeroXUrl.pathname).toBe("/swap/allowance-holder/quote");
+      expect(zeroXUrl.searchParams.get("taker")).toBe(sender);
+      expect(zeroXUrl.searchParams.get("slippageBps")).toBe("50");
+    });
+
+    it("produces the same calldata a dedicated preparation step would have", async () => {
+      const discovered = await getQuotesWithPlans(
+        env,
+        { ...intent, sender, slippageBps: 50, includeRawQuotes: true },
+        respond(),
+      );
+      const prepared = await prepareSwap(
+        env,
+        { ...intent, source: "ekubo", sender, slippageBps: 50 },
+        respond(),
+      );
+
+      const option = discovered.quotes.find(
+        (quote) => quote.source === "ekubo",
+      );
+      // Folding preparation into the quote is not a cheaper approximation of
+      // preparing separately: it is the same bytes, so the round trip it saves
+      // costs nothing.
+      expect(option?.execution?.execution_plan).toEqual(
+        prepared.execution_plan,
+      );
+      expect(option?.execution?.plan_id).toBe(prepared.plan_id);
+      // The execution block does not restate the provider blob the option
+      // already carries beside it; everything else about the quote matches.
+      const { raw, ...preparedQuoteFields } = prepared.quote;
+      expect(option?.quote).toEqual(raw);
+      expect(option?.execution?.quote).toEqual(preparedQuoteFields);
+    });
+
+    it("states the transactions once, inside the plan the wallet receives", async () => {
+      const result = await getQuotesWithPlans(
+        env,
+        { ...intent, sender, slippageBps: 50 },
+        respond(),
+      );
+
+      for (const quote of result.quotes) {
+        // The calldata used to appear twice, byte for byte. Only the copy the
+        // wallet actually consumes survives.
+        expect(quote.execution).not.toHaveProperty("transaction");
+        expect(quote.execution).not.toHaveProperty("approvals");
+        expect(quote.execution).not.toHaveProperty(
+          "post_execution_transactions",
+        );
+        expect(quote.execution?.execution_plan.ordered_steps).not.toBeEmpty();
+        // Nor is the identical execution guidance copied onto every option.
+        expect(quote.execution).not.toHaveProperty("client_execution");
+        // The raw provider blob is the largest thing here and off by default.
+        expect(quote).not.toHaveProperty("quote");
+      }
+      expect(result.execution.client_execution).not.toBeNull();
+    });
+
+    it("stays indicative, and cheap, when nobody has decided to swap", async () => {
+      const requested: string[] = [];
+      const result = await getQuotesWithPlans(
+        env,
+        intent,
+        (async (input: RequestInfo | URL) => {
+          requested.push(input.toString());
+          return respond()(input);
+        }) as typeof fetch,
+      );
+
+      expect(result.execution.execution_plans_included).toBe(false);
+      for (const quote of result.quotes) {
+        expect(quote.execution).toBeNull();
+        expect(quote.execution_unavailable).toBeNull();
+      }
+      // Without a taker, 0x is asked for a price rather than a firm quote.
+      expect(
+        new URL(requested.find((url) => url.startsWith("https://zero-x.test"))!)
+          .pathname,
+      ).toBe("/swap/allowance-holder/price");
+    });
+
+    it("refuses half an execution request before spending a round trip", async () => {
+      const requested: string[] = [];
+      const attempt = getQuotesWithPlans(
+        env,
+        { ...intent, sender },
+        (async (input: RequestInfo | URL) => {
+          requested.push(input.toString());
+          return respond()(input);
+        }) as typeof fetch,
+      );
+
+      await expect(attempt).rejects.toMatchObject({
+        code: "incomplete_execution_request",
+      });
+      expect(requested).toBeEmpty();
+    });
+
+    it("keeps the options it can execute when one provider cannot", async () => {
+      // 0x answered without calldata, so that option cannot be handed to a
+      // wallet. It stays visible for comparison and the rest still execute.
+      const result = await getQuotesWithPlans(
+        env,
+        { ...intent, sender, slippageBps: 50 },
+        respond({
+          liquidityAvailable: true,
+          sellAmount: "1000",
+          buyAmount: "950",
+          issues: { allowance: null },
+        }),
+      );
+
+      const ekubo = result.quotes.find((quote) => quote.source === "ekubo");
+      const zeroX = result.quotes.find((quote) => quote.source === "0x");
+      expect(ekubo?.execution?.execution_plan).toBeDefined();
+      expect(zeroX?.execution).toBeNull();
+      expect(zeroX?.execution_unavailable).toMatchObject({
+        code: "firm_quote_required",
+      });
+      expect(zeroX?.normalized.amount_out).toBe("950");
+    });
+  });
+
   it("prepares a 0x exact-output swap and approves maxSellAmount", async () => {
     let requestUrl = "";
     let requestHeaders: Headers | undefined;
@@ -232,7 +443,7 @@ describe("aggregated quote providers", () => {
 
   it("maps the zero address to 0x native-token notation", async () => {
     let requestUrl = "";
-    const result = await getQuote(
+    const result = await getQuotesWithPlans(
       env,
       {
         chainId: "4663",
@@ -376,7 +587,7 @@ describe("aggregated quote providers", () => {
   });
 
   it("returns an available 0x option when Ekubo is unavailable", async () => {
-    const result = await getQuote(
+    const result = await getQuotesWithPlans(
       env,
       {
         chainId: "4663",

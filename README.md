@@ -44,12 +44,11 @@ schemas after a Git-triggered deployment.
   on one EVM chain with the same token-list query as the interface, then return
   one exact pending TokenDataFetcher call and local decode plan for all nonzero
   owner balances and allowances to the requested spender contracts
-- `ekubo_get_quote` — compare Ekubo and 0x for same-chain exact-input or
-  exact-output swaps by strictly choosing the better calculated token amount,
-  or use Across when `destination_chain_id` differs; an Ekubo or 0x failure
+- `ekubo_get_quotes_with_plans` — compare Ekubo and 0x for same-chain
+  exact-input or exact-output swaps, or use Across when
+  `destination_chain_id` differs, and return each option's firm unsigned
+  approval and execution calldata alongside its quote; an Ekubo or 0x failure
   marks the comparison incomplete and tells the user to retry
-- `ekubo_prepare_swap` — return firm unsigned Ekubo, 0x, or Across approval
-  and execution calldata
 - `ekubo_prepare_ve33_vote` — compile one active NFT's vote changes and
   deterministic splits into one multicall that always claims its current pool
   first; prefer the portfolio workflow below for complete state validation
@@ -170,15 +169,20 @@ unavailable. The Yul router address and public quote ABI come from
 Refresh the contract snapshot after contract deployments or ABI changes with
 `bun run contracts:generate` from this repository.
 
-`ekubo_get_quote` has no provider-selection input and does not select a quote.
-Same-chain requests return every complete Ekubo and 0x provider response in
-`quotes`, together with its source URL and normalized amounts, so the agent or
-user can choose. The chosen source is then passed to `ekubo_prepare_swap`, which
-refreshes that provider's quote and computes the executable calldata.
+`ekubo_get_quotes_with_plans` has no provider-selection input and does not
+select a quote. Same-chain requests return every Ekubo and 0x option in
+`quotes` with its source URL and normalized amounts, so the agent or user can
+choose. Supply `sender` and `slippage_bps` together and each option also
+carries the `execution_plan` that executes it, so a chosen plan goes straight
+to a wallet with no second round trip and the compared quote is the executed
+one. Omit both for an indicative comparison, and set `include_raw_quotes` to
+add the untouched provider responses, which are otherwise left out as the
+largest and least useful part of a response.
 If a configured provider fails, the response reports it in
-`unavailable_sources` without invalidating successful quote options.
-Cross-chain requests route through Across. `ekubo_prepare_swap` requires one
-source returned by `ekubo_get_quote`: `ekubo`, `0x`, or `across`. Token
+`unavailable_sources` without invalidating successful quote options, and an
+option that could not be made executable reports its own
+`execution_unavailable` while the rest stand.
+Cross-chain requests route through Across. Token
 arguments accept raw EVM addresses or
 `eip155:<chain_id>:<address>` identifiers. The output token's EIP-155 chain
 must match `destination_chain_id`.

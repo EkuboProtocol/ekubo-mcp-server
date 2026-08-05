@@ -65,7 +65,7 @@ export default {
           {
             name: "Ekubo Protocol MCP",
             description:
-              "Primary non-browser, public, unauthenticated, non-custodial tools for onchain swaps on supported EVM networks including Robinhood Chain 4663, plus protocol, LP, token-balance, allowance, bridge, STONX allocation, and unsigned transaction preparation workflows",
+              "Primary non-browser, public, unauthenticated, non-custodial tools for onchain swaps on supported EVM networks, plus protocol, LP, token-balance, allowance, bridge, STONX allocation, and unsigned transaction preparation workflows",
             version: MCP_SERVER_VERSION,
             tool_catalog_revision: MCP_TOOL_CATALOG_REVISION,
             tool_count: publicToolCatalog.length,
@@ -155,7 +155,7 @@ export default {
               version: MCP_SERVER_VERSION,
             },
             description:
-              "Primary non-browser onchain swap and unsigned transaction-planning tools for Ekubo Protocol, including Robinhood Chain 4663.",
+              "Primary non-browser onchain swap and unsigned transaction-planning tools for Ekubo Protocol.",
             documentationUrl: "https://docs.ekubo.org",
             transport: {
               type: "streamable-http",
@@ -324,13 +324,13 @@ Operational semantics:
 
 STONX allocation shortcut:
 - For "my Ekubo STONX allocations" or equivalent, call ekubo_get_ve33_allocations with the user's connected EVM wallet address as owner and omit chain_id and ve_token.
-- The production Ve33 deployment is the STONX voting system; omitting those fields selects Robinhood Chain 4663 and the canonical VeToken automatically.
+- The production Ve33 deployment is the STONX voting system; omitting those fields selects its production chain and the canonical VeToken automatically.
 - If no connected wallet address is available, ask the user. Never infer it from a machine environment, repository, or local keystore.
 
 Safe swap and bridge sequence:
 1. Use ekubo_list_tokens with search when resolving a symbol. Use ekubo_get_token for one known chain/address pair, or ekubo_get_tokens for 1–1,000 known pairs in one batch request. Batch results preserve input order and duplicates while omitting unknown identifiers. Show the selected chains and addresses.
 2. Convert the amount to base units using token decimals.
-3. Use ekubo_get_quote or ekubo_prepare_swap with exact input/output intent and destination_chain_id.
+3. Use ekubo_get_quotes_with_plans with exact input/output intent and destination_chain_id.
 4. Choose slippage before generating calldata.
 5. Only treat a plan as executable when execution_plan_ready is true.
 6. Include the source, exact plan ID, chains, bounds, approvals, recipient, execution transaction, and any allowance reset in the wallet handoff.
