@@ -256,7 +256,27 @@ const quoteRequestSchema = z.object({
   amount,
 });
 
-export const getQuoteSchema = quoteRequestSchema;
+export const getQuoteSchema = quoteRequestSchema.extend({
+  sender: address
+    .optional()
+    .describe(
+      "Transaction sender/taker/depositor. Supply it together with slippage_bps as soon as the user has decided to swap: providers are then asked for firm quotes with calldata rather than indicative prices, and every returned option carries the execution_plan that executes it, so the chosen one goes straight to the wallet. That removes a second provider round trip and an agent turn from the window in which the quote is still good. Omit both fields for an indicative comparison.",
+    ),
+  recipient: address
+    .optional()
+    .describe(
+      "Optional output recipient; defaults to sender when execution plans are requested",
+    ),
+  slippage_bps: z
+    .number()
+    .int()
+    .min(0)
+    .max(10_000)
+    .optional()
+    .describe(
+      "User-selected slippage tolerance in basis points. Required alongside sender, and only meaningful with it, because it is the bound written into the returned calldata.",
+    ),
+});
 
 export const prepareSwapSchema = quoteRequestSchema.extend({
   source: quoteSource.describe(
@@ -899,7 +919,7 @@ export const getVe33AllocationsSchema = z
     chain_id: chainId
       .optional()
       .describe(
-        `Optional with ve_token; omit both for the production Ekubo STONX deployment on Robinhood Chain ${ROBINHOOD_STONX_CHAIN_ID}`,
+        "Optional with ve_token; omit both for the production Ekubo STONX deployment",
       ),
     ve_token: address
       .optional()
@@ -1079,7 +1099,7 @@ export const publicToolCatalog = [
     name: "ekubo_list_tokens",
     title: "List Ekubo tokens",
     description:
-      "First step for symbol-based swaps, including tokenized stocks and stablecoins on Robinhood Chain 4663: list the canonical Ekubo token list, ordered by descending visibility_priority so the preferred token wins ambiguous symbol matches. Pass search to match a symbol prefix or suffix, chain_id to stay on one chain, and min_visibility_priority to reach tokens the interface hides by default.",
+      "First step for symbol-based swaps, including tokenized stocks and stablecoins: list the canonical Ekubo token list, ordered by descending visibility_priority so the preferred token wins ambiguous symbol matches. Pass search to match a symbol prefix or suffix, chain_id to stay on one chain, and min_visibility_priority to reach tokens the interface hides by default.",
     inputSchema: z.toJSONSchema(listTokensSchema),
     _meta: toolCatalogMetadata,
   },
@@ -1103,7 +1123,7 @@ export const publicToolCatalog = [
     name: "ekubo_get_quote",
     title: "Get a swap or bridge quote",
     description:
-      "Primary non-browser quote path for onchain swap, trade, exchange, or convert requests on supported EVM chains, including Robinhood Chain 4663. Return every available Ekubo and 0x quote for a same-chain swap without accepting or selecting a source. Each quotes entry includes the full provider response and normalized amounts so the agent or user can choose a source, then call ekubo_prepare_swap with that source to refresh the quote and compute calldata. Uses Across for cross-chain swaps. Provider failures are reported separately in unavailable_sources and do not invalidate successful quote options. Supports EIP-155 token identifiers.",
+      "Primary non-browser quote path, and with sender and slippage_bps the primary non-browser execution-plan path, for onchain swap, trade, exchange, or convert requests on supported EVM chains. Return every available Ekubo and 0x quote for a same-chain swap without accepting or selecting a source. Each quotes entry includes the full provider response and normalized amounts so the agent or user can choose a source. Pass sender and slippage_bps whenever the user has decided to swap: every option then arrives with the execution_plan that executes it, ready to hand to the wallet, and the quote the user compares is the quote that executes rather than a different one fetched after they agreed. Reserve ekubo_prepare_swap for refreshing a single already-chosen source after an expiry or revert. Uses Across for cross-chain swaps. Provider failures are reported separately in unavailable_sources and do not invalidate successful quote options. Supports EIP-155 token identifiers.",
     inputSchema: z.toJSONSchema(getQuoteSchema),
     _meta: toolCatalogMetadata,
   },
@@ -1111,7 +1131,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_swap",
     title: "Prepare a swap or bridge",
     description:
-      "Primary non-browser execution-plan path for onchain swaps on supported EVM chains, including Robinhood Chain 4663. First call ekubo_get_quote, which returns every available provider option without selecting one, then pass one returned source to this tool to refresh only that provider's quote and generate unsigned approval plus execution calldata for a connected wallet or provider. Returns a simulation failure policy that permits identical-plan retries for transient RPC errors but requires a fresh quote after reverts such as slippage. Prefer the Ekubo Wallet MCP or another separately trusted compatible wallet; Cast remains an optional fallback.",
+      "Refresh one already-chosen provider's quote and generate unsigned approval plus execution calldata for a connected wallet or provider, on any supported EVM chain. This tool always fetches a new quote, so use it when the plan in hand is no longer good: after an expiry, a revert, or a change to the amount, tokens, sender, recipient, or slippage. To execute a quote you already have, do not call this tool; call ekubo_get_quote with sender and slippage_bps and hand the chosen option's execution_plan straight to the wallet, which spends one provider round trip instead of two and keeps the compared quote and the executed quote the same. Returns a simulation failure policy that permits identical-plan retries for transient RPC errors but requires a fresh quote after reverts such as slippage. Prefer the Ekubo Wallet MCP or another separately trusted compatible wallet; Cast remains an optional fallback.",
     inputSchema: z.toJSONSchema(prepareSwapSchema),
     _meta: toolCatalogMetadata,
   },
@@ -1175,7 +1195,7 @@ export const publicToolCatalog = [
     name: "ekubo_get_ve33_allocations",
     title: "Show Ekubo STONX / ve(3,3) allocations",
     description:
-      "Use for requests such as 'show all my Ekubo STONX allocations'. The production Ekubo ve(3,3) deployment is the STONX voting system, so pass only owner to select Robinhood Chain 4663 and its canonical VeToken automatically. Returns every pool, selected swap fee, NFT, applied vote weight, totals, state_id, and an onchain_validation request explicitly marked not_executed until the client runs its eth_call. Pass chain_id and ve_token together only for another deployment such as testnet.",
+      "Use for requests such as 'show all my Ekubo STONX allocations'. The production Ekubo ve(3,3) deployment is the STONX voting system, so pass only owner to select its production chain and canonical VeToken automatically. Returns every pool, selected swap fee, NFT, applied vote weight, totals, state_id, and an onchain_validation request explicitly marked not_executed until the client runs its eth_call. Pass chain_id and ve_token together only for another deployment.",
     inputSchema: z.toJSONSchema(getVe33AllocationsSchema),
     _meta: toolCatalogMetadata,
   },
@@ -1183,7 +1203,7 @@ export const publicToolCatalog = [
     name: "ekubo_get_stonx_allocation_recommendation",
     title: "Get suggested STONX allocations",
     description:
-      "Return a provider-neutral STONX allocation recommendation no more than one day old and an exactly 10,000-bps executable target list capped at 25 initialized canonical Robinhood Ve33 pools. A stale snapshot is refreshed and awaited before use; refresh failures fail closed. The tool constructs no transaction; use compact_max_lock for one final voting NFT per target.",
+      "Return a provider-neutral STONX allocation recommendation no more than one day old and an exactly 10,000-bps executable target list capped at 25 initialized canonical Ve33 pools. A stale snapshot is refreshed and awaited before use; refresh failures fail closed. The tool constructs no transaction; use compact_max_lock for one final voting NFT per target.",
     inputSchema: z.toJSONSchema(getStonxAllocationRecommendationSchema),
     _meta: toolCatalogMetadata,
   },
@@ -1447,7 +1467,7 @@ export const publicToolCatalog = [
     name: "ekubo_get_liquidity_opportunities",
     title: "Find Ekubo liquidity opportunities",
     description:
-      "Return the same boosted-fee, active-incentive, and projected ve(3,3)-emission opportunities shown by the Ekubo interface, ranked by APR with canonical token metadata, exact actionable pools or pair-level pool-discovery handoffs, source freshness, and risk context. A request whose ranking includes Robinhood Ve33 projections supplies a wallet-local emission-state read; pass its locally decoded values back to complete the final ranking.",
+      "Return the same boosted-fee, active-incentive, and projected ve(3,3)-emission opportunities shown by the Ekubo interface, ranked by APR with canonical token metadata, exact actionable pools or pair-level pool-discovery handoffs, source freshness, and risk context. A request whose ranking includes Ve33 projections supplies a wallet-local emission-state read; pass its locally decoded values back to complete the final ranking.",
     inputSchema: z.toJSONSchema(getLiquidityOpportunitiesSchema),
     _meta: toolCatalogMetadata,
   },
@@ -1469,6 +1489,22 @@ export const publicToolCatalog = [
   },
 ] as const;
 
+/**
+ * One catalog entry by name.
+ *
+ * Registration used to index into the catalog by position, which quietly made
+ * every tool's identity depend on how many tools happened to be declared above
+ * it: adding or retiring one silently re-pointed every later registration at
+ * the wrong entry. Names do not move when the list does.
+ */
+function catalogEntry(name: string) {
+  const entry = publicToolCatalog.find((tool) => tool.name === name);
+  if (entry === undefined) {
+    throw new Error(`internal error: no tool named ${name} in the catalog`);
+  }
+  return entry;
+}
+
 export function createEkuboServer(env: Env) {
   const server = new McpServer(
     {
@@ -1481,11 +1517,11 @@ export function createEkuboServer(env: Env) {
   );
 
   const registerCatalogTool = <Schema extends z.ZodObject<z.ZodRawShape>>(
-    index: number,
+    name: string,
     inputSchema: Schema,
     handler: (input: z.infer<Schema>) => unknown | Promise<unknown>,
   ) => {
-    const entry = publicToolCatalog[index];
+    const entry = catalogEntry(name);
     const registerTool = server.registerTool.bind(server) as unknown as (
       name: string,
       config: Record<string, unknown>,
@@ -1506,13 +1542,13 @@ export function createEkuboServer(env: Env) {
   };
 
   server.registerTool(
-    publicToolCatalog[0].name,
+    catalogEntry("ekubo_list_tokens").name,
     {
-      title: publicToolCatalog[0].title,
-      description: publicToolCatalog[0].description,
+      title: catalogEntry("ekubo_list_tokens").title,
+      description: catalogEntry("ekubo_list_tokens").description,
       inputSchema: listTokensSchema,
       annotations,
-      _meta: publicToolCatalog[0]._meta,
+      _meta: catalogEntry("ekubo_list_tokens")._meta,
     },
     async ({
       chain_id,
@@ -1534,13 +1570,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[1].name,
+    catalogEntry("ekubo_get_token").name,
     {
-      title: publicToolCatalog[1].title,
-      description: publicToolCatalog[1].description,
+      title: catalogEntry("ekubo_get_token").title,
+      description: catalogEntry("ekubo_get_token").description,
       inputSchema: getTokenSchema,
       annotations,
-      _meta: publicToolCatalog[1]._meta,
+      _meta: catalogEntry("ekubo_get_token")._meta,
     },
     async ({ chain_id, address: tokenAddress }) =>
       toolResult(async () => ({
@@ -1552,13 +1588,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[2].name,
+    catalogEntry("ekubo_get_tokens").name,
     {
-      title: publicToolCatalog[2].title,
-      description: publicToolCatalog[2].description,
+      title: catalogEntry("ekubo_get_tokens").title,
+      description: catalogEntry("ekubo_get_tokens").description,
       inputSchema: getTokensSchema,
       annotations,
-      _meta: publicToolCatalog[2]._meta,
+      _meta: catalogEntry("ekubo_get_tokens")._meta,
     },
     async (input) =>
       toolResult(async () => ({
@@ -1572,13 +1608,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[3].name,
+    catalogEntry("ekubo_get_quote").name,
     {
-      title: publicToolCatalog[3].title,
-      description: publicToolCatalog[3].description,
+      title: catalogEntry("ekubo_get_quote").title,
+      description: catalogEntry("ekubo_get_quote").description,
       inputSchema: getQuoteSchema,
       annotations,
-      _meta: publicToolCatalog[3]._meta,
+      _meta: catalogEntry("ekubo_get_quote")._meta,
     },
     async (input) =>
       toolResult(() => {
@@ -1597,18 +1633,21 @@ export function createEkuboServer(env: Env) {
           ),
           quoteType: input.quote_type,
           amount: input.amount,
+          slippageBps: input.slippage_bps,
+          recipient: input.recipient as Address | undefined,
+          sender: input.sender as Address | undefined,
         });
       }),
   );
 
   server.registerTool(
-    publicToolCatalog[4].name,
+    catalogEntry("ekubo_prepare_swap").name,
     {
-      title: publicToolCatalog[4].title,
-      description: publicToolCatalog[4].description,
+      title: catalogEntry("ekubo_prepare_swap").title,
+      description: catalogEntry("ekubo_prepare_swap").description,
       inputSchema: prepareSwapSchema,
       annotations,
-      _meta: publicToolCatalog[4]._meta,
+      _meta: catalogEntry("ekubo_prepare_swap")._meta,
     },
     async (input) =>
       toolResult(() => {
@@ -1636,13 +1675,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[5].name,
+    catalogEntry("ekubo_prepare_ve33_vote").name,
     {
-      title: publicToolCatalog[5].title,
-      description: publicToolCatalog[5].description,
+      title: catalogEntry("ekubo_prepare_ve33_vote").title,
+      description: catalogEntry("ekubo_prepare_ve33_vote").description,
       inputSchema: prepareVe33VoteSchema,
       annotations,
-      _meta: publicToolCatalog[5]._meta,
+      _meta: catalogEntry("ekubo_prepare_ve33_vote")._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -1670,13 +1709,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[6].name,
+    catalogEntry("ekubo_prepare_ve33_extend").name,
     {
-      title: publicToolCatalog[6].title,
-      description: publicToolCatalog[6].description,
+      title: catalogEntry("ekubo_prepare_ve33_extend").title,
+      description: catalogEntry("ekubo_prepare_ve33_extend").description,
       inputSchema: prepareVe33ExtendSchema,
       annotations,
-      _meta: publicToolCatalog[6]._meta,
+      _meta: catalogEntry("ekubo_prepare_ve33_extend")._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -1696,13 +1735,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[7].name,
+    catalogEntry("ekubo_prepare_ve33_stake").name,
     {
-      title: publicToolCatalog[7].title,
-      description: publicToolCatalog[7].description,
+      title: catalogEntry("ekubo_prepare_ve33_stake").title,
+      description: catalogEntry("ekubo_prepare_ve33_stake").description,
       inputSchema: prepareVe33StakeSchema,
       annotations,
-      _meta: publicToolCatalog[7]._meta,
+      _meta: catalogEntry("ekubo_prepare_ve33_stake")._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -1721,13 +1760,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[8].name,
+    catalogEntry("ekubo_prepare_ve33_split").name,
     {
-      title: publicToolCatalog[8].title,
-      description: publicToolCatalog[8].description,
+      title: catalogEntry("ekubo_prepare_ve33_split").title,
+      description: catalogEntry("ekubo_prepare_ve33_split").description,
       inputSchema: prepareVe33SplitSchema,
       annotations,
-      _meta: publicToolCatalog[8]._meta,
+      _meta: catalogEntry("ekubo_prepare_ve33_split")._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -1743,13 +1782,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[9].name,
+    catalogEntry("ekubo_prepare_ve33_claim_fees").name,
     {
-      title: publicToolCatalog[9].title,
-      description: publicToolCatalog[9].description,
+      title: catalogEntry("ekubo_prepare_ve33_claim_fees").title,
+      description: catalogEntry("ekubo_prepare_ve33_claim_fees").description,
       inputSchema: prepareVe33ClaimSchema,
       annotations,
-      _meta: publicToolCatalog[9]._meta,
+      _meta: catalogEntry("ekubo_prepare_ve33_claim_fees")._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -1767,13 +1806,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[10].name,
+    catalogEntry("ekubo_prepare_ve33_reinvest").name,
     {
-      title: publicToolCatalog[10].title,
-      description: publicToolCatalog[10].description,
+      title: catalogEntry("ekubo_prepare_ve33_reinvest").title,
+      description: catalogEntry("ekubo_prepare_ve33_reinvest").description,
       inputSchema: prepareVe33ReinvestSchema,
       annotations,
-      _meta: publicToolCatalog[10]._meta,
+      _meta: catalogEntry("ekubo_prepare_ve33_reinvest")._meta,
     },
     async (input) =>
       toolResult(() => {
@@ -1825,13 +1864,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[11].name,
+    catalogEntry("ekubo_prepare_ve33_claim_all_fees").name,
     {
-      title: publicToolCatalog[11].title,
-      description: publicToolCatalog[11].description,
+      title: catalogEntry("ekubo_prepare_ve33_claim_all_fees").title,
+      description: catalogEntry("ekubo_prepare_ve33_claim_all_fees").description,
       inputSchema: prepareAllVe33FeeClaimsSchema,
       annotations,
-      _meta: publicToolCatalog[11]._meta,
+      _meta: catalogEntry("ekubo_prepare_ve33_claim_all_fees")._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -1845,13 +1884,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[12].name,
+    catalogEntry("ekubo_get_ve33_allocations").name,
     {
-      title: publicToolCatalog[12].title,
-      description: publicToolCatalog[12].description,
+      title: catalogEntry("ekubo_get_ve33_allocations").title,
+      description: catalogEntry("ekubo_get_ve33_allocations").description,
       inputSchema: getVe33AllocationsSchema,
       annotations,
-      _meta: publicToolCatalog[12]._meta,
+      _meta: catalogEntry("ekubo_get_ve33_allocations")._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -1867,13 +1906,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[13].name,
+    catalogEntry("ekubo_get_stonx_allocation_recommendation").name,
     {
-      title: publicToolCatalog[13].title,
-      description: publicToolCatalog[13].description,
+      title: catalogEntry("ekubo_get_stonx_allocation_recommendation").title,
+      description: catalogEntry("ekubo_get_stonx_allocation_recommendation").description,
       inputSchema: getStonxAllocationRecommendationSchema,
       annotations,
-      _meta: publicToolCatalog[13]._meta,
+      _meta: catalogEntry("ekubo_get_stonx_allocation_recommendation")._meta,
     },
     async () =>
       toolResult(() =>
@@ -1886,13 +1925,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[14].name,
+    catalogEntry("ekubo_prepare_ve33_reallocation").name,
     {
-      title: publicToolCatalog[14].title,
-      description: publicToolCatalog[14].description,
+      title: catalogEntry("ekubo_prepare_ve33_reallocation").title,
+      description: catalogEntry("ekubo_prepare_ve33_reallocation").description,
       inputSchema: prepareVe33ReallocationSchema,
       annotations,
-      _meta: publicToolCatalog[14]._meta,
+      _meta: catalogEntry("ekubo_prepare_ve33_reallocation")._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -1913,13 +1952,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[15].name,
+    catalogEntry("ekubo_get_positions_by_owner").name,
     {
-      title: publicToolCatalog[15].title,
-      description: publicToolCatalog[15].description,
+      title: catalogEntry("ekubo_get_positions_by_owner").title,
+      description: catalogEntry("ekubo_get_positions_by_owner").description,
       inputSchema: getPositionsByOwnerSchema,
       annotations,
-      _meta: publicToolCatalog[15]._meta,
+      _meta: catalogEntry("ekubo_get_positions_by_owner")._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -1937,13 +1976,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[16].name,
+    catalogEntry("ekubo_get_pool").name,
     {
-      title: publicToolCatalog[16].title,
-      description: publicToolCatalog[16].description,
+      title: catalogEntry("ekubo_get_pool").title,
+      description: catalogEntry("ekubo_get_pool").description,
       inputSchema: getPoolSchema,
       annotations,
-      _meta: publicToolCatalog[16]._meta,
+      _meta: catalogEntry("ekubo_get_pool")._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -1956,13 +1995,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[17].name,
+    catalogEntry("ekubo_get_pool_liquidity").name,
     {
-      title: publicToolCatalog[17].title,
-      description: publicToolCatalog[17].description,
+      title: catalogEntry("ekubo_get_pool_liquidity").title,
+      description: catalogEntry("ekubo_get_pool_liquidity").description,
       inputSchema: getPoolLiquiditySchema,
       annotations,
-      _meta: publicToolCatalog[17]._meta,
+      _meta: catalogEntry("ekubo_get_pool_liquidity")._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -1975,39 +2014,39 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[18].name,
+    catalogEntry("ekubo_derive_pool_id").name,
     {
-      title: publicToolCatalog[18].title,
-      description: publicToolCatalog[18].description,
+      title: catalogEntry("ekubo_derive_pool_id").title,
+      description: catalogEntry("ekubo_derive_pool_id").description,
       inputSchema: derivePoolIdSchema,
       annotations,
-      _meta: publicToolCatalog[18]._meta,
+      _meta: catalogEntry("ekubo_derive_pool_id")._meta,
     },
     async (input) =>
       toolResult(() => derivePoolId(mapExactPoolKey(input.pool_key))),
   );
 
   server.registerTool(
-    publicToolCatalog[19].name,
+    catalogEntry("ekubo_decode_pool_config").name,
     {
-      title: publicToolCatalog[19].title,
-      description: publicToolCatalog[19].description,
+      title: catalogEntry("ekubo_decode_pool_config").title,
+      description: catalogEntry("ekubo_decode_pool_config").description,
       inputSchema: decodePoolConfigSchema,
       annotations,
-      _meta: publicToolCatalog[19]._meta,
+      _meta: catalogEntry("ekubo_decode_pool_config")._meta,
     },
     async ({ config }) =>
       toolResult(() => ({ decoded_config: decodePoolConfig(config as Hex) })),
   );
 
   server.registerTool(
-    publicToolCatalog[20].name,
+    catalogEntry("ekubo_get_position").name,
     {
-      title: publicToolCatalog[20].title,
-      description: publicToolCatalog[20].description,
+      title: catalogEntry("ekubo_get_position").title,
+      description: catalogEntry("ekubo_get_position").description,
       inputSchema: getPositionSchema,
       annotations,
-      _meta: publicToolCatalog[20]._meta,
+      _meta: catalogEntry("ekubo_get_position")._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -2021,13 +2060,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[21].name,
+    catalogEntry("ekubo_get_position_pool_candidates").name,
     {
-      title: publicToolCatalog[21].title,
-      description: publicToolCatalog[21].description,
+      title: catalogEntry("ekubo_get_position_pool_candidates").title,
+      description: catalogEntry("ekubo_get_position_pool_candidates").description,
       inputSchema: getPositionPoolCandidatesSchema,
       annotations,
-      _meta: publicToolCatalog[21]._meta,
+      _meta: catalogEntry("ekubo_get_position_pool_candidates")._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -2044,13 +2083,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[22].name,
+    catalogEntry("ekubo_prepare_lp_position_deposit").name,
     {
-      title: publicToolCatalog[22].title,
-      description: publicToolCatalog[22].description,
+      title: catalogEntry("ekubo_prepare_lp_position_deposit").title,
+      description: catalogEntry("ekubo_prepare_lp_position_deposit").description,
       inputSchema: prepareLpPositionDepositSchema,
       annotations,
-      _meta: publicToolCatalog[22]._meta,
+      _meta: catalogEntry("ekubo_prepare_lp_position_deposit")._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -2077,13 +2116,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[23].name,
+    catalogEntry("ekubo_prepare_lp_position_earnings_claim").name,
     {
-      title: publicToolCatalog[23].title,
-      description: publicToolCatalog[23].description,
+      title: catalogEntry("ekubo_prepare_lp_position_earnings_claim").title,
+      description: catalogEntry("ekubo_prepare_lp_position_earnings_claim").description,
       inputSchema: prepareLpPositionEarningsClaimSchema,
       annotations,
-      _meta: publicToolCatalog[23]._meta,
+      _meta: catalogEntry("ekubo_prepare_lp_position_earnings_claim")._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -2098,13 +2137,13 @@ export function createEkuboServer(env: Env) {
   );
 
   server.registerTool(
-    publicToolCatalog[24].name,
+    catalogEntry("ekubo_prepare_lp_position_withdraw").name,
     {
-      title: publicToolCatalog[24].title,
-      description: publicToolCatalog[24].description,
+      title: catalogEntry("ekubo_prepare_lp_position_withdraw").title,
+      description: catalogEntry("ekubo_prepare_lp_position_withdraw").description,
       inputSchema: prepareLpPositionWithdrawSchema,
       annotations,
-      _meta: publicToolCatalog[24]._meta,
+      _meta: catalogEntry("ekubo_prepare_lp_position_withdraw")._meta,
     },
     async (input) =>
       toolResult(() =>
@@ -2130,7 +2169,7 @@ export function createEkuboServer(env: Env) {
       ),
   );
 
-  registerCatalogTool(25, prepareWrapUnwrapSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_wrap_unwrap", prepareWrapUnwrapSchema, (input) =>
     prepareWrapUnwrap({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2139,7 +2178,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(26, prepareLpPositionTransferSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_lp_position_transfer", prepareLpPositionTransferSchema, (input) =>
     prepareLpPositionTransfer(env, {
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2149,7 +2188,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(27, prepareFixPoolPriceSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_fix_pool_price", prepareFixPoolPriceSchema, (input) =>
     prepareFixPoolPrice(env, {
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2172,7 +2211,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(28, prepareTwammOrderSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_twamm_order", prepareTwammOrderSchema, (input) =>
     prepareTwammOrder({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2190,7 +2229,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(29, prepareTwammOrderCollectionSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_twamm_order_collection", prepareTwammOrderCollectionSchema, (input) =>
     prepareTwammOrderCollection({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2200,7 +2239,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(30, prepareTwammOrderStopSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_twamm_order_stop", prepareTwammOrderStopSchema, (input) =>
     prepareTwammOrderStop({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2215,7 +2254,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(31, prepareTwammVirtualOrdersSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_twamm_virtual_orders", prepareTwammVirtualOrdersSchema, (input) =>
     prepareExecuteTwammVirtualOrders({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2223,7 +2262,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(32, prepareAuctionCreateSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_auction_create", prepareAuctionCreateSchema, (input) =>
     prepareAuctionCreate({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2240,7 +2279,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(33, prepareAuctionCompleteSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_auction_complete", prepareAuctionCompleteSchema, (input) =>
     prepareAuctionComplete({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2251,7 +2290,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(34, prepareAuctionCreatorProceedsSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_auction_creator_proceeds", prepareAuctionCreatorProceedsSchema, (input) =>
     prepareAuctionCreatorProceeds({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2260,7 +2299,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(35, prepareManualPoolBoostSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_manual_pool_boost", prepareManualPoolBoostSchema, (input) =>
     prepareManualPoolBoost({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2272,7 +2311,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(36, prepareOracleCapacityExpansionSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_oracle_capacity_expansion", prepareOracleCapacityExpansionSchema, (input) =>
     prepareOracleCapacityExpansion({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2281,7 +2320,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(37, prepareApprovalRevocationsSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_approval_revocations", prepareApprovalRevocationsSchema, (input) =>
     prepareApprovalRevocations({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2289,7 +2328,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(38, prepareOldGekuboUnwrapSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_old_gekubo_unwrap", prepareOldGekuboUnwrapSchema, (input) =>
     prepareOldGekuboUnwrap({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2297,11 +2336,11 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(39, getRewardsClaimsByOwnerSchema, (input) =>
+  registerCatalogTool("ekubo_get_rewards_claims_by_owner", getRewardsClaimsByOwnerSchema, (input) =>
     getRewardsClaimsByOwner(env, { owner: input.owner }),
   );
 
-  registerCatalogTool(40, prepareRewardsClaimSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_rewards_claim", prepareRewardsClaimSchema, (input) =>
     prepareRewardsClaim({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2318,7 +2357,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(41, prepareRecoveryFundClaimSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_recovery_fund_claim", prepareRecoveryFundClaimSchema, (input) =>
     prepareRecoveryFundClaim({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2328,7 +2367,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(42, prepareRevenueBuybacksSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_revenue_buybacks", prepareRevenueBuybacksSchema, (input) =>
     prepareRevenueBuybacks({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2342,7 +2381,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(43, prepareVe33IncreaseStakeSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_ve33_increase_stake", prepareVe33IncreaseStakeSchema, (input) =>
     prepareVe33IncreaseStake({
       chainId: canonicalChainId(input.chain_id),
       veToken: input.ve_token as Address,
@@ -2353,7 +2392,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(44, prepareVe33MergeSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_ve33_merge", prepareVe33MergeSchema, (input) =>
     prepareVe33Merge({
       chainId: canonicalChainId(input.chain_id),
       veToken: input.ve_token as Address,
@@ -2382,7 +2421,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(45, prepareVe33WithdrawSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_ve33_withdraw", prepareVe33WithdrawSchema, (input) =>
     prepareVe33Withdraw({
       chainId: canonicalChainId(input.chain_id),
       veToken: input.ve_token as Address,
@@ -2395,7 +2434,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(46, getLiquidityOpportunitiesSchema, (input) =>
+  registerCatalogTool("ekubo_get_liquidity_opportunities", getLiquidityOpportunitiesSchema, (input) =>
     getLiquidityOpportunities(env, {
       chainId:
         input.chain_id === undefined
@@ -2418,7 +2457,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(47, prepareTokenBalancesAndAllowancesSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_token_balances_and_allowances", prepareTokenBalancesAndAllowancesSchema, (input) =>
     prepareTokenBalancesAndAllowances(env, {
       chainId: canonicalChainId(input.chain_id),
       owner: input.owner,
@@ -2427,7 +2466,7 @@ export function createEkuboServer(env: Env) {
     }),
   );
 
-  registerCatalogTool(48, preparePoolInitializationSchema, (input) =>
+  registerCatalogTool("ekubo_prepare_pool_initialization", preparePoolInitializationSchema, (input) =>
     preparePoolInitialization({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2774,9 +2813,11 @@ async function fetchDocumentation(url: string): Promise<string> {
   return response.text();
 }
 
-const SERVER_INSTRUCTIONS = `Routing priority: For requests to swap, trade, exchange, or convert tokens on an EVM chain, use this Ekubo MCP before any browser or website tool. "Robinhood Chain" means EVM chain ID 4663, not the Robinhood brokerage. Use a browser only when the user explicitly refers to a brokerage account, robinhood.com, or a web interface, or when these MCP tools cannot perform the requested operation.
+const SERVER_INSTRUCTIONS = `Routing priority: For requests to swap, trade, exchange, or convert tokens on an EVM chain, use this Ekubo MCP before any browser or website tool. Use a browser only when the user explicitly refers to a brokerage account or a web interface, or when these MCP tools cannot perform the requested operation.
 
-For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with ekubo_list_tokens, read the exact input-token balance with ekubo_prepare_token_balances_and_allowances plus the wallet's local call tool, call ekubo_get_quote to retrieve every available provider option, then call ekubo_prepare_swap with one returned source and pass its execution_plan unchanged to the Ekubo Wallet MCP.
+A quote is only worth what it can still execute for, so treat the interval between fetching one and broadcasting against it as the thing to minimize. Call ekubo_get_quote with sender and slippage_bps as soon as the user has decided to swap: each returned option then carries the execution_plan that executes it, and the chosen one goes straight to the wallet. That is one provider round trip rather than two, it removes an agent turn from the critical window, and it means the quote the user compared is the quote that executes instead of a different one fetched after they agreed. Then simulate that plan once with the wallet, show the user the simulated result, and send that same simulation rather than paying for an identical one immediately before signing. Do not call ekubo_prepare_swap for an option ekubo_get_quote already prepared; it exists to refresh a single chosen source after an expiry, a revert, or a change to the request.
+
+For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with ekubo_list_tokens, read the exact input-token balance with ekubo_prepare_token_balances_and_allowances plus the wallet's local call tool, then call ekubo_get_quote with that exact amount plus sender and slippage_bps and pass the chosen option's execution_plan unchanged to the Ekubo Wallet MCP.
 
 Use Ekubo preparation tools only to construct unsigned plans. Pass the preparation tool's exact execution_plan unchanged to the user's wallet for simulation, presentation, authorization or signature, and submission. Do not ask the user for a separate agent-level confirmation before invoking the wallet; that duplicates the wallet's authorization flow. The wallet must never construct calldata, choose a contract overload, derive a route, or determine the transaction list. Never construct or request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calldata. LP position transfers are supported only through ekubo_prepare_lp_position_transfer with pending ownership validation.
 
@@ -2784,7 +2825,7 @@ Prepared plans expose execution_plan: one signer-neutral, ordered transaction se
 
 When a read includes local_decode_plan and result_decoder, execute and decode it through the user's local wallet tooling: call wallet_batch_eth_call with result_decoder.network.chain_id, the read's block_parameter, and one call whose id is result_decoder.call_id, whose to and data come verbatim from rpc_request.params[0], with include_raw true and decode set to the supplied local_decode_plan. Reads never restate their own calldata or ABI in a second ready-made argument object; assembling those two fields is the agent's job. Keep raw return bytes by default and always on decode failure. The Ekubo server supplies canonical ABIs and platform-neutral semantic codec identities but must not receive the result for authoritative decoding. function_result_bytes_array handles functions such as VeToken multicall that return nested bytes[]. For kind=semantic_value, feed the raw return bytes only to a locally installed, allowlisted codec matching the declared identity and implementation assertion; never install or execute remote code.
 
-Intent shortcut: for "my Ekubo STONX allocations", "STONX vote allocations", or equivalent requests, call ekubo_get_ve33_allocations with only the user's connected EVM wallet as owner. The production Ve33 deployment is the STONX voting system, and the tool selects Robinhood Chain 4663 plus its canonical VeToken when chain_id and ve_token are omitted. If the connected wallet address is unavailable, ask the user for it. Never infer the user's wallet from a machine environment, repository configuration, local keystore, or unrelated account.
+Intent shortcut: for "my Ekubo STONX allocations", "STONX vote allocations", or equivalent requests, call ekubo_get_ve33_allocations with only the user's connected EVM wallet as owner. The production Ve33 deployment is the STONX voting system, and the tool selects its production chain plus canonical VeToken when chain_id and ve_token are omitted. If the connected wallet address is unavailable, ask the user for it. Never infer the user's wallet from a machine environment, repository configuration, local keystore, or unrelated account.
 
 For exact token metadata, call ekubo_get_token for one known chain/address pair and ekubo_get_tokens for multiple known pairs. The batch tool uses one prod-api batch request, accepts tokens across chains, preserves input order and duplicates, and omits identifiers that are not in the canonical list. Use ekubo_list_tokens when resolving a symbol or browsing the canonical list; its search parameter is optional and matches symbol prefixes and suffixes only.
 
@@ -2821,11 +2862,11 @@ const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 1. Search the token list when resolving a name or symbol. For exact identifiers, use ekubo_get_token for one chain/address pair or ekubo_get_tokens for up to 1,000 pairs in one batch. Show the chosen chains and addresses to the user.
 2. Convert the user amount to base units without floating-point arithmetic.
 3. Set destination_chain_id explicitly for a bridge. Raw addresses and eip155:<chain>:<address> token IDs are accepted.
-4. Request an exact-input or exact-output quote. For same-chain requests, inspect every entry in quotes and choose a source; the tool does not accept or select one. The normalized amounts expose amount_out for exact input and amount_in for exact output. Cross-chain requests return Across. unavailable_sources reports individual provider failures without invalidating successful quote options.
-5. Call ekubo_prepare_swap with the chosen source, slippage tolerance, and sender so it refreshes that provider's quote and computes executable calldata.
+4. Request an exact-input or exact-output quote. Once the user has decided to swap, pass sender and slippage_bps so every option arrives with the calldata that executes it; omit both only for an indicative "what would I get" comparison. For same-chain requests, inspect every entry in quotes and choose a source; the tool does not accept or select one. The normalized amounts expose amount_out for exact input and amount_in for exact output. Cross-chain requests return Across. unavailable_sources reports individual provider failures without invalidating successful quote options, and a single option that could not be made executable reports its own execution_unavailable while the rest stand.
+5. Take the chosen option's execution.execution_plan as it is. Do not call ekubo_prepare_swap to obtain a plan you were already given: it fetches another quote, which spends a second round trip and an agent turn inside the window where the first quote is still good, and leaves the user having approved a quote that is not the one executed. Call it only to refresh a chosen source after an expiry, a revert, or a change to the amount, tokens, sender, recipient, or slippage.
 6. Include the provider, exact plan ID, token amounts, chains, slippage bound, recipient, approvals, execution transaction, and any allowance reset in the wallet handoff.
-7. Pass the complete plan to the user's wallet tooling for balance, allowance, policy, and exact-transaction simulation. Do not ask for separate agent-level confirmation.
-8. Let the wallet present the simulated result, collect authorization or signature, and submit. Never send credentials to this server.
+7. Pass the complete plan to the user's wallet tooling and let its own simulation establish balances, allowances, policy, and the exact transaction outcome. Do not read allowances or validate the transaction separately first, and do not ask for separate agent-level confirmation; both only spend the quote's remaining life.
+8. Simulate once. Let the wallet present that simulated result, collect authorization or signature, and submit that same simulation rather than simulating the identical plan again immediately before signing. A wallet that re-simulates to show a human the current state at approval time is a different matter and is expected. Never send credentials to this server.
 9. Inspect a wallet simulation's structured failure. Retry identical calldata only when recommended_action=retry_same_plan, normally for a transient RPC failure. For reprepare_plan, including slippage or any execution revert, request a fresh quote and calldata. Re-quote and revalidate after any change, expiry, or stale block.
 `;
 
@@ -2955,7 +2996,7 @@ constructing provider URLs themselves.
 
 const VE33_WORKFLOW = `# Ekubo ve(3,3) call workflow
 
-- For "my Ekubo STONX allocations" on Robinhood Chain, call ekubo_get_ve33_allocations with only the connected wallet address as owner. The production Ve33 deployment is for STONX, so it selects chain 4663 and the canonical VeToken automatically. If the client does not expose a connected address, ask the user; never infer ownership from a local keystore or environment.
+- For "my Ekubo STONX allocations", call ekubo_get_ve33_allocations with only the connected wallet address as owner. The production Ve33 deployment is for STONX, so it selects the right chain and the canonical VeToken automatically. If the client does not expose a connected address, ask the user; never infer ownership from a local keystore or environment.
 - The VeToken ERC721 owns the canonical Ve33 stake. The wallet must own or be approved for each ve_id.
 - splitStake must move a positive amount smaller than the source stake. The source keeps its vote with reduced weight; the new child starts unvoted.
 - Replacing or clearing a vote discards pending fee accounting unless fees are claimed first. Every compiler claims each active source unconditionally before that source vote is cleared or moved, including when claimable fees are zero.
