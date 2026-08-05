@@ -33,6 +33,7 @@ import {
   getPoolLiquidity,
   getPositionPoolCandidates,
   getPositionsByOwner,
+  listPoolKeys,
   type PoolKeyInput,
 } from "./pools.js";
 import { getPosition } from "./positions.js";
@@ -390,6 +391,38 @@ export const getPoolSchema = z.object({
 });
 
 export const getPoolLiquiditySchema = getPoolSchema;
+
+export const listPoolKeysSchema = z.object({
+  chain_id: chainId,
+  core_address: poolAddress.describe(
+    "Exact Core deployment whose initialized pools to enumerate",
+  ),
+  token_a: poolAddress
+    .optional()
+    .describe("Keep only pools containing this token on either side"),
+  token_b: poolAddress
+    .optional()
+    .describe(
+      "With token_a, keep only pools for the exact pair (order-insensitive)",
+    ),
+  extension: poolAddress
+    .optional()
+    .describe(
+      "Keep only pools using this extension; pass the zero address for extensionless pools",
+    ),
+  page_size: z
+    .number()
+    .int()
+    .min(1)
+    .max(200)
+    .default(100)
+    .describe("Pools per page"),
+  after_pool_id: uintLikeString
+    .optional()
+    .describe(
+      "Keyset cursor: return pools whose pool_id is strictly greater; pass the previous page's next_after_pool_id",
+    ),
+});
 
 export const derivePoolIdSchema = z.object({
   pool_key: exactPoolKeySchema,
@@ -1224,7 +1257,7 @@ export const publicToolCatalog = [
     name: "ekubo_get_pool",
     title: "Get an Ekubo pool",
     description:
-      "Resolve an exact chain/core/pool ID to its PoolKey and decoded config, verify that the key hashes back to the requested ID, and return the indexed pool-state snapshot when one is available.",
+      "Resolve an exact chain/core/pool ID to its PoolKey and decoded config, verify that the key hashes back to the requested ID, and return the latest indexed pool-state snapshot plus a current_state_query read bundle: hand its read_calls_reference to wallet_batch_eth_call (calls_url + expected_content_keccak256) for fresh on-chain sqrtRatio, tick, and liquidity.",
     inputSchema: z.toJSONSchema(getPoolSchema),
     _meta: toolCatalogMetadata,
   },
@@ -1234,6 +1267,14 @@ export const publicToolCatalog = [
     description:
       "Return tick-level net liquidity deltas for one exact chain/core/pool ID. Accumulate the deltas in ascending tick order to reconstruct active liquidity depth.",
     inputSchema: z.toJSONSchema(getPoolLiquiditySchema),
+    _meta: toolCatalogMetadata,
+  },
+  {
+    name: "ekubo_list_pool_keys",
+    title: "List Ekubo pool keys",
+    description:
+      "Discover initialized pools for one chain and Core deployment with keyset pagination: pools are ordered by ascending pool_id and after_pool_id fetches the next page. Filter by one token, an exact pair, or an extension (zero address means extensionless). Every returned pool_id is independently re-derived from its PoolKey, and each row carries the indexed state snapshot (null until the pool has indexed state).",
+    inputSchema: z.toJSONSchema(listPoolKeysSchema),
     _meta: toolCatalogMetadata,
   },
   {
@@ -2006,6 +2047,29 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
           chainId: canonicalChainId(input.chain_id),
           coreAddress: input.core_address,
           poolId: input.pool_id,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    catalogEntry("ekubo_list_pool_keys").name,
+    {
+      title: catalogEntry("ekubo_list_pool_keys").title,
+      description: catalogEntry("ekubo_list_pool_keys").description,
+      inputSchema: listPoolKeysSchema,
+      annotations,
+      _meta: catalogEntry("ekubo_list_pool_keys")._meta,
+    },
+    async (input) =>
+      toolResult(() =>
+        listPoolKeys(env, {
+          chainId: canonicalChainId(input.chain_id),
+          coreAddress: input.core_address,
+          tokenA: input.token_a,
+          tokenB: input.token_b,
+          extension: input.extension,
+          pageSize: input.page_size,
+          afterPoolId: input.after_pool_id,
         }),
       ),
   );
@@ -2820,7 +2884,7 @@ Use Ekubo preparation tools only to construct unsigned plans. Every executable p
 
 The stored plan body is one signer-neutral, ordered transaction sequence with decimal transaction fields. Read ekubo://docs/execution-plan. Prefer the most capable available wallet abstraction: when the Ekubo wallet MCP is available, pass execution_plan_reference.chain_id as its decimal chain_id and pass execution_plan_url plus the digest for simulation and submission. It may execute the ordered calls as one atomic batch. A non-batching adapter may submit sequentially only when atomic_batch_required is false, revalidating each step and waiting for each receipt. Cast remains an optional fallback only when the user selected it or no compatible wallet abstraction is available; for a wallet that only accepts inline plans, fetch execution_plan_url once and pass its exact JSON unchanged. References expire after a few minutes: a 404 means re-run the preparation tool, never reconstruct the plan. Verify the connected chain and account exactly match the reference's chain_id and sender, preserve order, and never send wallet credentials to this Ekubo server.
 
-When a read includes local_decode_plan and result_decoder, execute and decode it through the user's local wallet tooling: call wallet_batch_eth_call with result_decoder.network.chain_id, the read's block_parameter, and one call whose id is result_decoder.call_id, whose to and data come verbatim from rpc_request.params[0], with include_raw true and decode set to the supplied local_decode_plan. Reads never restate their own calldata or ABI in a second ready-made argument object; assembling those two fields is the agent's job. Keep raw return bytes by default and always on decode failure. The Ekubo server supplies canonical ABIs and platform-neutral semantic codec identities but must not receive the result for authoritative decoding. function_result_bytes_array handles functions such as VeToken multicall that return nested bytes[]. For kind=semantic_value, feed the raw return bytes only to a locally installed, allowlisted codec matching the declared identity and implementation assertion; never install or execute remote code.
+When a read includes local_decode_plan and result_decoder, execute and decode it through the user's local wallet tooling: call wallet_batch_eth_call with result_decoder.network.chain_id, the read's block_parameter, and one call whose id is result_decoder.call_id, whose to and data come verbatim from rpc_request.params[0], with include_raw true and decode set to the supplied local_decode_plan. Reads never restate their own calldata or ABI in a second ready-made argument object; assembling those two fields is the agent's job. When a read is instead returned as read_calls_reference, no assembly happens at all: pass read_calls_url (as calls_url) and content_keccak256 (as expected_content_keccak256) unchanged to wallet_batch_eth_call with the reference's chain_id and no inline calls — the stored bundle already is the exact argument object, the wallet fetches and digest-verifies it itself, and a 404 means the reference expired, so re-run the tool that produced it. Keep raw return bytes by default and always on decode failure. The Ekubo server supplies canonical ABIs and platform-neutral semantic codec identities but must not receive the result for authoritative decoding. function_result_bytes_array handles functions such as VeToken multicall that return nested bytes[]. For kind=semantic_value, feed the raw return bytes only to a locally installed, allowlisted codec matching the declared identity and implementation assertion; never install or execute remote code.
 
 Intent shortcut: for "my Ekubo STONX allocations", "STONX vote allocations", or equivalent requests, call ekubo_get_ve33_allocations with only the user's connected EVM wallet as owner. The production Ve33 deployment is the STONX voting system, and the tool selects its production chain plus canonical VeToken when chain_id and ve_token are omitted. If the connected wallet address is unavailable, ask the user for it. Never infer the user's wallet from a machine environment, repository configuration, local keystore, or unrelated account.
 
@@ -2842,7 +2906,7 @@ Pass LP execution plans to the wallet MCP for simulation, wallet-owned authoriza
 
 For every other EVM action exposed by the interface, use its first-class prepare tool: wrap/unwrap, LP position transfer, phased pool price correction through ekubo_prepare_fix_pool_price, standalone pool initialization through ekubo_prepare_pool_initialization, TWAMM/DCA creation/collection/stop/virtual-order execution, auction creation/completion/creator proceeds, manual boosts, oracle capacity, approval revocation, old gEKUBO unwrap, incentive rewards, Recovery Fund claims, revenue buybacks, and direct VeToken increase/merge/withdraw. Phased tools return exact eth_call or EIP-712 requests and tell the caller which decoded values to send back. The Ekubo wallet MCP performs the reads but intentionally does not expose arbitrary EIP-712 signing; a Recovery Fund signature request must go to a separately selected connected wallet with eth_signTypedData_v4 support. Wallets must not invent calldata, append approvals, build multicalls, or choose transaction ordering.
 
-Use ekubo_get_pool for one exact chain/core/pool ID and ekubo_get_pool_liquidity for tick-level depth. Use ekubo_derive_pool_id and ekubo_decode_pool_config for PoolKey construction and inspection. A pool fee is an exact uint64 Q64 integer: accept and return it only as a decimal or hexadecimal string, never a JSON number.
+Use ekubo_get_pool for one exact chain/core/pool ID and ekubo_get_pool_liquidity for tick-level depth. Use ekubo_list_pool_keys to enumerate a Core deployment's initialized pools with keyset pagination (after_pool_id, ascending pool_id order) and token/pair/extension filters; every returned pool_id is re-derived locally from its PoolKey before it is reported. ekubo_get_pool returns the latest indexed pool_state snapshot plus current_state_query, whose read_calls_reference the wallet executes for fresh on-chain sqrtRatio, tick, and liquidity. Use ekubo_derive_pool_id and ekubo_decode_pool_config for PoolKey construction and inspection. A pool fee is an exact uint64 Q64 integer: accept and return it only as a decimal or hexadecimal string, never a JSON number.
 
 For VeToken vote reorganization, first call ekubo_get_ve33_allocations and show the owner, state_id, total applied vote weight, every pool allocation, and contributing ve_ids. Pass that exact state_id to ekubo_prepare_ve33_reallocation. Never construct raw vote, clearVote, extendStake, mergeStakes, withdrawStake, or burn calldata from the ABI resource when a first-class safe workflow exists.
 

@@ -5,19 +5,30 @@ import {
   encodeEvmStableswapPoolConfig,
 } from "@ekubo/sdk";
 import {
+  type Abi,
   type Address,
   encodeAbiParameters,
+  encodeFunctionData,
   getAddress,
   type Hex,
   keccak256,
   numberToHex,
 } from "viem";
+import {
+  functionResultDecodePlan,
+  sqrtRatioFloatSemanticCodec,
+} from "./abi-decode.js";
+import {
+  coreDataFetcherContract,
+  poolKeyIndexContract,
+} from "./contracts.js";
 import { type Env, getTokens, ServiceError } from "./core.js";
 import {
   buildPositionStateReadPlan,
   type IndexedPosition,
   positionTokenIdentifiers,
 } from "./position-state.js";
+import { assertWalletBatchEthCallInput } from "./wallet-compatibility.js";
 
 export interface PoolKeyInput {
   token0: string;
@@ -288,62 +299,379 @@ function uniqueTokenIdentifiers(
   });
 }
 
+/**
+ * Build the fresh on-chain pool-state read as an exact wallet_batch_eth_call
+ * argument object. The registerTool wrapper's structural walk stores any
+ * property named `read_calls` in KV and replaces it with a
+ * read_calls_reference, so the wallet fetches and executes the stored bundle
+ * verbatim and the agent never reassembles calldata or ABIs.
+ */
+export function buildPoolStateReadBundle(input: {
+  chainId: string;
+  poolId: Hex;
+  poolKey: { token0: Address; token1: Address; config: Hex };
+}) {
+  const dataFetcher = coreDataFetcherContract(input.chainId);
+  if (dataFetcher === undefined) return null;
+  const poolStateAbi = (dataFetcher.abi as Abi).filter(
+    (entry) => entry.type === "function" && entry.name === "poolState",
+  );
+  if (poolStateAbi.length !== 1) return null;
+  const data = encodeFunctionData({
+    abi: poolStateAbi,
+    functionName: "poolState",
+    args: [input.poolKey],
+  });
+  const readCalls = {
+    chain_id: input.chainId,
+    block_parameter: "pending",
+    calls: [
+      {
+        id: `ekubo-pool-state-${input.chainId}-${input.poolId}`,
+        to: dataFetcher.address,
+        data,
+        include_raw: true,
+        decode: functionResultDecodePlan(poolStateAbi, "poolState", {
+          semanticCodecs: [sqrtRatioFloatSemanticCodec("sqrtRatio")],
+        }),
+      },
+    ],
+  };
+  // Fail closed at build time: the bundle must already be a valid wallet
+  // argument object, or it must never leave this server.
+  assertWalletBatchEthCallInput(readCalls);
+  return {
+    available: true as const,
+    contract: {
+      address: dataFetcher.address,
+      name: "CoreDataFetcher",
+      function_name: "poolState",
+      resource_uri: dataFetcher.resourceUri,
+    },
+    block_parameter: "pending" as const,
+    read_calls: readCalls,
+    result_semantics: {
+      sqrtRatio:
+        "uint96 SqrtRatio float; the attached semantic codec yields the canonical Q128 fixed value",
+      tick: "int32 current pool tick",
+      liquidity: "uint128 currently active liquidity as a decimal string",
+    },
+    instruction:
+      "Hand read_calls_reference to wallet_batch_eth_call (read_calls_url as calls_url, content_keccak256 as expected_content_keccak256, same chain_id, no inline calls) and prefer its decoded values over the indexed pool_state snapshot. Never broadcast this read-only call.",
+  };
+}
+
 export async function getPool(
   env: Env,
   input: { chainId: string; coreAddress: string; poolId: string },
   fetcher: Fetcher = fetch,
 ) {
   const coreAddress = normalizeAddress(input.coreAddress);
+  const generation = coreGeneration(coreAddress);
+  if (generation === "unknown") {
+    throw new ServiceError(
+      "unsupported_core",
+      "This tool supports the v2 and v3 Ekubo Core deployments only",
+      { chain_id: input.chainId, core_address: coreAddress },
+    );
+  }
   const poolIdValue = unsigned(input.poolId, "pool_id");
   const poolId = numberToHex(poolIdValue, { size: 32 });
   const base = normalizedBase(env.EKUBO_API_URL);
-  const path = `/pools/${encodeURIComponent(input.chainId)}/${encodeURIComponent(coreAddress)}/${encodeURIComponent(poolId)}`;
-  const [keyResponse, positionsResponse] = await Promise.all([
-    fetchJson<Record<string, unknown>>(new URL(`${path}/key`, base), fetcher),
-    fetchJson<Record<string, unknown>>(
-      new URL(`${path}/positions?limit=1`, base),
-      fetcher,
+  const response = await fetchJson<Record<string, unknown>>(
+    new URL(
+      `/poolKeys/${encodeURIComponent(input.chainId)}/${encodeURIComponent(coreAddress)}/${encodeURIComponent(poolId)}`,
+      base,
     ),
-  ]);
-  if (!isRecord(keyResponse.pool_key)) {
+    fetcher,
+  );
+  if (!isRecord(response.pool_key)) {
     throw new ServiceError(
       "invalid_upstream_response",
       "Pool key response is missing pool_key",
     );
   }
-  const key = poolKeyFromApi(keyResponse.pool_key);
-  const derived = derivePoolId(key);
-  if (BigInt(derived.pool_id) !== poolIdValue) {
+  const key = poolKeyFromApi(response.pool_key);
+  const token0 = normalizeAddress(key.token0);
+  const token1 = normalizeAddress(key.token1);
+  const config =
+    generation === "v3" ? encodePoolConfig(key) : encodeV2PoolConfig(key);
+  assertUpstreamConfigMatches(generation, response.pool_key, config);
+  const derivedPoolId = derivePoolIdFromConfig(token0, token1, config);
+  if (BigInt(derivedPoolId) !== poolIdValue) {
     throw new ServiceError(
       "invalid_upstream_response",
       "Indexed pool key does not derive to the requested pool_id",
-      { requested_pool_id: poolId, derived_pool_id: derived.pool_id },
+      { requested_pool_id: poolId, derived_pool_id: derivedPoolId },
     );
   }
-  const positions = Array.isArray(positionsResponse.data)
-    ? positionsResponse.data
-    : [];
-  const firstPosition = positions[0];
-  const poolState = isRecord(firstPosition) && isRecord(firstPosition.pool_state)
-    ? firstPosition.pool_state
-    : null;
+  const poolKey = { token0, token1, config };
+  const poolState = isRecord(response.state) ? response.state : null;
+  const currentStateQuery =
+    generation === "v3"
+      ? (buildPoolStateReadBundle({
+          chainId: input.chainId,
+          poolId,
+          poolKey,
+        }) ?? {
+          available: false as const,
+          reason:
+            "No CoreDataFetcher deployment is cataloged for this chain; pool_state is the indexed snapshot",
+        })
+      : {
+          available: false as const,
+          reason:
+            "CoreDataFetcher reads the v3 Core only; pool_state is the indexed snapshot",
+        };
   return {
     chain_id: input.chainId,
     core_address: coreAddress,
+    core_generation: generation,
     pool_id: poolId,
     pool_id_decimal: poolIdValue.toString(),
-    pool_key: derived.pool_key,
-    decoded_config: derived.decoded_config,
+    pool_key: poolKey,
+    decoded_config: decodedConfigForGeneration(generation, key, config),
     pool_state: poolState,
     pool_state_note:
       poolState === null
-        ? "No indexed position was available to supply the pool-state snapshot"
-        : "Indexed snapshot returned with the pool's largest position",
+        ? "No indexed state snapshot is available for this pool yet; use current_state_query for fresh on-chain state"
+        : "Indexed snapshot from the pool-key row; execute current_state_query through the wallet for fresh on-chain state",
+    current_state_query: currentStateQuery,
     cache: {
       mcp_result_storage: "none",
       pool_key_upstream_max_age_seconds: 1800,
       pool_state_upstream_max_age_seconds: 180,
     },
+  };
+}
+
+export async function listPoolKeys(
+  env: Env,
+  input: {
+    chainId: string;
+    coreAddress: string;
+    tokenA?: string;
+    tokenB?: string;
+    extension?: string;
+    pageSize: number;
+    afterPoolId?: string;
+  },
+  fetcher: Fetcher = fetch,
+) {
+  const coreAddress = normalizeAddress(input.coreAddress);
+  const generation = coreGeneration(coreAddress);
+  if (generation === "unknown") {
+    throw new ServiceError(
+      "unsupported_core",
+      "Pool key discovery supports the v2 and v3 Ekubo Core deployments only",
+      { chain_id: input.chainId, core_address: coreAddress },
+    );
+  }
+  const tokenA =
+    input.tokenA === undefined ? undefined : normalizeAddress(input.tokenA);
+  const tokenB =
+    input.tokenB === undefined ? undefined : normalizeAddress(input.tokenB);
+  if (tokenA !== undefined && tokenA === tokenB) {
+    throw new ServiceError(
+      "invalid_pair",
+      "token_a and token_b must be different tokens",
+    );
+  }
+  const extensionFilter =
+    input.extension === undefined
+      ? undefined
+      : normalizeAddress(input.extension);
+  const afterPoolId =
+    input.afterPoolId === undefined
+      ? undefined
+      : numberToHex(unsigned(input.afterPoolId, "after_pool_id"), {
+          size: 32,
+        });
+  const url = new URL(
+    `/poolKeys/${encodeURIComponent(input.chainId)}/${encodeURIComponent(coreAddress)}`,
+    normalizedBase(env.EKUBO_API_URL),
+  );
+  if (tokenA !== undefined) url.searchParams.set("tokenA", tokenA);
+  if (tokenB !== undefined) url.searchParams.set("tokenB", tokenB);
+  if (extensionFilter !== undefined) {
+    url.searchParams.set("extension", extensionFilter);
+  }
+  if (afterPoolId !== undefined) url.searchParams.set("after", afterPoolId);
+  url.searchParams.set("limit", input.pageSize.toString());
+  const response = await fetchJson<Record<string, unknown>>(url, fetcher);
+  if (
+    !Array.isArray(response.pools) ||
+    typeof response.has_more !== "boolean" ||
+    (response.next_cursor !== null && typeof response.next_cursor !== "string")
+  ) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      "Pool key listing must contain pools, next_cursor, and has_more",
+    );
+  }
+  const pools = response.pools.map((entry, index) =>
+    normalizeListedPool(input.chainId, generation, entry, index),
+  );
+  const onchainIndex = poolKeyIndexContract(input.chainId);
+  return {
+    chain_id: input.chainId,
+    core_address: coreAddress,
+    core_generation: generation,
+    filters: {
+      token_a: tokenA ?? null,
+      token_b: tokenB ?? null,
+      extension: extensionFilter ?? null,
+    },
+    pools,
+    page: {
+      page_size: input.pageSize,
+      after_pool_id: afterPoolId ?? null,
+      next_after_pool_id:
+        typeof response.next_cursor === "string" ? response.next_cursor : null,
+      has_more: response.has_more,
+    },
+    pagination_note:
+      "Pools are ordered by ascending pool_id. Pass next_after_pool_id as after_pool_id to fetch the next page; pool ids are keccak hashes, so a newly initialized pool can land inside an already-fetched range within the upstream cache window.",
+    onchain_index:
+      onchainIndex === undefined
+        ? null
+        : {
+            address: onchainIndex.address,
+            contract: "PoolKeyIndex",
+            resource_uri: onchainIndex.resourceUri,
+            verification_functions: [
+              "isRegistered",
+              "poolKeyById",
+              "getPoolKeysByToken",
+              "getPoolKeysByExtension",
+            ],
+            note: "Optional on-chain registry for spot verification. Registration is opt-in, so it is not guaranteed complete; every returned pool_id above was already re-derived locally from its pool key, which is the stronger integrity check.",
+          },
+    cache: {
+      mcp_result_storage: "none",
+      upstream_max_age_seconds: 1800,
+    },
+  };
+}
+
+function normalizeListedPool(
+  chainId: string,
+  generation: "v2" | "v3",
+  value: unknown,
+  index: number,
+) {
+  if (!isRecord(value) || typeof value.pool_id !== "string") {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      `Pool key listing entry ${index} is malformed`,
+    );
+  }
+  if (!isRecord(value.pool_key)) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      `Pool key listing entry ${index} is missing pool_key`,
+    );
+  }
+  const key = poolKeyFromApi(value.pool_key);
+  const token0 = normalizeAddress(key.token0);
+  const token1 = normalizeAddress(key.token1);
+  if (BigInt(token0) >= BigInt(token1)) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      `Pool key listing entry ${index} has unsorted tokens`,
+    );
+  }
+  const config =
+    generation === "v3" ? encodePoolConfig(key) : encodeV2PoolConfig(key);
+  assertUpstreamConfigMatches(generation, value.pool_key, config);
+  const poolId = derivePoolIdFromConfig(token0, token1, config);
+  const indexedPoolId = unsigned(value.pool_id, "indexed pool_id");
+  if (BigInt(poolId) !== indexedPoolId) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      `Pool key listing entry ${index} does not derive to its indexed pool_id`,
+      { indexed_pool_id: value.pool_id, derived_pool_id: poolId },
+    );
+  }
+  const extension = normalizeAddress(key.extension ?? "0x0");
+  return {
+    pool_id: poolId,
+    pool_id_decimal: indexedPoolId.toString(),
+    pool_key: { token0, token1, config },
+    decoded_config: decodedConfigForGeneration(generation, key, config),
+    pool_type:
+      key.stableswapParams === null || key.stableswapParams === undefined
+        ? ("concentrated" as const)
+        : ("stableswap" as const),
+    extension: {
+      address: extension,
+      type: extensionType(generation, extension),
+      resource_uri:
+        BigInt(extension) === 0n
+          ? null
+          : `ekubo://contracts/evm/${chainId}/${extension}`,
+    },
+    indexed_state: isRecord(value.state) ? value.state : null,
+  };
+}
+
+/**
+ * When the index also serves the raw packed config word (v3 pools), it must
+ * be byte-identical to the config this server just encoded from the
+ * decomposed fields — a drift between the two means either the index or the
+ * local encoder is wrong, and nothing downstream should trust the row.
+ * Absent for legacy v2-core pools, whose events carried no packed config.
+ */
+function assertUpstreamConfigMatches(
+  generation: "v2" | "v3",
+  apiPoolKey: Record<string, unknown>,
+  config: Hex,
+) {
+  if (generation !== "v3") return;
+  const upstream = apiPoolKey.config;
+  if (typeof upstream !== "string" || upstream.length === 0) return;
+  if (upstream.toLowerCase() !== config.toLowerCase()) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      "Indexed pool config does not match the locally encoded PoolKey config",
+      { indexed_config: upstream, derived_config: config },
+    );
+  }
+}
+
+function coreGeneration(coreAddress: Address): "v2" | "v3" | "unknown" {
+  return coreAddress === V3_CORE_ADDRESS
+    ? "v3"
+    : coreAddress === V2_CORE_ADDRESS
+      ? "v2"
+      : "unknown";
+}
+
+function decodedConfigForGeneration(
+  generation: "v2" | "v3",
+  key: PoolKeyInput,
+  config: Hex,
+) {
+  if (generation === "v3") return decodePoolConfig(config);
+  const stableswapParams = key.stableswapParams ?? null;
+  return {
+    config,
+    version: "v2" as const,
+    extension: normalizeAddress(key.extension ?? "0x0"),
+    fee: unsigned(key.fee ?? 0, "pool fee").toString(),
+    tick_spacing:
+      stableswapParams === null
+        ? Number(unsigned(key.tickSpacing ?? 0, "tick_spacing"))
+        : null,
+    stableswap_params:
+      stableswapParams === null
+        ? null
+        : {
+            center_tick: stableswapParams.centerTick,
+            amplification: stableswapParams.amplification,
+          },
+    exact_integer_note:
+      "fee is a uint64 Q64 value and is intentionally serialized as a decimal string, never a JSON number",
   };
 }
 
@@ -611,12 +939,7 @@ function normalizePoolCandidate(
       `Pair pool candidate ${index} has invalid stableswap_params`,
     );
   }
-  const generation =
-    coreAddress === V3_CORE_ADDRESS
-      ? "v3"
-      : coreAddress === V2_CORE_ADDRESS
-        ? "v2"
-        : "unknown";
+  const generation = coreGeneration(coreAddress);
   if (generation === "unknown") {
     throw new ServiceError(
       "unsupported_core",

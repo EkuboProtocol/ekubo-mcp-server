@@ -116,9 +116,15 @@ schemas after a Git-triggered deployment.
   one atomic wallet-batch-capable plan; each withdrawal automatically collects
   ordinary fees or Ve33 rewards and includes its own pending validation
 - `ekubo_get_pool` — resolve an exact chain/core/pool ID to a verified PoolKey,
-  decoded config, and indexed state snapshot when available
+  decoded config, the latest indexed state snapshot, and a `current_state_query`
+  read bundle whose `read_calls_reference` the wallet executes for fresh
+  on-chain sqrtRatio, tick, and liquidity
 - `ekubo_get_pool_liquidity` — return tick-level net liquidity deltas for one
   exact pool
+- `ekubo_list_pool_keys` — enumerate a Core deployment's initialized pools
+  with keyset pagination (`after_pool_id`, ascending pool_id) and
+  token/pair/extension filters; every pool_id is re-derived locally from its
+  PoolKey before it is reported
 - `ekubo_derive_pool_id` — pack a PoolKey and derive its exact Keccak pool ID
 - `ekubo_decode_pool_config` — decode the extension, exact uint64 Q64 fee,
   v3 discriminator, and concentrated or stableswap parameters
@@ -196,7 +202,11 @@ responsible for current-state simulation, presenting the simulated result,
 collecting authorization or signature, signing, and submission.
 
 Prepared execution plan bodies are stored in Workers KV and served at
-`/plan/<id>` for a short TTL so wallets fetch them by reference; no other tool
+`/plan/<id>` for a short TTL so wallets fetch them by reference. Read-call
+bundles — exact `wallet_batch_eth_call` argument objects, validated against
+the wallet boundary before storage — are stored the same way at `/read/<id>`
+with their own TTL and returned as `read_calls_reference` objects whose
+`content_keccak256` binds the exact stored bytes; no other tool
 result is stored or replayed, and `/mcp` responses use
 `Cache-Control: no-store`. No fixed request quota is guaranteed; clients must
 honor HTTP 429 and `Retry-After: 60`. Owner positions use upstream `no-cache`

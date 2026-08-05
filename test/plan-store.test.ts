@@ -72,7 +72,9 @@ describe("plan store", () => {
     const stored = (await loadExecutionPlan(env, id)) ?? "";
     expect(stored).not.toBe("");
     expect(keccak256(stringToHex(stored))).toBe(reference.content_keccak256);
-    expect(reference.content_length).toBe(stored.length);
+    expect(reference.content_length).toBe(
+      new TextEncoder().encode(stored).length,
+    );
     expect(JSON.parse(stored)).toEqual(planFixture());
     expect(store.entries.get(`plan:${id}`)?.expirationTtl).toBe(
       PLAN_TTL_SECONDS,

@@ -179,6 +179,10 @@ export const walletExecutionPlanSchema = z.object({
   }
 });
 
+// Doubles as the exact stored-body contract for /read/<id> references: a
+// read-call bundle is valid only when it is this object and nothing more.
+// The wallet's body parser rejects unknown fields too, so fork_id, calls_url,
+// and any future tool-input field stay tool-call decisions on both sides.
 export const walletBatchEthCallInputSchema = z.object({
   chain_id: positiveChainId,
   block_parameter: z.union([

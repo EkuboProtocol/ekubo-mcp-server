@@ -10,6 +10,7 @@ import {
   getPoolLiquidity,
   getPositionPoolCandidates,
   getPositionsByOwner,
+  listPoolKeys,
 } from "../src/pools.js";
 
 const env = {
@@ -259,8 +260,71 @@ describe("pool and position reads", () => {
       (async (input: RequestInfo | URL) => {
         const url = input.toString();
         requested.push(url);
-        if (url.endsWith("/key")) {
-          return Response.json({
+        return Response.json({
+          pool_id: derived.pool_id,
+          pool_key: {
+            token0,
+            token1,
+            fee: "0x0",
+            tick_spacing: "0x400",
+            extension: token0,
+            stableswap_params: null,
+            config: derived.pool_key.config,
+          },
+          state: { sqrt_ratio: "18446744073709551616", tick: 0, liquidity: "10" },
+        });
+      }) as typeof fetch,
+    );
+
+    // One request to the pool-key route; the old positions side channel is gone.
+    expect(requested).toHaveLength(1);
+    expect(requested[0]).toContain(`/poolKeys/4663/${core}/`);
+    expect(requested[0]).not.toContain("positions");
+    expect(result.pool_id).toBe(derived.pool_id);
+    expect(result.core_generation).toBe("v3");
+    expect(result.pool_key.config).toBe(derived.pool_key.config);
+    expect(result.pool_state).toEqual({
+      sqrt_ratio: "18446744073709551616",
+      tick: 0,
+      liquidity: "10",
+    });
+
+    // Fresh-state read bundle: an exact wallet argument object targeting
+    // CoreDataFetcher.poolState, ready for the read-store walk.
+    const query = result.current_state_query;
+    if (query.available !== true) {
+      throw new Error("expected an available current_state_query");
+    }
+    expect(query.contract.address).toBe(
+      "0xF68F25CA6C817733b7B15a42191AE72A34d56a2B",
+    );
+    expect(query.read_calls.chain_id).toBe("4663");
+    expect(query.read_calls.block_parameter).toBe("pending");
+    expect(query.read_calls.calls).toHaveLength(1);
+    expect(query.read_calls.calls[0].to).toBe(query.contract.address);
+    expect(query.read_calls.calls[0].decode).toMatchObject({
+      kind: "function_result",
+      function_name: "poolState",
+    });
+    const codecs = query.read_calls.calls[0]?.decode.semantic_codecs ?? [];
+    expect(codecs[0]?.path).toBe("sqrtRatio");
+  });
+
+  it("refuses an indexed config word that contradicts the local encoding", async () => {
+    const derived = derivePoolId({
+      token0,
+      token1,
+      fee: "0",
+      extension: token0,
+      tickSpacing: 1024,
+    });
+    await expect(
+      getPool(
+        env,
+        { chainId: "4663", coreAddress: core, poolId: derived.pool_id },
+        (async () =>
+          Response.json({
+            pool_id: derived.pool_id,
             pool_key: {
               token0,
               token1,
@@ -268,27 +332,224 @@ describe("pool and position reads", () => {
               tick_spacing: "0x400",
               extension: token0,
               stableswap_params: null,
+              config:
+                "0x0000000000000000000000000000000000000000000000000000000080000800",
             },
-          });
-        }
+            state: null,
+          })) as unknown as typeof fetch,
+      ),
+    ).rejects.toMatchObject({ code: "invalid_upstream_response" });
+  });
+
+  it("marks the fresh-state query unavailable for a v2 core", async () => {
+    const v2Core = "0xe0e0e08A6A4b9Dc7bD67BCB7aadE5cF48157d444";
+    const config = encodeAbiParameters(
+      [
+        {
+          type: "tuple",
+          components: [
+            { name: "token0", type: "address" },
+            { name: "token1", type: "address" },
+            { name: "config", type: "bytes32" },
+          ],
+        },
+      ],
+      [
+        {
+          token0,
+          token1,
+          config: "0x0000000000000000000000000000000000000000000000000000000000000400",
+        },
+      ],
+    );
+    const poolId = keccak256(config);
+    const result = await getPool(
+      env,
+      { chainId: "4663", coreAddress: v2Core, poolId },
+      (async () =>
+        Response.json({
+          pool_id: poolId,
+          pool_key: {
+            token0,
+            token1,
+            fee: "0x0",
+            tick_spacing: "0x400",
+            extension: token0,
+            stableswap_params: null,
+          },
+          state: null,
+        })) as unknown as typeof fetch,
+    );
+    expect(result.core_generation).toBe("v2");
+    expect(result.pool_state).toBeNull();
+    expect(result.current_state_query).toMatchObject({ available: false });
+  });
+
+  it("lists pool keys with keyset pagination and local re-derivation", async () => {
+    const apiKey = (tickSpacing: string, config: string | null = null) => ({
+      token0,
+      token1,
+      fee: "0x0",
+      tick_spacing: tickSpacing,
+      extension: token0,
+      stableswap_params: null,
+      config,
+    });
+    const derivedA = derivePoolId({
+      token0,
+      token1,
+      fee: "0",
+      extension: token0,
+      tickSpacing: 1024,
+    });
+    const derivedB = derivePoolId({
+      token0,
+      token1,
+      fee: "0",
+      extension: token0,
+      tickSpacing: 2048,
+    });
+    const requested: string[] = [];
+    const result = await listPoolKeys(
+      env,
+      {
+        chainId: "8453",
+        coreAddress: core,
+        tokenA: token0,
+        pageSize: 2,
+        afterPoolId: "1",
+      },
+      (async (input: RequestInfo | URL) => {
+        requested.push(input.toString());
         return Response.json({
-          data: [
+          pools: [
             {
-              pool_state: { sqrt_ratio: "18446744073709551616", tick: 0, liquidity: "10" },
+              pool_id: derivedA.pool_id,
+              pool_key: apiKey("0x400", derivedA.pool_key.config),
+              state: { sqrt_ratio: "1", tick: 0, liquidity: "0" },
+            },
+            {
+              pool_id: derivedB.pool_id,
+              pool_key: apiKey("0x800"),
+              state: null,
             },
           ],
+          next_cursor: derivedB.pool_id,
+          has_more: true,
         });
       }) as typeof fetch,
     );
 
-    expect(requested).toHaveLength(2);
-    expect(result.pool_id).toBe(derived.pool_id);
-    expect(result.pool_key.config).toBe(derived.pool_key.config);
-    expect(result.pool_state).toEqual({
-      sqrt_ratio: "18446744073709551616",
+    const url = new URL(requested[0] ?? "");
+    expect(url.pathname).toBe(`/poolKeys/8453/${core}`);
+    expect(url.searchParams.get("tokenA")).toBe(token0);
+    expect(url.searchParams.get("tokenB")).toBeNull();
+    expect(url.searchParams.get("limit")).toBe("2");
+    expect(url.searchParams.get("after")).toBe(`0x${"0".repeat(63)}1`);
+
+    expect(result.core_generation).toBe("v3");
+    expect(result.pools).toHaveLength(2);
+    expect(result.pools[0]?.pool_id).toBe(derivedA.pool_id);
+    expect(result.pools[0]?.pool_key.config).toBe(derivedA.pool_key.config);
+    expect(result.pools[0]?.pool_type).toBe("concentrated");
+    expect(result.pools[0]?.indexed_state).toEqual({
+      sqrt_ratio: "1",
       tick: 0,
-      liquidity: "10",
+      liquidity: "0",
     });
+    expect(result.pools[1]?.indexed_state).toBeNull();
+    expect(result.page).toEqual({
+      page_size: 2,
+      after_pool_id: `0x${"0".repeat(63)}1`,
+      next_after_pool_id: derivedB.pool_id,
+      has_more: true,
+    });
+    // PoolKeyIndex is deployed on Base, so on-chain verification metadata
+    // appears there and only there.
+    expect(result.onchain_index?.address).toBe(
+      "0x898956fc2Aed01D5F81F556FF5dcB10534285718",
+    );
+  });
+
+  it("refuses a listed pool key that does not derive to its pool_id", async () => {
+    const derived = derivePoolId({
+      token0,
+      token1,
+      fee: "0",
+      extension: token0,
+      tickSpacing: 1024,
+    });
+    await expect(
+      listPoolKeys(
+        env,
+        { chainId: "1", coreAddress: core, pageSize: 100 },
+        (async () =>
+          Response.json({
+            pools: [
+              {
+                pool_id: derived.pool_id,
+                pool_key: {
+                  token0,
+                  token1,
+                  fee: "0x1",
+                  tick_spacing: "0x400",
+                  extension: token0,
+                  stableswap_params: null,
+                },
+              },
+            ],
+            next_cursor: derived.pool_id,
+            has_more: false,
+          })) as unknown as typeof fetch,
+      ),
+    ).rejects.toMatchObject({ code: "invalid_upstream_response" });
+  });
+
+  it("validates listing inputs before any upstream request", async () => {
+    const neverFetch = (async () => {
+      throw new Error("must not fetch");
+    }) as unknown as typeof fetch;
+    await expect(
+      listPoolKeys(
+        env,
+        {
+          chainId: "1",
+          coreAddress: core,
+          tokenA: token0,
+          tokenB: token0,
+          pageSize: 100,
+        },
+        neverFetch,
+      ),
+    ).rejects.toMatchObject({ code: "invalid_pair" });
+    await expect(
+      listPoolKeys(
+        env,
+        {
+          chainId: "1",
+          coreAddress: token1,
+          pageSize: 100,
+        },
+        neverFetch,
+      ),
+    ).rejects.toMatchObject({ code: "unsupported_core" });
+  });
+
+  it("returns an empty page without on-chain index metadata off Base", async () => {
+    const result = await listPoolKeys(
+      env,
+      { chainId: "1", coreAddress: core, pageSize: 100 },
+      (async () =>
+        Response.json({
+          pools: [],
+          next_cursor: null,
+          has_more: false,
+        })) as unknown as typeof fetch,
+    );
+    expect(result.pools).toHaveLength(0);
+    expect(result.page.next_after_pool_id).toBeNull();
+    expect(result.page.has_more).toBe(false);
+    expect(result.onchain_index).toBeNull();
   });
 
   it("returns tick liquidity deltas with their reconstruction semantics", async () => {
