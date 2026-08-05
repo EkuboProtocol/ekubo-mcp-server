@@ -269,6 +269,7 @@ describe("pool and position reads", () => {
             tick_spacing: "0x400",
             extension: token0,
             stableswap_params: null,
+            config: derived.pool_key.config,
           },
           state: { sqrt_ratio: "18446744073709551616", tick: 0, liquidity: "10" },
         });
@@ -307,6 +308,37 @@ describe("pool and position reads", () => {
     });
     const codecs = query.read_calls.calls[0]?.decode.semantic_codecs ?? [];
     expect(codecs[0]?.path).toBe("sqrtRatio");
+  });
+
+  it("refuses an indexed config word that contradicts the local encoding", async () => {
+    const derived = derivePoolId({
+      token0,
+      token1,
+      fee: "0",
+      extension: token0,
+      tickSpacing: 1024,
+    });
+    await expect(
+      getPool(
+        env,
+        { chainId: "4663", coreAddress: core, poolId: derived.pool_id },
+        (async () =>
+          Response.json({
+            pool_id: derived.pool_id,
+            pool_key: {
+              token0,
+              token1,
+              fee: "0x0",
+              tick_spacing: "0x400",
+              extension: token0,
+              stableswap_params: null,
+              config:
+                "0x0000000000000000000000000000000000000000000000000000000080000800",
+            },
+            state: null,
+          })) as unknown as typeof fetch,
+      ),
+    ).rejects.toMatchObject({ code: "invalid_upstream_response" });
   });
 
   it("marks the fresh-state query unavailable for a v2 core", async () => {
@@ -354,13 +386,14 @@ describe("pool and position reads", () => {
   });
 
   it("lists pool keys with keyset pagination and local re-derivation", async () => {
-    const apiKey = (tickSpacing: string) => ({
+    const apiKey = (tickSpacing: string, config: string | null = null) => ({
       token0,
       token1,
       fee: "0x0",
       tick_spacing: tickSpacing,
       extension: token0,
       stableswap_params: null,
+      config,
     });
     const derivedA = derivePoolId({
       token0,
@@ -385,7 +418,6 @@ describe("pool and position reads", () => {
         tokenA: token0,
         pageSize: 2,
         afterPoolId: "1",
-        includeState: true,
       },
       (async (input: RequestInfo | URL) => {
         requested.push(input.toString());
@@ -393,7 +425,7 @@ describe("pool and position reads", () => {
           pools: [
             {
               pool_id: derivedA.pool_id,
-              pool_key: apiKey("0x400"),
+              pool_key: apiKey("0x400", derivedA.pool_key.config),
               state: { sqrt_ratio: "1", tick: 0, liquidity: "0" },
             },
             {
@@ -413,7 +445,6 @@ describe("pool and position reads", () => {
     expect(url.searchParams.get("tokenA")).toBe(token0);
     expect(url.searchParams.get("tokenB")).toBeNull();
     expect(url.searchParams.get("limit")).toBe("2");
-    expect(url.searchParams.get("includeState")).toBe("true");
     expect(url.searchParams.get("after")).toBe(`0x${"0".repeat(63)}1`);
 
     expect(result.core_generation).toBe("v3");
@@ -451,7 +482,7 @@ describe("pool and position reads", () => {
     await expect(
       listPoolKeys(
         env,
-        { chainId: "1", coreAddress: core, pageSize: 100, includeState: false },
+        { chainId: "1", coreAddress: core, pageSize: 100 },
         (async () =>
           Response.json({
             pools: [
@@ -487,7 +518,6 @@ describe("pool and position reads", () => {
           tokenA: token0,
           tokenB: token0,
           pageSize: 100,
-          includeState: true,
         },
         neverFetch,
       ),
@@ -499,7 +529,6 @@ describe("pool and position reads", () => {
           chainId: "1",
           coreAddress: token1,
           pageSize: 100,
-          includeState: true,
         },
         neverFetch,
       ),
@@ -509,7 +538,7 @@ describe("pool and position reads", () => {
   it("returns an empty page without on-chain index metadata off Base", async () => {
     const result = await listPoolKeys(
       env,
-      { chainId: "1", coreAddress: core, pageSize: 100, includeState: false },
+      { chainId: "1", coreAddress: core, pageSize: 100 },
       (async () =>
         Response.json({
           pools: [],

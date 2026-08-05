@@ -422,12 +422,6 @@ export const listPoolKeysSchema = z.object({
     .describe(
       "Keyset cursor: return pools whose pool_id is strictly greater; pass the previous page's next_after_pool_id",
     ),
-  include_state: z
-    .boolean()
-    .default(true)
-    .describe(
-      "Include each pool's indexed sqrt_ratio/tick/liquidity snapshot",
-    ),
 });
 
 export const derivePoolIdSchema = z.object({
@@ -1279,7 +1273,7 @@ export const publicToolCatalog = [
     name: "ekubo_list_pool_keys",
     title: "List Ekubo pool keys",
     description:
-      "Discover initialized pools for one chain and Core deployment with keyset pagination: pools are ordered by ascending pool_id and after_pool_id fetches the next page. Filter by one token, an exact pair, or an extension (zero address means extensionless). Every returned pool_id is independently re-derived from its PoolKey, and each row optionally carries the indexed state snapshot.",
+      "Discover initialized pools for one chain and Core deployment with keyset pagination: pools are ordered by ascending pool_id and after_pool_id fetches the next page. Filter by one token, an exact pair, or an extension (zero address means extensionless). Every returned pool_id is independently re-derived from its PoolKey, and each row carries the indexed state snapshot (null until the pool has indexed state).",
     inputSchema: z.toJSONSchema(listPoolKeysSchema),
     _meta: toolCatalogMetadata,
   },
@@ -2076,7 +2070,6 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
           extension: input.extension,
           pageSize: input.page_size,
           afterPoolId: input.after_pool_id,
-          includeState: input.include_state,
         }),
       ),
   );

@@ -396,6 +396,7 @@ export async function getPool(
   const token1 = normalizeAddress(key.token1);
   const config =
     generation === "v3" ? encodePoolConfig(key) : encodeV2PoolConfig(key);
+  assertUpstreamConfigMatches(generation, response.pool_key, config);
   const derivedPoolId = derivePoolIdFromConfig(token0, token1, config);
   if (BigInt(derivedPoolId) !== poolIdValue) {
     throw new ServiceError(
@@ -454,7 +455,6 @@ export async function listPoolKeys(
     extension?: string;
     pageSize: number;
     afterPoolId?: string;
-    includeState: boolean;
   },
   fetcher: Fetcher = fetch,
 ) {
@@ -498,7 +498,6 @@ export async function listPoolKeys(
   }
   if (afterPoolId !== undefined) url.searchParams.set("after", afterPoolId);
   url.searchParams.set("limit", input.pageSize.toString());
-  url.searchParams.set("includeState", input.includeState ? "true" : "false");
   const response = await fetchJson<Record<string, unknown>>(url, fetcher);
   if (
     !Array.isArray(response.pools) ||
@@ -584,6 +583,7 @@ function normalizeListedPool(
   }
   const config =
     generation === "v3" ? encodePoolConfig(key) : encodeV2PoolConfig(key);
+  assertUpstreamConfigMatches(generation, value.pool_key, config);
   const poolId = derivePoolIdFromConfig(token0, token1, config);
   const indexedPoolId = unsigned(value.pool_id, "indexed pool_id");
   if (BigInt(poolId) !== indexedPoolId) {
@@ -613,6 +613,30 @@ function normalizeListedPool(
     },
     indexed_state: isRecord(value.state) ? value.state : null,
   };
+}
+
+/**
+ * When the index also serves the raw packed config word (v3 pools), it must
+ * be byte-identical to the config this server just encoded from the
+ * decomposed fields — a drift between the two means either the index or the
+ * local encoder is wrong, and nothing downstream should trust the row.
+ * Absent for legacy v2-core pools, whose events carried no packed config.
+ */
+function assertUpstreamConfigMatches(
+  generation: "v2" | "v3",
+  apiPoolKey: Record<string, unknown>,
+  config: Hex,
+) {
+  if (generation !== "v3") return;
+  const upstream = apiPoolKey.config;
+  if (typeof upstream !== "string" || upstream.length === 0) return;
+  if (upstream.toLowerCase() !== config.toLowerCase()) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      "Indexed pool config does not match the locally encoded PoolKey config",
+      { indexed_config: upstream, derived_config: config },
+    );
+  }
 }
 
 function coreGeneration(coreAddress: Address): "v2" | "v3" | "unknown" {
