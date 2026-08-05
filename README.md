@@ -238,6 +238,13 @@ checking and exact-plan simulation. The wallet—not this
 server—controls target, spender, selector, native-value, signing, and submission
 authorization.
 
+**Important:** See [`docs/lp-position-bounds.md`](docs/lp-position-bounds.md) for
+how to calculate correct tick bounds. Ticks encode prices that must account for
+token decimal differences. For example, an ETH/USDC pair with ETH at 18 decimals
+and USDC at 6 decimals requires adjusting the price ratio by a factor of 10^(6-18)
+before converting to ticks, resulting in tick values around -20M, not +76K. Incorrect
+tick calculations cause deposits to fail or create positions at unintended prices.
+
 If one side must be acquired first, prepare and execute that swap as a separate
 wallet plan. Wait for its successful receipt, measure the actual token balance,
 reserve native gas, and only then size and prepare the LP deposit. Never use an
