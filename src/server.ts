@@ -1313,7 +1313,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_lp_position_deposit",
     title: "Prepare an LP position deposit",
     description:
-      "Prepare a new v3 position mint or add liquidity to an existing position in one first-class workflow. Resolves and verifies an indexed pool or derives an exact supplied PoolKey, initializes a new pool at initial_tick when requested, selects Positions or Ve33Positions, computes a nonzero minimum liquidity, and returns every approval, execution, refund, and cleanup transaction. No Cast encoding is required.",
+      "Prepare a new v3 position mint or add liquidity to an existing position in one first-class workflow. Resolves and verifies an indexed pool or derives an exact supplied PoolKey, initializes a new pool at initial_tick when requested, selects Positions or Ve33Positions, computes a nonzero minimum liquidity, and returns every approval, execution, refund, and cleanup transaction. No Cast encoding is required. Ekubo ticks use base 1.000001, so tick = ln(price in base units) x 10^6 and a Uniswap-style 1.0001 calculation is 100x too small. A position's token ratio follows the range and the current pool price, not the amounts deposited, so when a target composition matters do every swap first, re-read the tick with the pool's current_state_query, and mint once against that tick: a swap after the mint moves the tick and re-skews the position immediately.",
     inputSchema: z.toJSONSchema(prepareLpPositionDepositSchema),
     _meta: toolCatalogMetadata,
   },

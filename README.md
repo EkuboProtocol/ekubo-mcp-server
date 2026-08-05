@@ -260,6 +260,11 @@ wallet plan. Wait for its successful receipt, measure the actual token balance,
 reserve native gas, and only then size and prepare the LP deposit. Never use an
 unconfirmed quote output as though it were a settled wallet balance.
 
+Finish every swap before minting, and re-read the pool tick with
+`current_state_query` afterwards — a position's token ratio follows the range
+and the current price, not the amounts deposited, so a swap made after the mint
+moves the tick and re-skews the position it was meant to balance.
+
 For an existing position, call `ekubo_prepare_lp_position_earnings_claim` with
 the connected owner, chain, manager, and token ID from the owner-position list.
 It automatically selects standard fee collection or Ve33 reward claiming. Run
