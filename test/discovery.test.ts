@@ -1,4 +1,6 @@
+import { fakePlanStore } from "./fake-kv.js";
 import { describe, expect, it } from "bun:test";
+import { keccak256, stringToHex } from "viem";
 import worker from "../src/index.js";
 import {
   getTokensSchema,
@@ -22,6 +24,7 @@ import {
 } from "../src/version.js";
 
 const env = {
+  PLAN_STORE: fakePlanStore(),
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
   ZERO_X_API_KEY: "zero-x-test-key",
@@ -512,9 +515,11 @@ describe("Worker discovery", () => {
     expect(initializeResult.result.instructions).toContain(
       "wallet must never construct calldata",
     );
-    expect(initializeResult.result.instructions).toContain("execution_plan");
     expect(initializeResult.result.instructions).toContain(
-      "plan_id commits to the chain",
+      "execution_plan_reference",
+    );
+    expect(initializeResult.result.instructions).toContain(
+      "content_keccak256",
     );
     expect(initializeResult.result.instructions).toContain(
       "Do not ask the user for a separate agent-level confirmation",
@@ -799,9 +804,14 @@ describe("Worker discovery", () => {
         structuredContent: {
           action: string;
           transaction: { chain_id: string; data: string };
-          execution_plan: {
+          execution_plan?: unknown;
+          execution_plan_reference: {
+            kind: string;
+            execution_plan_url: string;
+            content_keccak256: `0x${string}`;
             chain_id: string;
-            ordered_steps: { kind: string }[];
+            sender: string;
+            step_count: number;
           };
         };
       };
@@ -813,10 +823,48 @@ describe("Worker discovery", () => {
     expect(splitResult.result.structuredContent.transaction.data).toStartWith(
       "0x",
     );
-    expect(splitResult.result.structuredContent.execution_plan).toMatchObject({
+    // The plan body must not travel through the agent: only a reference does.
+    expect(splitResult.result.structuredContent.execution_plan).toBeUndefined();
+    const reference =
+      splitResult.result.structuredContent.execution_plan_reference;
+    expect(reference).toMatchObject({
+      kind: "ekubo_execution_plan_reference",
+      chain_id: "4663",
+      sender: "0x1111111111111111111111111111111111111111",
+      step_count: 1,
+    });
+    expect(reference.execution_plan_url).toMatch(
+      /^https:\/\/mcp\.ekubo\.org\/plan\/[0-9a-f-]{36}$/,
+    );
+
+    // The wallet-side fetch: the stored body is served byte-for-byte, its
+    // keccak256 matches the reference, and it parses to the exact plan.
+    const planFetch = await worker.fetch(
+      new Request(reference.execution_plan_url),
+      env,
+      context,
+    );
+    expect(planFetch.status).toBe(200);
+    const planBody = await planFetch.text();
+    expect(keccak256(stringToHex(planBody))).toBe(reference.content_keccak256);
+    expect(JSON.parse(planBody)).toMatchObject({
+      schema_version: "1",
       chain_id: "4663",
       ordered_steps: [{ kind: "execution" }],
     });
+
+    const missingPlan = await worker.fetch(
+      new Request(
+        "https://mcp.ekubo.org/plan/00000000-0000-4000-8000-000000000000",
+      ),
+      env,
+      context,
+    );
+    expect(missingPlan.status).toBe(404);
+    const missingBody = (await missingPlan.json()) as {
+      error: { code: string };
+    };
+    expect(missingBody.error.code).toBe("plan_not_found_or_expired");
 
     const mismatchedCaip = await worker.fetch(
       new Request("https://mcp.ekubo.org/mcp", {

@@ -1,3 +1,4 @@
+import { fakePlanStore } from "./fake-kv.js";
 import { describe, expect, it } from "bun:test";
 import { numberToHex } from "viem";
 import {
@@ -26,6 +27,7 @@ import {
 } from "../src/ui-actions.js";
 
 const env = {
+  PLAN_STORE: fakePlanStore(),
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
   ZERO_X_API_KEY: "unused",

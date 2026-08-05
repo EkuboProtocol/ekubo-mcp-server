@@ -1,3 +1,4 @@
+import { fakePlanStore } from "./fake-kv.js";
 import { describe, expect, it } from "bun:test";
 import {
   decodeFunctionData,
@@ -341,6 +342,7 @@ describe("ve(3,3) call generation", () => {
     let requestedUrl = "";
     const result = await prepareAllVe33FeeClaims(
       {
+        PLAN_STORE: fakePlanStore(),
         EKUBO_API_URL: "https://api.test",
         EKUBO_QUOTER_URL: "https://quoter.test",
         ZERO_X_API_KEY: "unused",
@@ -438,6 +440,7 @@ describe("ve(3,3) call generation", () => {
     const amount = "987654321";
     const result = await prepareVe33Reinvest(
       {
+        PLAN_STORE: fakePlanStore(),
         EKUBO_API_URL: "https://api.test",
         EKUBO_QUOTER_URL: "https://quoter.test",
         ZERO_X_API_KEY: "unused",
@@ -515,6 +518,7 @@ describe("ve(3,3) call generation", () => {
         },
       })) as typeof fetch;
     const env = {
+      PLAN_STORE: fakePlanStore(),
       EKUBO_API_URL: "https://api.test",
       EKUBO_QUOTER_URL: "https://quoter.test",
       ZERO_X_API_KEY: "unused",

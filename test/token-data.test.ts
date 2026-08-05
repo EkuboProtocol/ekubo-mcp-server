@@ -1,3 +1,4 @@
+import { fakePlanStore } from "./fake-kv.js";
 import { describe, expect, it } from "bun:test";
 import { decodeFunctionData } from "viem";
 import { tokenDataFetcherContract } from "../src/contracts.js";
@@ -9,6 +10,7 @@ const spender = "0x2222222222222222222222222222222222222222";
 const token = "0x3333333333333333333333333333333333333333";
 const nativeToken = "0x0000000000000000000000000000000000000000";
 const env = {
+  PLAN_STORE: fakePlanStore(),
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
   ZERO_X_API_KEY: "unused",

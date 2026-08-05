@@ -424,7 +424,7 @@ export function preparePoolInitialization(input: {
       instruction:
         "Pass this complete plan to the wallet for current-state simulation, presentation, authorization, and submission. Verify the initial tick because the first successful initialization fixes the pool price.",
       calldata_complete:
-        "All calldata is complete. Pass execution_plan directly to wallet tooling; do not reconstruct maybeInitializePool with Cast or another encoder.",
+        "All calldata is complete. Pass execution_plan_reference (execution_plan_url plus content_keccak256) directly to wallet tooling; do not reconstruct maybeInitializePool with Cast or another encoder.",
     },
   };
 }
@@ -970,7 +970,7 @@ export async function prepareLpPositionDeposit(
       instruction:
         "Pass the complete plan to the wallet's simulation and authorization flow. Do not ask for separate agent-level confirmation; the wallet presents the simulated result and collects authorization or signature.",
       calldata_complete:
-        "All calldata is complete. Pass execution_plan directly to wallet tooling; do not reconstruct it with Cast or another encoder.",
+        "All calldata is complete. Pass execution_plan_reference (execution_plan_url plus content_keccak256) directly to wallet tooling; do not reconstruct it with Cast or another encoder.",
     },
   };
 }
@@ -1202,7 +1202,7 @@ export async function prepareLpPositionEarningsClaim(
       instruction:
         "Pass the current decoded fees or rewards and the complete plan to the wallet's simulation and authorization flow. Do not ask for separate agent-level confirmation.",
       calldata_complete:
-        "All calldata is complete. Pass execution_plan directly to wallet tooling; do not reconstruct it with Cast or another encoder.",
+        "All calldata is complete. Pass execution_plan_reference (execution_plan_url plus content_keccak256) directly to wallet tooling; do not reconstruct it with Cast or another encoder.",
     },
   };
 }
@@ -1326,7 +1326,7 @@ export async function prepareLpPositionWithdraw(
         ...withdrawal.onchain_validation,
       })),
       instruction:
-        "Execute every current_state_query at pending and require every individual ownership, liquidity, and earnings check to pass. Then simulate the exact complete execution_plan as one batch immediately before authorization and submission; discard the whole plan if any value changed.",
+        "Execute every current_state_query at pending and require every individual ownership, liquidity, and earnings check to pass. Then have the wallet simulate the exact complete plan as one batch immediately before authorization and submission; discard the whole plan if any value changed.",
     },
     wallet_policy_requirements: {
       allowed_chain_id: input.chainId,
@@ -1356,9 +1356,9 @@ export async function prepareLpPositionWithdraw(
     },
     wallet_handoff: {
       instruction:
-        "Pass every validated withdrawal and the complete multi-call execution_plan to the wallet. The calls may target unrelated positions or managers; the wallet is allowed to batch them into one transaction. Do not ask for separate agent-level confirmation.",
+        "Pass every validated withdrawal and the complete multi-call plan's execution_plan_reference to the wallet. The calls may target unrelated positions or managers; the wallet is allowed to batch them into one transaction. Do not ask for separate agent-level confirmation.",
       calldata_complete:
-        "All calldata and the complete ordered transaction list are supplied. Pass execution_plan directly to wallet tooling; do not reconstruct, omit, or add calls.",
+        "All calldata and the complete ordered transaction list are supplied. Pass execution_plan_reference (execution_plan_url plus content_keccak256) directly to wallet tooling; do not reconstruct, omit, or add calls.",
     },
   };
 }
@@ -1586,7 +1586,7 @@ async function prepareSingleLpPositionWithdraw(
       instruction:
         "Pass requested liquidity, its share of current liquidity, expected principal and earnings, recipient, manager, exact call, plan_id, and the complete plan to the wallet. Do not ask for separate agent-level confirmation.",
       calldata_complete:
-        "All calldata and the complete transaction list are supplied. Pass execution_plan directly to wallet tooling; do not reconstruct or add calls with Cast or another encoder.",
+        "All calldata and the complete transaction list are supplied. Pass execution_plan_reference (execution_plan_url plus content_keccak256) directly to wallet tooling; do not reconstruct or add calls with Cast or another encoder.",
     },
   };
 }

@@ -1,3 +1,4 @@
+import { fakePlanStore } from "./fake-kv.js";
 import { describe, expect, it } from "bun:test";
 import { encodeAbiParameters, keccak256 } from "viem";
 import type { Env } from "../src/core.js";
@@ -12,6 +13,7 @@ import {
 } from "../src/pools.js";
 
 const env = {
+  PLAN_STORE: fakePlanStore(),
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
   ZERO_X_API_KEY: "unused",

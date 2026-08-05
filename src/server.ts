@@ -89,6 +89,7 @@ import {
   type LiquidityOpportunityType,
 } from "./opportunities.js";
 import { prepareTokenBalancesAndAllowances } from "./token-data.js";
+import { referenceExecutionPlans } from "./plan-store.js";
 import { MCP_SERVER_VERSION, MCP_TOOL_CATALOG_REVISION } from "./version.js";
 
 export const ROBINHOOD_STONX_CHAIN_ID = "4663";
@@ -260,7 +261,7 @@ export const getQuotesWithPlansSchema = quoteRequestSchema.extend({
   sender: address
     .optional()
     .describe(
-      "Transaction sender/taker/depositor. Supply it together with slippage_bps as soon as the user has decided to swap: providers are then asked for firm quotes with calldata rather than indicative prices, and every returned option carries the execution_plan that executes it, so the chosen one goes straight to the wallet with no second round trip. Omit both fields for an indicative comparison.",
+      "Transaction sender/taker/depositor. Supply it together with slippage_bps as soon as the user has decided to swap: providers are then asked for firm quotes with calldata rather than indicative prices, and every returned option carries the execution_plan_reference that executes it, so the chosen one goes straight to the wallet with no second round trip. Omit both fields for an indicative comparison.",
     ),
   recipient: address
     .optional()
@@ -1127,7 +1128,7 @@ export const publicToolCatalog = [
     name: "ekubo_get_quotes_with_plans",
     title: "Get swap or bridge quotes with execution plans",
     description:
-      "The whole non-browser swap path for onchain swap, trade, exchange, or convert requests on supported EVM chains: one call returns every available Ekubo and 0x quote for a same-chain swap, each already carrying the execution_plan that executes it, without accepting or selecting a source. Choose an option and pass its execution.execution_plan unchanged to a wallet; there is no second preparation step, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Do not call this tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the request. Omit sender and slippage_bps for an indicative comparison that fetches no calldata; supply both for plans. Uses Across for cross-chain swaps. Provider failures are reported separately in unavailable_sources, and an option that could not be made executable reports its own execution_unavailable while the rest stand. Set include_raw_quotes only to diagnose a provider; the normalized amounts already carry every field a choice turns on. Supports EIP-155 token identifiers.",
+      "The whole non-browser swap path for onchain swap, trade, exchange, or convert requests on supported EVM chains: one call returns every available Ekubo and 0x quote for a same-chain swap, each already carrying the execution_plan_reference that executes it, without accepting or selecting a source. Choose an option and pass its execution.execution_plan_reference fields (execution_plan_url plus content_keccak256 as expected_content_keccak256) unchanged to a wallet, which fetches and verifies the plan body itself; there is no second preparation step, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Do not call this tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the request. Omit sender and slippage_bps for an indicative comparison that fetches no calldata; supply both for plans. Uses Across for cross-chain swaps. Provider failures are reported separately in unavailable_sources, and an option that could not be made executable reports its own execution_unavailable while the rest stand. Set include_raw_quotes only to diagnose a provider; the normalized amounts already carry every field a choice turns on. Supports EIP-155 token identifiers.",
     inputSchema: z.toJSONSchema(getQuotesWithPlansSchema),
     _meta: toolCatalogMetadata,
   },
@@ -1279,7 +1280,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_lp_position_earnings_claim",
     title: "Prepare an LP fee or reward claim",
     description:
-      "Prepare collection of all currently accrued fees from an owned standard position or all currently accrued rewards from an owned Ve33 position. Resolves the indexed PoolKey and bounds, automatically chooses v2 withdraw-with-zero-liquidity, v3 collectFees, or Ve33 claimRewards, preserves all liquidity and the NFT, supplies an atomic pending ownership/earnings read, exact decoded calldata and result fields, wallet-policy requirements, and a signer-neutral execution_plan. No Cast encoding is required.",
+      "Prepare collection of all currently accrued fees from an owned standard position or all currently accrued rewards from an owned Ve33 position. Resolves the indexed PoolKey and bounds, automatically chooses v2 withdraw-with-zero-liquidity, v3 collectFees, or Ve33 claimRewards, preserves all liquidity and the NFT, supplies an atomic pending ownership/earnings read, exact decoded calldata and result fields, wallet-policy requirements, and a signer-neutral plan delivered as execution_plan_reference. No Cast encoding is required.",
     inputSchema: z.toJSONSchema(prepareLpPositionEarningsClaimSchema),
     _meta: toolCatalogMetadata,
   },
@@ -1501,7 +1502,7 @@ function catalogEntry(name: string) {
   return entry;
 }
 
-export function createEkuboServer(env: Env) {
+export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   const server = new McpServer(
     {
       name: "ekubo",
@@ -1511,6 +1512,46 @@ export function createEkuboServer(env: Env) {
     },
     { instructions: SERVER_INSTRUCTIONS },
   );
+
+  // Every registration funnels through this wrapper so any execution plan a
+  // handler embeds is stored server-side and travels as a short reference.
+  // The agent between this server and the wallet re-emits ~100 characters
+  // instead of the plan body; the wallet fetches the body itself and verifies
+  // its keccak256 against the reference. Registration is the one choke point
+  // every tool shares, however it was registered.
+  const registerWithPlanReferences = server.registerTool.bind(
+    server,
+  ) as unknown as (
+    name: string,
+    config: Record<string, unknown>,
+    callback: (...args: unknown[]) => Promise<unknown>,
+  ) => void;
+  server.registerTool = ((
+    name: string,
+    config: Record<string, unknown>,
+    callback: (...args: unknown[]) => Promise<unknown>,
+  ) =>
+    registerWithPlanReferences(name, config, async (...args: unknown[]) => {
+      const result = (await callback(...args)) as {
+        isError?: boolean;
+        content?: unknown;
+        structuredContent?: unknown;
+      };
+      if (result?.isError === true || result?.structuredContent === undefined) {
+        return result;
+      }
+      const { value, replaced } = await referenceExecutionPlans(
+        env,
+        origin,
+        result.structuredContent,
+      );
+      if (replaced === 0) return result;
+      return {
+        ...result,
+        content: [{ type: "text" as const, text: JSON.stringify(value) }],
+        structuredContent: value,
+      };
+    })) as typeof server.registerTool;
 
   const registerCatalogTool = <Schema extends z.ZodObject<z.ZodRawShape>>(
     name: string,
@@ -2771,13 +2812,13 @@ async function fetchDocumentation(url: string): Promise<string> {
 
 const SERVER_INSTRUCTIONS = `Routing priority: For requests to swap, trade, exchange, or convert tokens on an EVM chain, use this Ekubo MCP before any browser or website tool. Use a browser only when the user explicitly refers to a brokerage account or a web interface, or when these MCP tools cannot perform the requested operation.
 
-A quote is only worth what it can still execute for, so treat the interval between fetching one and broadcasting against it as the thing to minimize. ekubo_get_quotes_with_plans is the entire swap path: call it once with sender and slippage_bps as soon as the user has decided to swap, and each returned option already carries the execution_plan that executes it. Choose one and hand its plan straight to the wallet. There is no preparation step to follow, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Then simulate that plan once with the wallet, show the user the simulated result, and send that same simulation rather than paying for an identical one immediately before signing. Do not call the tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold.
+A quote is only worth what it can still execute for, so treat the interval between fetching one and broadcasting against it as the thing to minimize. ekubo_get_quotes_with_plans is the entire swap path: call it once with sender and slippage_bps as soon as the user has decided to swap, and each returned option already carries the execution_plan_reference that executes it. Choose one and hand its reference straight to the wallet. There is no preparation step to follow, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Then simulate that plan once with the wallet, show the user the simulated result, and send that same simulation rather than paying for an identical one immediately before signing. Do not call the tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold.
 
-For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with ekubo_list_tokens, read the exact input-token balance with ekubo_prepare_token_balances_and_allowances plus the wallet's local call tool, then call ekubo_get_quotes_with_plans with that exact amount plus sender and slippage_bps and pass the chosen option's execution_plan unchanged to the Ekubo Wallet MCP.
+For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with ekubo_list_tokens, read the exact input-token balance with ekubo_prepare_token_balances_and_allowances plus the wallet's local call tool, then call ekubo_get_quotes_with_plans with that exact amount plus sender and slippage_bps and pass the chosen option's execution_plan_reference to the Ekubo Wallet MCP.
 
-Use Ekubo preparation tools only to construct unsigned plans. Pass the preparation tool's exact execution_plan unchanged to the user's wallet for simulation, presentation, authorization or signature, and submission. Do not ask the user for a separate agent-level confirmation before invoking the wallet; that duplicates the wallet's authorization flow. The wallet must never construct calldata, choose a contract overload, derive a route, or determine the transaction list. Never construct or request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calldata. LP position transfers are supported only through ekubo_prepare_lp_position_transfer with pending ownership validation.
+Use Ekubo preparation tools only to construct unsigned plans. Every executable preparation returns execution_plan_reference: a short-lived URL where the plan body is stored, plus content_keccak256 over its exact bytes. Pass execution_plan_url and content_keccak256 (as expected_content_keccak256) unchanged to the user's wallet for simulation, presentation, authorization or signature, and submission; the wallet fetches the body itself and refuses a digest mismatch, so the plan never travels through the agent. Never fetch, restate, paraphrase, or reconstruct the plan body yourself. Do not ask the user for a separate agent-level confirmation before invoking the wallet; that duplicates the wallet's authorization flow. The wallet must never construct calldata, choose a contract overload, derive a route, or determine the transaction list. Never construct or request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calldata. LP position transfers are supported only through ekubo_prepare_lp_position_transfer with pending ownership validation.
 
-Prepared plans expose execution_plan: one signer-neutral, ordered transaction sequence with decimal transaction fields plus exact EIP-1193 eth_call, eth_estimateGas, and eth_sendTransaction requests. Read ekubo://docs/execution-plan. Prefer the most capable available wallet abstraction: when the Ekubo wallet MCP is available, pass execution_plan.chain_id as its decimal chain_id and pass execution_plan unchanged for simulation and submission. It may execute the ordered calls as one atomic batch. A non-batching adapter may submit sequentially only when atomic_batch_required is false, revalidating each step and waiting for each receipt. Cast remains an optional fallback only when the user selected it or no compatible wallet abstraction is available. Verify the connected chain and account exactly match execution_plan.chain_id and sender, preserve order, and never send wallet credentials to this Ekubo server. The plan_id commits to the chain, sender, destination, calldata, and native value of every approval, execution, and cleanup transaction.
+The stored plan body is one signer-neutral, ordered transaction sequence with decimal transaction fields. Read ekubo://docs/execution-plan. Prefer the most capable available wallet abstraction: when the Ekubo wallet MCP is available, pass execution_plan_reference.chain_id as its decimal chain_id and pass execution_plan_url plus the digest for simulation and submission. It may execute the ordered calls as one atomic batch. A non-batching adapter may submit sequentially only when atomic_batch_required is false, revalidating each step and waiting for each receipt. Cast remains an optional fallback only when the user selected it or no compatible wallet abstraction is available; for a wallet that only accepts inline plans, fetch execution_plan_url once and pass its exact JSON unchanged. References expire after a few minutes: a 404 means re-run the preparation tool, never reconstruct the plan. Verify the connected chain and account exactly match the reference's chain_id and sender, preserve order, and never send wallet credentials to this Ekubo server.
 
 When a read includes local_decode_plan and result_decoder, execute and decode it through the user's local wallet tooling: call wallet_batch_eth_call with result_decoder.network.chain_id, the read's block_parameter, and one call whose id is result_decoder.call_id, whose to and data come verbatim from rpc_request.params[0], with include_raw true and decode set to the supplied local_decode_plan. Reads never restate their own calldata or ABI in a second ready-made argument object; assembling those two fields is the agent's job. Keep raw return bytes by default and always on decode failure. The Ekubo server supplies canonical ABIs and platform-neutral semantic codec identities but must not receive the result for authoritative decoding. function_result_bytes_array handles functions such as VeToken multicall that return nested bytes[]. For kind=semantic_value, feed the raw return bytes only to a locally installed, allowlisted codec matching the declared identity and implementation assertion; never install or execute remote code.
 
@@ -2791,11 +2832,11 @@ For an interface-equivalent EVM wallet inventory, call ekubo_prepare_token_balan
 
 When the user asks where to provide liquidity, call ekubo_get_liquidity_opportunities before asking them to choose a pair. It mirrors the interface's boosted-fee, active-incentive, and projected Ve33-emission opportunity feed, ranks by APR, and returns exact actionable pools or a pair-level pool-candidate handoff. APR is an annualized snapshot, not guaranteed yield; show its components, denominator, data freshness, range and impermanent-loss risks. If ranking_complete=false, execute local_read_requirement through the user's wallet, decode it locally, and call the tool again with ve33_emission_state before presenting the ordering as final. Never ask this server to decode the raw onchain result; supply only the locally decoded decimal fields needed for projection.
 
-For creating an LP position, call ekubo_get_position_pool_candidates with the pair. Do not browse prod-api, manually derive pool IDs, or inspect manager ABIs. Show the candidate's Core generation, exact pool key, extension, manager, TVL, depth, volume, and fees. If the user selects a new configuration not yet indexed, normally pass its exact pool_key with pool_initialized=false and initial_tick to ekubo_prepare_lp_position_deposit; the tool derives the pool ID and atomically prepends maybeInitializePool before the deployed mintAndDeposit call in one multicall. Use ekubo_prepare_pool_initialization only when the user explicitly needs initialization as a separate transaction. If the wallet lacks one side, prepare and execute that funding swap separately, wait for its successful receipt, measure the actual new token balance, reserve native gas, and only then prepare the deposit from the measured available amounts; never treat a quote's expected output as a settled balance. The deposit tool computes a nonzero minimum liquidity, approvals, initialization, native refund, allowance cleanup, decoded calls, wallet-policy requirements, and a complete execution_plan.
+For creating an LP position, call ekubo_get_position_pool_candidates with the pair. Do not browse prod-api, manually derive pool IDs, or inspect manager ABIs. Show the candidate's Core generation, exact pool key, extension, manager, TVL, depth, volume, and fees. If the user selects a new configuration not yet indexed, normally pass its exact pool_key with pool_initialized=false and initial_tick to ekubo_prepare_lp_position_deposit; the tool derives the pool ID and atomically prepends maybeInitializePool before the deployed mintAndDeposit call in one multicall. Use ekubo_prepare_pool_initialization only when the user explicitly needs initialization as a separate transaction. If the wallet lacks one side, prepare and execute that funding swap separately, wait for its successful receipt, measure the actual new token balance, reserve native gas, and only then prepare the deposit from the measured available amounts; never treat a quote's expected output as a settled balance. The deposit tool computes a nonzero minimum liquidity, approvals, initialization, native refund, allowance cleanup, decoded calls, wallet-policy requirements, and a complete plan delivered as execution_plan_reference.
 
-For “collect my LP fees” or “claim my LP rewards”, call ekubo_prepare_lp_position_earnings_claim with the connected owner wallet, manager, and token ID from ekubo_get_positions_by_owner. It automatically uses v2 zero-liquidity fee withdrawal, v3 collectFees, or Ve33 claimRewards and never removes liquidity, burns, or transfers the NFT. Execute its current_state_query and local_decode_plan through wallet call tooling on the user's device. Require every inner call to succeed, compare the decoded owner with expected_owner, retain raw return data, and pass the decoded fees or rewards plus execution_plan to the wallet for simulation and authorization. Never infer or manually encode the manager function.
+For “collect my LP fees” or “claim my LP rewards”, call ekubo_prepare_lp_position_earnings_claim with the connected owner wallet, manager, and token ID from ekubo_get_positions_by_owner. It automatically uses v2 zero-liquidity fee withdrawal, v3 collectFees, or Ve33 claimRewards and never removes liquidity, burns, or transfers the NFT. Execute its current_state_query and local_decode_plan through wallet call tooling on the user's device. Require every inner call to succeed, compare the decoded owner with expected_owner, retain raw return data, and pass the decoded fees or rewards plus execution_plan_reference to the wallet for simulation and authorization. Never infer or manually encode the manager function.
 
-For partial or full LP withdrawals, execute and decode each position's current_state_query locally with its supplied result_decoder, then select an exact positive liquidity amount no greater than that position's decoded liquidity. Require every inner call to succeed, compare decoded owner with expected_owner, and retain raw return data. Then call ekubo_prepare_lp_position_withdraw with one legacy withdrawal or a withdrawals array for up to 100 positions. It automatically chooses each correct v2/v3 withdraw overload or Ve33 withdrawAndClaimRewards, collects fees or rewards exactly as the interface does, and returns the entire transaction list. Include every principal/earnings estimate and recipient in the wallet handoff, and give the unchanged execution_plan to the wallet MCP. The wallet may batch unrelated position calls into one transaction but must never construct calldata, choose an overload, or add a claim transaction.
+For partial or full LP withdrawals, execute and decode each position's current_state_query locally with its supplied result_decoder, then select an exact positive liquidity amount no greater than that position's decoded liquidity. Require every inner call to succeed, compare decoded owner with expected_owner, and retain raw return data. Then call ekubo_prepare_lp_position_withdraw with one legacy withdrawal or a withdrawals array for up to 100 positions. It automatically chooses each correct v2/v3 withdraw overload or Ve33 withdrawAndClaimRewards, collects fees or rewards exactly as the interface does, and returns the entire transaction list. Include every principal/earnings estimate and recipient in the wallet handoff, and give the unchanged execution_plan_reference (URL plus digest) to the wallet MCP. The wallet may batch unrelated position calls into one transaction but must never construct calldata, choose an overload, or add a claim transaction.
 
 Pass LP execution plans to the wallet MCP for simulation, wallet-owned authorization, and execution; never use Cast to reconstruct LP calldata. Do not insert a separate agent confirmation step. If wallet policy rejects a plan, report its exact target, spender, recipient, selector, or native-value finding and do not attempt to change wallet policy.
 
@@ -2819,9 +2860,9 @@ const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 2. Convert the user amount to base units without floating-point arithmetic.
 3. Set destination_chain_id explicitly for a bridge. Raw addresses and eip155:<chain>:<address> token IDs are accepted.
 4. Request an exact-input or exact-output quote. Once the user has decided to swap, pass sender and slippage_bps so every option arrives with the calldata that executes it; omit both only for an indicative "what would I get" comparison. For same-chain requests, inspect every entry in quotes and choose a source; the tool does not accept or select one. The normalized amounts expose amount_out for exact input and amount_in for exact output. Cross-chain requests return Across. unavailable_sources reports individual provider failures without invalidating successful quote options, and a single option that could not be made executable reports its own execution_unavailable while the rest stand.
-5. Take the chosen option's execution.execution_plan as it is. Do not call the tool again to obtain a plan you were already given: it fetches fresh quotes, which spends a round trip and an agent turn inside the window where the plan in hand is still good, and leaves the user having approved a quote that is not the one executed. Call it again only after an expiry, a revert, or a change to the amount, tokens, sender, recipient, or slippage.
+5. Take the chosen option's execution.execution_plan_reference as it is. Do not call the tool again to obtain a plan you were already given: it fetches fresh quotes, which spends a round trip and an agent turn inside the window where the plan in hand is still good, and leaves the user having approved a quote that is not the one executed. Call it again only after an expiry, a revert, or a change to the amount, tokens, sender, recipient, or slippage.
 6. Include the provider, exact plan ID, token amounts, chains, slippage bound, recipient, approvals, execution transaction, and any allowance reset in the wallet handoff.
-7. Pass the complete plan to the user's wallet tooling and let its own simulation establish balances, allowances, policy, and the exact transaction outcome. Do not read allowances or validate the transaction separately first, and do not ask for separate agent-level confirmation; both only spend the quote's remaining life.
+7. Pass the reference's execution_plan_url and content_keccak256 (as expected_content_keccak256) to the user's wallet tooling and let its own simulation establish balances, allowances, policy, and the exact transaction outcome. The wallet fetches and verifies the plan body itself; never restate it. Do not read allowances or validate the transaction separately first, and do not ask for separate agent-level confirmation; both only spend the quote's remaining life.
 8. Simulate once. Let the wallet present that simulated result, collect authorization or signature, and submit that same simulation rather than simulating the identical plan again immediately before signing. A wallet that re-simulates to show a human the current state at approval time is a different matter and is expected. Never send credentials to this server.
 9. Inspect a wallet simulation's structured failure. Retry identical calldata only when recommended_action=retry_same_plan, normally for a transient RPC failure. For reprepare_plan, including slippage or any execution revert, request a fresh quote and calldata. Re-quote and revalidate after any change, expiry, or stale block.
 `;
@@ -2861,7 +2902,7 @@ The indexed \`pool_state\` is appropriate for portfolio range math and discovery
 
 Call \`ekubo_get_position_pool_candidates\` with the chain and token pair. It replaces direct data-API browsing and ABI inspection by returning every indexed candidate above the requested TVL floor, including verified PoolKey/config, Core generation, extension type, exact statistics, and the correct Positions manager. The default zero TVL floor is intentional for position creation because it keeps initialized pools with negligible liquidity visible.
 
-Once the user selects a v3 pool configuration, range, maximum token amounts, and slippage, call \`ekubo_prepare_lp_position_deposit\`. For an indexed pool, provide pool_id. For a new pool, provide the exact pool_key, pool_initialized=false, and initial_tick; the tool derives the ID and prepends \`maybeInitializePool\` before the deployed \`mintAndDeposit\` call in one atomic manager multicall. It calculates expected liquidity with shared SDK math, derives a nonzero minimum liquidity, selects Positions or Ve33Positions, and returns exact approvals, initialization/deposit/refund calldata, optional allowance cleanup, owner validation, decoded intent, wallet-policy requirements, and \`execution_plan\`.
+Once the user selects a v3 pool configuration, range, maximum token amounts, and slippage, call \`ekubo_prepare_lp_position_deposit\`. For an indexed pool, provide pool_id. For a new pool, provide the exact pool_key, pool_initialized=false, and initial_tick; the tool derives the ID and prepends \`maybeInitializePool\` before the deployed \`mintAndDeposit\` call in one atomic manager multicall. It calculates expected liquidity with shared SDK math, derives a nonzero minimum liquidity, selects Positions or Ve33Positions, and returns exact approvals, initialization/deposit/refund calldata, optional allowance cleanup, owner validation, decoded intent, wallet-policy requirements, and \`execution_plan_reference\`.
 
 When initialization must be its own transaction, call \`ekubo_prepare_pool_initialization\` with the exact PoolKey and initial tick. It selects Positions or Ve33Positions from the pool extension and returns one complete \`maybeInitializePool\` execution plan. The function is idempotent for an already initialized pool, but the first successful initializer fixes the pool's initial price, so simulate against pending state and verify the tick immediately before submission. Pool initialization does not correct an existing pool's price; use the phased \`ekubo_prepare_fix_pool_price\` workflow for that.
 
@@ -2873,7 +2914,7 @@ Do not encode \`mintAndDeposit\`, \`deposit\`, \`multicall\`, or \`refundNativeT
 
 Call \`ekubo_prepare_lp_position_earnings_claim\` with the connected owner wallet, chain, positions manager, and token ID returned by \`ekubo_get_positions_by_owner\`. Standard v3 Positions use \`collectFees\`; legacy v2 Positions use the explicit \`withdraw\` overload with liquidity zero and \`withFees=true\`; Ve33Positions use \`claimRewards\`. The recipient defaults to the sender and may be supplied explicitly. None of these paths withdraws principal, burns the NFT, or transfers it.
 
-Execute the returned \`onchain_validation.current_state_query\` exactly as supplied at \`pending\` through the wallet's call API with its \`local_decode_plan\`. Require every inner call to succeed, compare decoded owner with \`expected_owner\`, retain raw bytes, and pass \`fees0/fees1\` for standard positions or \`rewardAmount\` for Ve33 to the wallet with the unchanged \`execution_plan\`. The wallet performs exact simulation, presents the result, collects authorization or signature, and submits. Do not reconstruct or decode calldata with Cast, and do not infer a manager function from an ABI resource.
+Execute the returned \`onchain_validation.current_state_query\` exactly as supplied at \`pending\` through the wallet's call API with its \`local_decode_plan\`. Require every inner call to succeed, compare decoded owner with \`expected_owner\`, retain raw bytes, and pass \`fees0/fees1\` for standard positions or \`rewardAmount\` for Ve33 to the wallet with the unchanged \`execution_plan_reference\`. The wallet performs exact simulation, presents the result, collects authorization or signature, and submits. Do not reconstruct or decode calldata with Cast, and do not infer a manager function from an ABI resource.
 
 ## Withdraw liquidity
 
@@ -2884,20 +2925,21 @@ The returned execution plan contains the complete transaction list. The wallet m
 
 const EXECUTION_PLAN_WORKFLOW = `# Ekubo execution plan handoff
 
-Every executable preparation result includes an execution_plan object. It is the canonical boundary between this non-custodial Ekubo MCP server and a signing wallet.
+Every executable preparation result includes an execution_plan_reference object: a short-lived execution_plan_url where this server stored the plan body, content_keccak256 over the exact stored bytes, plus the plan's chain_id, sender, and step_count for sanity checks. The stored body is the canonical boundary between this non-custodial Ekubo MCP server and a signing wallet.
+
+## Relay the reference, not the body
+
+The agent between this server and a wallet passes only the reference. Give execution_plan_url and content_keccak256 (as expected_content_keccak256) to the wallet's simulate and send tools; the wallet fetches the body over HTTPS, recomputes keccak256 over the fetched bytes, refuses a mismatch, and validates the plan exactly as it would an inline one. Never fetch, restate, summarize, or reconstruct the body yourself, and never edit the URL or digest. References expire after a few minutes; a 404 means the plan is gone — re-run the preparation tool for fresh state and calldata. For a wallet that accepts only inline plans, fetch execution_plan_url once and hand over its exact JSON unchanged (for wallets that accept URLs but not this host, a data:application/json;base64 URI of those exact bytes is equivalent).
 
 ## Bind the sender first
 
 Choose the actual signing account before calling a preparation tool and pass that exact address as sender. Prefer the connected account exposed by wallet tooling. Use a local Cast account only when the user explicitly selected Cast execution and the account. Never infer "my wallet" from a local keystore or environment without that direction.
 
-After preparation, require execution_plan.chain_id and sender to match the wallet's observed chain and account. A mismatch invalidates the plan; do not rewrite the sender or silently switch networks.
+After preparation, require execution_plan_reference.chain_id and sender to match the wallet's observed chain and account. A mismatch invalidates the plan; do not rewrite the sender or silently switch networks.
 
 ## Execute ordered_steps
 
-Each step contains the same unsigned call in two encodings:
-
-- transaction has decimal chain_id, value, and optional gas with exact from, to, and data fields for wallet APIs that accept transaction objects.
-- eip1193 contains ready-to-forward eth_call, eth_estimateGas, and eth_sendTransaction requests with hexadecimal JSON-RPC quantities for compatible providers or separately trusted wallet MCP servers.
+These semantics govern the stored plan body, which only the wallet reads. Each step's transaction has decimal chain_id, value, and optional gas with exact from, to, and data fields for wallet APIs that accept transaction objects.
 
 Preserve ordered_steps exactly. The Ekubo wallet MCP accepts the plan's decimal chain_id directly and may simulate and execute all ordered calls as one atomic EIP-7702 batch. Other wallets may also batch. Only when atomic_batch_required is false may a non-batching adapter process the calls sequentially; it must revalidate each call, wait for successful receipts, and submit allowance_cleanup only after successful execution. Stop on any rejection, revert, failed receipt, chain/account change, expired quote, or changed plan.
 
@@ -2907,11 +2949,11 @@ Execution steps may include a portable revert_decode plan with kind=error_result
 
 ## Wallet tooling adapter
 
-Treat wallet tooling as a separate trust boundary from this public Ekubo server. When a wallet MCP or wallet API exposes call, simulation, authorization, and submission abstractions, use those directly and pass the exact execution_plan unchanged. Do not translate the plan into Cast or manually issue RPC calls when the wallet already wraps those operations. Do not ask the user for a separate agent-level confirmation; the wallet must simulate the exact plan, present the simulated result, collect authorization or signature, and submit it. Never provide a private key, mnemonic, or wallet credential to either MCP server.
+Treat wallet tooling as a separate trust boundary from this public Ekubo server. When a wallet MCP or wallet API exposes call, simulation, authorization, and submission abstractions, use those directly and pass the exact execution_plan_url plus expected_content_keccak256 unchanged. Do not translate the plan into Cast or manually issue RPC calls when the wallet already wraps those operations. Do not ask the user for a separate agent-level confirmation; the wallet must simulate the exact plan, present the simulated result, collect authorization or signature, and submit it. Never provide a private key, mnemonic, or wallet credential to either MCP server.
 
 ## Optional Cast fallback
 
-Use Cast only when the user explicitly selected it or no compatible wallet abstraction is available. For each step, verify the RPC chain ID. Simulate with cast call TO --data DATA --from SENDER --value VALUE. Estimate the identical bytes with cast estimate TO DATA --from SENDER --value VALUE. Submit those same bytes with cast send TO DATA plus the user's selected --account, --keystore, or hardware-wallet option and --value VALUE; rely on that wallet/signing interface for authorization. Recheck chain ID immediately before every send and independently fetch each receipt. Raw calldata is passed differently by Cast subcommands: call uses --data, while estimate and send use DATA as the positional signature argument. Do not reconstruct calldata from a displayed function description.
+Use Cast only when the user explicitly selected it or no compatible wallet abstraction is available. Fetch execution_plan_url once, verify content_keccak256 over the exact fetched bytes, and execute from that body. For each step, verify the RPC chain ID. Simulate with cast call TO --data DATA --from SENDER --value VALUE. Estimate the identical bytes with cast estimate TO DATA --from SENDER --value VALUE. Submit those same bytes with cast send TO DATA plus the user's selected --account, --keystore, or hardware-wallet option and --value VALUE; rely on that wallet/signing interface for authorization. Recheck chain ID immediately before every send and independently fetch each receipt. Raw calldata is passed differently by Cast subcommands: call uses --data, while estimate and send use DATA as the positional signature argument. Do not reconstruct calldata from a displayed function description.
 `;
 
 const QUOTER_API = `# Ekubo aggregated quote contract

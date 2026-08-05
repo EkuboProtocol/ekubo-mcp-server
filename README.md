@@ -173,9 +173,9 @@ Refresh the contract snapshot after contract deployments or ABI changes with
 select a quote. Same-chain requests return every Ekubo and 0x option in
 `quotes` with its source URL and normalized amounts, so the agent or user can
 choose. Supply `sender` and `slippage_bps` together and each option also
-carries the `execution_plan` that executes it, so a chosen plan goes straight
-to a wallet with no second round trip and the compared quote is the executed
-one. Omit both for an indicative comparison, and set `include_raw_quotes` to
+carries the `execution_plan_reference` that executes it, so a chosen plan goes
+straight to a wallet with no second round trip and the compared quote is the
+executed one. Omit both for an indicative comparison, and set `include_raw_quotes` to
 add the untouched provider responses, which are otherwise left out as the
 largest and least useful part of a response.
 If a configured provider fails, the response reports it in
@@ -195,7 +195,9 @@ The agent does not ask for a separate confirmation first: wallet tooling is
 responsible for current-state simulation, presenting the simulated result,
 collecting authorization or signature, signing, and submission.
 
-MCP tool results are not stored or replayed and `/mcp` responses use
+Prepared execution plan bodies are stored in Workers KV and served at
+`/plan/<id>` for a short TTL so wallets fetch them by reference; no other tool
+result is stored or replayed, and `/mcp` responses use
 `Cache-Control: no-store`. No fixed request quota is guaranteed; clients must
 honor HTTP 429 and `Retry-After: 60`. Owner positions use upstream `no-cache`
 semantics. Indexed pool-state snapshots may be cached upstream for 180 seconds,
@@ -230,8 +232,9 @@ For a new LP position, start with `ekubo_get_position_pool_candidates`; do not
 browse `prod-api` or infer a manager from an ABI resource. Its default
 `min_tvl_usd=0` keeps initialized pools with negligible liquidity visible.
 After the user selects an existing v3 pool, range, token maxima, and slippage,
-call `ekubo_prepare_lp_position_deposit`. Pass its exact `execution_plan` to the
-wallet MCP for policy checking and exact-plan simulation. The wallet—not this
+call `ekubo_prepare_lp_position_deposit`. Pass its exact
+`execution_plan_reference` (URL plus digest) to the wallet MCP for policy
+checking and exact-plan simulation. The wallet—not this
 server—controls target, spender, selector, native-value, signing, and submission
 authorization.
 
@@ -262,21 +265,23 @@ string. Responses use canonical decimal chain-ID strings. Pool fees are uint64
 Q64 values and must always be passed and consumed as decimal or hexadecimal
 strings, never JSON numbers.
 
-Every executable preparation also includes a signer-neutral `execution_plan`
-handoff. Its `ordered_steps` place approvals before the main execution and any
-exact-output allowance cleanup after it. Each step provides the same call as a
-decimal transaction object and as exact EIP-1193 `eth_call`,
-`eth_estimateGas`, and `eth_sendTransaction` requests. This makes the plan
-directly adaptable to a separately trusted wallet MCP or compatible wallet API
-without reconstructing calldata. The `plan_id`
-commits to the chain, sender, destination, calldata, and native value of every
-approval, execution, and cleanup transaction in the sequence.
+Every executable preparation also includes a signer-neutral
+`execution_plan_reference` handoff: a short-lived `execution_plan_url` where
+the plan body is stored, `content_keccak256` over its exact bytes, and the
+plan's `chain_id`, `sender`, and `step_count`. The agent relays only the
+reference; the wallet fetches the body itself, recomputes the digest, refuses a
+mismatch, and validates the plan as if it had been supplied inline. The stored
+body's `ordered_steps` place approvals before the main execution and any
+exact-output allowance cleanup after it, each as a decimal transaction object.
+The `plan_id` commits to the chain, sender, destination, calldata, and native
+value of every approval, execution, and cleanup transaction in the sequence.
 
 Bind the actual wallet address as `sender` before preparation. Prefer the
 connected account and call/simulate/submit abstractions exposed by wallet
-tooling. Pass `execution_plan.chain_id` directly as the wallet MCP's decimal
-`chain_id`, verify the observed chain and account against it and `sender`, and
-preserve the ordered calls. A capable wallet may simulate and submit the whole
+tooling. Pass `execution_plan_reference.chain_id` directly as the wallet MCP's
+decimal `chain_id`, verify the observed chain and account against it and
+`sender`, and pass `execution_plan_url` plus `content_keccak256` for the wallet
+to fetch, verify, and execute in order. A capable wallet may simulate and submit the whole
 sequence as one atomic batch. A non-batching adapter may process a plan
 sequentially only when `atomic_batch_required` is false, revalidating each step
 and waiting for its successful receipt before advancing. Use Cast only when the

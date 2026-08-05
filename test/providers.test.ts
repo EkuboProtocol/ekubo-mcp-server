@@ -1,3 +1,4 @@
+import { fakePlanStore } from "./fake-kv.js";
 import { describe, expect, it } from "bun:test";
 import { decodeFunctionData, erc20Abi } from "viem";
 import {
@@ -16,6 +17,7 @@ const spender = "0x5555555555555555555555555555555555555555";
 const swapTarget = "0x6666666666666666666666666666666666666666";
 
 const env: Env = {
+  PLAN_STORE: fakePlanStore(),
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
   ZERO_X_API_KEY: "zero-x-test-key",
@@ -660,6 +662,6 @@ describe("aggregated quote providers", () => {
     expect(requestedUrls[0]).toStartWith("https://zero-x.test/");
     expect(result.source).toBe("0x");
     expect(result.execution_plan_ready).toBe(true);
-    expect(result.wallet_handoff.instruction).toContain("Pass this complete plan");
+    expect(result.wallet_handoff.instruction).toContain("execution_plan_reference");
   });
 });

@@ -694,7 +694,7 @@ export function preparedUiAction(input: PreparedUiActionInput) {
       complete_transaction_list:
         "execution_plan is the complete ordered transaction list for this action.",
       calldata_complete:
-        "All calldata and transaction ordering are supplied. Pass execution_plan unchanged to wallet tooling; do not reconstruct calldata or add calls with setup-specific tools.",
+        "All calldata and transaction ordering are supplied. Pass execution_plan_reference (execution_plan_url plus content_keccak256) unchanged to wallet tooling; do not reconstruct calldata or add calls with setup-specific tools.",
     },
   };
 }
