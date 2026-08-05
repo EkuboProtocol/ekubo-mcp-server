@@ -196,7 +196,11 @@ responsible for current-state simulation, presenting the simulated result,
 collecting authorization or signature, signing, and submission.
 
 Prepared execution plan bodies are stored in Workers KV and served at
-`/plan/<id>` for a short TTL so wallets fetch them by reference; no other tool
+`/plan/<id>` for a short TTL so wallets fetch them by reference. Read-call
+bundles — exact `wallet_batch_eth_call` argument objects, validated against
+the wallet boundary before storage — are stored the same way at `/read/<id>`
+with their own TTL and returned as `read_calls_reference` objects whose
+`content_keccak256` binds the exact stored bytes; no other tool
 result is stored or replayed, and `/mcp` responses use
 `Cache-Control: no-store`. No fixed request quota is guaranteed; clients must
 honor HTTP 429 and `Retry-After: 60`. Owner positions use upstream `no-cache`

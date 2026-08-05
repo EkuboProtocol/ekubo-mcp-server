@@ -18,6 +18,7 @@ import {
   ROBINHOOD_STONX_VE_TOKEN,
   listTokensSchema,
 } from "../src/server.js";
+import { storeReadCalls } from "../src/read-store.js";
 import {
   MCP_SERVER_VERSION,
   MCP_TOOL_CATALOG_REVISION,
@@ -900,6 +901,72 @@ describe("Worker discovery", () => {
     expect(mismatchResult.result.structuredContent.error.code).toBe(
       "chain_mismatch",
     );
+  });
+
+  it("serves stored read-call bundles byte-for-byte at /read/<id>", async () => {
+    const bundle = {
+      chain_id: "8453",
+      block_parameter: "pending",
+      calls: [
+        {
+          id: "pool-state",
+          to: "0xF68F25CA6C817733b7B15a42191AE72A34d56a2B",
+          data: "0x1234abcd",
+          include_raw: true,
+        },
+      ],
+    };
+    const reference = await storeReadCalls(
+      env,
+      "https://mcp.ekubo.org",
+      bundle,
+    );
+    expect(reference.read_calls_url).toMatch(
+      /^https:\/\/mcp\.ekubo\.org\/read\/[0-9a-f-]{36}$/,
+    );
+
+    const fetched = await worker.fetch(
+      new Request(reference.read_calls_url),
+      env,
+      context,
+    );
+    expect(fetched.status).toBe(200);
+    expect(fetched.headers.get("content-type")).toBe("application/json");
+    expect(fetched.headers.get("cache-control")).toBe("no-store");
+    expect(fetched.headers.get("access-control-allow-origin")).toBe("*");
+    const body = await fetched.text();
+    expect(keccak256(stringToHex(body))).toBe(
+      reference.content_keccak256 as `0x${string}`,
+    );
+    expect(JSON.parse(body)).toEqual(bundle);
+
+    const head = await worker.fetch(
+      new Request(reference.read_calls_url, { method: "HEAD" }),
+      env,
+      context,
+    );
+    expect(head.status).toBe(200);
+    expect(await head.text()).toBe("");
+
+    const missing = await worker.fetch(
+      new Request(
+        "https://mcp.ekubo.org/read/00000000-0000-4000-8000-000000000000",
+      ),
+      env,
+      context,
+    );
+    expect(missing.status).toBe(404);
+    const missingBody = (await missing.json()) as { error: { code: string } };
+    expect(missingBody.error.code).toBe("read_calls_not_found_or_expired");
+
+    const badPath = await worker.fetch(
+      new Request("https://mcp.ekubo.org/read/not-a-uuid"),
+      env,
+      context,
+    );
+    expect(badPath.status).toBe(404);
+    const badPathBody = (await badPath.json()) as { error: { code: string } };
+    expect(badPathBody.error.code).toBe("route_not_found");
   });
 
   it("rejects browser origins outside the explicit allowlist", async () => {

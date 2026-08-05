@@ -2,6 +2,7 @@ import { createMcpHandler } from "agents/mcp/server";
 import openapi from "../openapi.json";
 import type { Env } from "./core.js";
 import { loadExecutionPlan, PLAN_TTL_SECONDS } from "./plan-store.js";
+import { loadReadCalls, READ_CALLS_TTL_SECONDS } from "./read-store.js";
 import { createEkuboServer, publicToolCatalog } from "./server.js";
 import { MCP_SERVER_VERSION, MCP_TOOL_CATALOG_REVISION } from "./version.js";
 
@@ -93,6 +94,38 @@ export default {
       );
     }
 
+    // Stored read-call bundles: exact wallet_batch_eth_call argument objects
+    // a read-preparation tool returned by reference. Served byte-for-byte for
+    // the same digest-verification reason as plan bodies.
+    const readMatch = /^\/read\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(
+      url.pathname,
+    );
+    if (readMatch !== null) {
+      const body = await loadReadCalls(env, readMatch[1]);
+      if (body === null) {
+        return json(
+          {
+            error: {
+              code: "read_calls_not_found_or_expired",
+              message:
+                "This read-calls reference has expired or never existed. Re-run the Ekubo tool that produced it to obtain a fresh bundle and reference.",
+            },
+          },
+          404,
+        );
+      }
+      return withSecurityHeaders(
+        new Response(request.method === "HEAD" ? null : body, {
+          headers: {
+            "content-type": "application/json",
+            "content-length": String(new TextEncoder().encode(body).length),
+            "cache-control": "no-store",
+            "access-control-allow-origin": "*",
+          },
+        }),
+      );
+    }
+
     switch (url.pathname) {
       case "/":
         return json(
@@ -146,11 +179,19 @@ export default {
                 "Platform-neutral codec IDs with explicit implementation assertions; wallets execute only locally installed allowlisted codecs and never fetch code from a plan.",
             },
             operational_semantics: {
-              mcp_tool_result_storage: `execution_plan_bodies_only: prepared execution plan bodies are retained at ${url.origin}/plan/<id> for ${PLAN_TTL_SECONDS} seconds so wallets fetch them by reference instead of receiving them through the agent; no other tool results are stored or replayed`,
+              mcp_tool_result_storage: `wallet_payload_bodies_only: prepared execution plan bodies are retained at ${url.origin}/plan/<id> for ${PLAN_TTL_SECONDS} seconds and read-call bundles (exact wallet_batch_eth_call argument objects) at ${url.origin}/read/<id> for ${READ_CALLS_TTL_SECONDS} seconds so wallets fetch them by reference instead of receiving them through the agent; no other tool results are stored or replayed`,
               execution_plan_delivery: {
                 mode: "reference",
                 fetch_url_template: `${url.origin}/plan/<id>`,
                 ttl_seconds: PLAN_TTL_SECONDS,
+                integrity:
+                  "content_keccak256 is keccak256 of the exact bytes served; wallets recompute it over the fetched body and must refuse a mismatch",
+              },
+              read_calls_delivery: {
+                mode: "reference",
+                fetch_url_template: `${url.origin}/read/<id>`,
+                ttl_seconds: READ_CALLS_TTL_SECONDS,
+                body: "an exact wallet_batch_eth_call argument object (chain_id, optional block_parameter and from, calls with decode plans) executed verbatim by the wallet",
                 integrity:
                   "content_keccak256 is keccak256 of the exact bytes served; wallets recompute it over the fetched body and must refuse a mismatch",
               },
@@ -358,7 +399,7 @@ LP position workflow resource: ekubo://docs/lp-position-workflow
 EVM contract directory: ekubo://contracts/evm
 
 Operational semantics:
-- Execution plan bodies are stored at ${origin}/plan/<id> for a short TTL and returned as execution_plan_reference objects; wallets fetch the body by URL and verify content_keccak256. No other tool results are stored or replayed.
+- Execution plan bodies are stored at ${origin}/plan/<id> for a short TTL and returned as execution_plan_reference objects; wallets fetch the body by URL and verify content_keccak256. Read-call bundles — exact wallet_batch_eth_call argument objects — are stored at ${origin}/read/<id> the same way and returned as read_calls_reference objects: pass read_calls_url as calls_url and content_keccak256 as expected_content_keccak256, unchanged. No other tool results are stored or replayed.
 - Onchain read plans carry canonical ABIs for local wallet decoding. Raw return bytes are included by default and preserved on failure. semantic_value passes a custom non-ABI raw result through a locally installed allowlisted codec; remote plans never supply executable code.
 - No fixed request quota is guaranteed. If the deployment limiter returns HTTP 429, honor Retry-After: 60 and back off.
 - Owner positions use upstream no-cache semantics. Position tools join canonical token metadata and USD prices and provide exact atomic pending eth_call plans for current position state. Pair-pool discovery defaults to a zero TVL floor and returns verified PoolKeys plus the correct position manager. Liquidity opportunities match the interface's boosted-fee, active-incentive, and Ve33-emission feed; pair/boost data is cached upstream for up to 600 seconds, campaigns for 300 seconds, and Ve33 pools for 30 seconds. Every EVM interface transaction path has a first-class prepare tool returning complete wallet execution plans; wallet tooling never constructs or appends calls. Indexed pool state is cached upstream for up to 180 seconds; tick liquidity and pool keys for up to 1,800 seconds. STONX recommendations are at most 86,400 seconds old.

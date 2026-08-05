@@ -1,5 +1,6 @@
 import { keccak256, stringToHex } from "viem";
 import type { Env } from "./core.js";
+import { isStorableReadCalls, storeReadCalls } from "./read-store.js";
 
 /**
  * How long a stored plan body stays fetchable. Plans embed quotes and
@@ -73,11 +74,15 @@ export function loadExecutionPlan(
 }
 
 /**
- * Replace every embedded execution plan in a tool result with a stored
+ * Replace every embedded wallet payload in a tool result with a stored
  * reference. One structural walk covers every preparation tool and every
- * quote candidate, so no tool has to know its plans are stored: anything
- * shaped like a plan under a property named `execution_plan` is stored and
- * the property is renamed `execution_plan_reference`.
+ * quote candidate, so no tool has to know its payloads are stored: anything
+ * shaped like a plan under a property named `execution_plan` becomes an
+ * `execution_plan_reference`, and anything shaped like an exact
+ * wallet_batch_eth_call argument object under a property named `read_calls`
+ * becomes a `read_calls_reference`. Values that fail the shape checks stay
+ * inline untouched, so a false-positive property name can never destroy
+ * content.
  */
 export async function referenceExecutionPlans(
   env: Env,
@@ -97,6 +102,13 @@ export async function referenceExecutionPlans(
       if (key === "execution_plan" && isExecutionPlan(entry)) {
         replaced += 1;
         rewritten["execution_plan_reference"] = await storeExecutionPlan(
+          env,
+          origin,
+          entry,
+        );
+      } else if (key === "read_calls" && isStorableReadCalls(entry)) {
+        replaced += 1;
+        rewritten["read_calls_reference"] = await storeReadCalls(
           env,
           origin,
           entry,
