@@ -116,9 +116,15 @@ schemas after a Git-triggered deployment.
   one atomic wallet-batch-capable plan; each withdrawal automatically collects
   ordinary fees or Ve33 rewards and includes its own pending validation
 - `ekubo_get_pool` — resolve an exact chain/core/pool ID to a verified PoolKey,
-  decoded config, and indexed state snapshot when available
+  decoded config, the latest indexed state snapshot, and a `current_state_query`
+  read bundle whose `read_calls_reference` the wallet executes for fresh
+  on-chain sqrtRatio, tick, and liquidity
 - `ekubo_get_pool_liquidity` — return tick-level net liquidity deltas for one
   exact pool
+- `ekubo_list_pool_keys` — enumerate a Core deployment's initialized pools
+  with keyset pagination (`after_pool_id`, ascending pool_id) and
+  token/pair/extension filters; every pool_id is re-derived locally from its
+  PoolKey before it is reported
 - `ekubo_derive_pool_id` — pack a PoolKey and derive its exact Keccak pool ID
 - `ekubo_decode_pool_config` — decode the extension, exact uint64 Q64 fee,
   v3 discriminator, and concentrated or stableswap parameters

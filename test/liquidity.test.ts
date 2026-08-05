@@ -123,8 +123,9 @@ describe("LP position preparation", () => {
       },
       (async (input: RequestInfo | URL) => {
         const url = input.toString();
-        if (url.endsWith("/key")) {
+        if (url.includes("/poolKeys/")) {
           return Response.json({
+            pool_id: pool.pool_id,
             pool_key: {
               token0: native,
               token1: usdg,
@@ -133,19 +134,11 @@ describe("LP position preparation", () => {
               extension: ve33,
               stableswap_params: null,
             },
-          });
-        }
-        if (url.includes("/positions?limit=1")) {
-          return Response.json({
-            data: [
-              {
-                pool_state: {
-                  sqrt_ratio: "2086582449616150103124962850664448",
-                  tick: -20_167_000,
-                  liquidity: "1000000000000",
-                },
-              },
-            ],
+            state: {
+              sqrt_ratio: "2086582449616150103124962850664448",
+              tick: -20_167_000,
+              liquidity: "1000000000000",
+            },
           });
         }
         if (url.includes("/tokens/batch?")) {
@@ -220,8 +213,9 @@ describe("LP position preparation", () => {
       },
       (async (input: RequestInfo | URL) => {
         const url = input.toString();
-        if (url.endsWith("/key")) {
+        if (url.includes("/poolKeys/")) {
           return Response.json({
+            pool_id: pool.pool_id,
             pool_key: {
               token0: usdg,
               token1: aapl,
@@ -230,19 +224,11 @@ describe("LP position preparation", () => {
               extension: ve33,
               stableswap_params: null,
             },
-          });
-        }
-        if (url.includes("/positions?limit=1")) {
-          return Response.json({
-            data: [
-              {
-                pool_state: {
-                  sqrt_ratio: "19517224466909814455579508667699864543428608",
-                  tick: 21_914_075,
-                  liquidity: "578492742679486189",
-                },
-              },
-            ],
+            state: {
+              sqrt_ratio: "19517224466909814455579508667699864543428608",
+              tick: 21_914_075,
+              liquidity: "578492742679486189",
+            },
           });
         }
         if (url.includes("/tokens/batch?")) {

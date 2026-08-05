@@ -1,6 +1,6 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
 const expectedServerVersion = "0.23.0";
-const expectedCatalogRevision = "2026-08-04.list-tokens";
+const expectedCatalogRevision = "2026-08-05.pool-key-discovery";
 const smokeNonce = `${Date.now()}-${Math.random()}`;
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
 
@@ -43,6 +43,7 @@ const expectedTools = [
   "ekubo_get_positions_by_owner",
   "ekubo_get_pool",
   "ekubo_get_pool_liquidity",
+  "ekubo_list_pool_keys",
   "ekubo_derive_pool_id",
   "ekubo_decode_pool_config",
   "ekubo_get_position",

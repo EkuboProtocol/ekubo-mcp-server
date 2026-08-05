@@ -393,8 +393,9 @@ describe("EVM interface action preparation", () => {
     });
     const fetcher = (async (input: RequestInfo | URL) => {
       const url = input.toString();
-      if (url.endsWith("/key")) {
+      if (url.includes("/poolKeys/")) {
         return Response.json({
+          pool_id: key.pool_id,
           pool_key: {
             token0: native,
             token1,
@@ -403,10 +404,8 @@ describe("EVM interface action preparation", () => {
             extension: native,
             stableswap_params: null,
           },
+          state: null,
         });
-      }
-      if (url.includes("/positions?limit=1")) {
-        return Response.json({ data: [] });
       }
       if (url.includes("/tokens/batch?")) {
         return Response.json([

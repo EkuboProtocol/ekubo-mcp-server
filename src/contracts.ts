@@ -248,8 +248,20 @@ export function contractAddressUri(chainId: string, address: string): string {
 }
 
 export function tokenDataFetcherContract(chainId: string) {
+  return namedContract(chainId, "TokenDataFetcher");
+}
+
+export function coreDataFetcherContract(chainId: string) {
+  return namedContract(chainId, "CoreDataFetcher");
+}
+
+export function poolKeyIndexContract(chainId: string) {
+  return namedContract(chainId, "PoolKeyIndex");
+}
+
+function namedContract(chainId: string, name: string) {
   const contract = Object.values(contractsForChain(chainId)).find(
-    (candidate) => candidate.name === "TokenDataFetcher",
+    (candidate) => candidate.name === name,
   );
   if (contract === undefined) return undefined;
   if (contract.abi === null) return undefined;

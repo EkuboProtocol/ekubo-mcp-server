@@ -200,6 +200,7 @@ describe("Worker discovery", () => {
       "ekubo_get_positions_by_owner",
       "ekubo_get_pool",
       "ekubo_get_pool_liquidity",
+      "ekubo_list_pool_keys",
       "ekubo_derive_pool_id",
       "ekubo_decode_pool_config",
       "ekubo_get_position",
