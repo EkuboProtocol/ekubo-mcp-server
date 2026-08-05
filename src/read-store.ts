@@ -65,7 +65,9 @@ export async function storeReadCalls(
     kind: "ekubo_read_calls_reference",
     read_calls_url: `${origin}/read/${id}`,
     content_keccak256: keccak256(stringToHex(body)),
-    content_length: body.length,
+    // UTF-8 byte length, matching the Content-Length header the /read route
+    // serves; string length would diverge on any non-ASCII byte.
+    content_length: new TextEncoder().encode(body).length,
     expires_at: new Date(
       Date.now() + READ_CALLS_TTL_SECONDS * 1000,
     ).toISOString(),

@@ -57,7 +57,9 @@ export async function storeExecutionPlan(
     kind: "ekubo_execution_plan_reference",
     execution_plan_url: `${origin}/plan/${id}`,
     content_keccak256: keccak256(stringToHex(body)),
-    content_length: body.length,
+    // UTF-8 byte length, matching the Content-Length header the /plan route
+    // serves; string length would diverge on any non-ASCII byte.
+    content_length: new TextEncoder().encode(body).length,
     expires_at: new Date(Date.now() + PLAN_TTL_SECONDS * 1000).toISOString(),
     chain_id: plan.chain_id,
     sender: plan.sender,
