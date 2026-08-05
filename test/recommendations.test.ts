@@ -65,7 +65,8 @@ describe("STONX allocation recommendations", () => {
 
     expect(result.execution_ready).toBe(true);
     expect(result.snapshot_refreshed_on_request).toBe(false);
-    expect(result.snapshot_max_age_seconds).toBe(86_400);
+    expect(result.snapshot_max_age_seconds).toBe(604_800);
+    expect(result.snapshot_refresh_after_seconds).toBe(86_400);
     expect(result.recommendation_count).toBe(3);
     expect(result.executable_target_count).toBe(2);
     expect(result.unavailable_weight_bps).toBe(1_000);
@@ -212,7 +213,7 @@ describe("STONX allocation recommendations", () => {
     expect(executeRequests).toBe(0);
   });
 
-  it("fails closed when a stale snapshot cannot refresh before the deadline", async () => {
+  it("fails closed when no snapshot is inside the usable window", async () => {
     const initialNow = Date.parse("2026-08-03T12:00:00.000Z");
     let clock = initialNow;
     let executeRequests = 0;
@@ -220,7 +221,8 @@ describe("STONX allocation recommendations", () => {
       const url = new URL(input.toString());
       if (url.hostname !== "api.dune.com") return poolResponse(pools);
       if (url.pathname === "/api/v1/query/8187907/results") {
-        return recommendationResponse("2026-08-01T12:00:00.000Z");
+        // Well past the one-week ceiling, so there is nothing to fall back to.
+        return recommendationResponse("2026-06-01T12:00:00.000Z");
       }
       if (url.pathname === "/api/v1/query/8187907/execute") {
         executeRequests += 1;
@@ -254,6 +256,56 @@ describe("STONX allocation recommendations", () => {
       "allocation_recommendations_unavailable",
     );
     expect(executeRequests).toBe(1);
+  });
+
+  // The production outage this fixes: the upstream query runs at most once a
+  // day, so every snapshot spends part of each day past the refresh threshold
+  // with no newer run available. That must not take the tool offline.
+  it("serves a day-old snapshot when the refresh never lands", async () => {
+    const snapshotAt = "2026-08-01T12:00:00.000Z";
+    let clock = Date.parse("2026-08-03T12:00:00.000Z");
+    let executeRequests = 0;
+    const fetcher = (async (input: RequestInfo | URL) => {
+      const url = new URL(input.toString());
+      if (url.hostname !== "api.dune.com") return poolResponse(pools);
+      if (url.pathname === "/api/v1/query/8187907/results") {
+        return recommendationResponse(snapshotAt);
+      }
+      if (url.pathname === "/api/v1/query/8187907/execute") {
+        executeRequests += 1;
+        return Response.json({
+          execution_id: "refresh_never_lands",
+          state: "QUERY_STATE_PENDING",
+        });
+      }
+      return Response.json({
+        execution_id: "refresh_never_lands",
+        state: "QUERY_STATE_EXECUTING",
+      });
+    }) as typeof fetch;
+
+    const result = await getStonxAllocationRecommendation(
+      env,
+      { chainId, veToken, ve33 },
+      fetcher,
+      {
+        now: () => clock,
+        sleep: async (milliseconds) => {
+          clock += milliseconds;
+        },
+        refreshMaxWaitMs: 2_000,
+        refreshPollIntervalMs: 1_000,
+      },
+    );
+
+    // A refresh was attempted, and its failure did not discard the snapshot.
+    expect(executeRequests).toBe(1);
+    expect(result.snapshot_at).toBe(snapshotAt);
+    expect(result.execution_ready).toBe(true);
+    expect(result.target_total_weight_bps).toBe(10_000);
+    // The caller is told exactly how stale the answer is rather than guessing.
+    expect(result.snapshot_age_seconds).toBeGreaterThanOrEqual(2 * 86_400);
+    expect(result.snapshot_refreshed_on_request).toBe(false);
   });
 
   it("caps executable recommendations at 25 pools and redistributes cutoff weight", async () => {

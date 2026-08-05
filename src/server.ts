@@ -1233,7 +1233,7 @@ export const publicToolCatalog = [
     name: "ekubo_get_stonx_allocation_recommendation",
     title: "Get suggested STONX allocations",
     description:
-      "Return a provider-neutral STONX allocation recommendation no more than one day old and an exactly 10,000-bps executable target list capped at 25 initialized canonical Ve33 pools. A stale snapshot is refreshed and awaited before use; refresh failures fail closed. The tool constructs no transaction; use compact_max_lock for one final voting NFT per target.",
+      "Return a provider-neutral STONX allocation recommendation and an exactly 10,000-bps executable target list capped at 25 initialized canonical Ve33 pools. The upstream snapshot refreshes at most once a day: past a day old a refresh is attempted and awaited, but the existing snapshot still answers the request when that refresh does not land, and only a snapshot older than a week is refused. Read snapshot_age_seconds to see how old the answer actually is. The tool constructs no transaction; use compact_max_lock for one final voting NFT per target.",
     inputSchema: z.toJSONSchema(getStonxAllocationRecommendationSchema),
     _meta: toolCatalogMetadata,
   },

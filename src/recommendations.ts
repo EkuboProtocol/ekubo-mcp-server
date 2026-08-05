@@ -14,7 +14,17 @@ const RECOMMENDATION_EXECUTE_URL =
   "https://api.dune.com/api/v1/query/8187907/execute";
 const MAX_RECOMMENDATION_POOLS = 100;
 const MAX_EXECUTABLE_RECOMMENDATION_TARGETS = 25;
-const MAX_RECOMMENDATION_AGE_MS = 24 * 60 * 60 * 1_000;
+/// The upstream query is scheduled at most once a day, so demanding a snapshot
+/// younger than the refresh interval makes the tool unavailable for part of
+/// every day: a snapshot just over a day old triggers a refresh that Dune
+/// declines to run, and the result is discarded even though it is perfectly
+/// serviceable. Allocation weights move slowly, so a week-old snapshot is worth
+/// far more than no recommendation at all.
+///
+/// Two thresholds instead of one: past REFRESH_AFTER a refresh is attempted,
+/// and only past MAX_AGE is a snapshot refused.
+const RECOMMENDATION_REFRESH_AFTER_MS = 24 * 60 * 60 * 1_000;
+const MAX_RECOMMENDATION_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
 const REFRESH_MAX_WAIT_MS = 20_000;
 const REFRESH_POLL_INTERVAL_MS = 1_000;
 const PROVIDER_REQUEST_TIMEOUT_MS = 20_000;
@@ -166,7 +176,15 @@ export async function getStonxAllocationRecommendation(
     recommendation_id: recommendationId,
     snapshot_at: snapshot.snapshotAt,
     snapshot_refreshed_on_request: snapshot.refreshedOnRequest,
+    snapshot_age_seconds: Math.max(
+      0,
+      Math.floor(snapshotAgeMs(snapshot.snapshotAt, runtime) / 1_000),
+    ),
+    /// Past this the snapshot is refused outright.
     snapshot_max_age_seconds: MAX_RECOMMENDATION_AGE_MS / 1_000,
+    /// Past this a refresh is attempted, but the snapshot stays serviceable
+    /// until it reaches snapshot_max_age_seconds.
+    snapshot_refresh_after_seconds: RECOMMENDATION_REFRESH_AFTER_MS / 1_000,
     chain_id: intent.chainId,
     ve_token: getAddress(intent.veToken),
     ve33: getAddress(intent.ve33),
@@ -273,16 +291,15 @@ async function fetchRecommendationSnapshot(
   const url = new URL(RECOMMENDATION_RESULT_URL);
   url.searchParams.set("limit", MAX_RECOMMENDATION_POOLS.toString());
   const payload = await fetchProviderJson(env, fetcher, url);
+
+  // What Dune already has, kept as the fallback for a refresh that does not
+  // land. Parsed eagerly so a malformed snapshot still surfaces its own error.
+  let existing: RecommendationSnapshot | null = null;
   if (payload.state === "QUERY_STATE_COMPLETED") {
-    const snapshot = parseRecommendationSnapshot(payload, false);
-    if (isFresh(snapshot.snapshotAt, runtime)) return snapshot;
+    existing = parseRecommendationSnapshot(payload, false);
+    if (isCurrent(existing.snapshotAt, runtime)) return existing;
   } else if (isActiveExecution(payload)) {
-    return waitForRefreshedSnapshot(
-      env,
-      fetcher,
-      executionId(payload),
-      runtime,
-    );
+    return refreshOrFallback(env, fetcher, executionId(payload), null, runtime);
   }
 
   const execution = await fetchProviderJson(
@@ -291,12 +308,41 @@ async function fetchRecommendationSnapshot(
     RECOMMENDATION_EXECUTE_URL,
     { method: "POST" },
   );
-  return waitForRefreshedSnapshot(
+  return refreshOrFallback(
     env,
     fetcher,
     executionId(execution),
+    existing,
     runtime,
   );
+}
+
+/// Wait for a refresh, but treat it as an improvement rather than a
+/// precondition: a snapshot still inside the usable window answers the request
+/// when the refresh times out, errors, or comes back no newer than what we
+/// already had. Without a usable fallback the refresh's own failure stands, so
+/// a genuinely broken upstream is still reported as itself.
+async function refreshOrFallback(
+  env: Env,
+  fetcher: typeof fetch,
+  id: string,
+  existing: RecommendationSnapshot | null,
+  runtime: RecommendationRuntime,
+): Promise<RecommendationSnapshot> {
+  const fallback =
+    existing !== null && isUsable(existing.snapshotAt, runtime)
+      ? existing
+      : null;
+  let refreshed: RecommendationSnapshot;
+  try {
+    refreshed = await waitForRefreshedSnapshot(env, fetcher, id, runtime);
+  } catch (error) {
+    if (fallback !== null) return fallback;
+    throw error;
+  }
+  if (isUsable(refreshed.snapshotAt, runtime)) return refreshed;
+  if (fallback !== null) return fallback;
+  throw recommendationUnavailable();
 }
 
 function parseRecommendationSnapshot(
@@ -368,11 +414,9 @@ async function waitForRefreshedSnapshot(
   while (true) {
     const payload = await fetchProviderJson(env, fetcher, url);
     if (payload.state === "QUERY_STATE_COMPLETED") {
-      const snapshot = parseRecommendationSnapshot(payload, true);
-      if (!isFresh(snapshot.snapshotAt, runtime)) {
-        throw recommendationUnavailable();
-      }
-      return snapshot;
+      // Age is judged by the caller, which knows whether an older snapshot is
+      // standing by.
+      return parseRecommendationSnapshot(payload, true);
     }
     if (!isActiveExecution(payload) || now() >= deadline) {
       throw recommendationUnavailable();
@@ -412,10 +456,23 @@ async function fetchProviderJson(
   return payload;
 }
 
-function isFresh(snapshotAt: string, runtime: RecommendationRuntime): boolean {
+function snapshotAgeMs(
+  snapshotAt: string,
+  runtime: RecommendationRuntime,
+): number {
   const submittedAt = Date.parse(snapshotAt);
-  if (!Number.isFinite(submittedAt)) return false;
-  return (runtime.now ?? Date.now)() - submittedAt <= MAX_RECOMMENDATION_AGE_MS;
+  if (!Number.isFinite(submittedAt)) return Number.POSITIVE_INFINITY;
+  return (runtime.now ?? Date.now)() - submittedAt;
+}
+
+/// Young enough that no refresh is worth attempting.
+function isCurrent(snapshotAt: string, runtime: RecommendationRuntime): boolean {
+  return snapshotAgeMs(snapshotAt, runtime) <= RECOMMENDATION_REFRESH_AFTER_MS;
+}
+
+/// Young enough to answer with, refreshed or not.
+function isUsable(snapshotAt: string, runtime: RecommendationRuntime): boolean {
+  return snapshotAgeMs(snapshotAt, runtime) <= MAX_RECOMMENDATION_AGE_MS;
 }
 
 function isActiveExecution(payload: Record<string, unknown>): boolean {
