@@ -12,7 +12,6 @@ import {
   prepareVe33StakeSchema,
   prepareVe33VoteSchema,
   prepareSwapSchema,
-  prepareTokenBalancesAndAllowancesSchema,
   publicToolCatalog,
   ROBINHOOD_STONX_CHAIN_ID,
   ROBINHOOD_STONX_VE_TOKEN,
@@ -230,7 +229,6 @@ describe("Worker discovery", () => {
       "ekubo_prepare_ve33_merge",
       "ekubo_prepare_ve33_withdraw",
       "ekubo_get_liquidity_opportunities",
-      "ekubo_prepare_token_balances_and_allowances",
       "ekubo_prepare_pool_initialization",
     ]);
     expect(JSON.stringify(catalog)).not.toMatch(/dune|8187907|api\.dune/i);
@@ -257,13 +255,6 @@ describe("Worker discovery", () => {
       }).success,
     ).toBe(true);
     expect(getTokensSchema.safeParse({ tokens: [] }).success).toBe(false);
-    expect(
-      prepareTokenBalancesAndAllowancesSchema.safeParse({
-        chain_id: 1,
-        owner: "0x1111111111111111111111111111111111111111",
-        spenders: ["0x2222222222222222222222222222222222222222"],
-      }).success,
-    ).toBe(true);
     expect(
       listTokensSchema.safeParse({
         chain_id: 4663,
@@ -328,9 +319,6 @@ describe("Worker discovery", () => {
     const listTokens = catalog.tools.find(
       (tool) => tool.name === "ekubo_list_tokens",
     );
-    const tokenBalances = catalog.tools.find(
-      (tool) => tool.name === "ekubo_prepare_token_balances_and_allowances",
-    );
     // Swapping is one tool. Nothing takes a source, because there is no
     // second step left for a caller to have already chosen one for.
     expect(
@@ -392,7 +380,6 @@ describe("Worker discovery", () => {
     expect(swap?.description).toContain(
       "Do not call this tool again for an option it already prepared",
     );
-    expect(tokenBalances?.description).toContain("'all', 'max'");
     expect(
       prepareVe33VoteSchema.shape.current_vote.safeParse(null).success,
     ).toBe(false);

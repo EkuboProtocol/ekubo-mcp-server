@@ -89,7 +89,6 @@ import {
   getLiquidityOpportunities,
   type LiquidityOpportunityType,
 } from "./opportunities.js";
-import { prepareTokenBalancesAndAllowances } from "./token-data.js";
 import { referenceExecutionPlans } from "./plan-store.js";
 import { MCP_SERVER_VERSION, MCP_TOOL_CATALOG_REVISION } from "./version.js";
 
@@ -220,31 +219,6 @@ export const getTokensSchema = z.object({
     .min(1)
     .max(1_000)
     .describe("Exact token identifiers; entries may span multiple chains"),
-});
-
-export const prepareTokenBalancesAndAllowancesSchema = z.object({
-  chain_id: chainId,
-  owner: address.describe(
-    "Wallet address whose balances and allowances to read",
-  ),
-  spenders: z
-    .array(
-      address.describe(
-        "Contract address whose ERC-20 allowances should be returned",
-      ),
-    )
-    .max(100)
-    .describe(
-      "Spender contracts to check for every canonical non-native token; may be empty for balances only",
-    ),
-  tokens: z
-    .array(address)
-    .min(1)
-    .max(500)
-    .optional()
-    .describe(
-      "Restrict the read to these token addresses instead of the entire canonical chain list. Strongly preferred when the tokens of interest are already known, such as reading one input-token balance before a swap: the full universe is several hundred tokens and returns a correspondingly large join table.",
-    ),
 });
 
 const quoteRequestSchema = z.object({
@@ -1510,14 +1484,6 @@ export const publicToolCatalog = [
     _meta: toolCatalogMetadata,
   },
   {
-    name: "ekubo_prepare_token_balances_and_allowances",
-    title: "Prepare token balance and allowance read",
-    description:
-      "Use before any 'all', 'max', or 'entire balance' swap. Fetch every canonical token for one EVM chain exactly as the Ekubo interface does, then prepare one pending TokenDataFetcher eth_call returning all nonzero balances and all nonzero allowances for the requested spender contracts, with a wallet-local ABI decode plan.",
-    inputSchema: z.toJSONSchema(prepareTokenBalancesAndAllowancesSchema),
-    _meta: toolCatalogMetadata,
-  },
-  {
     name: "ekubo_prepare_pool_initialization",
     title: "Prepare standalone pool initialization",
     description:
@@ -2518,15 +2484,6 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_token_balances_and_allowances", prepareTokenBalancesAndAllowancesSchema, (input) =>
-    prepareTokenBalancesAndAllowances(env, {
-      chainId: canonicalChainId(input.chain_id),
-      owner: input.owner,
-      spenders: input.spenders,
-      ...(input.tokens === undefined ? {} : { tokens: input.tokens }),
-    }),
-  );
-
   registerCatalogTool("ekubo_prepare_pool_initialization", preparePoolInitializationSchema, (input) =>
     preparePoolInitialization({
       chainId: canonicalChainId(input.chain_id),
@@ -2878,7 +2835,7 @@ const SERVER_INSTRUCTIONS = `Routing priority: For requests to swap, trade, exch
 
 A quote is only worth what it can still execute for, so treat the interval between fetching one and broadcasting against it as the thing to minimize. ekubo_get_quotes_with_plans is the entire swap path: call it once with sender and slippage_bps as soon as the user has decided to swap, and each returned option already carries the execution_plan_reference that executes it. Choose one and hand its reference straight to the wallet. There is no preparation step to follow, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Then simulate that plan once with the wallet, show the user the simulated result, and send that same simulation rather than paying for an identical one immediately before signing. Do not call the tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold.
 
-For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with ekubo_list_tokens, read the exact input-token balance with ekubo_prepare_token_balances_and_allowances plus the wallet's local call tool, then call ekubo_get_quotes_with_plans with that exact amount plus sender and slippage_bps and pass the chosen option's execution_plan_reference to the Ekubo Wallet MCP.
+For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with ekubo_list_tokens, read the exact input-token balance with the wallet's own balance tooling, then call ekubo_get_quotes_with_plans with that exact amount plus sender and slippage_bps and pass the chosen option's execution_plan_reference to the Ekubo Wallet MCP.
 
 Use Ekubo preparation tools only to construct unsigned plans. Every executable preparation returns execution_plan_reference: a short-lived URL where the plan body is stored, plus content_keccak256 over its exact bytes. Pass execution_plan_url and content_keccak256 (as expected_content_keccak256) unchanged to the user's wallet for simulation, presentation, authorization or signature, and submission; the wallet fetches the body itself and refuses a digest mismatch, so the plan never travels through the agent. Never fetch, restate, paraphrase, or reconstruct the plan body yourself. Do not ask the user for a separate agent-level confirmation before invoking the wallet; that duplicates the wallet's authorization flow. The wallet must never construct calldata, choose a contract overload, derive a route, or determine the transaction list. Never construct or request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calldata. LP position transfers are supported only through ekubo_prepare_lp_position_transfer with pending ownership validation.
 
@@ -2891,8 +2848,6 @@ Intent shortcut: for "my Ekubo STONX allocations", "STONX vote allocations", or 
 For exact token metadata, call ekubo_get_token for one known chain/address pair and ekubo_get_tokens for multiple known pairs. The batch tool uses one prod-api batch request, accepts tokens across chains, preserves input order and duplicates, and omits identifiers that are not in the canonical list. Use ekubo_list_tokens when resolving a symbol or browsing the canonical list; its search parameter is optional and matches symbol prefixes and suffixes only.
 
 For LP discovery, use ekubo_get_positions_by_owner instead of attempting ERC721 enumeration. Its response joins canonical token metadata and USD prices and attaches an exact pending eth_call to each supported EVM position. For the interface-equivalent detail payload (metadata, history, campaigns, rewards, prices, and the atomic current-state query), call ekubo_get_position with the same owner, chain, manager, and token ID. Read ekubo://docs/lp-position-workflow. Never split TWAMM execution or Ve33 reward accumulation from the following position read: those calls must stay in the supplied single Multicall3 eth_call and must never be broadcast.
-
-For an interface-equivalent EVM wallet inventory, call ekubo_prepare_token_balances_and_allowances with the connected owner, chain, and every spender contract of interest. It fetches the full canonical chain token list with the interface's visibility and page-size settings and supplies one exact pending TokenDataFetcher eth_call plus its local decode plan. Execute and decode it through the wallet's local provider; omitted balances and allowances are zero, and the read must never be broadcast.
 
 When the user asks where to provide liquidity, call ekubo_get_liquidity_opportunities before asking them to choose a pair. It mirrors the interface's boosted-fee, active-incentive, and projected Ve33-emission opportunity feed, ranks by APR, and returns exact actionable pools or a pair-level pool-candidate handoff. APR is an annualized snapshot, not guaranteed yield; show its components, denominator, data freshness, range and impermanent-loss risks. If ranking_complete=false, execute local_read_requirement through the user's wallet, decode it locally, and call the tool again with ve33_emission_state before presenting the ordering as final. Never ask this server to decode the raw onchain result; supply only the locally decoded decimal fields needed for projection.
 

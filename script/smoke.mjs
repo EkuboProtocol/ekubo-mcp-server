@@ -73,7 +73,6 @@ const expectedTools = [
   "ekubo_prepare_ve33_merge",
   "ekubo_prepare_ve33_withdraw",
   "ekubo_get_liquidity_opportunities",
-  "ekubo_prepare_token_balances_and_allowances",
   "ekubo_prepare_pool_initialization",
 ];
 assert(

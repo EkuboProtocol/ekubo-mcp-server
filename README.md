@@ -40,10 +40,6 @@ schemas after a Git-triggered deployment.
 - `ekubo_get_token` — fetch token metadata by chain and address
 - `ekubo_get_tokens` — fetch metadata for 1–1,000 exact token identifiers,
   across chains, through one `prod-api` batch request
-- `ekubo_prepare_token_balances_and_allowances` — fetch every canonical token
-  on one EVM chain with the same token-list query as the interface, then return
-  one exact pending TokenDataFetcher call and local decode plan for all nonzero
-  owner balances and allowances to the requested spender contracts
 - `ekubo_get_quotes_with_plans` — compare Ekubo and 0x for same-chain
   exact-input or exact-output swaps, or use Across when
   `destination_chain_id` differs, and return each option's firm unsigned
