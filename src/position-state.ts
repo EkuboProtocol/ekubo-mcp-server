@@ -15,7 +15,8 @@ import {
 } from "viem";
 import {
   functionResultDecodePlan,
-  localWalletDecoderHandoff,
+  type ReadCall,
+  readCallsBundle,
 } from "./abi-decode.js";
 import { ServiceError } from "./core.js";
 import { assertWalletAbiDecodePlan } from "./wallet-compatibility.js";
@@ -291,15 +292,18 @@ export function buildPositionStateReadPlan(
     expected_owner: normalizedExpectedOwner,
     pool_key: poolKey,
     bounds: position.bounds,
-    rpc_request: {
-      jsonrpc: "2.0",
-      id: 1,
-      method: "eth_call",
-      params: [{ to: MULTICALL3_ADDRESS, data: aggregateData }, "pending"],
-    },
-    // Every inner call's bytes are already encoded inside the aggregate in
-    // rpc_request, so they are described here rather than repeated. The result
-    // field lists live in local_decode_plan and are not restated either.
+    // The one aggregate eth_call reading this position: a Multicall3
+    // aggregate3 whose decode plan resolves every inner result. Callers ship
+    // it inside a read_calls bundle (alone or merged with sibling reads).
+    state_call: {
+      id: `ekubo-position-state-${tokenId}`,
+      to: MULTICALL3_ADDRESS,
+      data: aggregateData,
+      decode: decodePlan,
+    } satisfies ReadCall,
+    // Every inner call's bytes are already encoded inside the aggregate, so
+    // they are described here rather than repeated. The result field lists
+    // live in the stored decode plan and are not restated either.
     inner_calls: calls.map((call, index) => ({
       index,
       purpose: call.purpose,
@@ -313,14 +317,6 @@ export function buildPositionStateReadPlan(
       integer_serialization:
         "Serialize every decoded integer as a decimal string before returning it through JSON.",
     },
-    local_decode_plan: decodePlan,
-    result_decoder: localWalletDecoderHandoff({
-      chainId,
-      id: `ekubo-position-state-${tokenId}`,
-      to: MULTICALL3_ADDRESS,
-      data: aggregateData,
-      decode: decodePlan,
-    }),
     semantics: {
       read_only: true,
       never_broadcast:
@@ -329,8 +325,48 @@ export function buildPositionStateReadPlan(
         refresh === undefined
           ? "No pre-read refresh is required for this pool extension."
           : "The refresh and position read must remain in this single ordered aggregate eth_call so the read observes the simulated temporary state.",
-      historical_replay:
-        "For a historical snapshot, reuse the identical to/data and replace pending with the target block number encoded as a JSON-RPC quantity.",
+    },
+  };
+}
+
+export type PositionStateReadPlan = ReturnType<
+  typeof buildPositionStateReadPlan
+>;
+
+/**
+ * Wrap one position's read plan as a self-contained current_state_query whose
+ * `read_calls` bundle the registration walker stores and replaces with a
+ * `read_calls_reference` envelope for wallet_batch_eth_call.
+ *
+ * `includeAggregateCall` additionally keeps the aggregate's to/data inline —
+ * only ekubo_get_position sets it, so an agent can replay the identical read
+ * at a historical block for APR estimation; everywhere else the calldata
+ * lives solely in the stored bundle.
+ */
+export function positionStateQuery(
+  plan: PositionStateReadPlan,
+  options: { includeAggregateCall?: boolean } = {},
+) {
+  if (plan.available !== true) return plan;
+  const { state_call, semantics, ...rest } = plan;
+  return {
+    ...rest,
+    state_call_id: state_call.id,
+    ...(options.includeAggregateCall === true
+      ? { aggregate_call: { to: state_call.to, data: state_call.data } }
+      : {}),
+    read_calls: readCallsBundle({
+      chainId: plan.chain_id,
+      calls: [state_call],
+    }),
+    semantics: {
+      ...semantics,
+      ...(options.includeAggregateCall === true
+        ? {
+            historical_replay:
+              "For a historical snapshot, issue aggregate_call's identical to/data as eth_call with the target block number encoded as a JSON-RPC quantity.",
+          }
+        : {}),
     },
   };
 }

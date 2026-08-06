@@ -6,7 +6,7 @@ import {
   type Address,
   type Hex,
 } from "viem";
-import { localFunctionResultMetadata } from "./abi-decode.js";
+import { functionReadCall, readCallsBundle } from "./abi-decode.js";
 import { type Env, ServiceError } from "./core.js";
 import { preparedTransaction, preparedUiAction } from "./ui-actions.js";
 
@@ -107,88 +107,79 @@ export async function getRewardsClaimsByOwner(
     claims,
     onchain_validation: {
       status: "not_executed",
-      exact_read_list: claims.flatMap((item, index) => {
-        const target =
-          item.drop_address === INCENTIVES_V2
-            ? INCENTIVES_V2
-            : INCENTIVES_DATA_FETCHER_V3;
-        const isClaimedData = encodeFunctionData({
-          abi: INCENTIVES_ABI,
-          functionName: "isClaimed",
-          args: [item.key, BigInt(item.claim.index)],
-        });
-        const isAvailableData = encodeFunctionData({
-          abi: INCENTIVES_ABI,
-          functionName: "isAvailable",
-          args: [
-            item.key,
-            BigInt(item.claim.index),
-            BigInt(item.claim.amount),
-          ],
-        });
-        return [
-          {
-            claim_index: index,
-            field: "is_claimed",
-            chain_id: item.chain_id,
-            rpc_request: {
-              jsonrpc: "2.0",
-              id: index * 2 + 1,
-              method: "eth_call",
-              params: [
-                {
-                  to: target,
-                  data: isClaimedData,
-                },
-                "pending",
-              ],
-            },
-            decode_as: "bool",
-            ...localFunctionResultMetadata({
-              chainId: item.chain_id,
+      // Two reads per claim, grouped into one stored bundle per chain. Each
+      // claim's is_claimed/is_available results are addressed by call id.
+      validation_reads: (() => {
+        const callsByChain = new Map<
+          string,
+          ReturnType<typeof functionReadCall>[]
+        >();
+        for (const [index, item] of claims.entries()) {
+          const target =
+            item.drop_address === INCENTIVES_V2
+              ? INCENTIVES_V2
+              : INCENTIVES_DATA_FETCHER_V3;
+          const chainCalls = callsByChain.get(item.chain_id) ?? [];
+          chainCalls.push(
+            functionReadCall({
               id: `ekubo-reward-claim-${index}-is-claimed`,
               to: target,
-              data: isClaimedData,
+              data: encodeFunctionData({
+                abi: INCENTIVES_ABI,
+                functionName: "isClaimed",
+                args: [item.key, BigInt(item.claim.index)],
+              }),
               abi: INCENTIVES_ABI,
               functionName: "isClaimed",
             }),
-          },
-          {
-            claim_index: index,
-            field: "is_available",
-            chain_id: item.chain_id,
-            rpc_request: {
-              jsonrpc: "2.0",
-              id: index * 2 + 2,
-              method: "eth_call",
-              params: [
-                {
-                  to: target,
-                  data: isAvailableData,
-                },
-                "pending",
-              ],
-            },
-            decode_as: "bool",
-            ...localFunctionResultMetadata({
-              chainId: item.chain_id,
+            functionReadCall({
               id: `ekubo-reward-claim-${index}-is-available`,
               to: target,
-              data: isAvailableData,
+              data: encodeFunctionData({
+                abi: INCENTIVES_ABI,
+                functionName: "isAvailable",
+                args: [
+                  item.key,
+                  BigInt(item.claim.index),
+                  BigInt(item.claim.amount),
+                ],
+              }),
               abi: INCENTIVES_ABI,
               functionName: "isAvailable",
             }),
-          },
-        ];
-      }),
+          );
+          callsByChain.set(item.chain_id, chainCalls);
+        }
+        // The wallet boundary caps a bundle at 128 calls; chunk beyond it.
+        const MAX_CALLS_PER_BUNDLE = 128;
+        return [...callsByChain.entries()].flatMap(([chainId, chainCalls]) => {
+          const chunks = [];
+          for (
+            let start = 0;
+            start < chainCalls.length;
+            start += MAX_CALLS_PER_BUNDLE
+          ) {
+            chunks.push({
+              chain_id: chainId,
+              read_calls: readCallsBundle({
+                chainId,
+                calls: chainCalls.slice(start, start + MAX_CALLS_PER_BUNDLE),
+              }),
+            });
+          }
+          return chunks;
+        });
+      })(),
+      call_id_pattern:
+        "ekubo-reward-claim-<claim_index>-is-claimed and ekubo-reward-claim-<claim_index>-is-available, both decoding as bool",
       instruction:
-        "Execute every supplied read on its stated chain. A claim is executable only when is_claimed=false and is_available=true; then pass its prepare_input unchanged to ekubo_prepare_rewards_claim grouped by chain_id.",
+        "Pass each validation_reads entry's read_calls_reference unchanged as wallet_batch_eth_call's reference argument on its stated chain. A claim is executable only when is_claimed=false and is_available=true; then pass its prepare_input unchanged to ekubo_prepare_rewards_claim grouped by chain_id.",
     },
     source_url: url.toString(),
     ignored_non_evm_claim_count: body.claims.length - evmClaims.length,
     next_step:
-      "Run the supplied exact read list, group available unclaimed records by chain, then call ekubo_prepare_rewards_claim with each record's prepare_input. Do not reconstruct the read or claim calldata.",
-    cache: { mcp_result_storage: "none" },
+      "Run the stored validation reads through the wallet, group available unclaimed records by chain, then call ekubo_prepare_rewards_claim with each record's prepare_input. Do not reconstruct the read or claim calldata.",
+    cache: { mcp_result_storage: "wallet_read_bundles_only" },
   };
 }
 

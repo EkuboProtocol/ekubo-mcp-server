@@ -1,4 +1,4 @@
-import { fakePlanStore } from "./fake-kv.js";
+import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
 import { decodeFunctionData, multicall3Abi } from "viem";
 import type { Env } from "../src/core.js";
@@ -9,7 +9,7 @@ import {
 import { getPosition } from "../src/positions.js";
 
 const env = {
-  PLAN_STORE: fakePlanStore(),
+  ARTIFACT_STORE: fakeArtifactStore(),
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
   ZERO_X_API_KEY: "unused",
@@ -55,11 +55,9 @@ describe("position interface parity", () => {
     expect(plan.available).toBe(true);
     if (!plan.available) throw new Error("expected an EVM read plan");
 
-    expect(plan.rpc_request.method).toBe("eth_call");
-    const rpcCall = plan.rpc_request.params[0];
-    if (typeof rpcCall === "string") throw new Error("expected call object");
-    expect(rpcCall.to).toBe(MULTICALL3_ADDRESS);
-    expect(plan.rpc_request.params[1]).toBe("pending");
+    expect(plan.state_call.to).toBe(MULTICALL3_ADDRESS);
+    expect(plan.state_call.id).toBe(`ekubo-position-state-${plan.token_id}`);
+    expect(plan.block_parameter).toBe("pending");
     expect(plan.inner_calls.map((call) => call.purpose)).toEqual([
       "accumulate_ve33_rewards_in_simulation",
       "position_state",
@@ -70,9 +68,12 @@ describe("position interface parity", () => {
       current_owner: 2,
     });
     // Inner calls are described, not re-encoded: their bytes already exist
-    // inside the aggregate in rpc_request.
+    // inside the aggregate call.
     expect(plan.inner_calls.every((call) => !("call_data" in call))).toBe(true);
-    expect(plan.local_decode_plan).toMatchObject({
+    const decodePlan = plan.state_call.decode as Record<string, unknown> & {
+      results: Record<string, unknown>[];
+    };
+    expect(decodePlan).toMatchObject({
       kind: "multicall3",
       function_name: "aggregate3",
       expected_result_count: 3,
@@ -94,7 +95,7 @@ describe("position interface parity", () => {
         },
       ],
     });
-    expect(Object.keys(plan.local_decode_plan).sort()).toEqual([
+    expect(Object.keys(decodePlan).sort()).toEqual([
       "abi",
       "expected_result_count",
       "function_name",
@@ -102,23 +103,15 @@ describe("position interface parity", () => {
       "required",
       "results",
     ]);
-    expect(plan.local_decode_plan.results.map((result) => Object.keys(result).sort())).toEqual([
+    expect(decodePlan.results.map((result) => Object.keys(result).sort())).toEqual([
       ["index", "required_success"],
       ["decode", "index", "required_success"],
       ["decode", "index", "required_success"],
     ]);
-    expect(plan.result_decoder).toMatchObject({
-      trust_boundary: "execute_and_decode_on_user_device",
-      call_id: `ekubo-position-state-${plan.token_id}`,
-      network: {
-        chain_id: "4663",
-        caip2_chain_id: "eip155:4663",
-      },
-    });
 
     const aggregate = decodeFunctionData({
       abi: multicall3Abi,
-      data: rpcCall.data,
+      data: plan.state_call.data as `0x${string}`,
     });
     expect(aggregate.functionName).toBe("aggregate3");
     const calls = aggregate.args?.[0] as readonly {
@@ -156,22 +149,24 @@ describe("position interface parity", () => {
       expect(plan).toMatchObject({
         available: true,
         manager_version: manager.version,
-        local_decode_plan: {
-          kind: "multicall3",
-          expected_result_count: 2,
-          results: [
-            {
-              index: 0,
-              decode: {
-                kind: "function_result",
-                function_name: "getPositionFeesAndLiquidity",
+        state_call: {
+          decode: {
+            kind: "multicall3",
+            expected_result_count: 2,
+            results: [
+              {
+                index: 0,
+                decode: {
+                  kind: "function_result",
+                  function_name: "getPositionFeesAndLiquidity",
+                },
               },
-            },
-            {
-              index: 1,
-              decode: { function_name: "ownerOf" },
-            },
-          ],
+              {
+                index: 1,
+                decode: { function_name: "ownerOf" },
+              },
+            ],
+          },
         },
       });
     }
@@ -257,6 +252,16 @@ describe("position interface parity", () => {
       "USDG",
     ]);
     expect(result.current_state_query.available).toBe(true);
+    if (result.current_state_query.available !== true) {
+      throw new Error("expected an available current-state query");
+    }
+    // getPosition keeps the aggregate call inline for historical APR replay
+    // alongside the stored read bundle.
+    expect(result.current_state_query.aggregate_call?.to).toBeDefined();
+    expect(result.current_state_query.read_calls.calls).toHaveLength(1);
+    expect(
+      result.current_state_query.semantics.historical_replay,
+    ).toContain("aggregate_call");
     expect(result.interface_parity.apr_history).toContain("collect_fees");
     expect(requested.some((url) => url.includes("/rewards/4663/"))).toBe(true);
   });

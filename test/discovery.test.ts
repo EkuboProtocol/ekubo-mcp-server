@@ -1,4 +1,4 @@
-import { fakePlanStore } from "./fake-kv.js";
+import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
 import { keccak256, stringToHex } from "viem";
 import worker from "../src/index.js";
@@ -17,14 +17,14 @@ import {
   ROBINHOOD_STONX_VE_TOKEN,
   listTokensSchema,
 } from "../src/server.js";
-import { storeReadCalls } from "../src/read-store.js";
+import { storeArtifact } from "../src/artifact-store.js";
 import {
   MCP_SERVER_VERSION,
   MCP_TOOL_CATALOG_REVISION,
 } from "../src/version.js";
 
 const env = {
-  PLAN_STORE: fakePlanStore(),
+  ARTIFACT_STORE: fakeArtifactStore(),
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
   ZERO_X_API_KEY: "zero-x-test-key",
@@ -176,7 +176,15 @@ describe("Worker discovery", () => {
       server_version: string;
       catalog_revision: string;
       tool_count: number;
-      tools: typeof publicToolCatalog;
+      tools: {
+        name: string;
+        title: string;
+        description: string;
+        inputSchema: Record<string, unknown>;
+        annotations?: { readOnlyHint?: boolean; idempotentHint?: boolean };
+        outputSchema?: Record<string, unknown>;
+        _meta?: Record<string, unknown>;
+      }[];
     };
     expect(catalog.server_version).toBe(MCP_SERVER_VERSION);
     expect(catalog.catalog_revision).toBe(MCP_TOOL_CATALOG_REVISION);
@@ -232,12 +240,34 @@ describe("Worker discovery", () => {
       "ekubo_prepare_pool_initialization",
     ]);
     expect(JSON.stringify(catalog)).not.toMatch(/dune|8187907|api\.dune/i);
-    expect(
-      catalog.tools.every(
-        (tool) =>
-          tool._meta["com.ekubo/catalogRevision"] === MCP_TOOL_CATALOG_REVISION,
-      ),
-    ).toBe(true);
+    // The catalog revision lives once at the catalog level, not repeated in
+    // per-tool _meta.
+    expect(catalog.catalog_revision).toBe(MCP_TOOL_CATALOG_REVISION);
+    expect(catalog.tools.every((tool) => !("_meta" in tool))).toBe(true);
+    // Annotations are per tool: preparation tools and the quotes tool are not
+    // read-only or idempotent; true reads are.
+    const annotationFor = (name: string) =>
+      catalog.tools.find((tool) => tool.name === name)?.annotations;
+    expect(annotationFor("ekubo_get_pool")).toMatchObject({
+      readOnlyHint: true,
+      idempotentHint: true,
+    });
+    expect(annotationFor("ekubo_prepare_wrap_unwrap")).toMatchObject({
+      readOnlyHint: false,
+      idempotentHint: false,
+    });
+    expect(annotationFor("ekubo_get_quotes_with_plans")).toMatchObject({
+      readOnlyHint: false,
+      idempotentHint: false,
+    });
+    // outputSchema only on the handoff tools.
+    const outputSchemaFor = (name: string) =>
+      catalog.tools.find((tool) => tool.name === name)?.outputSchema;
+    expect(outputSchemaFor("ekubo_prepare_wrap_unwrap")).toBeDefined();
+    expect(outputSchemaFor("ekubo_get_quotes_with_plans")).toBeDefined();
+    expect(outputSchemaFor("ekubo_get_pool")).toBeDefined();
+    expect(outputSchemaFor("ekubo_list_tokens")).toBeUndefined();
+    expect(outputSchemaFor("ekubo_derive_pool_id")).toBeUndefined();
     const batchTokens = catalog.tools.find(
       (tool) => tool.name === "ekubo_get_tokens",
     );
@@ -508,7 +538,10 @@ describe("Worker discovery", () => {
       "execution_plan_reference",
     );
     expect(initializeResult.result.instructions).toContain(
-      "content_keccak256",
+      "pass the envelope unchanged as the wallet tool's reference argument",
+    );
+    expect(initializeResult.result.instructions).toContain(
+      MCP_TOOL_CATALOG_REVISION,
     );
     expect(initializeResult.result.instructions).toContain(
       "Do not ask the user for a separate agent-level confirmation",
@@ -549,11 +582,11 @@ describe("Worker discovery", () => {
     expect(listResult.result.tools.map((tool) => tool.name)).toEqual(
       publicToolCatalog.map((tool) => tool.name),
     );
+    // The catalog revision is stated once in the server instructions and HTTP
+    // discovery instead of being repeated in every tool's _meta.
     expect(
       listResult.result.tools.every(
-        (tool) =>
-          tool._meta?.["com.ekubo/catalogRevision"] ===
-          MCP_TOOL_CATALOG_REVISION,
+        (tool) => tool._meta?.["com.ekubo/catalogRevision"] === undefined,
       ),
     ).toBe(true);
 
@@ -796,11 +829,15 @@ describe("Worker discovery", () => {
           execution_plan?: unknown;
           execution_plan_reference: {
             kind: string;
-            execution_plan_url: string;
-            content_keccak256: `0x${string}`;
-            chain_id: string;
-            sender: string;
-            step_count: number;
+            artifact_type: string;
+            url: string;
+            integrity: { algorithm: string; value: `0x${string}` };
+            bytes: number;
+            summary: {
+              chain_id: string;
+              sender: string;
+              step_count: number;
+            };
           };
         };
       };
@@ -817,25 +854,30 @@ describe("Worker discovery", () => {
     const reference =
       splitResult.result.structuredContent.execution_plan_reference;
     expect(reference).toMatchObject({
-      kind: "ekubo_execution_plan_reference",
-      chain_id: "4663",
-      sender: "0x1111111111111111111111111111111111111111",
-      step_count: 1,
+      kind: "artifact_reference",
+      artifact_type: "execution_plan",
+      summary: {
+        chain_id: "4663",
+        sender: "0x1111111111111111111111111111111111111111",
+        step_count: 1,
+      },
     });
-    expect(reference.execution_plan_url).toMatch(
-      /^https:\/\/mcp\.ekubo\.org\/plan\/[0-9a-f-]{36}$/,
+    expect(reference.url).toMatch(
+      /^https:\/\/mcp\.ekubo\.org\/artifact\/[0-9a-f-]{36}$/,
     );
 
     // The wallet-side fetch: the stored body is served byte-for-byte, its
     // keccak256 matches the reference, and it parses to the exact plan.
     const planFetch = await worker.fetch(
-      new Request(reference.execution_plan_url),
+      new Request(reference.url),
       env,
       context,
     );
     expect(planFetch.status).toBe(200);
     const planBody = await planFetch.text();
-    expect(keccak256(stringToHex(planBody))).toBe(reference.content_keccak256);
+    expect(reference.integrity.algorithm).toBe("keccak256");
+    expect(keccak256(stringToHex(planBody))).toBe(reference.integrity.value);
+    expect(new TextEncoder().encode(planBody).length).toBe(reference.bytes);
     expect(JSON.parse(planBody)).toMatchObject({
       schema_version: "1",
       chain_id: "4663",
@@ -844,7 +886,7 @@ describe("Worker discovery", () => {
 
     const missingPlan = await worker.fetch(
       new Request(
-        "https://mcp.ekubo.org/plan/00000000-0000-4000-8000-000000000000",
+        "https://mcp.ekubo.org/artifact/00000000-0000-4000-8000-000000000000",
       ),
       env,
       context,
@@ -853,7 +895,7 @@ describe("Worker discovery", () => {
     const missingBody = (await missingPlan.json()) as {
       error: { code: string };
     };
-    expect(missingBody.error.code).toBe("plan_not_found_or_expired");
+    expect(missingBody.error.code).toBe("artifact_not_found_or_expired");
 
     const mismatchedCaip = await worker.fetch(
       new Request("https://mcp.ekubo.org/mcp", {
@@ -891,7 +933,7 @@ describe("Worker discovery", () => {
     );
   });
 
-  it("serves stored read-call bundles byte-for-byte at /read/<id>", async () => {
+  it("serves stored read-call bundles byte-for-byte at /artifact/<id>", async () => {
     const bundle = {
       chain_id: "8453",
       block_parameter: "pending",
@@ -904,17 +946,17 @@ describe("Worker discovery", () => {
         },
       ],
     };
-    const reference = await storeReadCalls(
-      env,
-      "https://mcp.ekubo.org",
-      bundle,
-    );
-    expect(reference.read_calls_url).toMatch(
-      /^https:\/\/mcp\.ekubo\.org\/read\/[0-9a-f-]{36}$/,
+    const reference = await storeArtifact(env, "https://mcp.ekubo.org", {
+      artifactType: "read_calls",
+      body: bundle,
+    });
+    expect(reference.artifact_type).toBe("read_calls");
+    expect(reference.url).toMatch(
+      /^https:\/\/mcp\.ekubo\.org\/artifact\/[0-9a-f-]{36}$/,
     );
 
     const fetched = await worker.fetch(
-      new Request(reference.read_calls_url),
+      new Request(reference.url),
       env,
       context,
     );
@@ -923,13 +965,12 @@ describe("Worker discovery", () => {
     expect(fetched.headers.get("cache-control")).toBe("no-store");
     expect(fetched.headers.get("access-control-allow-origin")).toBe("*");
     const body = await fetched.text();
-    expect(keccak256(stringToHex(body))).toBe(
-      reference.content_keccak256 as `0x${string}`,
-    );
+    expect(keccak256(stringToHex(body))).toBe(reference.integrity.value);
+    expect(new TextEncoder().encode(body).length).toBe(reference.bytes);
     expect(JSON.parse(body)).toEqual(bundle);
 
     const head = await worker.fetch(
-      new Request(reference.read_calls_url, { method: "HEAD" }),
+      new Request(reference.url, { method: "HEAD" }),
       env,
       context,
     );
@@ -938,17 +979,17 @@ describe("Worker discovery", () => {
 
     const missing = await worker.fetch(
       new Request(
-        "https://mcp.ekubo.org/read/00000000-0000-4000-8000-000000000000",
+        "https://mcp.ekubo.org/artifact/00000000-0000-4000-8000-000000000000",
       ),
       env,
       context,
     );
     expect(missing.status).toBe(404);
     const missingBody = (await missing.json()) as { error: { code: string } };
-    expect(missingBody.error.code).toBe("read_calls_not_found_or_expired");
+    expect(missingBody.error.code).toBe("artifact_not_found_or_expired");
 
     const badPath = await worker.fetch(
-      new Request("https://mcp.ekubo.org/read/not-a-uuid"),
+      new Request("https://mcp.ekubo.org/artifact/not-a-uuid"),
       env,
       context,
     );

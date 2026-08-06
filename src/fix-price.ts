@@ -8,7 +8,7 @@ import {
 import { encodeFunctionData, getAddress, type Address, type Hex } from "viem";
 import {
   functionResultDecodePlan,
-  localWalletDecoderHandoff,
+  readCallsBundle,
   sqrtRatioFloatSemanticCodec,
 } from "./abi-decode.js";
 import { type Env, getTokens, ServiceError } from "./core.js";
@@ -131,24 +131,23 @@ export async function prepareFixPoolPrice(
     functionName: "poolPrice",
     args: [poolKey],
   });
-  const currentPriceQuery = {
-    jsonrpc: "2.0",
-    id: 1,
-    method: "eth_call",
-    params: [{ to: CORE_DATA_FETCHER_V3, data: readData }, "pending"],
-  } as const;
   const currentPriceDecodePlan = functionResultDecodePlan(
     CORE_DATA_FETCHER_ABI,
     "poolPrice",
     { semanticCodecs: [sqrtRatioFloatSemanticCodec("sqrtRatio")] },
   );
-  const currentPriceResultDecoder = localWalletDecoderHandoff({
-    chainId: input.chainId,
-    id: `ekubo-pool-price-${pool.pool_id}`,
-    to: CORE_DATA_FETCHER_V3,
-    data: readData,
-    decode: currentPriceDecodePlan,
-  });
+  const currentPriceReadCalls = () =>
+    readCallsBundle({
+      chainId: input.chainId,
+      calls: [
+        {
+          id: `ekubo-pool-price-${pool.pool_id}`,
+          to: CORE_DATA_FETCHER_V3,
+          data: readData,
+          decode: currentPriceDecodePlan,
+        },
+      ],
+    });
 
   const shared = {
     schema_version: "1",
@@ -183,12 +182,10 @@ export async function prepareFixPoolPrice(
       phase: "read_current_price",
       execution_plan_ready: false,
       current_price_query: {
-        rpc_request: currentPriceQuery,
         decode_as: "(uint96 sqrtRatio,int32 tick)",
-        local_decode_plan: currentPriceDecodePlan,
-        result_decoder: currentPriceResultDecoder,
+        read_calls: currentPriceReadCalls(),
         resume: {
-          tool: "ekubo_prepare_fix_price",
+          tool: "ekubo_prepare_fix_pool_price",
           preserve_original_arguments: true,
           arguments: {
             pending_current_sqrt_ratio:
@@ -199,7 +196,7 @@ export async function prepareFixPoolPrice(
       next_phase: "quote",
       wallet_handoff: {
         instruction:
-          "Use the wallet's call API for this supplied read when available; do not ask for agent-level confirmation or reconstruct the calldata with Cast.",
+          "Pass current_price_query.read_calls_reference unchanged as wallet_batch_eth_call's reference argument; do not ask for agent-level confirmation or reconstruct the calldata with Cast.",
       },
     };
   }
@@ -235,20 +232,19 @@ export async function prepareFixPoolPrice(
     functionName: "quote",
     args: [quoteRoute],
   });
-  const quoteQuery = {
-    jsonrpc: "2.0",
-    id: 2,
-    method: "eth_call",
-    params: [{ to: YUL_ROUTER_ADDRESS, data: quoteCalldata }, "pending"],
-  } as const;
   const quoteDecodePlan = functionResultDecodePlan(YUL_ROUTER_ABI, "quote");
-  const quoteResultDecoder = localWalletDecoderHandoff({
-    chainId: input.chainId,
-    id: `ekubo-fix-price-quote-${pool.pool_id}`,
-    to: YUL_ROUTER_ADDRESS,
-    data: quoteCalldata,
-    decode: quoteDecodePlan,
-  });
+  const quoteReadCalls = () =>
+    readCallsBundle({
+      chainId: input.chainId,
+      calls: [
+        {
+          id: `ekubo-fix-price-quote-${pool.pool_id}`,
+          to: YUL_ROUTER_ADDRESS,
+          data: quoteCalldata,
+          decode: quoteDecodePlan,
+        },
+      ],
+    });
 
   if (input.quoteResult === undefined) {
     return {
@@ -260,13 +256,11 @@ export async function prepareFixPoolPrice(
         direction: priceIncreasing ? "increase" : "decrease",
       },
       quote_query: {
-        rpc_request: quoteQuery,
         decode_as:
           "(address specifiedToken,address calculatedToken,int256 specifiedAmount,int256 calculatedAmount)",
-        local_decode_plan: quoteDecodePlan,
-        result_decoder: quoteResultDecoder,
+        read_calls: quoteReadCalls(),
         resume: {
-          tool: "ekubo_prepare_fix_price",
+          tool: "ekubo_prepare_fix_pool_price",
           preserve_original_arguments: true,
           arguments: {
             quote_result: {
@@ -288,7 +282,7 @@ export async function prepareFixPoolPrice(
       next_phase: "execute",
       wallet_handoff: {
         instruction:
-          "Use the wallet's call API for this supplied quote when available; do not ask for agent-level confirmation or reconstruct the calldata with Cast.",
+          "Pass quote_query.read_calls_reference unchanged as wallet_batch_eth_call's reference argument; do not ask for agent-level confirmation or reconstruct the calldata with Cast.",
       },
     };
   }
@@ -391,18 +385,10 @@ export async function prepareFixPoolPrice(
         partial_fill_stops_at_target: true,
       },
       onchainValidation: {
-        current_price_query: {
-          rpc_request: currentPriceQuery,
-          local_decode_plan: currentPriceDecodePlan,
-          result_decoder: currentPriceResultDecoder,
-        },
-        quote_query: {
-          rpc_request: quoteQuery,
-          local_decode_plan: quoteDecodePlan,
-          result_decoder: quoteResultDecoder,
-        },
+        current_price_query: { read_calls: currentPriceReadCalls() },
+        quote_query: { read_calls: quoteReadCalls() },
         instruction:
-          "Immediately before signing, rerun both supplied pending reads, verify the current price remains on the same side of the target, verify the quote tuple still matches, and simulate the exact execution plan.",
+          "Immediately before signing, rerun both supplied pending reads through their read_calls_reference envelopes, verify the current price remains on the same side of the target, verify the quote tuple still matches, and simulate the exact execution plan.",
       },
     }),
     phase: "execute",

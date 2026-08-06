@@ -1,4 +1,4 @@
-import { fakePlanStore } from "./fake-kv.js";
+import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
 import { encodeAbiParameters, keccak256 } from "viem";
 import type { Env } from "../src/core.js";
@@ -14,7 +14,7 @@ import {
 } from "../src/pools.js";
 
 const env = {
-  PLAN_STORE: fakePlanStore(),
+  ARTIFACT_STORE: fakeArtifactStore(),
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
   ZERO_X_API_KEY: "unused",
@@ -172,7 +172,7 @@ describe("pool and position reads", () => {
     expect(result.tokens.map((token) => token.usd_price)).toEqual([1, 2]);
     expect(result.positions[0]).toMatchObject({
       chain_id: "4663",
-      current_state_query: {
+      current_state: {
         available: true,
         manager_version: "positions_v3",
         block_parameter: "pending",
@@ -219,30 +219,33 @@ describe("pool and position reads", () => {
       }) as typeof fetch,
     );
 
-    const queries = result.positions.map(
-      (position: any) => position.current_state_query,
+    const summaries = result.positions.map(
+      (position: any) => position.current_state,
     );
-    // Both positions use the same manager, so the byte-identical decode plan
-    // and read semantics are emitted once rather than per position.
-    expect(queries[0].local_decode_plan_ref).toBe(
-      queries[1].local_decode_plan_ref,
-    );
-    expect(queries[0].semantics_ref).toBe(queries[1].semantics_ref);
-    expect(Object.keys(result.shared_decode_plans)).toHaveLength(1);
-    expect(Object.keys(result.shared_read_semantics)).toHaveLength(1);
-    expect(
-      result.shared_decode_plans[queries[0].local_decode_plan_ref],
-    ).toMatchObject({ kind: "multicall3", function_name: "aggregate3" });
-
-    // The plan itself must not be inlined again per position.
-    for (const query of queries) {
-      expect(query).not.toHaveProperty("local_decode_plan");
-      expect(query).not.toHaveProperty("semantics");
+    // Position rows carry only metadata plus a call-id link; the read
+    // machinery itself lives in one stored bundle per chain.
+    for (const summary of summaries) {
+      expect(summary).not.toHaveProperty("state_call");
+      expect(summary).not.toHaveProperty("semantics");
+      expect(summary.state_call_id).toStartWith("ekubo-position-state-");
     }
-    // Each position still carries its own distinct call.
-    expect(queries[0].rpc_request.params[0].data).not.toBe(
-      queries[1].rpc_request.params[0].data,
+    expect(result.current_state_reads).toHaveLength(1);
+    const bundle = result.current_state_reads[0];
+    expect(bundle.chain_id).toBe("4663");
+    expect(bundle.read_calls.calls).toHaveLength(2);
+    expect(bundle.read_calls.calls.map((call: any) => call.id)).toEqual(
+      summaries.map((summary: any) => summary.state_call_id),
     );
+    // Each position still carries its own distinct aggregate call.
+    expect(bundle.read_calls.calls[0].data).not.toBe(
+      bundle.read_calls.calls[1].data,
+    );
+    for (const call of bundle.read_calls.calls) {
+      expect(call.decode).toMatchObject({
+        kind: "multicall3",
+        function_name: "aggregate3",
+      });
+    }
   });
 
   it("resolves and verifies an exact pool key and indexed state", async () => {

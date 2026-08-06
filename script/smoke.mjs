@@ -1,7 +1,7 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-const expectedServerVersion = "0.26.0";
+const expectedServerVersion = "0.27.0";
 const expectedCatalogRevision =
-  "2026-08-06.remove-token-balances-and-allowances";
+  "2026-08-06.unified-artifact-references";
 const smokeNonce = `${Date.now()}-${Math.random()}`;
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
 
@@ -116,6 +116,10 @@ assert(
   "MCP VeToken safety instructions are missing",
 );
 assert(
+  initialized.result?.instructions?.includes(expectedCatalogRevision),
+  "MCP instructions are missing the tool catalog revision",
+);
+assert(
   !privateRecommendationSourcePattern.test(JSON.stringify(initialized)),
   "MCP initialization exposes the private recommendation source",
 );
@@ -128,10 +132,9 @@ assert(
 );
 assert(
   listed.result?.tools?.every(
-    (tool) =>
-      tool._meta?.["com.ekubo/catalogRevision"] === expectedCatalogRevision,
+    (tool) => tool._meta?.["com.ekubo/catalogRevision"] === undefined,
   ),
-  "MCP tools/list is missing the tool catalog revision metadata",
+  "MCP tools/list still repeats per-tool catalog revision metadata",
 );
 assert(
   !privateRecommendationSourcePattern.test(JSON.stringify(listed)),

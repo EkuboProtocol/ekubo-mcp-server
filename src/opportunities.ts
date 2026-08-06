@@ -7,7 +7,7 @@ import {
 } from "viem";
 import {
   functionResultDecodePlan,
-  localWalletDecoderHandoff,
+  readCallsBundle,
 } from "./abi-decode.js";
 import {
   type Env,
@@ -504,17 +504,16 @@ function ve33EmissionStateReadRequirement() {
       resource_uri: `ekubo://contracts/evm/${ROBINHOOD_CHAIN_ID}/${ROBINHOOD_VE33_DATA_FETCHER}`,
     },
     block_parameter: "pending",
-    rpc_request: {
-      method: "eth_call",
-      params: [{ to: ROBINHOOD_VE33_DATA_FETCHER, data }, "pending"],
-    },
-    local_decode_plan: decode,
-    result_decoder: localWalletDecoderHandoff({
+    read_calls: readCallsBundle({
       chainId: ROBINHOOD_CHAIN_ID,
-      id: "ve33-emission-state",
-      to: ROBINHOOD_VE33_DATA_FETCHER,
-      data,
-      decode,
+      calls: [
+        {
+          id: "ve33-emission-state",
+          to: ROBINHOOD_VE33_DATA_FETCHER,
+          data,
+          decode,
+        },
+      ],
     }),
     resume:
       {

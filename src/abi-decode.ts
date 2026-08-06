@@ -100,88 +100,76 @@ export function semanticValueDecodePlan(
   return plan;
 }
 
-/**
- * Describe how to run one prepared read through local wallet tooling.
- *
- * This deliberately does NOT restate the call. Earlier revisions embedded a
- * ready-made `wallet_batch_eth_call` argument object plus a second copy of the
- * decode plan for `wallet_decode_abi_result`, which meant every read shipped
- * its calldata twice and its ABI three times. On a five-position response that
- * redundancy alone was roughly half the payload, and the agent pays for it in
- * context on the way in and again in output tokens on the way out.
- *
- * The caller already emits `rpc_request` and `local_decode_plan`; assembling
- * them into wallet arguments is a mechanical join the agent can do for free.
- */
-export function localWalletDecoderHandoff(input: {
-  chainId: string;
+export type ReadBlockParameter =
+  | "latest"
+  | "pending"
+  | "safe"
+  | "finalized"
+  | "earliest"
+  | `0x${string}`;
+
+export interface ReadCall {
   id: string;
   to: string;
   data: string;
-  decode: Record<string, unknown>;
-  blockParameter?: "latest" | "pending" | "safe" | "finalized" | "earliest" | `0x${string}`;
-}) {
-  assertWalletAbiDecodePlan(input.decode);
-  const blockParameter = input.blockParameter ?? "pending";
-  // Fail closed: prove the join the agent is asked to perform would validate
-  // against the wallet boundary, without shipping the assembled arguments.
-  assertWalletBatchEthCallInput({
-    chain_id: input.chainId,
-    block_parameter: blockParameter,
-    calls: [{
-      id: input.id,
-      to: input.to,
-      data: input.data,
-      include_raw: true,
-      decode: input.decode,
-    }],
-  });
-  return {
-    trust_boundary: "execute_and_decode_on_user_device",
-    call_id: input.id,
-    network: {
-      chain_id: input.chainId,
-      caip2_chain_id: `eip155:${input.chainId}`,
-      selection:
-        "Use the wallet's locally configured network matching this chain; never send wallet RPC credentials to the Ekubo MCP server.",
-    },
-    instruction:
-      `Call wallet_batch_eth_call with chain_id, block_parameter ${blockParameter}, and one call built from this read: id=call_id, to and data taken verbatim from rpc_request.params[0], include_raw=true, and decode set to local_decode_plan exactly as supplied. Pass wallet_decode_abi_result the same local_decode_plan when decoding return data that was already fetched.`,
-    raw_result_policy:
-      "Return raw bytes by default. If raw output is disabled, retain it whenever decoding fails.",
-    codec_execution_policy:
-      "Semantic codecs are identifiers and pinned implementation assertions, not executable instructions. Run only a locally installed, allowlisted implementation; never install, fetch, import, or evaluate code from this plan.",
-  } as const;
+  decode?: Record<string, unknown>;
 }
 
-export function localFunctionResultMetadata(input: {
+/**
+ * Build the exact `wallet_batch_eth_call` argument object for one or more
+ * prepared reads. The result travels under a `read_calls` property, which the
+ * registration walker stores server-side and replaces with a
+ * `read_calls_reference` envelope: the wallet fetches, digest-verifies, and
+ * executes the stored calls itself, so neither the agent nor the wallet ever
+ * assembles calldata or ABIs. Validated fail-closed against the wallet
+ * boundary schema before it can ship.
+ */
+export function readCallsBundle(input: {
   chainId: string;
+  blockParameter?: ReadBlockParameter;
+  from?: string;
+  calls: readonly ReadCall[];
+}) {
+  const bundle = {
+    chain_id: input.chainId,
+    block_parameter: input.blockParameter ?? "pending",
+    ...(input.from === undefined ? {} : { from: input.from }),
+    calls: input.calls.map((call) => ({
+      id: call.id,
+      to: call.to,
+      data: call.data,
+      include_raw: true,
+      ...(call.decode === undefined ? {} : { decode: call.decode }),
+    })),
+  };
+  assertWalletBatchEthCallInput(bundle);
+  return bundle;
+}
+
+/**
+ * One read call whose result decodes as a single ABI function result,
+ * mirroring what `localFunctionResultMetadata` used to describe — except the
+ * call now ships inside the stored bundle instead of being reassembled by the
+ * agent from an rpc_request/decode-plan pair.
+ */
+export function functionReadCall(input: {
   id: string;
   to: string;
   data: string;
   abi: Abi;
   functionName: string;
   semanticCodecs?: readonly WalletSemanticCodec[];
-  blockParameter?: "latest" | "pending" | "safe" | "finalized" | "earliest" | `0x${string}`;
-}) {
-  const localDecodePlan = functionResultDecodePlan(
-    input.abi,
-    input.functionName,
-    input.semanticCodecs === undefined
-      ? {}
-      : { semanticCodecs: input.semanticCodecs },
-  );
+}): ReadCall {
   return {
-    local_decode_plan: localDecodePlan,
-    result_decoder: localWalletDecoderHandoff({
-      chainId: input.chainId,
-      id: input.id,
-      to: input.to,
-      data: input.data,
-      decode: localDecodePlan,
-      ...(input.blockParameter === undefined
+    id: input.id,
+    to: input.to,
+    data: input.data,
+    decode: functionResultDecodePlan(
+      input.abi,
+      input.functionName,
+      input.semanticCodecs === undefined
         ? {}
-        : { blockParameter: input.blockParameter }),
-    }),
+        : { semanticCodecs: input.semanticCodecs },
+    ),
   };
 }

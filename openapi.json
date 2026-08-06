@@ -181,11 +181,16 @@
     "schemas": {
       "ErrorResponse": {
         "type": "object",
-        "required": ["error"],
+        "required": [
+          "error"
+        ],
         "properties": {
           "error": {
             "type": "object",
-            "required": ["code", "message"],
+            "required": [
+              "code",
+              "message"
+            ],
             "properties": {
               "code": {
                 "type": "string"
@@ -199,7 +204,12 @@
       },
       "Tool": {
         "type": "object",
-        "required": ["name", "title", "description", "inputSchema"],
+        "required": [
+          "name",
+          "title",
+          "description",
+          "inputSchema"
+        ],
         "properties": {
           "name": {
             "type": "string"
@@ -213,25 +223,39 @@
           "inputSchema": {
             "type": "object"
           },
-          "_meta": {
+          "annotations": {
             "type": "object",
             "additionalProperties": true
+          },
+          "outputSchema": {
+            "type": "object"
           }
         }
       },
       "JsonRpcRequest": {
         "type": "object",
-        "required": ["jsonrpc", "method"],
+        "required": [
+          "jsonrpc",
+          "method"
+        ],
         "properties": {
           "jsonrpc": {
             "const": "2.0"
           },
           "id": {
-            "type": ["string", "number", "null"]
+            "type": [
+              "string",
+              "number",
+              "null"
+            ]
           },
           "method": {
             "type": "string",
-            "examples": ["initialize", "tools/list", "tools/call"]
+            "examples": [
+              "initialize",
+              "tools/list",
+              "tools/call"
+            ]
           },
           "params": {}
         }

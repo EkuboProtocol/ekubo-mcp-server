@@ -133,6 +133,14 @@ const simulationFailurePolicySchema = z.object({
   }
 });
 
+/**
+ * Capabilities a plan may require of the wallet that executes it. The wallet
+ * rejects any plan listing a capability it does not implement, so this list
+ * is the producer-side mirror of the wallet's supported set: emitting an
+ * entry not in it would produce plans no deployed wallet accepts.
+ */
+export const WALLET_SUPPORTED_CAPABILITIES = ["atomic_batch"] as const;
+
 export const walletExecutionPlanSchema = z.object({
   schema_version: z.literal("1"),
   chain_id: decimalQuantity,
@@ -141,13 +149,6 @@ export const walletExecutionPlanSchema = z.object({
   ordered_steps: z.array(z.object({
     step: z.number().int().positive(),
     kind: z.enum(["approval", "execution", "allowance_cleanup", "signature_dependent_execution", "other"]),
-    submit_condition: z.enum([
-      "always",
-      "if_required_by_current_allowance",
-      "after_prior_required_steps_have_successful_receipts",
-      "after_execution_has_successful_receipt_if_allowance_remains",
-      "after_required_signature_is_supplied",
-    ]),
     transaction: z.object({
       chain_id: decimalQuantity,
       from: address,
@@ -156,11 +157,13 @@ export const walletExecutionPlanSchema = z.object({
       value: decimalQuantity,
       gas: decimalQuantity.optional(),
     }).strict(),
-    eip1193: z.record(z.string(), z.unknown()).optional(),
     revert_decode: walletAbiDecodePlanSchema.optional(),
   }).strict()).min(1).max(4_096),
-  execution_policy: z.record(z.string(), z.unknown()).optional(),
-  adapters: z.record(z.string(), z.unknown()).optional(),
+  required_capabilities: z
+    .array(z.enum(WALLET_SUPPORTED_CAPABILITIES))
+    .max(16)
+    .optional(),
+  extensions: z.record(z.string(), z.unknown()).optional(),
   simulation_failure_policy: simulationFailurePolicySchema.optional(),
 }).strict().superRefine((plan, ctx) => {
   if (plan.caip2_chain_id !== `eip155:${plan.chain_id}`) {
@@ -179,10 +182,11 @@ export const walletExecutionPlanSchema = z.object({
   }
 });
 
-// Doubles as the exact stored-body contract for /read/<id> references: a
+// Doubles as the exact stored-body contract for read_calls artifacts: a
 // read-call bundle is valid only when it is this object and nothing more.
-// The wallet's body parser rejects unknown fields too, so fork_id, calls_url,
-// and any future tool-input field stay tool-call decisions on both sides.
+// The wallet's body parser rejects unknown fields too, so fork_id, the
+// reference envelope, and any future tool-input field stay tool-call
+// decisions on both sides.
 export const walletBatchEthCallInputSchema = z.object({
   chain_id: positiveChainId,
   block_parameter: z.union([

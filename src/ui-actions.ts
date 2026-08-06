@@ -19,7 +19,10 @@ import {
   type PreparedTransaction,
   transactionIdentity,
 } from "./execution-plan.js";
-import { buildPositionStateReadPlan } from "./position-state.js";
+import {
+  buildPositionStateReadPlan,
+  positionStateQuery,
+} from "./position-state.js";
 import { getOwnedIndexedPosition } from "./positions.js";
 
 const NATIVE_TOKEN = getAddress("0x0000000000000000000000000000000000000000");
@@ -230,9 +233,9 @@ export async function prepareLpPositionTransfer(
     },
     onchainValidation: {
       status: "not_executed",
-      current_state_query: currentStateQuery,
+      current_state_query: positionStateQuery(currentStateQuery),
       instruction:
-        "Execute current_state_query at pending with its supplied local_decode_plan, require every inner call to succeed, compare decoded owner with expected_owner locally, and retain raw return data immediately before simulating the transfer.",
+        "Pass current_state_query.read_calls_reference unchanged as wallet_batch_eth_call's reference argument, require every inner call to succeed, compare decoded owner with expected_owner locally, and retain raw return data immediately before simulating the transfer.",
     },
   });
 }
@@ -498,7 +501,6 @@ export function prepareApprovalRevocations(input: {
   const steps = transactions.map((transaction): ExecutionPlanStepInput => ({
     kind: "execution",
     transaction,
-    submitCondition: "after_prior_required_steps_have_successful_receipts",
   }));
 
   return preparedUiAction({
@@ -694,7 +696,7 @@ export function preparedUiAction(input: PreparedUiActionInput) {
       complete_transaction_list:
         "execution_plan is the complete ordered transaction list for this action.",
       calldata_complete:
-        "All calldata and transaction ordering are supplied. Pass execution_plan_reference (execution_plan_url plus content_keccak256) unchanged to wallet tooling; do not reconstruct calldata or add calls with setup-specific tools.",
+        "All calldata and transaction ordering are supplied. Pass the execution_plan_reference envelope unchanged as the wallet's reference argument; do not reconstruct calldata or add calls with setup-specific tools.",
     },
   };
 }

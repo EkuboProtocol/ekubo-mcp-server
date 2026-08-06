@@ -1,4 +1,4 @@
-import { fakePlanStore } from "./fake-kv.js";
+import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
 import { numberToHex } from "viem";
 import {
@@ -27,7 +27,7 @@ import {
 } from "../src/ui-actions.js";
 
 const env = {
-  PLAN_STORE: fakePlanStore(),
+  ARTIFACT_STORE: fakeArtifactStore(),
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
   ZERO_X_API_KEY: "unused",
@@ -298,10 +298,9 @@ describe("EVM interface action preparation", () => {
     });
 
     expect(unwrap.transaction?.data).toBe("0x0001005a0300000001000501");
-    expect(unwrap.execution_plan.execution_policy).toMatchObject({
-      atomic_batch_required: true,
-      atomic_batch_instruction: expect.stringContaining("atomic batch"),
-    });
+    expect(unwrap.execution_plan.required_capabilities).toEqual([
+      "atomic_batch",
+    ]);
     expect(buybacks.decoded_calls.map((call) => call.function)).toEqual([
       "collect",
       "withdrawProtocolFees",
@@ -376,10 +375,15 @@ describe("EVM interface action preparation", () => {
       chain_id: "1",
       requested_owner_matches_key: true,
     });
-    expect(result.onchain_validation.exact_read_list).toHaveLength(2);
+    expect(result.onchain_validation.validation_reads).toHaveLength(1);
+    const validationBundle = result.onchain_validation.validation_reads[0];
+    expect(validationBundle.chain_id).toBe("1");
     expect(
-      result.onchain_validation.exact_read_list.map((read) => read.field),
-    ).toEqual(["is_claimed", "is_available"]);
+      validationBundle.read_calls.calls.map((call: { id: string }) => call.id),
+    ).toEqual([
+      "ekubo-reward-claim-0-is-claimed",
+      "ekubo-reward-claim-0-is-available",
+    ]);
   });
 
   it("supplies every phase of fix-price reads, quote, approval, and execution", async () => {
@@ -447,24 +451,28 @@ describe("EVM interface action preparation", () => {
     expect(read).toMatchObject({
       phase: "read_current_price",
       current_price_query: {
-        local_decode_plan: {
-          kind: "function_result",
-          function_name: "poolPrice",
-          semantic_codecs: [
+        read_calls: {
+          calls: [
             {
-              path: "sqrtRatio",
-              semantic_type: "ekubo.sqrt_ratio_float",
-              codec: {
-                id: "ekubo.sqrt_ratio_float_to_q128",
-                implementations: [{ ecosystem: "npm" }],
+              decode: {
+                kind: "function_result",
+                function_name: "poolPrice",
+                semantic_codecs: [
+                  {
+                    path: "sqrtRatio",
+                    semantic_type: "ekubo.sqrt_ratio_float",
+                    codec: {
+                      id: "ekubo.sqrt_ratio_float_to_q128",
+                      implementations: [{ ecosystem: "npm" }],
+                    },
+                  },
+                ],
               },
             },
           ],
         },
-        result_decoder: {
-          trust_boundary: "execute_and_decode_on_user_device",
-        },
         resume: {
+          tool: "ekubo_prepare_fix_pool_price",
           arguments: {
             pending_current_sqrt_ratio:
               "<wallet_batch_eth_call.results[0].decoded.sqrtRatio.abi_value>",
@@ -482,9 +490,15 @@ describe("EVM interface action preparation", () => {
     expect(quote).toMatchObject({
       phase: "quote",
       quote_query: {
-        local_decode_plan: {
-          kind: "function_result",
-          function_name: "quote",
+        read_calls: {
+          calls: [
+            {
+              decode: {
+                kind: "function_result",
+                function_name: "quote",
+              },
+            },
+          ],
         },
         resume: {
           arguments: {

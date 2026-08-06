@@ -2,24 +2,30 @@ import { describe, expect, it } from "bun:test";
 import { parseAbi } from "viem";
 import {
   EKUBO_SQRT_RATIO_FLOAT_CODEC,
+  functionReadCall,
   functionResultDecodePlan,
-  localWalletDecoderHandoff,
+  readCallsBundle,
   semanticValueDecodePlan,
   sqrtRatioFloatSemanticCodec,
 } from "../src/abi-decode.js";
+import { walletBatchEthCallInputSchema } from "../src/wallet-compatibility.js";
 
 describe("local ABI decode plans", () => {
-  it("describes JSON-safe function decoding without executing it remotely", () => {
+  it("builds an exact wallet_batch_eth_call argument object", () => {
     const abi = parseAbi([
       "function state() view returns (uint256 amount,bytes payload)",
     ]);
     const decode = functionResultDecodePlan(abi, "state");
-    const handoff = localWalletDecoderHandoff({
+    const bundle = readCallsBundle({
       chainId: "4663",
-      id: "state",
-      to: "0x0000000000000000000000000000000000000001",
-      data: "0x12345678",
-      decode,
+      calls: [
+        {
+          id: "state",
+          to: "0x0000000000000000000000000000000000000001",
+          data: "0x12345678",
+          decode,
+        },
+      ],
     });
 
     expect(decode).toEqual({
@@ -28,16 +34,25 @@ describe("local ABI decode plans", () => {
       function_name: "state",
       required: true,
     });
-    expect(handoff).toMatchObject({
-      trust_boundary: "execute_and_decode_on_user_device",
-      call_id: "state",
-      network: { chain_id: "4663", caip2_chain_id: "eip155:4663" },
+    expect(bundle).toEqual({
+      chain_id: "4663",
+      block_parameter: "pending",
+      calls: [
+        {
+          id: "state",
+          to: "0x0000000000000000000000000000000000000001",
+          data: "0x12345678",
+          include_raw: true,
+          decode,
+        },
+      ],
     });
-    expect(handoff.instruction).toContain("wallet_batch_eth_call");
-    expect(handoff.instruction).toContain("local_decode_plan");
+    // The bundle is the exact stored body a wallet executes verbatim, so it
+    // must validate against the strict wallet boundary schema.
+    expect(walletBatchEthCallInputSchema.safeParse(bundle).success).toBe(true);
   });
 
-  it("never restates the calldata or ABI it was built from", () => {
+  it("wraps one function read with its decode plan", () => {
     const abi = [
       {
         type: "function",
@@ -47,19 +62,22 @@ describe("local ABI decode plans", () => {
         stateMutability: "view",
       },
     ] as const;
-    const decode = functionResultDecodePlan(abi, "state");
-    const handoff = localWalletDecoderHandoff({
-      chainId: "4663",
+    const call = functionReadCall({
       id: "state",
       to: "0x0000000000000000000000000000000000000001",
       data: "0x12345678",
-      decode,
+      abi,
+      functionName: "state",
     });
-    // The caller already emits rpc_request and local_decode_plan. Repeating
-    // either one here is what made multi-position responses unreadable.
-    const serialized = JSON.stringify(handoff);
-    expect(serialized).not.toContain("0x12345678");
-    expect(serialized).not.toContain("function_result");
+    expect(call).toEqual({
+      id: "state",
+      to: "0x0000000000000000000000000000000000000001",
+      data: "0x12345678",
+      decode: functionResultDecodePlan(abi, "state"),
+    });
+    expect(() =>
+      readCallsBundle({ chainId: "4663", calls: [call] }),
+    ).not.toThrow();
   });
 
   it("pins npm explicitly while keeping semantic codec identity portable", () => {

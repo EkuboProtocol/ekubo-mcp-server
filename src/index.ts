@@ -1,9 +1,12 @@
 import { createMcpHandler } from "agents/mcp/server";
 import openapi from "../openapi.json";
 import type { Env } from "./core.js";
-import { loadExecutionPlan, PLAN_TTL_SECONDS } from "./plan-store.js";
-import { loadReadCalls, READ_CALLS_TTL_SECONDS } from "./read-store.js";
-import { createEkuboServer, publicToolCatalog } from "./server.js";
+import { ARTIFACT_TTL_SECONDS, loadArtifact } from "./artifact-store.js";
+import {
+  createEkuboServer,
+  publicToolCatalog,
+  publicToolCatalogWithOutputs,
+} from "./server.js";
 import { MCP_SERVER_VERSION, MCP_TOOL_CATALOG_REVISION } from "./version.js";
 
 export default {
@@ -61,54 +64,31 @@ export default {
       );
     }
 
-    // Stored execution plan bodies, fetched by wallets from the reference
-    // URL a preparation tool returned. Served byte-for-byte as stored so the
-    // wallet's keccak256 of the response matches the reference's
-    // content_keccak256 exactly.
-    const planMatch = /^\/plan\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(
+    // Stored artifact bodies (execution plans and read-call bundles), fetched
+    // by wallets from the reference URL a tool returned. Served byte-for-byte
+    // as stored so the wallet's keccak256 of the response matches the
+    // reference's integrity.value exactly.
+    const artifactMatch = /^\/artifact\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(
       url.pathname,
     );
-    if (planMatch !== null) {
-      const body = await loadExecutionPlan(env, planMatch[1]);
+    if (artifactMatch !== null) {
+      const body = await loadArtifact(env, artifactMatch[1]);
       if (body === null) {
-        return json(
-          {
-            error: {
-              code: "plan_not_found_or_expired",
-              message:
-                "This execution plan reference has expired or never existed. Re-run the Ekubo preparation tool to obtain a fresh plan and reference.",
-            },
-          },
-          404,
+        // A miss can mean expiry, a bad id, or a KV propagation gap between
+        // the storing PoP and this one. Log it so the miss rate is measurable
+        // before deciding stronger storage is warranted.
+        console.warn(
+          JSON.stringify({
+            event: "artifact_fetch_miss",
+            id: artifactMatch[1],
+          }),
         );
-      }
-      return withSecurityHeaders(
-        new Response(request.method === "HEAD" ? null : body, {
-          headers: {
-            "content-type": "application/json",
-            "content-length": String(new TextEncoder().encode(body).length),
-            "cache-control": "no-store",
-            "access-control-allow-origin": "*",
-          },
-        }),
-      );
-    }
-
-    // Stored read-call bundles: exact wallet_batch_eth_call argument objects
-    // a read-preparation tool returned by reference. Served byte-for-byte for
-    // the same digest-verification reason as plan bodies.
-    const readMatch = /^\/read\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(
-      url.pathname,
-    );
-    if (readMatch !== null) {
-      const body = await loadReadCalls(env, readMatch[1]);
-      if (body === null) {
         return json(
           {
             error: {
-              code: "read_calls_not_found_or_expired",
+              code: "artifact_not_found_or_expired",
               message:
-                "This read-calls reference has expired or never existed. Re-run the Ekubo tool that produced it to obtain a fresh bundle and reference.",
+                "This reference has expired or never existed. Re-run the Ekubo tool that produced it to obtain a fresh reference.",
             },
           },
           404,
@@ -179,21 +159,19 @@ export default {
                 "Platform-neutral codec IDs with explicit implementation assertions; wallets execute only locally installed allowlisted codecs and never fetch code from a plan.",
             },
             operational_semantics: {
-              mcp_tool_result_storage: `wallet_payload_bodies_only: prepared execution plan bodies are retained at ${url.origin}/plan/<id> for ${PLAN_TTL_SECONDS} seconds and read-call bundles (exact wallet_batch_eth_call argument objects) at ${url.origin}/read/<id> for ${READ_CALLS_TTL_SECONDS} seconds so wallets fetch them by reference instead of receiving them through the agent; no other tool results are stored or replayed`,
-              execution_plan_delivery: {
+              mcp_tool_result_storage: `wallet_payload_bodies_only: prepared execution plan bodies and read-call bundles (exact wallet_batch_eth_call argument objects) are retained at ${url.origin}/artifact/<id> for ${ARTIFACT_TTL_SECONDS} seconds so wallets fetch them by reference instead of receiving them through the agent; no other tool results are stored or replayed`,
+              artifact_delivery: {
                 mode: "reference",
-                fetch_url_template: `${url.origin}/plan/<id>`,
-                ttl_seconds: PLAN_TTL_SECONDS,
+                envelope_kind: "artifact_reference",
+                artifact_types: ["execution_plan", "read_calls"],
+                fetch_url_template: `${url.origin}/artifact/<id>`,
+                storage_ttl_seconds: ARTIFACT_TTL_SECONDS,
+                handling:
+                  "Pass the whole artifact_reference object unchanged as the wallet tool's reference argument; the wallet fetches the body itself. A 404 means the reference expired: re-run the tool that produced it.",
                 integrity:
-                  "content_keccak256 is keccak256 of the exact bytes served; wallets recompute it over the fetched body and must refuse a mismatch",
-              },
-              read_calls_delivery: {
-                mode: "reference",
-                fetch_url_template: `${url.origin}/read/<id>`,
-                ttl_seconds: READ_CALLS_TTL_SECONDS,
-                body: "an exact wallet_batch_eth_call argument object (chain_id, optional block_parameter and from, calls with decode plans) executed verbatim by the wallet",
-                integrity:
-                  "content_keccak256 is keccak256 of the exact bytes served; wallets recompute it over the fetched body and must refuse a mismatch",
+                  "reference.integrity.value is keccak256 of the exact bytes served and reference.bytes their exact length; wallets recompute both over the fetched body and must refuse a mismatch",
+                staleness:
+                  "No timestamps travel in the envelope. A plan's validity is expressed by the deadline inside its calldata and enforced by the wallet's simulation against current chain state.",
               },
               mcp_http_cache:
                 "no-store; tool calls are not replayed from an MCP cache",
@@ -273,7 +251,7 @@ export default {
             server_version: MCP_SERVER_VERSION,
             catalog_revision: MCP_TOOL_CATALOG_REVISION,
             tool_count: publicToolCatalog.length,
-            tools: publicToolCatalog,
+            tools: publicToolCatalogWithOutputs,
           },
           200,
           { "cache-control": "no-store" },
@@ -399,7 +377,7 @@ LP position workflow resource: ekubo://docs/lp-position-workflow
 EVM contract directory: ekubo://contracts/evm
 
 Operational semantics:
-- Execution plan bodies are stored at ${origin}/plan/<id> for a short TTL and returned as execution_plan_reference objects; wallets fetch the body by URL and verify content_keccak256. Read-call bundles — exact wallet_batch_eth_call argument objects — are stored at ${origin}/read/<id> the same way and returned as read_calls_reference objects: pass read_calls_url as calls_url and content_keccak256 as expected_content_keccak256, unchanged. No other tool results are stored or replayed.
+- Execution plan bodies and read-call bundles (exact wallet_batch_eth_call argument objects) are stored at ${origin}/artifact/<id> and returned as artifact_reference envelopes under execution_plan_reference and read_calls_reference. Pass the whole envelope unchanged as the wallet tool's reference argument; the wallet fetches the body itself and verifies integrity. A 404 means the reference expired: re-run the tool that produced it. No other tool results are stored or replayed.
 - Onchain read plans carry canonical ABIs for local wallet decoding. Raw return bytes are included by default and preserved on failure. semantic_value passes a custom non-ABI raw result through a locally installed allowlisted codec; remote plans never supply executable code.
 - No fixed request quota is guaranteed. If the deployment limiter returns HTTP 429, honor Retry-After: 60 and back off.
 - Owner positions use upstream no-cache semantics. Position tools join canonical token metadata and USD prices and provide exact atomic pending eth_call plans for current position state. Pair-pool discovery defaults to a zero TVL floor and returns verified PoolKeys plus the correct position manager. Liquidity opportunities match the interface's boosted-fee, active-incentive, and Ve33-emission feed; pair/boost data is cached upstream for up to 600 seconds, campaigns for 300 seconds, and Ve33 pools for 30 seconds. Every EVM interface transaction path has a first-class prepare tool returning complete wallet execution plans; wallet tooling never constructs or appends calls. Indexed pool state is cached upstream for up to 180 seconds; tick liquidity and pool keys for up to 1,800 seconds. STONX recommendations are at most 86,400 seconds old.
@@ -416,10 +394,10 @@ Safe swap and bridge sequence:
 4. Choose slippage before generating calldata.
 5. Only treat a plan as executable when execution_plan_ready is true.
 6. Include the source, exact plan ID, chains, bounds, approvals, recipient, execution transaction, and any allowance reset in the wallet handoff.
-7. Pass the chosen option's execution_plan_reference (execution_plan_url plus content_keccak256) to the user's wallet tooling for balance, allowance, policy, and exact-transaction simulation. Do not ask for separate agent-level confirmation.
+7. Pass the chosen option's execution_plan_reference object unchanged as the wallet's reference argument for balance, allowance, policy, and exact-transaction simulation. Do not ask for separate agent-level confirmation.
 8. Let the wallet present the simulated result, collect authorization or signature, and submit. Never send credentials to this server.
 
-Wallet handoff: every executable preparation includes execution_plan_reference: a short URL plus content_keccak256 standing in for the plan body. Read ekubo://docs/execution-plan, bind sender before preparation, and verify the reference's chain_id and sender against the connected wallet. Pass execution_plan_url and content_keccak256 (as expected_content_keccak256) unchanged to the wallet's simulate/send tools; the wallet fetches the body itself, verifies the digest, and validates the plan. Never restate or reconstruct the plan body. If the wallet only accepts inline plans, fetch the URL once and pass its exact JSON unchanged. Use Cast only when the user selected it or no compatible wallet abstraction is available.
+Wallet handoff: every executable preparation includes execution_plan_reference: an artifact_reference envelope standing in for the plan body. Read ekubo://docs/execution-plan, bind sender before preparation, and verify the envelope summary's chain_id and sender against the connected wallet. Pass the whole envelope unchanged as the wallet's reference argument for simulate and send; the wallet fetches the body itself, verifies integrity, and validates the plan. Never restate or reconstruct the plan body. If the wallet only accepts inline plans, fetch the URL once and pass its exact JSON unchanged. Use Cast only when the user selected it or no compatible wallet abstraction is available.
 
 Liquidity discovery: call ekubo_get_liquidity_opportunities when the user asks where to provide liquidity. It matches the interface's boosted-fee, active-incentive, and projected Ve33-emission opportunity feed and returns exact pools where the opportunity is pool-specific. For a pair-level incentive, follow its ekubo_get_position_pool_candidates handoff before preparing a deposit. If ranking_complete=false, execute and decode local_read_requirement through the user's wallet and repeat the call with the locally decoded ve33_emission_state; do not treat the provisional ordering as final.
 

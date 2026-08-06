@@ -474,7 +474,7 @@ function quoteExecutionGuidance(preparation: SwapPreparationIntent | null) {
     : {
         execution_plans_included: true,
         instruction:
-          "Each quote carries the execution_plan_reference that executes it. Choose one option and pass that quote's execution.execution_plan_reference fields — execution_plan_url and content_keccak256 (as expected_content_keccak256) — unchanged to the wallet, which fetches and verifies the plan body itself. Do not call this tool again for the option you just chose: it would buy a fresh quote and restart the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the amount, tokens, sender, recipient, or slippage.",
+          "Each quote carries the execution_plan_reference that executes it. Choose one option and pass that quote's execution.execution_plan_reference envelope unchanged as the wallet's reference argument, which fetches and verifies the plan body itself. Do not call this tool again for the option you just chose: it would buy a fresh quote and restart the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the amount, tokens, sender, recipient, or slippage.",
         sender: getAddress(preparation.sender),
         recipient: getAddress(preparation.recipient ?? preparation.sender),
         slippage_bps: preparation.slippageBps.toString(),
@@ -519,7 +519,7 @@ export async function prepareSwap(
         : null,
     wallet_handoff: {
       instruction:
-        "Pass execution_plan_reference's execution_plan_url and content_keccak256 (as expected_content_keccak256) to the wallet's simulation and authorization flow; the wallet fetches and verifies the plan body itself. Do not ask the user for a separate agent-level approval; the wallet presents the simulated result and collects authorization or signature. Simulate once and send that simulation rather than simulating the same plan twice. Re-prepare after any change or stale quote.",
+        "Pass the execution_plan_reference envelope unchanged as the wallet's reference argument for simulation and authorization; the wallet fetches and verifies the plan body itself. Do not ask the user for a separate agent-level approval; the wallet presents the simulated result and collects authorization or signature. Simulate once and send that simulation rather than simulating the same plan twice. Re-prepare after any change or stale quote.",
       recipient: prepared.recipient,
       sender: getAddress(intent.sender),
     },
@@ -704,7 +704,7 @@ function clientExecution() {
       "Use the user's connected provider to validate the transaction, estimate gas, submit, and confirm receipts",
     must_revalidate_before_signing: true,
     steps: [
-      "Pass the chosen option's execution_plan_reference (its execution_plan_url plus content_keccak256 as expected_content_keccak256) to the wallet and let its own simulation establish current state, including whether an approval step is still required; the wallet fetches and verifies the plan body itself, and a separate allowance read or validation call beforehand buys nothing the simulation does not already cover and spends time this quote does not have",
+      "Pass the chosen option's execution_plan_reference envelope unchanged as the wallet's reference argument and let its own simulation establish current state, including whether an approval step is still required; the wallet fetches and verifies the plan body itself, and a separate allowance read or validation call beforehand buys nothing the simulation does not already cover and spends time this quote does not have",
       "Simulate once, present that simulated result, and submit that same simulation rather than paying for an identical one immediately before signing; do not request a separate agent-level confirmation",
       "Have the wallet collect authorization or signature and submit; this MCP server must not receive a private key or seed phrase",
       "If the plan carries an allowance_cleanup step, submit it only after the execution step has a successful receipt",

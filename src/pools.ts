@@ -16,6 +16,7 @@ import {
 } from "viem";
 import {
   functionResultDecodePlan,
+  readCallsBundle,
   sqrtRatioFloatSemanticCodec,
 } from "./abi-decode.js";
 import {
@@ -197,41 +198,47 @@ export async function getPositionsByOwner(
       buildPositionStateReadPlan(position, owner),
     ]),
   );
-  // Every position of the same manager version produces a byte-identical
-  // decode plan and identical read semantics. Inlining them per position made
-  // this response grow by several kilobytes per position while carrying no
-  // additional information, so they are emitted once and referenced.
-  const sharedDecodePlans = new Map<string, unknown>();
-  const sharedSemantics = new Map<string, unknown>();
-  const dedupe = (
-    store: Map<string, unknown>,
-    prefix: string,
-    value: unknown,
+  // One stored read bundle per chain: every readable position on a chain is
+  // read by its own Multicall3 aggregate call inside that chain's bundle,
+  // chunked at the wallet boundary's 128-call maximum. Each position row
+  // links to its aggregate by state_call_id; the read machinery itself never
+  // travels through the agent.
+  const callsByChain = new Map<
+    string,
+    { id: string; to: string; data: string; decode?: Record<string, unknown> }[]
+  >();
+  for (const plan of readPlans.values()) {
+    if (plan.available !== true) continue;
+    const chainCalls = callsByChain.get(plan.chain_id) ?? [];
+    chainCalls.push(plan.state_call);
+    callsByChain.set(plan.chain_id, chainCalls);
+  }
+  const MAX_CALLS_PER_BUNDLE = 128;
+  const currentStateReads = [...callsByChain.entries()].flatMap(
+    ([chainId, chainCalls]) => {
+      const chunks = [];
+      for (
+        let start = 0;
+        start < chainCalls.length;
+        start += MAX_CALLS_PER_BUNDLE
+      ) {
+        chunks.push({
+          chain_id: chainId,
+          read_calls: readCallsBundle({
+            chainId,
+            calls: chainCalls.slice(start, start + MAX_CALLS_PER_BUNDLE),
+          }),
+        });
+      }
+      return chunks;
+    },
+  );
+  const positionSummary = (
+    plan: ReturnType<typeof buildPositionStateReadPlan>,
   ) => {
-    const serialized = JSON.stringify(value);
-    for (const [key, existing] of store) {
-      if (JSON.stringify(existing) === serialized) return key;
-    }
-    const key = `${prefix}_${store.size + 1}`;
-    store.set(key, value);
-    return key;
-  };
-  const compactPlan = (plan: ReturnType<typeof buildPositionStateReadPlan>) => {
     if (plan.available !== true) return plan;
-    const {
-      local_decode_plan: localDecodePlan,
-      semantics,
-      ...rest
-    } = plan;
-    return {
-      ...rest,
-      local_decode_plan_ref: dedupe(
-        sharedDecodePlans,
-        "decode_plan",
-        localDecodePlan,
-      ),
-      semantics_ref: dedupe(sharedSemantics, "semantics", semantics),
-    };
+    const { state_call, semantics: _semantics, ...rest } = plan;
+    return { ...rest, state_call_id: state_call.id };
   };
   return {
     owner,
@@ -241,24 +248,26 @@ export async function getPositionsByOwner(
       isIndexedPosition(position)
         ? {
             ...position,
-            current_state_query: compactPlan(
+            current_state: positionSummary(
               readPlans.get(positionIdentity(position))!,
             ),
           }
         : position,
     ),
-    shared_decode_plans: Object.fromEntries(sharedDecodePlans),
-    shared_read_semantics: Object.fromEntries(sharedSemantics),
-    shared_reference_note:
-      "Each current_state_query names its decode plan and read semantics instead of repeating them. Resolve local_decode_plan_ref against shared_decode_plans and pass the resolved plan to the wallet unchanged; resolve semantics_ref against shared_read_semantics.",
+    current_state_reads: currentStateReads,
+    read_semantics: {
+      read_only: true,
+      never_broadcast:
+        "Aggregates may contain simulated state-changing refresh calls for TWAMM or Ve33. Execute them only as eth_call; never submit them as transactions.",
+    },
     tokens,
     token_metadata_note:
       "Canonical token metadata and current USD prices used by the Ekubo interface. Join by canonical chain_id and numeric address; usd_price may be null.",
     current_state_note:
-      "Indexed liquidity and pool_state are discovery snapshots. Execute and decode each available current_state_query locally, resolving local_decode_plan_ref against shared_decode_plans and following its result_decoder. Require every inner call to succeed, retain raw eth_call return data, and compare the decoded owner with expected_owner before using pending principal, fees or Ve33 rewards.",
+      "Indexed liquidity and pool_state are discovery snapshots. For fresh pending state, pass each current_state_reads entry's read_calls_reference unchanged as wallet_batch_eth_call's reference argument. Each position's current_state.state_call_id names its aggregate call in those results; require every inner call to succeed, retain raw return data, and compare the decoded owner with expected_owner before using pending principal, fees or Ve33 rewards.",
     pagination: response.pagination,
     cache: {
-      mcp_result_storage: "none",
+      mcp_result_storage: "wallet_read_bundles_only",
       upstream_cache_control: "no-cache",
     },
   };
@@ -357,7 +366,7 @@ export function buildPoolStateReadBundle(input: {
       liquidity: "uint128 currently active liquidity as a decimal string",
     },
     instruction:
-      "Hand read_calls_reference to wallet_batch_eth_call (read_calls_url as calls_url, content_keccak256 as expected_content_keccak256, same chain_id, no inline calls) and prefer its decoded values over the indexed pool_state snapshot. Never broadcast this read-only call.",
+      "Pass read_calls_reference unchanged as wallet_batch_eth_call's reference argument (no inline calls) and prefer its decoded values over the indexed pool_state snapshot. Never broadcast this read-only call.",
   };
 }
 

@@ -1,11 +1,11 @@
-import { fakePlanStore } from "./fake-kv.js";
+import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
 import type { Env } from "../src/core.js";
 import { getLiquidityOpportunities } from "../src/opportunities.js";
 import { derivePoolId } from "../src/pools.js";
 
 const env = {
-  PLAN_STORE: fakePlanStore(),
+  ARTIFACT_STORE: fakeArtifactStore(),
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
   ZERO_X_API_KEY: "unused",
@@ -226,13 +226,17 @@ describe("liquidity opportunities", () => {
       status: "not_executed",
       chain_id: "4663",
       block_parameter: "pending",
-      rpc_request: { method: "eth_call" },
-      local_decode_plan: {
-        kind: "function_result",
-        function_name: "getEmissionState",
-      },
-      result_decoder: {
-        trust_boundary: "execute_and_decode_on_user_device",
+      read_calls: {
+        chain_id: "4663",
+        calls: [
+          {
+            id: "ve33-emission-state",
+            decode: {
+              kind: "function_result",
+              function_name: "getEmissionState",
+            },
+          },
+        ],
       },
       resume: {
         arguments: {

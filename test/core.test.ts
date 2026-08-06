@@ -1,4 +1,4 @@
-import { fakePlanStore } from "./fake-kv.js";
+import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
 import { type Env, getQuotesWithPlans, getTokens, prepareSwap } from "../src/core.js";
 
@@ -32,7 +32,7 @@ const quote = {
 } as const;
 
 const env: Env = {
-  PLAN_STORE: fakePlanStore(),
+  ARTIFACT_STORE: fakeArtifactStore(),
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
   ZERO_X_API_KEY: "unused",
@@ -160,9 +160,7 @@ describe("MCP service core", () => {
       ],
     });
     expect(result.plan_id).toMatch(/^0x[0-9a-f]{64}$/);
-    expect(result.execution_plan.execution_policy.atomic_batch_required).toBe(
-      false,
-    );
+    expect(result.execution_plan).not.toHaveProperty("required_capabilities");
     expect(requested).toEqual([
       `https://quoter.test/1/1000/${token0}/${token1}`,
     ]);
@@ -207,10 +205,9 @@ describe("MCP service core", () => {
     expect(
       result.execution_plan.ordered_steps.map((step) => step.kind),
     ).toEqual(["approval", "execution", "allowance_cleanup"]);
-    expect(result.execution_plan.execution_policy).toMatchObject({
-      atomic_batch_required: true,
-      atomic_batch_instruction: expect.stringContaining("atomic batch"),
-    });
+    expect(result.execution_plan.required_capabilities).toEqual([
+      "atomic_batch",
+    ]);
     expect(result.client_execution.must_revalidate_before_signing).toBe(true);
   });
 });

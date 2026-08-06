@@ -1,4 +1,4 @@
-import { fakePlanStore } from "./fake-kv.js";
+import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
 import {
   decodeFunctionData,
@@ -170,7 +170,7 @@ function fixtureFetcher(
 }
 
 const env = {
-  PLAN_STORE: fakePlanStore(),
+  ARTIFACT_STORE: fakeArtifactStore(),
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
   ZERO_X_API_KEY: "unused",
@@ -224,13 +224,15 @@ describe("safe VeToken allocation workflows", () => {
     expect(result.onchain_validation).toMatchObject({
       status: "not_executed",
       required_before_signing: true,
-      eth_call: {
+      read_calls: {
         chain_id: chainId,
-        to: veToken,
       },
     });
     expect(result.onchain_validation.calls).toHaveLength(13);
-    expect(result.onchain_validation.eth_call.data).toStartWith("0xac9650d8");
+    const stateCall = result.onchain_validation.read_calls.calls[0];
+    expect(stateCall.id).toBe("ekubo-ve33-portfolio-state");
+    expect(stateCall.to).toBe(veToken);
+    expect(stateCall.data).toStartWith("0xac9650d8");
     expect(result.onchain_validation.calls.slice(0, 5).map((call) => call.expectation)).toEqual([
       { comparison: "equals", path: "$", value: "3" },
       { comparison: "equals", path: "$", value: owner },
@@ -244,17 +246,18 @@ describe("safe VeToken allocation workflows", () => {
         note: "Dynamic at the provider block; use this value for the final displayed projection.",
       },
     ]);
-    expect(result.onchain_validation.local_decode_plan).toMatchObject({
+    expect(stateCall.decode).toMatchObject({
       kind: "function_result_bytes_array",
       function_name: "multicall",
       expected_result_count: 13,
       required: true,
     });
     expect(
-      result.onchain_validation.local_decode_plan.results.every(
+      (stateCall.decode as { results: Record<string, unknown>[] }).results.every(
         (entry) =>
           Object.keys(entry).sort().join(",") === "decode,index" &&
-          entry.decode?.kind === "function_result",
+          (entry.decode as { kind?: string } | undefined)?.kind ===
+            "function_result",
       ),
     ).toBe(true);
   });
@@ -307,11 +310,11 @@ describe("safe VeToken allocation workflows", () => {
     expect(plan.onchain_validation).toMatchObject({
       status: "not_executed",
       required_before_signing: true,
-      eth_call: {
+      read_calls: {
         chain_id: chainId,
-        to: veToken,
       },
     });
+    expect(plan.onchain_validation.read_calls.calls[0].to).toBe(veToken);
     expect(plan.onchain_validation.calls).toHaveLength(13);
     expect(plan.calls.map((call) => call.type)).toEqual([
       "claim_pool_fees",

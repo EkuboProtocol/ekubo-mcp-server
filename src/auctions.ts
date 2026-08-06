@@ -7,7 +7,7 @@ import {
   type Address,
   type Hex,
 } from "viem";
-import { localFunctionResultMetadata } from "./abi-decode.js";
+import { functionReadCall, readCallsBundle } from "./abi-decode.js";
 import { ServiceError } from "./core.js";
 import {
   erc20ApprovalTransaction,
@@ -319,20 +319,18 @@ export function prepareAuctionCreatorProceeds(input: {
     transaction,
     onchainValidation: {
       owner: {
-        rpc_request: {
-          jsonrpc: "2.0",
-          id: 1,
-          method: "eth_call",
-          params: [{ to: AUCTIONS_V3, data: ownerRead }, "pending"],
-        },
         decode_as: "address",
-        ...localFunctionResultMetadata({
+        read_calls: readCallsBundle({
           chainId: input.chainId,
-          id: `ekubo-auction-owner-${tokenId}`,
-          to: AUCTIONS_V3,
-          data: ownerRead,
-          abi: AUCTIONS_ABI,
-          functionName: "ownerOf",
+          calls: [
+            functionReadCall({
+              id: `ekubo-auction-owner-${tokenId}`,
+              to: AUCTIONS_V3,
+              data: ownerRead,
+              abi: AUCTIONS_ABI,
+              functionName: "ownerOf",
+            }),
+          ],
         }),
         expected: sender,
       },

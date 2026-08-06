@@ -1,4 +1,4 @@
-import { fakePlanStore } from "./fake-kv.js";
+import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
 import { decodeFunctionData, erc20Abi } from "viem";
 import {
@@ -17,7 +17,7 @@ const spender = "0x5555555555555555555555555555555555555555";
 const swapTarget = "0x6666666666666666666666666666666666666666";
 
 const env: Env = {
-  PLAN_STORE: fakePlanStore(),
+  ARTIFACT_STORE: fakeArtifactStore(),
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
   ZERO_X_API_KEY: "zero-x-test-key",

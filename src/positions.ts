@@ -2,6 +2,7 @@ import { type Address, getAddress, numberToHex } from "viem";
 import { type Env, getTokens, ServiceError } from "./core.js";
 import {
   buildPositionStateReadPlan,
+  positionStateQuery,
   type IndexedPosition,
   positionTokenIdentifiers,
 } from "./position-state.js";
@@ -91,7 +92,13 @@ export async function getPosition(
     { tokens: tokenIdentifiers },
     fetcher,
   );
-  const currentStateQuery = buildPositionStateReadPlan(indexedPosition, owner);
+  const currentStateQuery = positionStateQuery(
+    buildPositionStateReadPlan(indexedPosition, owner),
+    // Keep the aggregate's to/data inline here only: the interface-parity APR
+    // guidance has the agent replay the identical read at historical blocks,
+    // which a stored-bundle reference alone cannot support.
+    { includeAggregateCall: true },
+  );
 
   return {
     owner,
@@ -107,11 +114,11 @@ export async function getPosition(
     current_state_query: currentStateQuery,
     interface_parity: {
       current_values:
-        "Execute current_state_query at pending through wallet call tooling with its supplied local_decode_plan. Decode on the user's device, retain raw return data, require every inner call to succeed, and compare the decoded owner with expected_owner.",
+        "Pass current_state_query.read_calls_reference unchanged as wallet_batch_eth_call's reference argument. The wallet decodes on the user's device; retain raw return data, require every inner call to succeed, and compare the decoded owner with expected_owner.",
       usd_values:
         "Divide token amounts by 10^decimals, multiply by the matching token usd_price, and sum token0 plus token1. The interface treats missing or zero prices as unavailable.",
       apr_history:
-        "position_history supplies update, collect_fees, and claim_rewards events. For all-time APR, replay the same aggregate call at one block after the latest update. For 1d/7d APR, resolve the block at the target timestamp and replay there. Add fees collected or rewards claimed since that point before annualizing against current principal USD value.",
+        "position_history supplies update, collect_fees, and claim_rewards events. For all-time APR, replay current_state_query.aggregate_call at one block after the latest update. For 1d/7d APR, resolve the block at the target timestamp and replay there. Add fees collected or rewards claimed since that point before annualizing against current principal USD value.",
       indexed_vs_onchain:
         "indexed_position.liquidity and pool_state power the portfolio row and range math. The pending aggregate call powers the detail view and includes uncollected fees or current Ve33 rewards.",
     },
@@ -125,10 +132,10 @@ export async function getPosition(
       token_metadata:
         `${base}tokens/batch (exact identifiers are included in this response)`,
       onchain:
-        "User-selected EIP-155 RPC endpoint via current_state_query.rpc_request",
+        "User-selected EIP-155 RPC endpoint via the stored current_state_query read bundle",
     },
     cache: {
-      mcp_result_storage: "none",
+      mcp_result_storage: "wallet_read_bundles_only",
       owner_positions_upstream_cache_control: "no-cache",
       token_prices_interface_refetch_seconds: 30,
       onchain_block_parameter: "pending",

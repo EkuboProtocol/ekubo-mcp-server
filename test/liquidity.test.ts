@@ -1,4 +1,4 @@
-import { fakePlanStore } from "./fake-kv.js";
+import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
 import type { Env } from "../src/core.js";
 import {
@@ -10,7 +10,7 @@ import {
 import { derivePoolId } from "../src/pools.js";
 
 const env = {
-  PLAN_STORE: fakePlanStore(),
+  ARTIFACT_STORE: fakeArtifactStore(),
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
   ZERO_X_API_KEY: "unused",
@@ -186,7 +186,7 @@ describe("LP position preparation", () => {
     expect(
       result.execution_plan.ordered_steps.map((step) => step.kind),
     ).toEqual(["approval", "execution", "allowance_cleanup"]);
-    expect(result.wallet_handoff.calldata_complete).toContain("wallet tooling");
+    expect(result.wallet_handoff.calldata_complete).toContain("reference argument");
   });
 
   it("uses indexed Q128 prices and protects imbalanced deposits at slippage endpoints", async () => {
@@ -355,7 +355,7 @@ describe("LP position preparation", () => {
     ]);
     expect(result.execution_plan.ordered_steps).toHaveLength(1);
     expect(result.execution_plan.ordered_steps[0]?.kind).toBe("execution");
-    expect(result.wallet_handoff.calldata_complete).toContain("wallet tooling");
+    expect(result.wallet_handoff.calldata_complete).toContain("reference argument");
   });
 
   it("prepares Ve33 reward claiming without removing liquidity", async () => {
@@ -564,7 +564,9 @@ describe("LP position preparation", () => {
     expect(result.action).toBe("ekubo_withdraw_lp_positions");
     expect(result.withdrawals).toHaveLength(2);
     expect(result.execution_plan.ordered_steps).toHaveLength(2);
-    expect(result.execution_plan.execution_policy.atomic_batch_required).toBe(true);
+    expect(result.execution_plan.required_capabilities).toEqual([
+      "atomic_batch",
+    ]);
     expect(result.execution_plan.simulation_failure_policy.execution_reverted).toMatchObject({
       action: "reprepare_plan",
       instruction: expect.stringContaining("fresh withdrawal"),

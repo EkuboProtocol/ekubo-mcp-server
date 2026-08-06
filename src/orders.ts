@@ -11,7 +11,7 @@ import {
   type Address,
   type Hex,
 } from "viem";
-import { localFunctionResultMetadata } from "./abi-decode.js";
+import { functionReadCall, readCallsBundle } from "./abi-decode.js";
 import { ServiceError } from "./core.js";
 import {
   erc20ApprovalTransaction,
@@ -444,20 +444,18 @@ function prepareExistingOrderAction(
     },
     onchainValidation: {
       owner: {
-        rpc_request: {
-          jsonrpc: "2.0",
-          id: 1,
-          method: "eth_call",
-          params: [{ to: ordersAddress, data: ownerRead }, "pending"],
-        },
         decode_as: "address",
-        ...localFunctionResultMetadata({
+        read_calls: readCallsBundle({
           chainId: input.chainId,
-          id: `ekubo-twamm-order-owner-${tokenId}`,
-          to: ordersAddress,
-          data: ownerRead,
-          abi: ORDERS_ABI,
-          functionName: "ownerOf",
+          calls: [
+            functionReadCall({
+              id: `ekubo-twamm-order-owner-${tokenId}`,
+              to: ordersAddress,
+              data: ownerRead,
+              abi: ORDERS_ABI,
+              functionName: "ownerOf",
+            }),
+          ],
         }),
         expected: sender,
       },

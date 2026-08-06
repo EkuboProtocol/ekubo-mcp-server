@@ -18,10 +18,10 @@
     "EKUBO_API_URL": "https://prod-api.ekubo.org",
     "EKUBO_QUOTER_URL": "https://prod-api-quoter.ekubo.org"
   },
-  "kv_namespaces": [
+  "r2_buckets": [
     {
-      "binding": "PLAN_STORE",
-      "id": "59fab436fc0040b1829090886b860a96"
+      "binding": "ARTIFACT_STORE",
+      "bucket_name": "mcp-artifacts"
     }
   ],
   "observability": {

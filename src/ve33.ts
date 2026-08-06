@@ -21,8 +21,8 @@ import {
 import {
   functionResultBytesArrayDecodePlan,
   functionResultDecodePlan,
-  localFunctionResultMetadata,
-  localWalletDecoderHandoff,
+  functionReadCall,
+  readCallsBundle,
 } from "./abi-decode.js";
 import {
   type Env,
@@ -611,47 +611,41 @@ export function prepareVe33Withdraw(intent: PrepareVe33WithdrawIntent) {
       requires_expired_stake: true,
       onchain_validation: {
         status: "not_executed",
-        rpc_requests: [
-          {
-            label: "owner",
-            request: {
-              jsonrpc: "2.0",
-              id: 1,
-              method: "eth_call",
-              params: [{ to: veToken, data: ownerRead }, "pending"],
-            },
-            decode_as: "address",
-            ...localFunctionResultMetadata({
-              chainId: intent.chainId,
+        // Both reads always run together on this chain: one stored bundle.
+        read_calls: readCallsBundle({
+          chainId: intent.chainId,
+          calls: [
+            functionReadCall({
               id: `ekubo-ve33-owner-${veId}`,
               to: veToken,
               data: ownerRead,
               abi: VE_TOKEN_ABI,
               functionName: "ownerOf",
             }),
-            expected: getAddress(intent.sender),
-          },
-          {
-            label: "stake",
-            request: {
-              jsonrpc: "2.0",
-              id: 2,
-              method: "eth_call",
-              params: [{ to: veToken, data: stakeRead }, "pending"],
-            },
-            decode_as: "(uint128 amount,uint64 endTime)",
-            ...localFunctionResultMetadata({
-              chainId: intent.chainId,
+            functionReadCall({
               id: `ekubo-ve33-stake-${veId}`,
               to: veToken,
               data: stakeRead,
               abi: VE_TOKEN_ABI,
               functionName: "stakes",
             }),
+          ],
+        }),
+        reads: [
+          {
+            label: "owner",
+            call_id: `ekubo-ve33-owner-${veId}`,
+            decode_as: "address",
+            expected: getAddress(intent.sender),
+          },
+          {
+            label: "stake",
+            call_id: `ekubo-ve33-stake-${veId}`,
+            decode_as: "(uint128 amount,uint64 endTime)",
           },
         ],
         instruction:
-          "Verify owner equals sender, amount is positive, and endTime is not later than the pending block timestamp before simulation and submission.",
+          "Pass read_calls_reference unchanged as wallet_batch_eth_call's reference argument, then verify owner equals sender, amount is positive, and endTime is not later than the pending block timestamp before simulation and submission.",
       },
       safety: {
         returns_stake_to_owner: true,
@@ -907,33 +901,31 @@ export function prepareVe33Merge(intent: PrepareVe33MergeIntent) {
   }
 
   const veToken = getAddress(intent.veToken);
-  const ownerReads = [destinationVeId, ...sourceIds].map((veId, index) => {
-    const data = encodeFunctionData({
-      abi: VE_TOKEN_ABI,
-      functionName: "ownerOf",
-      args: [veId],
-    });
-    return {
-      label: index === 0 ? "destination_owner" : `source_${index}_owner`,
-      ve_id: veId.toString(),
-      request: {
-        jsonrpc: "2.0",
-        id: index + 1,
-        method: "eth_call",
-        params: [{ to: veToken, data }, "pending"],
-      },
-      decode_as: "address",
-      ...localFunctionResultMetadata({
-        chainId: intent.chainId,
+  // One ownerOf read per NFT, all inside one stored bundle.
+  const mergeIds = [destinationVeId, ...sourceIds];
+  const ownerReadCalls = readCallsBundle({
+    chainId: intent.chainId,
+    calls: mergeIds.map((veId) =>
+      functionReadCall({
         id: `ekubo-ve33-merge-owner-${veId}`,
         to: veToken,
-        data,
+        data: encodeFunctionData({
+          abi: VE_TOKEN_ABI,
+          functionName: "ownerOf",
+          args: [veId],
+        }),
         abi: VE_TOKEN_ABI,
         functionName: "ownerOf",
       }),
-      expected: getAddress(intent.sender),
-    };
+    ),
   });
+  const ownerReads = mergeIds.map((veId, index) => ({
+    label: index === 0 ? "destination_owner" : `source_${index}_owner`,
+    ve_id: veId.toString(),
+    call_id: `ekubo-ve33-merge-owner-${veId}`,
+    decode_as: "address",
+    expected: getAddress(intent.sender),
+  }));
 
   return ve33Plan({
     action: "ve33_merge_stakes",
@@ -955,9 +947,10 @@ export function prepareVe33Merge(intent: PrepareVe33MergeIntent) {
               },
       onchain_validation: {
         status: "not_executed",
+        read_calls: ownerReadCalls,
         owner_reads: ownerReads,
         instruction:
-          "Verify every NFT is still owned by sender and simulate the complete atomic multicall. The destination must satisfy the contract's active-lock and expiry ordering requirements.",
+          "Pass read_calls_reference unchanged as wallet_batch_eth_call's reference argument, verify every NFT is still owned by sender, and simulate the complete atomic multicall. The destination must satisfy the contract's active-lock and expiry ordering requirements.",
       },
       safety: {
         every_voted_source_claims_fees_during_merge: true,
@@ -1924,8 +1917,10 @@ export async function prepareAllVe33FeeClaims(
       active_vote_claims: claims.length,
       skipped_unvoted: skippedUnvoted,
       fee_tokens: sortedFeeTokens,
-      pre_claim_balance_snapshots: sortedFeeTokens.map((token) =>
-        balanceSnapshotRequest(intent.chainId, token, sender),
+      pre_claim_balance_snapshots: balanceSnapshots(
+        intent.chainId,
+        sortedFeeTokens,
+        sender,
       ),
       state_validation: evidence,
     },
@@ -1967,8 +1962,10 @@ export async function prepareVe33Reinvest(
       phase: "claim" as const,
       plan,
       fee_tokens: feeTokens,
-      pre_claim_balance_snapshots: feeTokens.map((token) =>
-        balanceSnapshotRequest(intent.chainId, token, sender),
+      pre_claim_balance_snapshots: balanceSnapshots(
+        intent.chainId,
+        feeTokens,
+        sender,
       ),
       next_phase:
         "Immediately before execution, take every supplied balance snapshot. After the claim confirms, compute each exact claimed delta and call this tool with phase=swap. For the native token, add the claim transaction's gas cost back to the post-claim balance delta. Never pass a wallet's pre-existing balance as a claimed fee amount.",
@@ -2743,22 +2740,20 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
   return {
     status: "not_executed" as const,
     required_before_signing: true,
-    eth_call: {
-      chain_id: portfolio.chainId,
-      to: portfolio.veToken,
-      data,
-    },
-    local_decode_plan: localDecodePlan,
-    result_decoder: localWalletDecoderHandoff({
+    read_calls: readCallsBundle({
       chainId: portfolio.chainId,
-      id: "ekubo-ve33-portfolio-state",
-      to: portfolio.veToken,
-      data,
-      decode: localDecodePlan,
+      calls: [
+        {
+          id: "ekubo-ve33-portfolio-state",
+          to: portfolio.veToken,
+          data,
+          decode: localDecodePlan,
+        },
+      ],
     }),
     calls,
     instruction:
-      "Execute and decode eth_call on the user's device with local_decode_plan, retain raw outer and child bytes, and apply every static call expectation to the corresponding decoded child immediately before signing.",
+      "Pass read_calls_reference unchanged as wallet_batch_eth_call's reference argument, retain raw outer and child bytes, and apply every static call expectation to the corresponding decoded child immediately before signing.",
   };
 }
 
@@ -2814,48 +2809,57 @@ function feeTokensFromClaims(
   );
 }
 
-function balanceSnapshotRequest(
+/**
+ * Balance snapshots for one phase's fee tokens. Every ERC-20 balanceOf read
+ * ships inside one stored bundle; the native balance cannot travel there
+ * (eth_getBalance is not an eth_call), so it stays a wallet-balance lookup.
+ */
+function balanceSnapshots(
   chainId: string,
-  token: Address,
+  tokens: readonly Address[],
   owner: Address,
 ) {
-  if (BigInt(token) === 0n) {
-    return {
-      token,
-      type: "native_balance",
-      rpc: {
-        chain_id: chainId,
-        method: "eth_getBalance",
-        params: [owner, "pending"],
-      },
-      result_encoding: "hexadecimal_json_rpc_quantity",
-      result_serialization: "decimal_string",
-      claimed_delta_instruction:
-        "post_claim_balance - pre_claim_balance + claim_transaction_gas_cost",
-    };
-  }
-  const data = encodeFunctionData({
-    abi: erc20Abi,
-    functionName: "balanceOf",
-    args: [owner],
-  });
+  const erc20Tokens = tokens.filter((token) => BigInt(token) !== 0n);
   return {
-    token,
-    type: "erc20_balance",
-    rpc: {
-      chain_id: chainId,
-      method: "eth_call",
-      params: [{ to: token, data }, "pending"],
-    },
-    ...localFunctionResultMetadata({
-      chainId,
-      id: `ekubo-token-balance-${token}`,
-      to: token,
-      data,
-      abi: erc20Abi,
-      functionName: "balanceOf",
-    }),
-    claimed_delta_instruction: "post_claim_balance - pre_claim_balance",
+    snapshots: tokens.map((token) =>
+      BigInt(token) === 0n
+        ? {
+            token,
+            type: "native_balance",
+            source:
+              "Read the owner's pending native balance through the wallet's balance tooling.",
+            result_serialization: "decimal_string",
+            claimed_delta_instruction:
+              "post_claim_balance - pre_claim_balance + claim_transaction_gas_cost",
+          }
+        : {
+            token,
+            type: "erc20_balance",
+            call_id: `ekubo-token-balance-${token}`,
+            claimed_delta_instruction:
+              "post_claim_balance - pre_claim_balance",
+          },
+    ),
+    ...(erc20Tokens.length === 0
+      ? {}
+      : {
+          read_calls: readCallsBundle({
+            chainId,
+            calls: erc20Tokens.map((token) =>
+              functionReadCall({
+                id: `ekubo-token-balance-${token}`,
+                to: token,
+                data: encodeFunctionData({
+                  abi: erc20Abi,
+                  functionName: "balanceOf",
+                  args: [owner],
+                }),
+                abi: erc20Abi,
+                functionName: "balanceOf",
+              }),
+            ),
+          }),
+        }),
   };
 }
 

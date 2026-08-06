@@ -19,7 +19,8 @@ import {
 } from "viem";
 import {
   errorResultDecodePlan,
-  localFunctionResultMetadata,
+  functionReadCall,
+  readCallsBundle,
 } from "./abi-decode.js";
 import { type Env, getTokens, ServiceError } from "./core.js";
 import {
@@ -31,6 +32,7 @@ import {
 import { decodePoolConfig, derivePoolId, getPool } from "./pools.js";
 import {
   buildPositionStateReadPlan,
+  positionStateQuery,
   positionTokenIdentifiers,
 } from "./position-state.js";
 import { getOwnedIndexedPosition } from "./positions.js";
@@ -424,7 +426,7 @@ export function preparePoolInitialization(input: {
       instruction:
         "Pass this complete plan to the wallet for current-state simulation, presentation, authorization, and submission. Verify the initial tick because the first successful initialization fixes the pool price.",
       calldata_complete:
-        "All calldata is complete. Pass execution_plan_reference (execution_plan_url plus content_keccak256) directly to wallet tooling; do not reconstruct maybeInitializePool with Cast or another encoder.",
+        "All calldata is complete. Pass the execution_plan_reference envelope unchanged as the wallet's reference argument; do not reconstruct maybeInitializePool with Cast or another encoder.",
     },
   };
 }
@@ -758,26 +760,18 @@ export async function prepareLpPositionDeposit(
       : {
           status: "not_executed",
           expected_owner: sender,
-          rpc_request: {
-            jsonrpc: "2.0",
-            id: 1,
-            method: "eth_call",
-            params: [
-              {
+          decode_as: "address",
+          read_calls: readCallsBundle({
+            chainId: input.chainId,
+            calls: [
+              functionReadCall({
+                id: `ekubo-lp-owner-${tokenId}`,
                 to: positionsAddress,
                 data: ownerReadData!,
-              },
-              "pending",
+                abi: OWNER_OF_ABI,
+                functionName: "ownerOf",
+              }),
             ],
-          },
-          decode_as: "address",
-          ...localFunctionResultMetadata({
-            chainId: input.chainId,
-            id: `ekubo-lp-owner-${tokenId}`,
-            to: positionsAddress,
-            data: ownerReadData!,
-            abi: OWNER_OF_ABI,
-            functionName: "ownerOf",
           }),
         };
   const identity = {
@@ -970,7 +964,7 @@ export async function prepareLpPositionDeposit(
       instruction:
         "Pass the complete plan to the wallet's simulation and authorization flow. Do not ask for separate agent-level confirmation; the wallet presents the simulated result and collects authorization or signature.",
       calldata_complete:
-        "All calldata is complete. Pass execution_plan_reference (execution_plan_url plus content_keccak256) directly to wallet tooling; do not reconstruct it with Cast or another encoder.",
+        "All calldata is complete. Pass the execution_plan_reference envelope unchanged as the wallet's reference argument; do not reconstruct it with Cast or another encoder.",
     },
   };
 }
@@ -1148,40 +1142,47 @@ export async function prepareLpPositionEarningsClaim(
     }),
     onchain_validation: {
       status: "not_executed",
-      current_state_query: currentStateQuery,
+      // One stored bundle covers the position-state aggregate and, for Ve33,
+      // the stakeToken read: both always execute together on this chain.
+      current_state_query: (() => {
+        const { state_call, semantics, ...stateRest } = currentStateQuery;
+        return {
+          ...stateRest,
+          state_call_id: state_call.id,
+          read_calls: readCallsBundle({
+            chainId: owned.chainId,
+            calls:
+              managerVersion === "ve33_positions_v3"
+                ? [
+                    state_call,
+                    functionReadCall({
+                      id: `ekubo-stake-token-${owned.positionsAddress}`,
+                      to: owned.positionsAddress,
+                      data: stakeTokenReadData,
+                      abi: STAKE_TOKEN_ABI,
+                      functionName: "stakeToken",
+                    }),
+                  ]
+                : [state_call],
+          }),
+          semantics,
+        };
+      })(),
       claimable_result_fields:
         managerVersion === "ve33_positions_v3"
           ? ["rewardAmount"]
           : ["fees0", "fees1"],
       instruction:
-        "Execute current_state_query exactly as supplied at pending with its local_decode_plan. Require every inner call to succeed, compare decoded owner with expected_owner locally, retain the raw result, and pass the decoded claimable amount with the plan to the wallet. Then have the wallet simulate the exact execution transaction immediately before authorization and submission.",
+        "Pass current_state_query.read_calls_reference unchanged as wallet_batch_eth_call's reference argument. Require every inner call to succeed, compare decoded owner with expected_owner locally, retain the raw result, and pass the decoded claimable amount with the plan to the wallet. Then have the wallet simulate the exact execution transaction immediately before authorization and submission.",
     },
     reward_token:
       managerVersion === "ve33_positions_v3"
         ? {
             known_address:
               owned.chainId === "4663" ? ROBINHOOD_STONX_ADDRESS : null,
-            rpc_request: {
-              jsonrpc: "2.0",
-              id: 1,
-              method: "eth_call",
-              params: [
-                {
-                  to: owned.positionsAddress,
-                  data: stakeTokenReadData,
-                },
-                "pending",
-              ],
-            },
             decode_as: "address",
-            ...localFunctionResultMetadata({
-              chainId: owned.chainId,
-              id: `ekubo-stake-token-${owned.positionsAddress}`,
-              to: owned.positionsAddress,
-              data: stakeTokenReadData,
-              abi: STAKE_TOKEN_ABI,
-              functionName: "stakeToken",
-            }),
+            call_id: `ekubo-stake-token-${owned.positionsAddress}`,
+            note: "Decoded from the stakeToken call inside current_state_query's stored read bundle.",
           }
         : null,
     wallet_policy_requirements: {
@@ -1202,7 +1203,7 @@ export async function prepareLpPositionEarningsClaim(
       instruction:
         "Pass the current decoded fees or rewards and the complete plan to the wallet's simulation and authorization flow. Do not ask for separate agent-level confirmation.",
       calldata_complete:
-        "All calldata is complete. Pass execution_plan_reference (execution_plan_url plus content_keccak256) directly to wallet tooling; do not reconstruct it with Cast or another encoder.",
+        "All calldata is complete. Pass the execution_plan_reference envelope unchanged as the wallet's reference argument; do not reconstruct it with Cast or another encoder.",
     },
   };
 }
@@ -1312,8 +1313,6 @@ export async function prepareLpPositionWithdraw(
       steps: transactions.map((transaction) => ({
         kind: "execution" as const,
         transaction,
-        submitCondition:
-          "after_prior_required_steps_have_successful_receipts" as const,
       })),
       atomicBatchRequired: transactions.length > 1,
       simulationFailurePolicy: withdrawalSimulationFailurePolicy(),
@@ -1358,7 +1357,7 @@ export async function prepareLpPositionWithdraw(
       instruction:
         "Pass every validated withdrawal and the complete multi-call plan's execution_plan_reference to the wallet. The calls may target unrelated positions or managers; the wallet is allowed to batch them into one transaction. Do not ask for separate agent-level confirmation.",
       calldata_complete:
-        "All calldata and the complete ordered transaction list are supplied. Pass execution_plan_reference (execution_plan_url plus content_keccak256) directly to wallet tooling; do not reconstruct, omit, or add calls.",
+        "All calldata and the complete ordered transaction list are supplied. Pass the execution_plan_reference envelope unchanged as the wallet's reference argument; do not reconstruct, omit, or add calls.",
     },
   };
 }
@@ -1563,10 +1562,10 @@ async function prepareSingleLpPositionWithdraw(
     }),
     onchain_validation: {
       status: "not_executed",
-      current_state_query: currentStateQuery,
+      current_state_query: positionStateQuery(currentStateQuery),
       required_current_liquidity_at_least: liquidity.toString(),
       instruction:
-        "Execute current_state_query exactly as supplied at pending with its local_decode_plan. Require every inner call to succeed, compare decoded owner with expected_owner locally, and require decoded liquidity at least requested_liquidity. Retain the raw result, pass current principal plus fees or Ve33 rewards to the wallet with the plan, simulate the exact withdrawal immediately before authorization and submission, and discard the plan if any value changed.",
+        "Pass current_state_query.read_calls_reference unchanged as wallet_batch_eth_call's reference argument. Require every inner call to succeed, compare decoded owner with expected_owner locally, and require decoded liquidity at least requested_liquidity. Retain the raw result, pass current principal plus fees or Ve33 rewards to the wallet with the plan, simulate the exact withdrawal immediately before authorization and submission, and discard the plan if any value changed.",
     },
     wallet_policy_requirements: {
       allowed_chain_id: owned.chainId,
@@ -1586,7 +1585,7 @@ async function prepareSingleLpPositionWithdraw(
       instruction:
         "Pass requested liquidity, its share of current liquidity, expected principal and earnings, recipient, manager, exact call, plan_id, and the complete plan to the wallet. Do not ask for separate agent-level confirmation.",
       calldata_complete:
-        "All calldata and the complete transaction list are supplied. Pass execution_plan_reference (execution_plan_url plus content_keccak256) directly to wallet tooling; do not reconstruct or add calls with Cast or another encoder.",
+        "All calldata and the complete transaction list are supplied. Pass the execution_plan_reference envelope unchanged as the wallet's reference argument; do not reconstruct or add calls with Cast or another encoder.",
     },
   };
 }

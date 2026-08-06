@@ -197,12 +197,14 @@ The agent does not ask for a separate confirmation first: wallet tooling is
 responsible for current-state simulation, presenting the simulated result,
 collecting authorization or signature, signing, and submission.
 
-Prepared execution plan bodies are stored in Workers KV and served at
-`/plan/<id>` for a short TTL so wallets fetch them by reference. Read-call
-bundles — exact `wallet_batch_eth_call` argument objects, validated against
-the wallet boundary before storage — are stored the same way at `/read/<id>`
-with their own TTL and returned as `read_calls_reference` objects whose
-`content_keccak256` binds the exact stored bytes; no other tool
+Prepared execution plan bodies and read-call bundles — exact
+`wallet_batch_eth_call` argument objects, validated against the wallet
+boundary before storage — are stored in R2 — strongly consistent, so a fresh reference never 404s from replication lag — and served at
+`/artifact/<id>` so wallets fetch them by reference. Both travel as
+`artifact_reference` envelopes (under `execution_plan_reference` and
+`read_calls_reference`) whose `integrity.value` keccak256 and `bytes` count
+bind the exact stored bytes; the agent passes the envelope unchanged as the
+wallet tool's `reference` argument. No other tool
 result is stored or replayed, and `/mcp` responses use
 `Cache-Control: no-store`. No fixed request quota is guaranteed; clients must
 honor HTTP 429 and `Retry-After: 60`. Owner positions use upstream `no-cache`
@@ -284,11 +286,14 @@ Q64 values and must always be passed and consumed as decimal or hexadecimal
 strings, never JSON numbers.
 
 Every executable preparation also includes a signer-neutral
-`execution_plan_reference` handoff: a short-lived `execution_plan_url` where
-the plan body is stored, `content_keccak256` over its exact bytes, and the
-plan's `chain_id`, `sender`, and `step_count`. The agent relays only the
-reference; the wallet fetches the body itself, recomputes the digest, refuses a
-mismatch, and validates the plan as if it had been supplied inline. The stored
+`execution_plan_reference` handoff: an `artifact_reference` envelope naming
+where the plan body is stored, an `integrity` block (keccak256 plus byte
+count) over its exact bytes, and a `summary` with the plan's `chain_id`,
+`sender`, and `step_count`. The agent relays only the envelope, unchanged; the
+wallet fetches the body itself, recomputes the digest, refuses a mismatch, and
+validates the plan as if it had been supplied inline. No timestamps travel in
+the envelope: plan validity is enforced by the wallet's simulation against
+current chain state, and storage expiry surfaces as a fetch 404. The stored
 body's `ordered_steps` place approvals before the main execution and any
 exact-output allowance cleanup after it, each as a decimal transaction object.
 The `plan_id` commits to the chain, sender, destination, calldata, and native
@@ -296,13 +301,12 @@ value of every approval, execution, and cleanup transaction in the sequence.
 
 Bind the actual wallet address as `sender` before preparation. Prefer the
 connected account and call/simulate/submit abstractions exposed by wallet
-tooling. Pass `execution_plan_reference.chain_id` directly as the wallet MCP's
-decimal `chain_id`, verify the observed chain and account against it and
-`sender`, and pass `execution_plan_url` plus `content_keccak256` for the wallet
-to fetch, verify, and execute in order. A capable wallet may simulate and submit the whole
-sequence as one atomic batch. A non-batching adapter may process a plan
-sequentially only when `atomic_batch_required` is false, revalidating each step
-and waiting for its successful receipt before advancing. Use Cast only when the
+tooling. Verify the observed chain and account against the envelope summary's
+`chain_id` and `sender`, then pass the whole envelope unchanged as the wallet
+MCP's `reference` argument for it to fetch, verify, and execute in order. The
+wallet executes multi-step plans as one atomic batch; a plan that lists a
+capability in `required_capabilities` the wallet does not implement must be
+rejected, not adapted. Use Cast only when the
 user selected it or no compatible wallet abstraction is available; the
 execution-plan resource retains its exact fallback syntax without making Cast
 the default.

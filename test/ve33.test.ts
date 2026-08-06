@@ -1,4 +1,4 @@
-import { fakePlanStore } from "./fake-kv.js";
+import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
 import {
   decodeFunctionData,
@@ -342,7 +342,7 @@ describe("ve(3,3) call generation", () => {
     let requestedUrl = "";
     const result = await prepareAllVe33FeeClaims(
       {
-        PLAN_STORE: fakePlanStore(),
+        ARTIFACT_STORE: fakeArtifactStore(),
         EKUBO_API_URL: "https://api.test",
         EKUBO_QUOTER_URL: "https://quoter.test",
         ZERO_X_API_KEY: "unused",
@@ -440,7 +440,7 @@ describe("ve(3,3) call generation", () => {
     const amount = "987654321";
     const result = await prepareVe33Reinvest(
       {
-        PLAN_STORE: fakePlanStore(),
+        ARTIFACT_STORE: fakeArtifactStore(),
         EKUBO_API_URL: "https://api.test",
         EKUBO_QUOTER_URL: "https://quoter.test",
         ZERO_X_API_KEY: "unused",
@@ -518,7 +518,7 @@ describe("ve(3,3) call generation", () => {
         },
       })) as typeof fetch;
     const env = {
-      PLAN_STORE: fakePlanStore(),
+      ARTIFACT_STORE: fakeArtifactStore(),
       EKUBO_API_URL: "https://api.test",
       EKUBO_QUOTER_URL: "https://quoter.test",
       ZERO_X_API_KEY: "unused",
@@ -540,7 +540,22 @@ describe("ve(3,3) call generation", () => {
       claimed.plan.calls.every((call) => call.type === "claim_pool_fees"),
     ).toBe(true);
     expect(claimed.fee_tokens).toEqual([token0, token1, token2]);
-    expect(claimed.pre_claim_balance_snapshots).toHaveLength(3);
+    expect(claimed.pre_claim_balance_snapshots.snapshots).toHaveLength(3);
+    // Native balance is a wallet-balance lookup; both ERC-20 balanceOf reads
+    // ship in one stored bundle addressed by call id.
+    expect(
+      claimed.pre_claim_balance_snapshots.snapshots.map(
+        (snapshot) => snapshot.type,
+      ),
+    ).toEqual(["native_balance", "erc20_balance", "erc20_balance"]);
+    expect(
+      claimed.pre_claim_balance_snapshots.read_calls?.calls.map(
+        (call) => call.id,
+      ),
+    ).toEqual([
+      "ekubo-token-balance-0x2222222222222222222222222222222222222222",
+      "ekubo-token-balance-0x3333333333333333333333333333333333333333",
+    ]);
     expect(claimed.next_phase).toContain(
       "Never pass a wallet's pre-existing balance",
     );

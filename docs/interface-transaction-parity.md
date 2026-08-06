@@ -48,7 +48,8 @@ business action. Every preparer that spends an ERC-20 includes its exact
 approval transaction in the returned execution plan. The dedicated revocation
 page is covered separately above.
 
-Plans matching interface submissions made with `forceAtomic` set
-`execution_policy.atomic_batch_required`. This currently includes swaps with an
-approval or allowance cleanup and the approval-plus-route old gEKUBO migration.
-If a wallet cannot guarantee atomic execution, it must not submit such a plan.
+Plans matching interface submissions made with `forceAtomic` list
+`atomic_batch` in `required_capabilities`. This currently includes swaps with
+an approval or allowance cleanup and the approval-plus-route old gEKUBO
+migration. A wallet that does not implement a required capability must reject
+such a plan rather than adapt it.
