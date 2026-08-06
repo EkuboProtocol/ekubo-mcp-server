@@ -142,36 +142,17 @@ export function prepareAuctionCreate(input: {
       salt: input.salt,
       auction_key: auctionKey,
     },
-    decodedCalls: [
-      ...approvals.map((approval) => ({
-        order: 1,
-        function: "approve",
-        target: approval.to,
-        arguments: { spender: AUCTIONS_V3, amount: sellAmount.toString() },
+    steps: [
+      ...approvals.map((transaction) => ({
+        kind: "approval" as const,
+        transaction,
       })),
-      {
-        order: approvals.length + 1,
-        function: "mint",
-        target: AUCTIONS_V3,
-        arguments: { salt: input.salt, expected_token_id: tokenId.toString() },
-      },
-      {
-        order: approvals.length + 2,
-        function: "sellAmountByAuction",
-        target: AUCTIONS_V3,
-        arguments: {
-          token_id: tokenId.toString(),
-          auction_key: auctionKey,
-          amount: sellAmount.toString(),
-        },
-      },
+      ...transactions.map((transaction) => ({
+        kind: "execution" as const,
+        transaction,
+      })),
     ],
-    approvals,
-    steps: transactions.map((transaction) => ({
-      kind: "execution" as const,
-      transaction,
-    })),
-    atomicBatchRequired: transactions.length > 1,
+    atomicBatchRequired: approvals.length + transactions.length > 1,
     details: {
       auctions_manager: AUCTIONS_V3,
       expected_token_id: tokenId.toString(),
@@ -248,27 +229,6 @@ export function prepareAuctionComplete(input: {
       graduation_pool_initialized: input.graduationPoolInitialized,
       launch_pool_tick: input.launchPoolTick ?? null,
     },
-    decodedCalls: [
-      ...(input.graduationPoolInitialized
-        ? []
-        : [
-            {
-              order: 1,
-              function: "maybeInitializeGraduationPool",
-              target: AUCTIONS_V3,
-              arguments: {
-                auction_key: auctionKey,
-                tick: input.launchPoolTick,
-              },
-            },
-          ]),
-      {
-        order: input.graduationPoolInitialized ? 1 : 2,
-        function: "completeAuctionAndStartBoost",
-        target: AUCTIONS_V3,
-        arguments: { token_id: tokenId.toString(), auction_key: auctionKey },
-      },
-    ],
     steps: transactions.map((transaction) => ({
       kind: "execution" as const,
       transaction,
@@ -312,14 +272,6 @@ export function prepareAuctionCreatorProceeds(input: {
       token_id: tokenId.toString(),
       auction_key: auctionKey,
     },
-    decodedCalls: [
-      {
-        order: 1,
-        function: "collectCreatorProceeds",
-        target: AUCTIONS_V3,
-        arguments: { token_id: tokenId.toString(), auction_key: auctionKey },
-      },
-    ],
     transaction,
     onchainValidation: {
       owner: {

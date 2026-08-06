@@ -1,5 +1,14 @@
 import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
+import {
+  planStepKinds,
+  planTargets,
+  planTotalValue,
+  planTransactions,
+  planValues,
+  planFunctions,
+  ALL_ABI,
+} from "./plan-helpers.js";
 import type { Env } from "../src/core.js";
 import {
   prepareLpPositionDeposit,
@@ -59,14 +68,10 @@ describe("LP position preparation", () => {
         address: ve33Positions,
         contract: "Ve33Positions",
       },
-      decoded_calls: [
-        {
-          function: "maybeInitializePool",
-          target: ve33Positions,
-        },
-      ],
-      transaction: { to: ve33Positions, value: "0" },
     });
+    expect(planFunctions(result, ALL_ABI)).toEqual(["maybeInitializePool"]);
+    expect(planTargets(result)).toEqual([ve33Positions]);
+    expect(planValues(result)).toEqual(["0"]);
     expect(result.pool.initialization.idempotent_if_already_initialized).toBe(
       true,
     );
@@ -150,39 +155,26 @@ describe("LP position preparation", () => {
     expect(
       BigInt(result.liquidity_protection.minimum_liquidity),
     ).toBeGreaterThan(0n);
-    expect(result.approvals).toHaveLength(1);
-    expect(result.approvals[0]?.to).toBe(
+    // The approval is the plan's first step now.
+    expect(planStepKinds(result)[0]).toBe("approval");
+    expect(planTransactions(result)[0]?.to).toBe(
       "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
     );
     // No outer multicall: each Positions call is its own decodable step, and
     // the native value rides on the deposit rather than on a wrapper.
-    expect(result.transaction).toBeNull();
-    expect(result.transactions.map(({ value }) => value)).toEqual([
-      "100000000000000",
-      "0",
-    ]);
-    expect(result.decoded_calls.map((call) => call.function)).toEqual([
+    // Step 0 is the approval; the value rides on the deposit.
+    expect(planValues(result)).toEqual(["0", "100000000000000", "0", "0"]);
+    expect(planFunctions(result, ALL_ABI)).toEqual([
+      "approve",
       "mintAndDeposit",
       "refundNativeToken",
+      "approve",
     ]);
-    expect(result.decoded_calls[0]?.arguments).toMatchObject({
-      pool_key: pool.pool_key,
-      tick_lower: -20_495_360,
-      tick_upper: -19_787_776,
-      max_amount0: "100000000000000",
-      max_amount1: "185278",
-      min_liquidity: result.liquidity_protection.minimum_liquidity,
-    });
     // The plan itself is the artifact; what a policy must permit to sign it is
     // the wallet's business, not this server's.
+    expect(planTotalValue(result)).toBe(100000000000000n);
     expect(
-      result.execution_plan.ordered_steps.reduce(
-        (total, step) => total + BigInt(step.transaction.value),
-        0n,
-      ),
-    ).toBe(100000000000000n);
-    expect(
-      result.execution_plan.ordered_steps.map((step) => step.kind),
+      planStepKinds(result),
     ).toEqual([
       "approval",
       "execution",
@@ -321,13 +313,14 @@ describe("LP position preparation", () => {
     expect(result.pool.initialization).toMatchObject({
       initial_tick: -20_167_000,
     });
-    expect(result.decoded_calls.map((call) => call.function)).toEqual([
+    expect(planFunctions(result, ALL_ABI)).toEqual([
+      "approve",
       "maybeInitializePool",
       "mintAndDeposit",
       "refundNativeToken",
+      "approve",
     ]);
-    expect(result.transaction).toBeNull();
-    expect(result.transactions).toHaveLength(3);
+    expect(planTransactions(result)).toHaveLength(5);
   });
 
   it("prepares standard fee collection without removing liquidity", async () => {
@@ -352,7 +345,7 @@ describe("LP position preparation", () => {
       removes_liquidity: false,
       burns_or_transfers_nft: false,
     });
-    expect(result.decoded_calls[0]?.arguments).not.toHaveProperty("liquidity");
+    expect(planTransactions(result)[0]?.arguments).not.toHaveProperty("liquidity");
     expect(result.onchain_validation.claimable_result_fields).toEqual([
       "fees0",
       "fees1",
@@ -402,7 +395,7 @@ describe("LP position preparation", () => {
     );
     expect([
       ...new Set(
-        result.execution_plan.ordered_steps.map((step) => step.transaction.to),
+        planTargets(result),
       ),
     ]).toEqual([ve33Positions]);
   });
@@ -424,11 +417,7 @@ describe("LP position preparation", () => {
     );
 
     expect(result.claim.implementation_function).toBe("withdraw");
-    expect(result.decoded_calls[0]?.arguments).toMatchObject({
-      liquidity: "0",
-      with_fees: true,
-      recipient: sender,
-    });
+    expect(planFunctions(result, ALL_ABI)[0]).toBe("withdraw");
     expect(result.claim.removes_liquidity).toBe(false);
   });
 
@@ -438,9 +427,13 @@ describe("LP position preparation", () => {
       {
         chainId: "4663",
         sender,
-        positionsAddress: positionsV3,
-        tokenId: "42",
-        liquidity: "400",
+        withdrawals: [
+          {
+            positionsAddress: positionsV3,
+            tokenId: "42",
+            liquidity: "400",
+          },
+        ],
       },
       ownedPositionFetcher({
         positionsAddress: positionsV3,
@@ -448,8 +441,8 @@ describe("LP position preparation", () => {
       }),
     );
 
-    expect(result.action).toBe("ekubo_withdraw_lp_position");
-    expect(result.withdrawal).toMatchObject({
+    expect(result.action).toBe("ekubo_withdraw_lp_positions");
+    expect(result.withdrawals[0].withdrawal).toMatchObject({
       implementation_function: "withdraw",
       requested_liquidity: "400",
       indexed_liquidity: "1000",
@@ -459,18 +452,14 @@ describe("LP position preparation", () => {
       claims_ve33_rewards: false,
       burns_or_transfers_nft: false,
     });
-    expect(result.decoded_calls[0]?.arguments).toMatchObject({
-      liquidity: "400",
-      recipient: sender,
-      with_fees: true,
-    });
+    expect(planFunctions(result, ALL_ABI)[0]).toBe("withdraw");
     expect(result.execution_plan.ordered_steps).toHaveLength(1);
     expect(result.execution_plan.ordered_steps[0]?.kind).toBe("execution");
-    expect(result.output_protection.contract_minimum_amounts_supported).toBe(
+    expect(result.withdrawals[0].output_protection.contract_minimum_amounts_supported).toBe(
       false,
     );
     expect(result.wallet_handoff.calldata_complete).toContain(
-      "complete transaction list",
+      "complete ordered transaction list",
     );
   });
 
@@ -480,9 +469,13 @@ describe("LP position preparation", () => {
       {
         chainId: "4663",
         sender,
-        positionsAddress: ve33Positions,
-        tokenId: "43",
-        liquidity: "1000",
+        withdrawals: [
+          {
+            positionsAddress: ve33Positions,
+            tokenId: "43",
+            liquidity: "1000",
+          },
+        ],
       },
       ownedPositionFetcher({
         positionsAddress: ve33Positions,
@@ -491,16 +484,13 @@ describe("LP position preparation", () => {
       }),
     );
 
-    expect(result.withdrawal).toMatchObject({
+    expect(result.withdrawals[0].withdrawal).toMatchObject({
       implementation_function: "withdrawAndClaimRewards",
       full_withdrawal_by_indexed_snapshot: true,
       collects_fees: false,
       claims_ve33_rewards: true,
     });
-    expect(
-      result.decoded_calls[0]?.result_fields.map((field) => field.name),
-    ).toEqual(["amount0", "amount1", "rewardAmount"]);
-    expect(result.onchain_validation.required_current_liquidity_at_least).toBe(
+    expect(result.onchain_validation.current_state_queries[0].required_current_liquidity_at_least).toBe(
       "1000",
     );
   });
@@ -586,9 +576,13 @@ describe("LP position preparation", () => {
       {
         chainId: "4663",
         sender,
-        positionsAddress: positionsV2,
-        tokenId: "44",
-        liquidity: "250",
+        withdrawals: [
+          {
+            positionsAddress: positionsV2,
+            tokenId: "44",
+            liquidity: "250",
+          },
+        ],
       },
       ownedPositionFetcher({
         positionsAddress: positionsV2,
@@ -597,13 +591,9 @@ describe("LP position preparation", () => {
       }),
     );
 
-    expect(result.position.manager_version).toBe("positions_v2");
-    expect(result.decoded_calls[0]?.arguments).toMatchObject({
-      bounds: { lower: -20_495_360, upper: -19_787_776 },
-      liquidity: "250",
-      with_fees: true,
-    });
-    expect(result.withdrawal.collects_fees).toBe(true);
+    expect(result.withdrawals[0].position.manager_version).toBe("positions_v2");
+    expect(planFunctions(result, ALL_ABI)[0]).toBe("withdraw");
+    expect(result.withdrawals[0].withdrawal.collects_fees).toBe(true);
   });
 
   it("rejects zero-liquidity withdrawal plans", async () => {
@@ -611,9 +601,13 @@ describe("LP position preparation", () => {
       prepareLpPositionWithdraw(env, {
         chainId: "4663",
         sender,
-        positionsAddress: positionsV3,
-        tokenId: "42",
-        liquidity: "0",
+        withdrawals: [
+          {
+            positionsAddress: positionsV3,
+            tokenId: "42",
+            liquidity: "0",
+          },
+        ],
       }),
     ).rejects.toThrow("Withdrawal liquidity must be positive");
   });

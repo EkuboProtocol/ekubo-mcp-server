@@ -3111,7 +3111,11 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
   details: TDetails;
   value?: bigint;
 }) {
-  const functionNames = calls.map(({ data }) => safeVeTokenFunctionName(data));
+  // Not a value any more, but still the guard: this throws if a plan would
+  // call a VeToken function that is not on the allowlist.
+  for (const { data } of calls) {
+    safeVeTokenFunctionName(data);
+  }
   // Each veToken call is its own step rather than a `multicall` payload. A
   // wallet cannot police what it cannot decode: an opaque `bytes[]` argument
   // reduces the whole batch to one allowlisted target, while separate steps are
@@ -3135,7 +3139,6 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
     approvals: approvals.map(transactionIdentity),
     transactions: transactions.map(transactionIdentity),
   };
-  const transaction = transactions.length === 1 ? transactions[0] : null;
   return {
     schema_version: schemaVersion,
     action,
@@ -3143,10 +3146,6 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
     execution_plan_ready: transactions.length > 0,
     agent_confirmation_required: false,
     wallet_validation_required: true,
-    approvals,
-    calls,
-    transaction,
-    transactions,
     execution_plan:
       transactions.length === 0
         ? null
@@ -3167,17 +3166,6 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
               approvals.length + transactions.length > 1,
           }),
     ...details,
-    transaction_safety: {
-      allowlisted_vetoken_functions: functionNames,
-      only_allowlisted_vetoken_functions: true,
-      ownership_or_nft_transfer_calls: 0,
-      ownership_or_nft_transfer_calls_are_forbidden: true,
-      source_nft_burns_inside_compound_merges: calls.filter(
-        ({ type }) => type === "claim_fees_and_merge_stake",
-      ).length,
-      signs_transactions: false,
-      submits_transactions: false,
-    },
     client_execution: {
       must_revalidate_before_signing: true,
       instruction:

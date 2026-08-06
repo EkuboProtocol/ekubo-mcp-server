@@ -1,5 +1,12 @@
 import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
+import {
+  planStepKinds,
+  planTargets,
+  planTotalValue,
+  planTransactions,
+  planValues,
+} from "./plan-helpers.js";
 import { type Env, getQuotesWithPlans, getTokens, prepareSwap } from "../src/core.js";
 
 const token0 = "0x0000000000000000000000000000000000000000";
@@ -147,7 +154,7 @@ describe("MCP service core", () => {
     expect(result.agent_confirmation_required).toBe(false);
     expect(result.wallet_validation_required).toBe(true);
     expect(result.client_execution.must_revalidate_before_signing).toBe(true);
-    expect(result.transaction.data).toStartWith("0x");
+    expect(planTransactions(result)[0].data).toStartWith("0x");
     expect(result.execution_plan).toMatchObject({
       chain_id: "1",
       caip2_chain_id: "eip155:1",
@@ -199,12 +206,6 @@ describe("MCP service core", () => {
       fetcher as typeof fetch,
     );
 
-    expect(result.approval?.transaction.chain_id).toBe("1");
-    expect(result.approval?.transaction.to).toBe(token1);
-    expect(result.approval?.transaction.data).toStartWith("0x095ea7b3");
-    expect(
-      result.execution_plan.ordered_steps.map((step) => step.kind),
-    ).toEqual(["approval", "execution", "allowance_cleanup"]);
     expect(result.execution_plan.required_capabilities).toEqual([
       "atomic_batch",
     ]);

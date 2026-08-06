@@ -261,21 +261,6 @@ export function prepareRewardsClaim(input: {
       sender,
       claim_count: claims.length,
     },
-    decodedCalls: claims.map((claim, index) => ({
-      order: index + 1,
-      function: "claim",
-      target: claim.dropAddress,
-      arguments: {
-        key: claim.key,
-        claim: {
-          ...claim.claim,
-          index: claim.claim.index.toString(),
-          amount: claim.claim.amount.toString(),
-        },
-        proof: claim.proof,
-        allow_failure_in_aggregate: calls.length > 1,
-      },
-    })),
     transaction,
     details: {
       multicall3: calls.length > 1 ? MULTICALL3 : null,
@@ -405,24 +390,6 @@ export function prepareRecoveryFundClaim(input: {
           amount: amount.toString(),
         })),
       },
-      decodedCalls: [
-        ...(!input.hasSignedConditions
-          ? [
-              {
-                order: 1,
-                function: "agreeToClaimConditions",
-                target: RECOVERY_FUND,
-                arguments: { account: sender, signature: input.signature },
-              },
-            ]
-          : []),
-        ...claims.map(({ token, amount }, index) => ({
-          order: index + (input.hasSignedConditions ? 1 : 2),
-          function: "claim",
-          target: RECOVERY_FUND,
-          arguments: { account: sender, token, amount: amount.toString() },
-        })),
-      ],
       steps: transactions.map((transaction) => ({
         kind: "execution" as const,
         transaction,
@@ -461,12 +428,6 @@ export function prepareRevenueBuybacks(input: {
   ) {
     throw new ServiceError("no_work", "Select at least one buyback action");
   }
-  const decodedCalls: {
-    order: number;
-    function: string;
-    target: Address;
-    arguments: Record<string, unknown>;
-  }[] = [];
   const calls: Hex[] = [];
   for (const [index, item] of input.endedOrderCollects.entries()) {
     const sellToken = getAddress(item.sellToken);
@@ -483,16 +444,6 @@ export function prepareRevenueBuybacks(input: {
         args: [sellToken, fee, endTime],
       }),
     );
-    decodedCalls.push({
-      order: decodedCalls.length + 1,
-      function: "collect",
-      target: REVENUE_BUYBACKS,
-      arguments: {
-        sell_token: sellToken,
-        fee: fee.toString(),
-        end_time: endTime.toString(),
-      },
-    });
   }
   for (const [index, pair] of input.protocolFeePairs.entries()) {
     const token0 = getAddress(pair.token0);
@@ -510,12 +461,6 @@ export function prepareRevenueBuybacks(input: {
         args: [token0, token1],
       }),
     );
-    decodedCalls.push({
-      order: decodedCalls.length + 1,
-      function: "withdrawProtocolFees",
-      target: REVENUE_BUYBACKS,
-      arguments: { token0, token1 },
-    });
   }
   for (const tokenValue of input.rollTokens) {
     const token = getAddress(tokenValue);
@@ -526,12 +471,6 @@ export function prepareRevenueBuybacks(input: {
         args: [token],
       }),
     );
-    decodedCalls.push({
-      order: decodedCalls.length + 1,
-      function: "roll",
-      target: REVENUE_BUYBACKS,
-      arguments: { token },
-    });
   }
   // One step per call, for the same reason as the recovery-fund claim above.
   const transactions = calls.map((call) =>
@@ -549,7 +488,6 @@ export function prepareRevenueBuybacks(input: {
       protocol_fee_pairs: input.protocolFeePairs,
       roll_tokens: input.rollTokens,
     },
-    decodedCalls,
     steps: transactions.map((transaction) => ({
       kind: "execution" as const,
       transaction,

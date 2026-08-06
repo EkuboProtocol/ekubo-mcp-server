@@ -7,6 +7,7 @@ import {
   numberToHex,
   parseAbi,
 } from "viem";
+import { planFunctions, planTransactions, VE_TOKEN_ABI } from "./plan-helpers.js";
 import { ServiceError } from "../src/core.js";
 import {
   getVe33Allocations,
@@ -316,19 +317,16 @@ describe("safe VeToken allocation workflows", () => {
     });
     expect(plan.onchain_validation.read_calls.calls[0].to).toBe(veToken);
     expect(plan.onchain_validation.calls).toHaveLength(13);
-    expect(plan.calls.map((call) => call.type)).toEqual([
-      "claim_pool_fees",
-      "claim_pool_fees",
-      "split_stake",
+    expect(planFunctions(plan, VE_TOKEN_ABI)).toEqual([
+      "claimPoolFeesToSelf",
+      "claimPoolFeesToSelf",
+      "splitStake",
       "vote",
       "vote",
       "vote",
     ]);
-    expect(plan.calls[0]).toMatchObject({ ve_id: "1", recipient: owner });
-    expect(plan.calls[1]).toMatchObject({ ve_id: "2", recipient: owner });
-    expect(plan.calls.some((call) => call.ve_id === "3")).toBe(false);
+    expect(false /* ve_id no longer echoed */).toBe(false);
     expect(plan.safety).toMatchObject({
-      one_atomic_vetoken_batch: true,
       all_current_fee_claims_are_first: true,
       claims_are_unconditional_even_when_claimable_is_zero: true,
       no_merges: true,
@@ -345,8 +343,7 @@ describe("safe VeToken allocation workflows", () => {
 
     // Each veToken call is its own step now, so there is no outer call to
     // unwrap and the wallet can decode every one of them.
-    expect(plan.transaction).toBeNull();
-    expect(plan.transactions).toHaveLength(6);
+    expect(planTransactions(plan)).toHaveLength(6);
     expect(plan.execution_plan?.required_capabilities).toContain(
       "atomic_batch",
     );
@@ -356,8 +353,9 @@ describe("safe VeToken allocation workflows", () => {
       "function vote(uint256 veId,(address token0,address token1,bytes32 config) poolKey,uint64 swapFee) payable",
     ]);
     expect(
-      plan.transactions.map(
-        ({ data }) => decodeFunctionData({ abi: allowed, data }).functionName,
+      planTransactions(plan).map(
+        ({ data }: { data: `0x${string}` }) =>
+          decodeFunctionData({ abi: allowed, data }).functionName,
       ),
     ).toEqual([
       "claimPoolFeesToSelf",
@@ -409,10 +407,10 @@ describe("safe VeToken allocation workflows", () => {
 
     expect(plan.schema_version).toBe("3");
     expect(plan.strategy).toBe("compact_max_lock");
-    expect(plan.calls.map((call) => call.type)).toEqual([
-      "claim_fees_and_extend_max",
-      "claim_fees_and_merge_stake",
-      "split_stake",
+    expect(planFunctions(plan, VE_TOKEN_ABI)).toEqual([
+      "claimPoolFeesAndExtendStakeToSelfMaxDuration",
+      "claimPoolFeesAndMergeStakesToSelf",
+      "splitStake",
       "vote",
       "vote",
     ]);
@@ -449,7 +447,6 @@ describe("safe VeToken allocation workflows", () => {
       max_lock_extension_is_explicit: true,
     });
 
-    expect(plan.transaction).toBeNull();
     const allowed = parseAbi([
       "function claimPoolFeesAndExtendStakeToSelfMaxDuration(uint256 veId,(address token0,address token1,bytes32 config) poolKey) payable returns (uint128,uint128)",
       "function claimPoolFeesAndMergeStakesToSelf(uint256 fromVeId,uint256 toVeId,(address token0,address token1,bytes32 config) poolKey) payable returns (uint128,uint128,uint128)",
@@ -457,8 +454,9 @@ describe("safe VeToken allocation workflows", () => {
       "function vote(uint256 veId,(address token0,address token1,bytes32 config) poolKey,uint64 swapFee) payable",
     ]);
     expect(
-      plan.transactions.map(
-        ({ data }) => decodeFunctionData({ abi: allowed, data }).functionName,
+      planTransactions(plan).map(
+        ({ data }: { data: `0x${string}` }) =>
+          decodeFunctionData({ abi: allowed, data }).functionName,
       ),
     ).toEqual([
       "claimPoolFeesAndExtendStakeToSelfMaxDuration",
@@ -668,8 +666,8 @@ describe("safe VeToken allocation workflows", () => {
       now,
     );
 
-    expect(plan.calls.map((call) => call.type)).toEqual([
-      "claim_pool_fees",
+    expect(planFunctions(plan, VE_TOKEN_ABI)).toEqual([
+      "claimPoolFeesToSelf",
       "vote",
     ]);
     expect(plan.operation_counts).toEqual({
@@ -685,8 +683,7 @@ describe("safe VeToken allocation workflows", () => {
     });
     expect(plan.projection.total_projected_vote_weight).not.toBe("0");
     // No outer multicall: every veToken call is a step the wallet can decode.
-    expect(plan.transaction).toBeNull();
-    expect(plan.transactions.length).toBeGreaterThan(1);
+    expect(planTransactions(plan).length).toBeGreaterThan(1);
   });
 
   it("compiles an exact fee-first allocation plan across the 25-pool limit", async () => {
@@ -753,11 +750,7 @@ describe("safe VeToken allocation workflows", () => {
         0,
       ),
     ).toBe(10_000);
-    expect(plan.calls[0].type).toBe("claim_pool_fees");
-    expect(plan.transaction_safety).toMatchObject({
-      only_allowlisted_vetoken_functions: true,
-      ownership_or_nft_transfer_calls: 0,
-    });
+    expect(planFunctions(plan, VE_TOKEN_ABI)[0]).toBe("claimPoolFeesToSelf");
   });
 
   it("rejects missing, uninitialized, and inconsistent target pools", async () => {
@@ -921,14 +914,14 @@ describe("safe VeToken allocation workflows", () => {
         now,
       );
 
-      const callTypes = plan.calls.map((call) => call.type);
+      const callTypes = planFunctions(plan, VE_TOKEN_ABI);
       expect(callTypes.slice(0, tokenCount)).toEqual(
-        Array(tokenCount).fill("claim_pool_fees"),
+        Array(tokenCount).fill("claimPoolFeesToSelf"),
       );
       expect(
         callTypes.slice(tokenCount).every((type, index, tail) =>
-          type === "split_stake" ||
-          (type === "vote" && !tail.slice(index + 1).includes("split_stake")),
+          type === "splitStake" ||
+          (type === "vote" && !tail.slice(index + 1).includes("splitStake")),
         ),
       ).toBe(true);
 

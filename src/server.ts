@@ -544,31 +544,21 @@ const lpPositionWithdrawalSchema = z.object({
     .describe("Principal and earnings recipient; defaults to sender"),
 });
 
-export const prepareLpPositionWithdrawSchema = z.union([
-  z
-    .object({
-      chain_id: chainId,
-      sender: address.describe(
-        "Current owner of every position and wallet that will submit the transaction",
+export const prepareLpPositionWithdrawSchema = z
+  .object({
+    chain_id: chainId,
+    sender: address.describe(
+      "Current owner of every position and wallet that will submit the transaction",
+    ),
+    withdrawals: z
+      .array(lpPositionWithdrawalSchema)
+      .min(1)
+      .max(100)
+      .describe(
+        "One or more position withdrawals to prepare in one wallet-batch-capable execution plan",
       ),
-      withdrawals: z
-        .array(lpPositionWithdrawalSchema)
-        .min(1)
-        .max(100)
-        .describe(
-          "One or more position withdrawals to prepare in one wallet-batch-capable execution plan",
-        ),
-    })
-    .strict(),
-  lpPositionWithdrawalSchema
-    .extend({
-      chain_id: chainId,
-      sender: address.describe(
-        "Current position owner and wallet that will submit the transaction",
-      ),
-    })
-    .strict(),
-]);
+  })
+  .strict();
 
 export const prepareWrapUnwrapSchema = z.object({
   chain_id: chainId,
@@ -1371,7 +1361,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_lp_position_withdraw",
     title: "Prepare one or more LP position withdrawals",
     description:
-      "Prepare partial or full liquidity withdrawals from one or more owned EVM positions with one complete wallet-batch-capable plan. Pass withdrawals for a many-at-a-time request; the legacy single-position fields remain supported. Resolves each indexed PoolKey and bounds, uses each exact requested uint128 liquidity, automatically collects standard-position fees or Ve33 rewards as the interface does, supports explicit recipients, preserves the NFTs, and supplies pending ownership/liquidity/earnings validation, and exact decoded calldata and result fields. The wallet never constructs calldata.",
+      "Prepare partial or full liquidity withdrawals from one or more owned EVM positions with one complete wallet-batch-capable plan. Pass withdrawals, one entry per position. Resolves each indexed PoolKey and bounds, uses each exact requested uint128 liquidity, automatically collects standard-position fees or Ve33 rewards as the interface does, supports explicit recipients, preserves the NFTs, and supplies pending ownership/liquidity/earnings validation, and exact decoded calldata and result fields. The wallet never constructs calldata.",
     inputSchema: z.toJSONSchema(prepareLpPositionWithdrawSchema),
   },
   {
@@ -2284,25 +2274,16 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     },
     async (input) =>
       toolResult(() =>
-        "withdrawals" in input
-          ? prepareLpPositionWithdraw(env, {
-                chainId: canonicalChainId(input.chain_id),
-                sender: input.sender,
-                withdrawals: input.withdrawals.map((withdrawal) => ({
-                  positionsAddress: withdrawal.positions_address,
-                  tokenId: withdrawal.token_id,
-                  liquidity: withdrawal.liquidity,
-                  recipient: withdrawal.recipient,
-                })),
-              })
-          : prepareLpPositionWithdraw(env, {
-                chainId: canonicalChainId(input.chain_id),
-                sender: input.sender,
-                positionsAddress: input.positions_address,
-                tokenId: input.token_id,
-                liquidity: input.liquidity,
-                recipient: input.recipient,
-              }),
+        prepareLpPositionWithdraw(env, {
+          chainId: canonicalChainId(input.chain_id),
+          sender: input.sender,
+          withdrawals: input.withdrawals.map((withdrawal) => ({
+            positionsAddress: withdrawal.positions_address,
+            tokenId: withdrawal.token_id,
+            liquidity: withdrawal.liquidity,
+            recipient: withdrawal.recipient,
+          })),
+        }),
       ),
   );
 
@@ -2967,7 +2948,7 @@ For creating an LP position, call ekubo_get_position_pool_candidates with the pa
 
 For “collect my LP fees” or “claim my LP rewards”, call ekubo_prepare_lp_position_earnings_claim with the connected owner wallet, manager, and token ID from ekubo_get_positions_by_owner. It automatically uses v2 zero-liquidity fee withdrawal, v3 collectFees, or Ve33 claimRewards and never removes liquidity, burns, or transfers the NFT. Execute its current_state_query by passing its read_calls_reference unchanged to wallet_batch_eth_call. Require every inner call to succeed, compare the decoded owner with expected_owner, retain raw return data, and pass the decoded fees or rewards plus execution_plan_reference to the wallet for simulation and authorization. Never infer or manually encode the manager function.
 
-For partial or full LP withdrawals, execute each position's current_state_query through its read_calls_reference, then select an exact positive liquidity amount no greater than that position's decoded liquidity. Require every inner call to succeed, compare decoded owner with expected_owner, and retain raw return data. Then call ekubo_prepare_lp_position_withdraw with one legacy withdrawal or a withdrawals array for up to 100 positions. It automatically chooses each correct v2/v3 withdraw overload or Ve33 withdrawAndClaimRewards, collects fees or rewards exactly as the interface does, and returns the entire transaction list. Include every principal/earnings estimate and recipient in the wallet handoff, and give the unchanged execution_plan_reference envelope to the wallet MCP. The wallet may batch unrelated position calls into one transaction but must never construct calldata, choose an overload, or add a claim transaction.
+For partial or full LP withdrawals, execute each position's current_state_query through its read_calls_reference, then select an exact positive liquidity amount no greater than that position's decoded liquidity. Require every inner call to succeed, compare decoded owner with expected_owner, and retain raw return data. Then call ekubo_prepare_lp_position_withdraw with a withdrawals array of up to 100 positions. It automatically chooses each correct v2/v3 withdraw overload or Ve33 withdrawAndClaimRewards, collects fees or rewards exactly as the interface does, and returns the entire transaction list. Include every principal/earnings estimate and recipient in the wallet handoff, and give the unchanged execution_plan_reference envelope to the wallet MCP. The wallet may batch unrelated position calls into one transaction but must never construct calldata, choose an overload, or add a claim transaction.
 
 Pass LP execution plans to the wallet MCP for simulation, wallet-owned authorization, and execution; never use Cast to reconstruct LP calldata. Do not insert a separate agent confirmation step. If wallet policy rejects a plan, report the wallet's exact finding verbatim and do not attempt to change wallet policy; proposing a policy change is the wallet's own tool to offer, not this server's.
 

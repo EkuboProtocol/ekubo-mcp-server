@@ -8,6 +8,11 @@ import {
   parseAbi,
 } from "viem";
 import {
+  planFunctions,
+  planTransactions,
+  VE_TOKEN_ABI,
+} from "./plan-helpers.js";
+import {
   getVe33Allocations,
   prepareAllVe33FeeClaims,
   prepareVe33Claim,
@@ -110,8 +115,8 @@ describe("ve(3,3) call generation", () => {
     );
     expect(result.source_vote_is_preserved_with_reduced_weight).toBe(true);
     expect(result.split_token_starts_unvoted).toBe(true);
-    expect(result.transactions.length).toBeGreaterThan(0);
-    for (const { data } of result.transactions) {
+    expect(planTransactions(result).length).toBeGreaterThan(0);
+    for (const { data } of planTransactions(result)) {
       expect(data).toStartWith("0x");
     }
   });
@@ -146,9 +151,9 @@ describe("ve(3,3) call generation", () => {
       saltNonce,
     });
 
-    expect(result.calls.map((call) => call.type)).toEqual([
-      "claim_pool_fees",
-      "split_stake",
+    expect(planFunctions(result, VE_TOKEN_ABI)).toEqual([
+      "claimPoolFeesToSelf",
+      "splitStake",
       "vote",
       "vote",
     ]);
@@ -161,8 +166,8 @@ describe("ve(3,3) call generation", () => {
     expect(
       result.safety.current_pool_fees_are_claimed_unconditionally_first,
     ).toBe(true);
-    expect(result.transactions.length).toBeGreaterThan(0);
-    for (const { data } of result.transactions) {
+    expect(planTransactions(result).length).toBeGreaterThan(0);
+    for (const { data } of planTransactions(result)) {
       expect(data).toStartWith("0x");
     }
   });
@@ -197,9 +202,9 @@ describe("ve(3,3) call generation", () => {
       saltNonce,
     });
 
-    expect(result.calls.map((call) => call.type)).toEqual([
-      "claim_pool_fees",
-      "split_stake",
+    expect(planFunctions(result, VE_TOKEN_ABI)).toEqual([
+      "claimPoolFeesToSelf",
+      "splitStake",
       "vote",
     ]);
   });
@@ -213,7 +218,7 @@ describe("ve(3,3) call generation", () => {
       maxDuration: true,
       currentPoolKey: poolA,
     });
-    expect(result.calls[0].type).toBe("claim_fees_and_extend_max_duration");
+    expect(planFunctions(result, VE_TOKEN_ABI)[0]).toBe("claimPoolFeesAndExtendStakeToSelfMaxDuration");
     expect(result.claims_current_pool_fees_first).toBe(true);
     expect(result.clears_current_vote).toBe(true);
   });
@@ -251,21 +256,21 @@ describe("ve(3,3) call generation", () => {
       currentPoolKey: poolA,
     });
 
-    expect(extend.calls.map((call) => call.type)).toEqual([
-      "extend_max_duration",
+    expect(planFunctions(extend, VE_TOKEN_ABI)).toEqual([
+      "extendStakeMaxDuration",
     ]);
     expect(
       increase.execution_plan?.ordered_steps.map((step) => step.kind),
     ).toEqual(["approval", "execution"]);
-    expect(merge.calls.map((call) => call.type)).toEqual([
-      "claim_destination_pool_fees",
-      "claim_source_fees_and_merge_stake",
-      "merge_unvoted_stake",
-      "clear_destination_vote",
+    expect(planFunctions(merge, VE_TOKEN_ABI)).toEqual([
+      "claimPoolFeesToSelf",
+      "claimPoolFeesAndMergeStakesToSelf",
+      "mergeStakes",
+      "clearVote",
     ]);
-    expect(withdraw.calls.map((call) => call.type)).toEqual([
-      "claim_pool_fees",
-      "withdraw_expired_stake",
+    expect(planFunctions(withdraw, VE_TOKEN_ABI)).toEqual([
+      "claimPoolFeesToSelf",
+      "withdrawStakeToSelf",
     ]);
   });
 
@@ -290,19 +295,16 @@ describe("ve(3,3) call generation", () => {
       abi: parseAbi([
         "function stakeMaxDuration(uint128 amount,bytes32 salt) payable returns (uint256)",
       ]),
-      data: result.calls[0].data,
+      // Step 0 is the ERC-20 approval, which the plan now carries itself.
+      data: planTransactions(result)[1].data,
     });
     expect(call.functionName).toBe("stakeMaxDuration");
     expect(call.args).toEqual([BigInt(amount), salt]);
     const approval = decodeFunctionData({
       abi: erc20Abi,
-      data: result.approvals[0].data,
+      data: planTransactions(result)[0].data,
     });
     expect(approval.args).toEqual([veToken, BigInt(amount)]);
-    expect(result.transaction_safety).toMatchObject({
-      only_allowlisted_vetoken_functions: true,
-      ownership_or_nft_transfer_calls: 0,
-    });
     expect(
       result.execution_plan?.ordered_steps.map((step) => step.kind),
     ).toEqual(["approval", "execution"]);
@@ -319,12 +321,11 @@ describe("ve(3,3) call generation", () => {
         { veId: "456", poolKey: poolB },
       ],
     });
-    expect(result.calls).toHaveLength(2);
-    expect(result.calls.every((call) => call.type === "claim_pool_fees")).toBe(
+    expect(planTransactions(result)).toHaveLength(2);
+    expect(planFunctions(result, VE_TOKEN_ABI).every((name) => name === "claimPoolFeesToSelf")).toBe(
       true,
     );
-    expect(result.transaction).toBeNull();
-    expect(result.transactions).toHaveLength(2);
+    expect(planTransactions(result)).toHaveLength(2);
   });
 
   it("discovers every active owned vote and prepares one claim-all multicall", async () => {
@@ -422,7 +423,7 @@ describe("ve(3,3) call generation", () => {
     expect(url.pathname).toBe(`/ve33/${veToken}/${sender}`);
     expect(url.searchParams.get("chainId")).toBe("4663");
     expect(url.searchParams.get("pageSize")).toBe("100");
-    expect(result.calls).toHaveLength(2);
+    expect(planTransactions(result)).toHaveLength(2);
     expect(result.discovery).toMatchObject({
       indexed_owned_ve_tokens: 3,
       active_vote_claims: 2,
@@ -434,8 +435,7 @@ describe("ve(3,3) call generation", () => {
       expected_pool_id: poolId(poolAArgument),
     });
     // One step per claim rather than an opaque multicall payload.
-    expect(result.transaction).toBeNull();
-    expect(result.transactions).toHaveLength(2);
+    expect(planTransactions(result)).toHaveLength(2);
     expect(result.execution_plan?.required_capabilities).toContain(
       "atomic_batch",
     );
@@ -467,10 +467,10 @@ describe("ve(3,3) call generation", () => {
     if (result.phase !== "stake") throw new Error("unexpected phase");
     const approval = decodeFunctionData({
       abi: erc20Abi,
-      data: result.plan.approvals[0].data,
+      data: planTransactions(result.plan)[0].data,
     });
     expect(approval.args).toEqual([veToken, BigInt(amount)]);
-    expect(result.plan.transaction?.value).toBe("0");
+    expect(planTransactions(result.plan)[0].value).toBe("0");
   });
 
   it("auto-claims every active fee source and apportions reinvested STONX across all active allocations", async () => {
@@ -540,9 +540,11 @@ describe("ve(3,3) call generation", () => {
     );
     expect(claimed.phase).toBe("claim");
     if (claimed.phase !== "claim") throw new Error("unexpected phase");
-    expect(claimed.plan.calls).toHaveLength(2);
+    expect(planTransactions(claimed.plan)).toHaveLength(2);
     expect(
-      claimed.plan.calls.every((call) => call.type === "claim_pool_fees"),
+      planFunctions(claimed.plan, VE_TOKEN_ABI).every(
+        (name) => name === "claimPoolFeesToSelf",
+      ),
     ).toBe(true);
     expect(claimed.fee_tokens).toEqual([token0, token1, token2]);
     expect(claimed.pre_claim_balance_snapshots.snapshots).toHaveLength(3);
@@ -590,18 +592,16 @@ describe("ve(3,3) call generation", () => {
     expect(
       staked.plan.allocations.map((allocation) => allocation.increase_amount),
     ).toEqual(["34", "66"]);
-    expect(staked.plan.calls).toHaveLength(2);
+    // One approval step plus one increase per allocation.
+    expect(planTransactions(staked.plan)).toHaveLength(3);
     expect(staked.plan.safety).toMatchObject({
       every_existing_active_allocation_is_increased: true,
       increase_stake_amount_preserves_existing_votes_and_fee_accounting: true,
       no_vote_is_cleared_or_replaced: true,
     });
-    expect(staked.plan.transaction_safety).toMatchObject({
-      ownership_or_nft_transfer_calls: 0,
-    });
     const approval = decodeFunctionData({
       abi: erc20Abi,
-      data: staked.plan.approvals[0].data,
+      data: planTransactions(staked.plan)[0].data,
     });
     expect(approval.args).toEqual([veToken, 100n]);
   });

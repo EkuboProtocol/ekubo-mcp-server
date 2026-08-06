@@ -67,19 +67,11 @@ export interface ExactPoolKeyInput {
   config: Hex;
 }
 
-export interface DecodedUiCall {
-  order: number;
-  function: string;
-  target?: Address;
-  arguments: Record<string, unknown>;
-}
-
 export interface PreparedUiActionInput {
   action: string;
   chainId: string;
   sender: Address;
   request: Record<string, unknown>;
-  decodedCalls: DecodedUiCall[];
   transaction?: PreparedTransaction;
   approvals?: PreparedTransaction[];
   postExecutionTransactions?: PreparedTransaction[];
@@ -129,15 +121,6 @@ export function prepareWrapUnwrap(input: {
       amount: amount.toString(),
       wrapped_token: WETH_MAINNET,
     },
-    decodedCalls: [
-      {
-        order: 1,
-        function: input.direction === "wrap" ? "deposit" : "withdraw",
-        target: WETH_MAINNET,
-        arguments:
-          input.direction === "wrap" ? {} : { amount: amount.toString() },
-      },
-    ],
     transaction,
     details: {
       native_amount: amount.toString(),
@@ -209,18 +192,6 @@ export async function prepareLpPositionTransfer(
       token_id: owned.tokenId.toString(),
       recipient,
     },
-    decodedCalls: [
-      {
-        order: 1,
-        function: "safeTransferFrom",
-        target: owned.positionsAddress,
-        arguments: {
-          from: sender,
-          to: recipient,
-          token_id: owned.tokenId.toString(),
-        },
-      },
-    ],
     transaction,
     details: {
       irreversible_ownership_change: true,
@@ -278,14 +249,6 @@ export function prepareOracleCapacityExpansion(input: {
       token,
       min_capacity: input.minCapacity,
     },
-    decodedCalls: [
-      {
-        order: 1,
-        function: "expandCapacity",
-        target: ORACLE_V3,
-        arguments: { token, min_capacity: input.minCapacity },
-      },
-    ],
     transaction,
     details: {
       oracle: ORACLE_V3,
@@ -374,32 +337,6 @@ export function prepareManualPoolBoost(input: {
       amount0: amount0.toString(),
       amount1: amount1.toString(),
     },
-    decodedCalls: [
-      ...approvals.map((transaction, index) => ({
-        order: index + 1,
-        function: "approve",
-        target: transaction.to,
-        arguments: {
-          spender: MANUAL_POOL_BOOSTER_V3,
-          amount:
-            transaction.to === poolKey.token0
-              ? amount0.toString()
-              : amount1.toString(),
-        },
-      })),
-      {
-        order: approvals.length + 1,
-        function: "boost",
-        target: MANUAL_POOL_BOOSTER_V3,
-        arguments: {
-          pool_key: poolKey,
-          start_time: startTime.toString(),
-          end_time: endTime.toString(),
-          rate0: rate0.toString(),
-          rate1: rate1.toString(),
-        },
-      },
-    ],
     approvals,
     transaction,
     details: {
@@ -436,14 +373,6 @@ export function prepareExecuteTwammVirtualOrders(input: {
     chainId: input.chainId,
     sender,
     request: { chain_id: input.chainId, sender, pool_key: poolKey },
-    decodedCalls: [
-      {
-        order: 1,
-        function: "lockAndExecuteVirtualOrders",
-        target: extension,
-        arguments: { pool_key: poolKey },
-      },
-    ],
     transaction,
     details: {
       permissionless_maintenance: true,
@@ -512,12 +441,6 @@ export function prepareApprovalRevocations(input: {
       sender,
       approvals: revocations,
     },
-    decodedCalls: revocations.map(({ token, spender }, index) => ({
-      order: index + 1,
-      function: "approve",
-      target: token,
-      arguments: { spender, amount: "0" },
-    })),
     steps,
     details: {
       transaction_count: transactions.length,
@@ -579,29 +502,6 @@ export function prepareOldGekuboUnwrap(input: {
       sender,
       amount: amount.toString(),
     },
-    decodedCalls: [
-      {
-        order: 1,
-        function: "approve",
-        target: OLD_GEKUBO_TOKEN,
-        arguments: {
-          spender: HYPER_ROUTER_V2_MAINNET,
-          amount: amount.toString(),
-        },
-      },
-      {
-        order: 2,
-        function: "unwrap_old_gekubo_route",
-        target: HYPER_ROUTER_V2_MAINNET,
-        arguments: {
-          amount: amount.toString(),
-          input_token: OLD_GEKUBO_TOKEN,
-          output_token: EKUBO_TOKEN,
-          input_token_index: OLD_GEKUBO_TOKEN_INDEX,
-          output_token_index: EKUBO_TOKEN_INDEX,
-        },
-      },
-    ],
     approvals: [approvalTransaction],
     transaction,
     atomicBatchRequired: true,
@@ -616,6 +516,18 @@ export function preparedUiAction(input: PreparedUiActionInput) {
   if ((input.steps === undefined) === (input.transaction === undefined)) {
     throw new Error(
       "internal UI action plan error: provide either steps or one transaction",
+    );
+  }
+  // `steps` is the whole plan, so approvals and cleanups have to be in it.
+  // Accepting them alongside would silently drop them from the plan — an
+  // approval that never executes turns into a revert at signing time.
+  if (
+    input.steps !== undefined &&
+    ((input.approvals?.length ?? 0) > 0 ||
+      (input.postExecutionTransactions?.length ?? 0) > 0)
+  ) {
+    throw new Error(
+      "internal UI action plan error: fold approvals and cleanups into steps",
     );
   }
   const approvals = input.approvals ?? [];
@@ -646,14 +558,6 @@ export function preparedUiAction(input: PreparedUiActionInput) {
       value,
     })),
   };
-  const allowedTargets = [
-    ...new Set(exactTransactions.map((transaction) => transaction.to)),
-  ];
-  const nativeValue = exactTransactions.reduce(
-    (total, transaction) => total + BigInt(transaction.value),
-    0n,
-  );
-
   return {
     schema_version: "1",
     action: input.action,
@@ -663,11 +567,6 @@ export function preparedUiAction(input: PreparedUiActionInput) {
     wallet_validation_required: true,
     request: input.request,
     ...(input.details === undefined ? {} : { details: input.details }),
-    decoded_calls: input.decodedCalls,
-    exact_transaction_list: exactTransactions,
-    ...(input.transaction === undefined
-      ? {}
-      : { transaction: input.transaction }),
     execution_plan: plan,
     onchain_validation: {
       ...(input.onchainValidation ?? {}),

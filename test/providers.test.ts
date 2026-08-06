@@ -2,6 +2,13 @@ import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
 import { decodeFunctionData, erc20Abi } from "viem";
 import {
+  planStepKinds,
+  planTargets,
+  planTotalValue,
+  planTransactions,
+  planValues,
+} from "./plan-helpers.js";
+import {
   type Env,
   getQuotesWithPlans,
   listTokens,
@@ -429,17 +436,19 @@ describe("aggregated quote providers", () => {
     expect(requestHeaders?.get("0x-api-key")).toBe("zero-x-test-key");
     expect(result.source).toBe("0x");
     expect(result.quote.maximum_amount_in).toBe("205");
-    expect(result.transaction.to).toBe(swapTarget);
-    const approval = decodeFunctionData({
-      abi: erc20Abi,
-      data: result.approvals[0].data,
-    });
+    // The plan is the only statement of the transactions: approval, swap,
+    // then the allowance cleanup.
+    expect(planStepKinds(result)).toEqual([
+      "approval",
+      "execution",
+      "allowance_cleanup",
+    ]);
+    const [approvalTx, swapTx, cleanupTx] = planTransactions(result);
+    expect(swapTx.to).toBe(swapTarget);
+    const approval = decodeFunctionData({ abi: erc20Abi, data: approvalTx.data });
     expect(approval.functionName).toBe("approve");
     expect(approval.args).toEqual([spender, 205n]);
-    const cleanup = decodeFunctionData({
-      abi: erc20Abi,
-      data: result.post_execution_transactions[0].data,
-    });
+    const cleanup = decodeFunctionData({ abi: erc20Abi, data: cleanupTx.data });
     expect(cleanup.args).toEqual([spender, 0n]);
   });
 
@@ -514,8 +523,8 @@ describe("aggregated quote providers", () => {
         })) as typeof fetch,
     );
 
-    expect(result.approvals).toEqual([]);
-    expect(result.post_execution_transactions).toEqual([]);
+    // A sufficient pre-existing allowance means no approval and no cleanup.
+    expect(planStepKinds(result)).toEqual(["execution"]);
   });
 
   it("replaces the Across unlimited approval with an exact-amount approval", async () => {
@@ -574,17 +583,19 @@ describe("aggregated quote providers", () => {
     expect(authorization).toBe("Bearer across-test-key");
     expect(result.action).toBe("ekubo_bridge");
     expect(result.source).toBe("across");
-    expect(result.approvals).toHaveLength(1);
+    // The approval and the bridge call are both steps of the one plan.
+    expect(planStepKinds(result)).toEqual(["approval", "execution"]);
     // Across returns an unlimited approval (0xaaaa here); it must be discarded
     // in favour of an exact-amount approve for maxInputAmount.
-    expect(result.approvals[0].data).not.toBe("0xaaaa");
+    expect(planTransactions(result)[0].data).not.toBe("0xaaaa");
     const acrossApproval = decodeFunctionData({
       abi: erc20Abi,
-      data: result.approvals[0].data,
+      data: planTransactions(result)[0].data,
     });
     expect(acrossApproval.functionName).toBe("approve");
     expect(acrossApproval.args).toEqual([spender, 205n]);
-    expect(result.transaction.value).toBe("3");
+    // The bridge call carries the native value, not the approval.
+    expect(planTransactions(result)[1].value).toBe("3");
     expect(result.quote.expected_fill_time_seconds).toBe(12);
   });
 

@@ -62,7 +62,7 @@ const POOL_KEY_COMPONENTS = [
   { name: "config", type: "bytes32", internalType: "PoolConfig" },
 ] as const;
 
-const POSITIONS_DEPOSIT_ABI = [
+export const POSITIONS_DEPOSIT_ABI = [
   {
     type: "error",
     name: "DepositFailedDueToSlippage",
@@ -165,7 +165,7 @@ const POSITIONS_DEPOSIT_ABI = [
   },
 ] as const satisfies Abi;
 
-const OWNER_OF_ABI = [
+export const OWNER_OF_ABI = [
   {
     type: "function",
     name: "ownerOf",
@@ -199,7 +199,7 @@ const POSITIONS_V3_COLLECT_FEES_ABI = [
   },
 ] as const satisfies Abi;
 
-const POSITIONS_V2_WITHDRAW_ABI = [
+export const POSITIONS_V2_WITHDRAW_ABI = [
   {
     type: "function",
     name: "withdraw",
@@ -229,7 +229,7 @@ const POSITIONS_V2_WITHDRAW_ABI = [
   },
 ] as const satisfies Abi;
 
-const POSITIONS_V3_WITHDRAW_ABI = [
+export const POSITIONS_V3_WITHDRAW_ABI = [
   {
     type: "function",
     name: "withdraw",
@@ -252,7 +252,7 @@ const POSITIONS_V3_WITHDRAW_ABI = [
   },
 ] as const satisfies Abi;
 
-const VE33_WITHDRAW_AND_CLAIM_REWARDS_ABI = [
+export const VE33_WITHDRAW_AND_CLAIM_REWARDS_ABI = [
   {
     type: "function",
     name: "withdrawAndClaimRewards",
@@ -287,7 +287,7 @@ const VE33_CLAIM_REWARDS_ABI = [
   },
 ] as const satisfies Abi;
 
-const STAKE_TOKEN_ABI = [
+export const STAKE_TOKEN_ABI = [
   {
     type: "function",
     name: "stakeToken",
@@ -387,18 +387,6 @@ export function preparePoolInitialization(input: {
           : "Positions",
       resource_uri: `ekubo://contracts/evm/${input.chainId}/${positionsAddress}`,
     },
-    decoded_calls: [
-      {
-        order: 1,
-        function: "maybeInitializePool",
-        target: positionsAddress,
-        arguments: {
-          pool_key: pool.pool_key,
-          tick: input.initialTick,
-        },
-      },
-    ],
-    transaction,
     execution_plan: executionPlan({
       chainId: input.chainId,
       sender,
@@ -846,38 +834,6 @@ export async function prepareLpPositionDeposit(
       slippage_bps: input.slippageBps,
       note: "Wallet simulation against current chain state is mandatory because the indexed price snapshot may be up to 180 seconds old.",
     },
-    decoded_calls: [
-      ...(initializeCall === null
-        ? []
-        : [
-            {
-              order: 1,
-              function: "maybeInitializePool",
-              arguments: {
-                pool_key: poolKey,
-                tick: input.initialTick,
-              },
-            },
-          ]),
-      {
-        order: initializeCall === null ? 1 : 2,
-        function: input.mode === "mint_new" ? "mintAndDeposit" : "deposit",
-        arguments: depositArguments,
-      },
-      ...(nativeValue === 0n
-        ? []
-        : [
-            {
-              order: initializeCall === null ? 2 : 3,
-              function: "refundNativeToken",
-              arguments: {},
-            },
-          ]),
-    ],
-    approvals: approvalTransactions,
-    transaction,
-    transactions,
-    post_execution_transactions: cleanupTransactions,
     onchain_validation: {
       owner: ownerValidation,
       exact_transaction_simulation_required: true,
@@ -1072,15 +1028,6 @@ export async function prepareLpPositionEarningsClaim(
       bounds,
     },
     tokens,
-    decoded_calls: [
-      {
-        order: 1,
-        function: implementationFunction,
-        arguments: decodedArguments,
-        result_fields: transactionResultFields,
-      },
-    ],
-    transaction,
     execution_plan: executionPlan({
       chainId: owned.chainId,
       sender,
@@ -1155,24 +1102,11 @@ interface BatchLpPositionWithdrawInput {
   withdrawals: Array<Omit<SingleLpPositionWithdrawInput, "chainId" | "sender">>;
 }
 
-export function prepareLpPositionWithdraw(
-  env: Env,
-  input: SingleLpPositionWithdrawInput,
-  fetcher?: Fetcher,
-): ReturnType<typeof prepareSingleLpPositionWithdraw>;
-export function prepareLpPositionWithdraw(
-  env: Env,
-  input: BatchLpPositionWithdrawInput,
-  fetcher?: Fetcher,
-): Promise<Record<string, unknown>>;
 export async function prepareLpPositionWithdraw(
   env: Env,
-  input: SingleLpPositionWithdrawInput | BatchLpPositionWithdrawInput,
+  input: BatchLpPositionWithdrawInput,
   fetcher: Fetcher = fetch,
 ) {
-  if (!("withdrawals" in input)) {
-    return prepareSingleLpPositionWithdraw(env, input, fetcher);
-  }
   if (input.withdrawals.length === 0 || input.withdrawals.length > 100) {
     throw new ServiceError(
       "invalid_withdrawals",
@@ -1203,15 +1137,22 @@ export async function prepareLpPositionWithdraw(
       ),
     ),
   );
-  const transactions = prepared.map((withdrawal) => withdrawal.transaction);
+  // Each withdrawal's plan is the only statement of its transactions, so the
+  // batch reads them back out of it rather than keeping a second copy.
+  const transactions = prepared.flatMap((withdrawal) =>
+    withdrawal.execution_plan.ordered_steps.map(({ transaction }) => ({
+      chain_id: transaction.chain_id,
+      to: transaction.to,
+      data: transaction.data,
+      value: transaction.value,
+    })),
+  );
   const identity = {
     action: "withdraw_liquidity_batch",
     chain_id: input.chainId,
     sender,
-    withdrawals: prepared.map((withdrawal) => ({
-      plan_id: withdrawal.plan_id,
-      transaction: transactionIdentity(withdrawal.transaction),
-    })),
+    withdrawals: prepared.map((withdrawal) => withdrawal.plan_id),
+    transactions: transactions.map(transactionIdentity),
   };
 
   return {
@@ -1234,11 +1175,8 @@ export async function prepareLpPositionWithdraw(
       output_protection: withdrawal.output_protection,
       position: withdrawal.position,
       tokens: withdrawal.tokens,
-      decoded_call: withdrawal.decoded_calls[0],
-      transaction: withdrawal.transaction,
       onchain_validation: withdrawal.onchain_validation,
     })),
-    transactions,
     execution_plan: executionPlanFromSteps({
       chainId: input.chainId,
       sender,
@@ -1451,15 +1389,6 @@ async function prepareSingleLpPositionWithdraw(
       manager_version: managerVersion,
     },
     tokens,
-    decoded_calls: [
-      {
-        order: 1,
-        function: implementationFunction,
-        arguments: decodedArguments,
-        result_fields: transactionResultFields,
-      },
-    ],
-    transaction,
     execution_plan: executionPlan({
       chainId: owned.chainId,
       sender,

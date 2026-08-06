@@ -15,7 +15,6 @@ import { functionReadCall, readCallsBundle } from "./abi-decode.js";
 import { ServiceError } from "./core.js";
 import {
   erc20ApprovalTransaction,
-  type DecodedUiCall,
   preparedTransaction,
   preparedUiAction,
 } from "./ui-actions.js";
@@ -146,12 +145,6 @@ export function prepareTwammOrder(input: {
   // A multicall let one msg.value cover every inner call; as separate steps
   // each call funds its own order, and the total is unchanged.
   let callValues: bigint[];
-  let decodedCalls: {
-    order: number;
-    function: string;
-    target: Address;
-    arguments: Record<string, unknown>;
-  }[];
   if (parsedOrders.length === 1) {
     const order = parsedOrders[0];
     assertFits(order.amount, 112, "orders[0].amount");
@@ -163,14 +156,6 @@ export function prepareTwammOrder(input: {
       }),
     ];
     callValues = [order.amount];
-    decodedCalls = [
-      {
-        order: 1,
-        function: "mintAndIncreaseSellAmount",
-        target: ORDERS_V3,
-        arguments: serializeOrder(order),
-      },
-    ];
   } else {
     if (input.salt === undefined || !/^0x[0-9a-fA-F]{64}$/.test(input.salt)) {
       throw new ServiceError(
@@ -207,23 +192,6 @@ export function prepareTwammOrder(input: {
       ),
     ];
     callValues = [0n, ...parsedOrders.map((order) => order.amount)];
-    decodedCalls = [
-      {
-        order: 1,
-        function: "mint",
-        target: ORDERS_V3,
-        arguments: { salt: input.salt, expected_token_id: tokenId.toString() },
-      },
-      ...parsedOrders.map((order, index) => ({
-        order: index + 2,
-        function: "increaseSellAmount",
-        target: ORDERS_V3,
-        arguments: {
-          token_id: tokenId?.toString(),
-          ...serializeOrder(order),
-        },
-      })),
-    ];
   }
   const nativeValue = sellToken === NATIVE_TOKEN ? totalAmount : 0n;
   // One step per call so the wallet decodes each, with each order funding
@@ -262,24 +230,17 @@ export function prepareTwammOrder(input: {
       salt: input.salt ?? null,
       orders: parsedOrders.map(serializeOrder),
     },
-    decodedCalls: [
-      ...approvals.map((approval) => ({
-        order: 1,
-        function: "approve",
-        target: approval.to,
-        arguments: { spender: ORDERS_V3, amount: totalAmount.toString() },
+    steps: [
+      ...approvals.map((transaction) => ({
+        kind: "approval" as const,
+        transaction,
       })),
-      ...decodedCalls.map((call) => ({
-        ...call,
-        order: call.order + approvals.length,
+      ...transactions.map((transaction) => ({
+        kind: "execution" as const,
+        transaction,
       })),
     ],
-    approvals,
-    steps: transactions.map((transaction) => ({
-      kind: "execution" as const,
-      transaction,
-    })),
-    atomicBatchRequired: transactions.length > 1,
+    atomicBatchRequired: approvals.length + transactions.length > 1,
     details: {
       orders_manager: ORDERS_V3,
       expected_token_id:
@@ -370,12 +331,6 @@ function prepareExistingOrderAction(
       args: [tokenId, orderKey],
     }),
   );
-  const decodedCalls: DecodedUiCall[] = orders.map(({ orderKey }, index) => ({
-    order: index + 1,
-    function: "collectProceeds",
-    target: ordersAddress,
-    arguments: { token_id: tokenId.toString(), order_key: orderKey },
-  }));
   if (input.mode === "stop") {
     const pendingTimestamp = unsigned(
       input.pendingTimestamp,
@@ -398,16 +353,6 @@ function prepareExistingOrderAction(
           args: [tokenId, orderKey, saleRate],
         }),
       );
-      decodedCalls.push({
-        order: decodedCalls.length + 1,
-        function: "decreaseSaleRate",
-        target: ordersAddress,
-        arguments: {
-          token_id: tokenId.toString(),
-          order_key: orderKey,
-          sale_rate_decrease: saleRate.toString(),
-        },
-      });
     });
   }
   // One step per call: an opaque `bytes[]` payload collapses the batch into a
@@ -436,7 +381,6 @@ function prepareExistingOrderAction(
       token_id: tokenId.toString(),
       mode: input.mode,
     },
-    decodedCalls,
     steps: transactions.map((transaction) => ({
       kind: "execution" as const,
       transaction,

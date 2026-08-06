@@ -343,31 +343,6 @@ export async function prepareFixPoolPrice(
       chainId: input.chainId,
       sender,
       request: shared.request,
-      decodedCalls: [
-        ...approvals.map((approval, index) => ({
-          order: index + 1,
-          function: "approve",
-          target: approval.to,
-          arguments: {
-            spender: YUL_ROUTER_ADDRESS,
-            amount: requiredInputAmount.toString(),
-          },
-        })),
-        {
-          order: approvals.length + 1,
-          function: "execute_target_price_route",
-          target: YUL_ROUTER_ADDRESS,
-          arguments: {
-            pool_key: poolKey,
-            target_sqrt_ratio: targetSqrtRatioFloat.toString(),
-            allow_partial: true,
-            specified_token: specifiedToken,
-            calculated_token: calculatedToken,
-            specified_amount: TARGET_PRICE_SPECIFIED_AMOUNT.toString(),
-            calculated_amount_threshold: quotedCalculatedAmount.toString(),
-          },
-        },
-      ],
       approvals,
       transaction,
       details: {

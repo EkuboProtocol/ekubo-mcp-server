@@ -1,6 +1,13 @@
 import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
 import { keccak256, stringToHex } from "viem";
+import {
+  planStepKinds,
+  planTargets,
+  planTotalValue,
+  planTransactions,
+  planValues,
+} from "./plan-helpers.js";
 import worker from "../src/index.js";
 import {
   getTokensSchema,
@@ -825,7 +832,7 @@ describe("Worker discovery", () => {
       result: {
         structuredContent: {
           action: string;
-          transaction: { chain_id: string; data: string };
+          execution_plan_ready: boolean;
           execution_plan?: unknown;
           execution_plan_reference: {
             kind: string;
@@ -838,11 +845,11 @@ describe("Worker discovery", () => {
       };
     };
     expect(splitResult.result.structuredContent.action).toBe("ve33_split");
-    expect(splitResult.result.structuredContent.transaction.chain_id).toBe(
-      "4663",
-    );
-    expect(splitResult.result.structuredContent.transaction.data).toStartWith(
-      "0x",
+    expect(
+      splitResult.result.structuredContent.execution_plan_reference.url,
+    ).toStartWith("http");
+    expect(splitResult.result.structuredContent.execution_plan_ready).toBe(
+      true,
     );
     // The plan body must not travel through the agent: only a reference does.
     expect(splitResult.result.structuredContent.execution_plan).toBeUndefined();

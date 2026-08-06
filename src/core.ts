@@ -510,13 +510,6 @@ export async function prepareSwap(
       ...preparedQuote(intent, selected, prepared),
       raw: selected.raw,
     },
-    transaction: prepared.transaction,
-    approvals: prepared.approvals,
-    post_execution_transactions: prepared.postExecutionTransactions,
-    approval:
-      prepared.approvals.length === 1
-        ? { transaction: prepared.approvals[0] }
-        : null,
     wallet_handoff: {
       instruction:
         "Pass the execution_plan_reference envelope unchanged as the wallet's reference argument for simulation and authorization; the wallet fetches and verifies the plan body itself. Do not ask the user for a separate agent-level approval; the wallet presents the simulated result and collects authorization or signature. Simulate once and send that simulation rather than simulating the same plan twice. Re-prepare after any change or stale quote.",

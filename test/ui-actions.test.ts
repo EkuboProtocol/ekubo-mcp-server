@@ -2,6 +2,16 @@ import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
 import { numberToHex } from "viem";
 import {
+  planStepKinds,
+  planTargets,
+  planTotalValue,
+  planTransactions,
+  planValues,
+  planFunctions,
+  planArgs,
+  ALL_ABI,
+} from "./plan-helpers.js";
+import {
   prepareAuctionComplete,
   prepareAuctionCreate,
   prepareAuctionCreatorProceeds,
@@ -64,11 +74,11 @@ describe("EVM interface action preparation", () => {
       amount: "100",
     });
 
-    expect(wrap.exact_transaction_list).toHaveLength(1);
-    expect(wrap.exact_transaction_list[0]?.value).toBe("100");
-    expect(wrap.exact_transaction_list[0]?.data).toBe("0xd0e30db0");
-    expect(unwrap.exact_transaction_list[0]?.value).toBe("0");
-    expect(unwrap.exact_transaction_list[0]?.data.slice(0, 10)).toBe(
+    expect(planTransactions(wrap)).toHaveLength(1);
+    expect(planTransactions(wrap)[0]?.value).toBe("100");
+    expect(planTransactions(wrap)[0]?.data).toBe("0xd0e30db0");
+    expect(planTransactions(unwrap)[0]?.value).toBe("0");
+    expect(planTransactions(unwrap)[0]?.data.slice(0, 10)).toBe(
       "0x2e1a7d4d",
     );
   });
@@ -83,11 +93,11 @@ describe("EVM interface action preparation", () => {
       ],
     });
 
-    expect(result.exact_transaction_list).toHaveLength(2);
+    expect(planTransactions(result)).toHaveLength(2);
     expect(
       result.execution_plan.ordered_steps.map((step) => step.step),
     ).toEqual([1, 2]);
-    expect(result.decoded_calls.map((call) => call.arguments.amount)).toEqual([
+    expect(planArgs(result, ALL_ABI).map((args) => String(args[1]))).toEqual([
       "0",
       "0",
     ]);
@@ -138,10 +148,8 @@ describe("EVM interface action preparation", () => {
       }) as typeof fetch,
     );
 
-    expect(result.decoded_calls[0]).toMatchObject({
-      function: "safeTransferFrom",
-      arguments: { from: sender, to: recipient, token_id: "42" },
-    });
+    expect(planFunctions(result, ALL_ABI)).toEqual(["safeTransferFrom"]);
+    expect(planArgs(result, ALL_ABI)[0]).toEqual([sender, recipient, 42n]);
     expect(result.details).toMatchObject({
       irreversible_ownership_change: true,
       transfers_liquidity_and_unclaimed_earnings_with_nft: true,
@@ -170,15 +178,15 @@ describe("EVM interface action preparation", () => {
       poolKey,
     });
 
-    expect(boost.decoded_calls.map((call) => call.function)).toEqual([
+    expect(planFunctions(boost, ALL_ABI)).toEqual([
       "approve",
       "boost",
     ]);
     expect(boost.details).toMatchObject({
       rate_scale: "Q32 token base units per second",
     });
-    expect(oracle.exact_transaction_list[0]?.data.slice(0, 10)).not.toBe("0x");
-    expect(execute.decoded_calls[0]?.function).toBe(
+    expect(planTransactions(oracle)[0]?.data.slice(0, 10)).not.toBe("0x");
+    expect(planFunctions(execute, ALL_ABI)[0]).toBe(
       "lockAndExecuteVirtualOrders",
     );
   });
@@ -209,16 +217,16 @@ describe("EVM interface action preparation", () => {
       ],
     });
 
-    expect(create.decoded_calls.map((call) => call.function)).toEqual([
+    expect(planFunctions(create, ALL_ABI)).toEqual([
       "approve",
       "mintAndIncreaseSellAmount",
     ]);
-    expect(stop.decoded_calls.map((call) => call.function)).toEqual([
+    expect(planFunctions(stop, ALL_ABI)).toEqual([
       "collectProceeds",
       "decreaseSaleRate",
     ]);
     // collectProceeds and decreaseSaleRate are two decodable steps now.
-    expect(stop.exact_transaction_list).toHaveLength(2);
+    expect(planTransactions(stop)).toHaveLength(2);
   });
 
   it("funds each split order from its own step and preserves the total", () => {
@@ -238,17 +246,12 @@ describe("EVM interface action preparation", () => {
         { fee: "1", startTime: "1010", endTime: "3000", amount: "25000" },
       ],
     });
-    const steps = create.execution_plan.ordered_steps;
-    expect(steps.map((step) => step.transaction.value)).toEqual([
+    expect(planValues(create)).toEqual([
       "0",
       "10000",
       "25000",
     ]);
-    const total = steps.reduce(
-      (sum, step) => sum + BigInt(step.transaction.value),
-      0n,
-    );
-    expect(total).toBe(35000n);
+    expect(planTotalValue(create)).toBe(35000n);
     expect(create.execution_plan.required_capabilities).toEqual([
       "atomic_batch",
     ]);
@@ -270,9 +273,7 @@ describe("EVM interface action preparation", () => {
       auctionDuration: 7200,
       salt: `0x${"56".repeat(32)}`,
     });
-    expect(
-      create.execution_plan.ordered_steps.map((step) => step.transaction.value),
-    ).toEqual(["0", "1000"]);
+    expect(planValues(create)).toEqual(["0", "1000"]);
   });
 
   it("prepares auction creation and optional graduation initialization", () => {
@@ -309,12 +310,12 @@ describe("EVM interface action preparation", () => {
       launchPoolTick: 42,
     });
 
-    expect(create.decoded_calls.map((call) => call.function)).toEqual([
+    expect(planFunctions(create, ALL_ABI)).toEqual([
       "approve",
       "mint",
       "sellAmountByAuction",
     ]);
-    expect(complete.decoded_calls.map((call) => call.function)).toEqual([
+    expect(planFunctions(complete, ALL_ABI)).toEqual([
       "maybeInitializeGraduationPool",
       "completeAuctionAndStartBoost",
     ]);
@@ -333,9 +334,7 @@ describe("EVM interface action preparation", () => {
         }
       ).auction_key,
     });
-    expect(creatorProceeds.decoded_calls[0]?.function).toBe(
-      "collectCreatorProceeds",
-    );
+    expect(planFunctions(creatorProceeds, ALL_ABI)[0]).toBe("collectCreatorProceeds");
   });
 
   it("matches the old gEKUBO byte route and revenue maintenance ordering", () => {
@@ -352,17 +351,20 @@ describe("EVM interface action preparation", () => {
       rollTokens: [token1],
     });
 
-    expect(unwrap.transaction?.data).toBe("0x0001005a0300000001000501");
+    // Step 0 is the approval; the raw byte route is the execution step.
+    expect(planTransactions(unwrap)[1]?.data).toBe(
+      "0x0001005a0300000001000501",
+    );
     expect(unwrap.execution_plan.required_capabilities).toEqual([
       "atomic_batch",
     ]);
-    expect(buybacks.decoded_calls.map((call) => call.function)).toEqual([
+    expect(planFunctions(buybacks, ALL_ABI)).toEqual([
       "collect",
       "withdrawProtocolFees",
       "roll",
     ]);
     // Each buyback call is its own decodable step now, not one multicall.
-    expect(buybacks.exact_transaction_list).toHaveLength(3);
+    expect(planTransactions(buybacks)).toHaveLength(3);
   });
 
   it("returns signature-first recovery and complete incentive claim plans", () => {
@@ -403,8 +405,8 @@ describe("EVM interface action preparation", () => {
       next_step:
         "Use a separately selected connected wallet that supports EIP-712, then return its 65-byte signature to this preparation tool. Do not ask the Ekubo wallet MCP to sign it.",
     });
-    expect(reward.exact_transaction_list).toHaveLength(1);
-    expect(reward.decoded_calls[0]?.function).toBe("claim");
+    expect(planTransactions(reward)).toHaveLength(1);
+    expect(planFunctions(reward, ALL_ABI)[0]).toBe("claim");
   });
 
   it("supplies the complete reward availability read list before claiming", async () => {
@@ -578,14 +580,9 @@ describe("EVM interface action preparation", () => {
       execution_plan_ready: true,
       agent_confirmation_required: false,
     });
-    const executable = execute as typeof execute & {
-      decoded_calls: { function: string }[];
-      exact_transaction_list: unknown[];
-    };
-    expect(executable.decoded_calls.map((call) => call.function)).toEqual([
-      "approve",
-      "execute_target_price_route",
-    ]);
-    expect(executable.exact_transaction_list).toHaveLength(2);
+    // The route call is opaque calldata from the quote provider, so only the
+    // approval decodes; the plan still states both steps.
+    expect(planStepKinds(execute)).toEqual(["approval", "execution"]);
+    expect(planTransactions(execute)).toHaveLength(2);
   });
 });
