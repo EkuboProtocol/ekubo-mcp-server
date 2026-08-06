@@ -955,7 +955,7 @@ export const prepareVe33ReallocationSchema = z.object({
   chain_id: chainId,
   ve_token: address,
   sender: address.describe(
-    "VeToken owner that will execute the atomic multicall",
+    "VeToken owner that will execute the atomic batch",
   ),
   current_state_id: bytes32.describe(
     "Exact state_id returned by ekubo_get_ve33_allocations; preparation fails if indexed state changed",
@@ -1231,7 +1231,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_ve33_vote",
     title: "Prepare one ve(3,3) NFT vote change",
     description:
-      "Compile one actively voted ve-token into multiple allocations. Unconditionally claims its current pool first, then splits and changes votes in one VeToken multicall. Prefer the portfolio reallocation workflow for complete state validation.",
+      "Compile one actively voted ve-token into multiple allocations. Unconditionally claims its current pool first, then splits and changes votes in one atomic batch of decodable VeToken steps. Prefer the portfolio reallocation workflow for complete state validation.",
     inputSchema: z.toJSONSchema(prepareVe33VoteSchema),
   },
   {
@@ -1259,7 +1259,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_ve33_claim_fees",
     title: "Prepare ve-token fee claims",
     description:
-      "Generate one call or a VeToken multicall that claims voter fees from one or more ve-tokens.",
+      "Generate one call, or an atomic batch of decodable VeToken steps, claiming voter fees from one or more ve-tokens.",
     inputSchema: z.toJSONSchema(prepareVe33ClaimSchema),
   },
   {
@@ -1273,7 +1273,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_ve33_claim_all_fees",
     title: "Prepare all ve-token fee claims",
     description:
-      "Discover every active vote on VeTokens owned by the sender and generate one native VeToken multicall claiming all indexed pool fees, with ownerOf and voteState validation calldata.",
+      "Discover every active vote on VeTokens owned by the sender and generate one atomic batch of decodable VeToken steps claiming all indexed pool fees, with ownerOf and voteState validation calldata.",
     inputSchema: z.toJSONSchema(prepareAllVe33FeeClaimsSchema),
   },
   {
@@ -1294,7 +1294,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_ve33_reallocation",
     title: "Prepare atomic ve(3,3) reallocation",
     description:
-      "Compile a reviewed current allocation into at most 25 target pool-weight shares using one VeToken multicall. The optional compact_max_lock strategy fee-safely consolidates active NFTs, extends the survivor to four years, then creates exactly one voting NFT per target; it explicitly discloses burned source IDs and lock extension.",
+      "Compile a reviewed current allocation into at most 25 target pool-weight shares as one atomic batch of decodable VeToken steps. The optional compact_max_lock strategy fee-safely consolidates active NFTs, extends the survivor to four years, then creates exactly one voting NFT per target; it explicitly discloses burned source IDs and lock extension.",
     inputSchema: z.toJSONSchema(prepareVe33ReallocationSchema),
   },
   {
@@ -1364,14 +1364,14 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_lp_position_earnings_claim",
     title: "Prepare an LP fee or reward claim",
     description:
-      "Prepare collection of all currently accrued fees from an owned standard position or all currently accrued rewards from an owned Ve33 position. Resolves the indexed PoolKey and bounds, automatically chooses v2 withdraw-with-zero-liquidity, v3 collectFees, or Ve33 claimRewards, preserves all liquidity and the NFT, supplies an atomic pending ownership/earnings read, exact decoded calldata and result fields, wallet-policy requirements, and a signer-neutral plan delivered as execution_plan_reference. No Cast encoding is required.",
+      "Prepare collection of all currently accrued fees from an owned standard position or all currently accrued rewards from an owned Ve33 position. Resolves the indexed PoolKey and bounds, automatically chooses v2 withdraw-with-zero-liquidity, v3 collectFees, or Ve33 claimRewards, preserves all liquidity and the NFT, supplies an atomic pending ownership/earnings read, exact decoded calldata and result fields, and a signer-neutral plan delivered as execution_plan_reference. No Cast encoding is required.",
     inputSchema: z.toJSONSchema(prepareLpPositionEarningsClaimSchema),
   },
   {
     name: "ekubo_prepare_lp_position_withdraw",
     title: "Prepare one or more LP position withdrawals",
     description:
-      "Prepare partial or full liquidity withdrawals from one or more owned EVM positions with one complete wallet-batch-capable plan. Pass withdrawals for a many-at-a-time request; the legacy single-position fields remain supported. Resolves each indexed PoolKey and bounds, uses each exact requested uint128 liquidity, automatically collects standard-position fees or Ve33 rewards as the interface does, supports explicit recipients, preserves the NFTs, and supplies pending ownership/liquidity/earnings validation, exact decoded calldata and result fields, and wallet-policy requirements. The wallet never constructs calldata.",
+      "Prepare partial or full liquidity withdrawals from one or more owned EVM positions with one complete wallet-batch-capable plan. Pass withdrawals for a many-at-a-time request; the legacy single-position fields remain supported. Resolves each indexed PoolKey and bounds, uses each exact requested uint128 liquidity, automatically collects standard-position fees or Ve33 rewards as the interface does, supports explicit recipients, preserves the NFTs, and supplies pending ownership/liquidity/earnings validation, and exact decoded calldata and result fields. The wallet never constructs calldata.",
     inputSchema: z.toJSONSchema(prepareLpPositionWithdrawSchema),
   },
   {
@@ -1399,21 +1399,21 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_twamm_order",
     title: "Prepare a TWAMM or DCA order",
     description:
-      "Prepare one or many current-interface TWAMM order splits, including deterministic minting, exact approval/native value, and the complete manager multicall.",
+      "Prepare one or many current-interface TWAMM order splits, including deterministic minting, exact approval and per-order native value, and the complete plan as one atomic batch of decodable steps.",
     inputSchema: z.toJSONSchema(prepareTwammOrderSchema),
   },
   {
     name: "ekubo_prepare_twamm_order_collection",
     title: "Prepare TWAMM proceeds collection",
     description:
-      "Prepare collection of every selected order key through the exact current or legacy Orders manager multicall, with pending owner validation.",
+      "Prepare collection of every selected order key through the exact current or legacy Orders manager, as one atomic batch of decodable steps, with pending owner validation.",
     inputSchema: z.toJSONSchema(prepareTwammOrderCollectionSchema),
   },
   {
     name: "ekubo_prepare_twamm_order_stop",
     title: "Prepare stopping a TWAMM order",
     description:
-      "Prepare the interface's complete stop flow: collect every selected order and decrease every still-active sale rate in one manager multicall.",
+      "Prepare the interface's complete stop flow: collect every selected order and decrease every still-active sale rate in one atomic batch of decodable steps.",
     inputSchema: z.toJSONSchema(prepareTwammOrderStopSchema),
   },
   {
@@ -1434,7 +1434,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_auction_complete",
     title: "Prepare auction completion",
     description:
-      "Prepare permissionless auction completion and, when necessary, graduation-pool initialization in the same manager multicall.",
+      "Prepare permissionless auction completion and, when necessary, graduation-pool initialization in the same atomic batch.",
     inputSchema: z.toJSONSchema(prepareAuctionCompleteSchema),
   },
   {
@@ -1490,14 +1490,14 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_recovery_fund_claim",
     title: "Prepare a Recovery Fund claim",
     description:
-      "Return the exact EIP-712 signature request when needed, then prepare agreement and all selected recovery claims in one multicall.",
+      "Return the exact EIP-712 signature request when needed, then prepare agreement and all selected recovery claims in one atomic batch of decodable steps.",
     inputSchema: z.toJSONSchema(prepareRecoveryFundClaimSchema),
   },
   {
     name: "ekubo_prepare_revenue_buybacks",
     title: "Prepare revenue buyback maintenance",
     description:
-      "Prepare the exact selected ended-order collections, protocol-fee withdrawals, and token rolls in interface order within one multicall.",
+      "Prepare the exact selected ended-order collections, protocol-fee withdrawals, and token rolls in interface order within one atomic batch of decodable steps.",
     inputSchema: z.toJSONSchema(prepareRevenueBuybacksSchema),
   },
   {
@@ -1511,7 +1511,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_ve33_merge",
     title: "Prepare merging ve-token stakes",
     description:
-      "Prepare fee-safe merging of one or more source NFTs into a destination, including required claims and the selected resulting vote in one multicall.",
+      "Prepare fee-safe merging of one or more source NFTs into a destination, including required claims and the selected resulting vote in one atomic batch of decodable steps.",
     inputSchema: z.toJSONSchema(prepareVe33MergeSchema),
   },
   {
@@ -1532,7 +1532,7 @@ export const publicToolCatalog = [
     name: "ekubo_prepare_pool_initialization",
     title: "Prepare standalone pool initialization",
     description:
-      "Prepare one exact permissionless maybeInitializePool transaction for a supplied v3 PoolKey and initial tick. This is the standalone alternative to the atomic maybeInitializePool plus mintAndDeposit multicall returned by ekubo_prepare_lp_position_deposit when pool_initialized=false.",
+      "Prepare one exact permissionless maybeInitializePool transaction for a supplied v3 PoolKey and initial tick. This is the standalone alternative to the atomic maybeInitializePool plus mintAndDeposit batch returned by ekubo_prepare_lp_position_deposit when pool_initialized=false.",
     inputSchema: z.toJSONSchema(preparePoolInitializationSchema),
   },
 ] as const;
@@ -2963,13 +2963,13 @@ For LP discovery, use ekubo_get_positions_by_owner instead of attempting ERC721 
 
 When the user asks where to provide liquidity, call ekubo_get_liquidity_opportunities before asking them to choose a pair. It mirrors the interface's boosted-fee, active-incentive, and projected Ve33-emission opportunity feed, ranks by APR, and returns exact actionable pools or a pair-level pool-candidate handoff. APR is an annualized snapshot, not guaranteed yield; show its components, denominator, data freshness, range and impermanent-loss risks. If ranking_complete=false, execute local_read_requirement through the user's wallet, decode it locally, and call the tool again with ve33_emission_state before presenting the ordering as final. Never ask this server to decode the raw onchain result; supply only the locally decoded decimal fields needed for projection.
 
-For creating an LP position, call ekubo_get_position_pool_candidates with the pair. Do not browse prod-api, manually derive pool IDs, or inspect manager ABIs. Show the candidate's Core generation, exact pool key, extension, manager, TVL, depth, volume, and fees. If the user selects a new configuration not yet indexed, normally pass its exact pool_key with pool_initialized=false and initial_tick to ekubo_prepare_lp_position_deposit; the tool derives the pool ID and atomically prepends maybeInitializePool before the deployed mintAndDeposit call in one multicall. Use ekubo_prepare_pool_initialization only when the user explicitly needs initialization as a separate transaction. If the wallet lacks one side, prepare and execute that funding swap separately, wait for its successful receipt, measure the actual new token balance, reserve native gas, and only then prepare the deposit from the measured available amounts; never treat a quote's expected output as a settled balance. The deposit tool computes a nonzero minimum liquidity, approvals, initialization, native refund, allowance cleanup, decoded calls, wallet-policy requirements, and a complete plan delivered as execution_plan_reference.
+For creating an LP position, call ekubo_get_position_pool_candidates with the pair. Do not browse prod-api, manually derive pool IDs, or inspect manager ABIs. Show the candidate's Core generation, exact pool key, extension, manager, TVL, depth, volume, and fees. If the user selects a new configuration not yet indexed, normally pass its exact pool_key with pool_initialized=false and initial_tick to ekubo_prepare_lp_position_deposit; the tool derives the pool ID and prepends maybeInitializePool as its own step before the deployed mintAndDeposit call, which the wallet executes as one atomic batch. Use ekubo_prepare_pool_initialization only when the user explicitly needs initialization as a separate transaction. If the wallet lacks one side, prepare and execute that funding swap separately, wait for its successful receipt, measure the actual new token balance, reserve native gas, and only then prepare the deposit from the measured available amounts; never treat a quote's expected output as a settled balance. The deposit tool computes a nonzero minimum liquidity, approvals, initialization, native refund, allowance cleanup, decoded calls, and a complete plan delivered as execution_plan_reference.
 
 For “collect my LP fees” or “claim my LP rewards”, call ekubo_prepare_lp_position_earnings_claim with the connected owner wallet, manager, and token ID from ekubo_get_positions_by_owner. It automatically uses v2 zero-liquidity fee withdrawal, v3 collectFees, or Ve33 claimRewards and never removes liquidity, burns, or transfers the NFT. Execute its current_state_query by passing its read_calls_reference unchanged to wallet_batch_eth_call. Require every inner call to succeed, compare the decoded owner with expected_owner, retain raw return data, and pass the decoded fees or rewards plus execution_plan_reference to the wallet for simulation and authorization. Never infer or manually encode the manager function.
 
 For partial or full LP withdrawals, execute each position's current_state_query through its read_calls_reference, then select an exact positive liquidity amount no greater than that position's decoded liquidity. Require every inner call to succeed, compare decoded owner with expected_owner, and retain raw return data. Then call ekubo_prepare_lp_position_withdraw with one legacy withdrawal or a withdrawals array for up to 100 positions. It automatically chooses each correct v2/v3 withdraw overload or Ve33 withdrawAndClaimRewards, collects fees or rewards exactly as the interface does, and returns the entire transaction list. Include every principal/earnings estimate and recipient in the wallet handoff, and give the unchanged execution_plan_reference envelope to the wallet MCP. The wallet may batch unrelated position calls into one transaction but must never construct calldata, choose an overload, or add a claim transaction.
 
-Pass LP execution plans to the wallet MCP for simulation, wallet-owned authorization, and execution; never use Cast to reconstruct LP calldata. Do not insert a separate agent confirmation step. If wallet policy rejects a plan, report its exact target, spender, recipient, selector, or native-value finding and do not attempt to change wallet policy.
+Pass LP execution plans to the wallet MCP for simulation, wallet-owned authorization, and execution; never use Cast to reconstruct LP calldata. Do not insert a separate agent confirmation step. If wallet policy rejects a plan, report the wallet's exact finding verbatim and do not attempt to change wallet policy; proposing a policy change is the wallet's own tool to offer, not this server's.
 
 For every other EVM action exposed by the interface, use its first-class prepare tool: wrap/unwrap, LP position transfer, phased pool price correction through ekubo_prepare_fix_pool_price, standalone pool initialization through ekubo_prepare_pool_initialization, TWAMM/DCA creation/collection/stop/virtual-order execution, auction creation/completion/creator proceeds, manual boosts, oracle capacity, approval revocation, old gEKUBO unwrap, incentive rewards, Recovery Fund claims, revenue buybacks, and direct VeToken increase/merge/withdraw. Phased tools return exact eth_call or EIP-712 requests and tell the caller which decoded values to send back. The Ekubo wallet MCP performs the reads but intentionally does not expose arbitrary EIP-712 signing; a Recovery Fund signature request must go to a separately selected connected wallet with eth_signTypedData_v4 support. Wallets must not invent calldata, append approvals, build multicalls, or choose transaction ordering.
 
@@ -2983,7 +2983,7 @@ For "reinvest my fees", call ekubo_prepare_ve33_reinvest with phase=claim and om
 
 For a new stake, use ekubo_prepare_ve33_stake; max duration is the default when no duration is supplied. For an existing stake, pass current_pool_key when it is voted so ekubo_prepare_ve33_extend uses a compound fee claim before extension; omit it only for an unvoted VeToken. max_duration=true must be an explicit choice.
 
-Every active source vote must be claimed unconditionally before that vote is cleared or moved, even when claimable fees are currently zero. Preserve the returned compact claim-and-extend, claim-and-merge, split, and vote order in one VeToken multicall. Execute onchain_validation's read_calls_reference through wallet_batch_eth_call immediately before signing, simulate the exact transaction from sender, and discard the plan after any state change or failed expectation.`;
+Every active source vote must be claimed unconditionally before that vote is cleared or moved, even when claimable fees are currently zero. Preserve the returned compact claim-and-extend, claim-and-merge, split, and vote order across the plan's steps, which the wallet executes as one atomic batch. Execute onchain_validation's read_calls_reference through wallet_batch_eth_call immediately before signing, simulate the exact transaction from sender, and discard the plan after any state change or failed expectation.`;
 
 const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 
@@ -3033,13 +3033,13 @@ The indexed \`pool_state\` is appropriate for portfolio range math and discovery
 
 Call \`ekubo_get_position_pool_candidates\` with the chain and token pair. It replaces direct data-API browsing and ABI inspection by returning every indexed candidate above the requested TVL floor, including verified PoolKey/config, Core generation, extension type, exact statistics, and the correct Positions manager. The default zero TVL floor is intentional for position creation because it keeps initialized pools with negligible liquidity visible.
 
-Once the user selects a v3 pool configuration, range, maximum token amounts, and slippage, call \`ekubo_prepare_lp_position_deposit\`. For an indexed pool, provide pool_id. For a new pool, provide the exact pool_key, pool_initialized=false, and initial_tick; the tool derives the ID and prepends \`maybeInitializePool\` before the deployed \`mintAndDeposit\` call in one atomic manager multicall. It calculates expected liquidity with shared SDK math, derives a nonzero minimum liquidity, selects Positions or Ve33Positions, and returns exact approvals, initialization/deposit/refund calldata, optional allowance cleanup, owner validation, decoded intent, wallet-policy requirements, and \`execution_plan_reference\`.
+Once the user selects a v3 pool configuration, range, maximum token amounts, and slippage, call \`ekubo_prepare_lp_position_deposit\`. For an indexed pool, provide pool_id. For a new pool, provide the exact pool_key, pool_initialized=false, and initial_tick; the tool derives the ID and emits \`maybeInitializePool\` as its own step before the deployed \`mintAndDeposit\` call, which the wallet executes as one atomic batch. It calculates expected liquidity with shared SDK math, derives a nonzero minimum liquidity, selects Positions or Ve33Positions, and returns exact approvals, initialization/deposit/refund calldata, optional allowance cleanup, owner validation, decoded intent, and \`execution_plan_reference\`.
 
 When initialization must be its own transaction, call \`ekubo_prepare_pool_initialization\` with the exact PoolKey and initial tick. It selects Positions or Ve33Positions from the pool extension and returns one complete \`maybeInitializePool\` execution plan. The function is idempotent for an already initialized pool, but the first successful initializer fixes the pool's initial price, so simulate against pending state and verify the tick immediately before submission. Pool initialization does not correct an existing pool's price; use the phased \`ekubo_prepare_fix_pool_price\` workflow for that.
 
 If the wallet needs a preliminary swap to acquire one side, use \`ekubo_get_quotes_with_plans\` and take one option's plan as a separate step. Pass it to the wallet MCP so the wallet simulates it, presents the simulated result, collects authorization or signature, submits it, and returns a successful receipt. Then read the actual resulting balance or balance delta, preserve enough native token for gas, and call the LP preparer with the measured maxima. Do not combine the deposit with an unsettled swap or size it from quoted output alone.
 
-Do not encode \`mintAndDeposit\`, \`deposit\`, \`multicall\`, or \`refundNativeToken\` with Cast. Give the returned execution plan unchanged to the user's wallet MCP for exact-plan simulation, wallet-owned authorization, and submission. Do not insert a separate agent confirmation step. The wallet remains authoritative for allowed targets, approval spenders, native-value limits, known selectors, connected account, and chain. This server cannot loosen wallet policy.
+Do not encode \`mintAndDeposit\`, \`deposit\`, or \`refundNativeToken\` with Cast. Give the returned execution plan unchanged to the user's wallet MCP for exact-plan simulation, wallet-owned authorization, and submission. Do not insert a separate agent confirmation step. The wallet remains authoritative for what may be signed, the connected account, and the chain. This server states no policy requirements of its own and cannot loosen wallet policy.
 
 ## Collect fees or claim rewards
 
@@ -3133,7 +3133,7 @@ const VE33_WORKFLOW = `# Ekubo ve(3,3) call workflow
 - Replacing or clearing a vote discards pending fee accounting unless fees are claimed first. Every compiler claims each active source unconditionally before that source vote is cleared or moved, including when claimable fees are zero.
 - Extending moves the stake to a new end time and clears its vote. For a voted token, provide current_pool_key so the extension tool uses a compound claim-and-extend method. Omit it only for an unvoted token, where direct extension cannot discard voter fees.
 - Pool keys may use an exact bytes32 config or data-API fields: fee, tick_spacing, extension, and optional stableswap_params.
-- For claim-all, use ekubo_prepare_ve33_claim_all_fees to discover the owner's indexed active votes and obtain one VeToken multicall plus ownerOf/voteState validation calldata. Revalidate those calls through the user's provider before signing.
+- For claim-all, use ekubo_prepare_ve33_claim_all_fees to discover the owner's indexed active votes and obtain one atomic batch of decodable VeToken steps plus ownerOf/voteState validation calldata. Revalidate those calls through the user's provider before signing.
 - For any vote reorganization, first use ekubo_get_ve33_allocations and show the complete allocation plus state_id. Pass that exact state_id and target weight_bps values totaling 10,000 to ekubo_prepare_ve33_reallocation.
 - preserve_existing_locks allocates every distinct expiry cohort proportionally across every target so pool weights decay together; it may require more voting NFTs than target pools and does not guarantee a 25-NFT portfolio.
 - For a suggested STONX update, first call ekubo_get_stonx_allocation_recommendation. Use its at-most-25 executable targets only when execution_ready is true and target_total_weight_bps is exactly 10,000, then pass strategy=compact_max_lock to the normal state-validated reallocation workflow.

@@ -406,22 +406,6 @@ export function preparePoolInitialization(input: {
       transaction,
       postExecutionTransactions: [],
     }),
-    wallet_policy_requirements: {
-      allowed_chain_id: input.chainId,
-      allowed_targets: [positionsAddress],
-      allowed_approval_spenders: [],
-      native_value_in_plan: "0",
-      required_max_native_value_per_batch_at_least: "0",
-      calldata_selectors: [
-        {
-          target: positionsAddress,
-          function: "maybeInitializePool",
-          selector: data.slice(0, 10),
-          nested_in_multicall: false,
-        },
-      ],
-      note: "The wallet must simulate immediately before submission because the first successful initializer fixes the pool's initial price.",
-    },
     wallet_handoff: {
       instruction:
         "Pass this complete plan to the wallet for current-state simulation, presentation, authorization, and submission. Verify the initial tick because the first successful initialization fixes the pool price.",
@@ -922,56 +906,6 @@ export async function prepareLpPositionDeposit(
           cleanupTransactions.length >
         1,
     }),
-    wallet_policy_requirements: {
-      allowed_chain_id: input.chainId,
-      allowed_targets: [
-        ...new Set([
-          ...approvalTransactions.map((approval) => approval.to),
-          positionsAddress,
-        ]),
-      ],
-      allowed_approval_spenders: [positionsAddress],
-      native_value_in_plan: nativeValue.toString(),
-      required_max_native_value_per_batch_at_least: nativeValue.toString(),
-      calldata_selectors: [
-        ...(approvalTransactions.length === 0
-          ? []
-          : [
-              {
-                target: "erc20_tokens",
-                function: "approve",
-                selector: approvalSelector,
-              },
-            ]),
-        ...(initializeCall === null
-          ? []
-          : [
-              {
-                target: positionsAddress,
-                function: "maybeInitializePool",
-                selector: initializeCall.slice(0, 10),
-                nested_in_multicall: false,
-              },
-            ]),
-        {
-          target: positionsAddress,
-          function: input.mode === "mint_new" ? "mintAndDeposit" : "deposit",
-          selector: depositCall.slice(0, 10),
-          nested_in_multicall: false,
-        },
-        ...(nativeValue === 0n
-          ? []
-          : [
-              {
-                target: positionsAddress,
-                function: "refundNativeToken",
-                selector: refundSelector,
-                nested_in_multicall: false,
-              },
-            ]),
-      ],
-      note: "The wallet owns policy authorization. This Ekubo server cannot modify an allowed-target, spender, native-value, or calldata-selector policy.",
-    },
     wallet_handoff: {
       instruction:
         "Pass the complete plan to the wallet's simulation and authorization flow. Do not ask for separate agent-level confirmation; the wallet presents the simulated result and collects authorization or signature.",
@@ -1197,20 +1131,6 @@ export async function prepareLpPositionEarningsClaim(
             note: "Decoded from the stakeToken call inside current_state_query's stored read bundle.",
           }
         : null,
-    wallet_policy_requirements: {
-      allowed_chain_id: owned.chainId,
-      allowed_targets: [owned.positionsAddress],
-      allowed_transfer_recipients: [recipient],
-      native_value_in_plan: "0",
-      calldata_selectors: [
-        {
-          target: owned.positionsAddress,
-          function: implementationFunction,
-          selector: transactionData.slice(0, 10),
-        },
-      ],
-      note: "The wallet owns policy authorization. This Ekubo server cannot modify allowed-target, recipient, native-value, or calldata-selector policy.",
-    },
     wallet_handoff: {
       instruction:
         "Pass the current decoded fees or rewards and the complete plan to the wallet's simulation and authorization flow. Do not ask for separate agent-level confirmation.",
@@ -1338,32 +1258,6 @@ export async function prepareLpPositionWithdraw(
       })),
       instruction:
         "Execute every current_state_query at pending and require every individual ownership, liquidity, and earnings check to pass. Then have the wallet simulate the exact complete plan as one batch immediately before authorization and submission; discard the whole plan if any value changed.",
-    },
-    wallet_policy_requirements: {
-      allowed_chain_id: input.chainId,
-      allowed_targets: [
-        ...new Set(
-          prepared.flatMap(
-            (withdrawal) =>
-              withdrawal.wallet_policy_requirements.allowed_targets,
-          ),
-        ),
-      ],
-      allowed_transfer_recipients: [
-        ...new Set(
-          prepared.flatMap(
-            (withdrawal) =>
-              withdrawal.wallet_policy_requirements
-                .allowed_transfer_recipients,
-          ),
-        ),
-      ],
-      native_value_in_plan: "0",
-      calldata_selectors: prepared.flatMap(
-        (withdrawal) =>
-          withdrawal.wallet_policy_requirements.calldata_selectors,
-      ),
-      note: "The wallet owns policy authorization and may batch all supplied calls into one transaction even though they withdraw unrelated positions. This Ekubo server cannot modify wallet policy.",
     },
     wallet_handoff: {
       instruction:
@@ -1578,20 +1472,6 @@ async function prepareSingleLpPositionWithdraw(
       required_current_liquidity_at_least: liquidity.toString(),
       instruction:
         "Pass current_state_query.read_calls_reference unchanged as wallet_batch_eth_call's reference argument. Require every inner call to succeed, compare decoded owner with expected_owner locally, and require decoded liquidity at least requested_liquidity. Retain the raw result, pass current principal plus fees or Ve33 rewards to the wallet with the plan, simulate the exact withdrawal immediately before authorization and submission, and discard the plan if any value changed.",
-    },
-    wallet_policy_requirements: {
-      allowed_chain_id: owned.chainId,
-      allowed_targets: [owned.positionsAddress],
-      allowed_transfer_recipients: [recipient],
-      native_value_in_plan: "0",
-      calldata_selectors: [
-        {
-          target: owned.positionsAddress,
-          function: implementationFunction,
-          selector: transactionData.slice(0, 10),
-        },
-      ],
-      note: "The wallet owns policy authorization. This Ekubo server cannot modify allowed-target, recipient, native-value, or calldata-selector policy.",
     },
     wallet_handoff: {
       instruction:

@@ -72,14 +72,9 @@ describe("LP position preparation", () => {
     );
     expect(result.execution_plan.ordered_steps).toHaveLength(1);
     expect(result.execution_plan.ordered_steps[0]?.kind).toBe("execution");
-    expect(result.wallet_policy_requirements.calldata_selectors).toEqual([
-      {
-        target: ve33Positions,
-        function: "maybeInitializePool",
-        selector: result.transaction.data.slice(0, 10),
-        nested_in_multicall: false,
-      },
-    ]);
+    expect(result.execution_plan.ordered_steps[0]?.transaction.to).toBe(
+      ve33Positions,
+    );
 
     const standardPool = derivePoolId({
       token0: native,
@@ -178,16 +173,14 @@ describe("LP position preparation", () => {
       max_amount1: "185278",
       min_liquidity: result.liquidity_protection.minimum_liquidity,
     });
-    expect(result.wallet_policy_requirements).toMatchObject({
-      allowed_approval_spenders: [ve33Positions],
-      native_value_in_plan: "100000000000000",
-      required_max_native_value_per_batch_at_least: "100000000000000",
-    });
+    // The plan itself is the artifact; what a policy must permit to sign it is
+    // the wallet's business, not this server's.
     expect(
-      result.wallet_policy_requirements.calldata_selectors.map(
-        (selector) => selector.function,
+      result.execution_plan.ordered_steps.reduce(
+        (total, step) => total + BigInt(step.transaction.value),
+        0n,
       ),
-    ).toEqual(["approve", "mintAndDeposit", "refundNativeToken"]);
+    ).toBe(100000000000000n);
     expect(
       result.execution_plan.ordered_steps.map((step) => step.kind),
     ).toEqual([
@@ -407,9 +400,11 @@ describe("LP position preparation", () => {
     expect(result.reward_token?.known_address).toBe(
       "0x570C5aa79c798E7A418412cC8399ae5bcCe570C5",
     );
-    expect(result.wallet_policy_requirements.allowed_targets).toEqual([
-      ve33Positions,
-    ]);
+    expect([
+      ...new Set(
+        result.execution_plan.ordered_steps.map((step) => step.transaction.to),
+      ),
+    ]).toEqual([ve33Positions]);
   });
 
   it("uses the explicit zero-liquidity fee path for legacy v2", async () => {

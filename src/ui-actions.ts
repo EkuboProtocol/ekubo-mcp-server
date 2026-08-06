@@ -673,23 +673,6 @@ export function preparedUiAction(input: PreparedUiActionInput) {
       ...(input.onchainValidation ?? {}),
       exact_transaction_simulation_required: true,
     },
-    wallet_policy_requirements: {
-      allowed_chain_id: input.chainId,
-      allowed_targets: allowedTargets,
-      allowed_approval_spenders: input.decodedCalls.flatMap((call) =>
-        call.function === "approve" &&
-        typeof call.arguments.spender === "string"
-          ? [call.arguments.spender]
-          : [],
-      ),
-      native_value_in_plan: nativeValue.toString(),
-      required_max_native_value_per_batch_at_least: nativeValue.toString(),
-      calldata_selectors: exactTransactions.map((transaction, index) => ({
-        step: index + 1,
-        target: transaction.to,
-        selector: transaction.data.slice(0, 10),
-      })),
-    },
     wallet_handoff: {
       instruction:
         "Pass the complete plan to the wallet's simulation and authorization flow. Do not ask for separate agent-level confirmation; the wallet presents the simulated result and collects authorization or signature.",
