@@ -217,7 +217,62 @@ describe("EVM interface action preparation", () => {
       "collectProceeds",
       "decreaseSaleRate",
     ]);
-    expect(stop.exact_transaction_list).toHaveLength(1);
+    // collectProceeds and decreaseSaleRate are two decodable steps now.
+    expect(stop.exact_transaction_list).toHaveLength(2);
+  });
+
+  it("funds each split order from its own step and preserves the total", () => {
+    // Splitting the multicall moved native value from one wrapper onto the
+    // individual payable calls. The sum must still be exactly what the user
+    // is selling, and `mint` must carry none of it.
+    const native = "0x0000000000000000000000000000000000000000";
+    const create = prepareTwammOrder({
+      chainId: "1",
+      sender,
+      sellToken: native,
+      buyToken: token2,
+      pendingTimestamp: "1000",
+      salt: `0x${"34".repeat(32)}`,
+      orders: [
+        { fee: "1", startTime: "1010", endTime: "2000", amount: "10000" },
+        { fee: "1", startTime: "1010", endTime: "3000", amount: "25000" },
+      ],
+    });
+    const steps = create.execution_plan.ordered_steps;
+    expect(steps.map((step) => step.transaction.value)).toEqual([
+      "0",
+      "10000",
+      "25000",
+    ]);
+    const total = steps.reduce(
+      (sum, step) => sum + BigInt(step.transaction.value),
+      0n,
+    );
+    expect(total).toBe(35000n);
+    expect(create.execution_plan.required_capabilities).toEqual([
+      "atomic_batch",
+    ]);
+  });
+
+  it("puts the auction sell amount on the payable call, not on mint", () => {
+    const native = "0x0000000000000000000000000000000000000000";
+    const create = prepareAuctionCreate({
+      chainId: "1",
+      sender,
+      sellToken: native,
+      buyToken: token2,
+      sellAmount: "1000",
+      creatorFeeQ32: "100",
+      minBoostDuration: 3600,
+      graduationPoolFeeQ64: "1000",
+      graduationPoolTickSpacing: 4,
+      startTime: "1000",
+      auctionDuration: 7200,
+      salt: `0x${"56".repeat(32)}`,
+    });
+    expect(
+      create.execution_plan.ordered_steps.map((step) => step.transaction.value),
+    ).toEqual(["0", "1000"]);
   });
 
   it("prepares auction creation and optional graduation initialization", () => {
@@ -306,7 +361,8 @@ describe("EVM interface action preparation", () => {
       "withdrawProtocolFees",
       "roll",
     ]);
-    expect(buybacks.exact_transaction_list).toHaveLength(1);
+    // Each buyback call is its own decodable step now, not one multicall.
+    expect(buybacks.exact_transaction_list).toHaveLength(3);
   });
 
   it("returns signature-first recovery and complete incentive claim plans", () => {

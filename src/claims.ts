@@ -384,16 +384,11 @@ export function prepareRecoveryFundClaim(input: {
       }),
     ),
   ];
-  const data = encodeFunctionData({
-    abi: RECOVERY_ABI,
-    functionName: "multicall",
-    args: [calls],
-  });
-  const transaction = preparedTransaction(
-    input.chainId,
-    RECOVERY_FUND,
-    data,
-    0n,
+  // One step per call. An opaque `bytes[]` payload collapses the batch into a
+  // single allowlisted target the wallet cannot decode; separate steps are each
+  // read and authorized, and the atomic batch keeps them all-or-nothing.
+  const transactions = calls.map((call) =>
+    preparedTransaction(input.chainId, RECOVERY_FUND, call, 0n),
   );
 
   return {
@@ -428,7 +423,11 @@ export function prepareRecoveryFundClaim(input: {
           arguments: { account: sender, token, amount: amount.toString() },
         })),
       ],
-      transaction,
+      steps: transactions.map((transaction) => ({
+        kind: "execution" as const,
+        transaction,
+      })),
+      atomicBatchRequired: transactions.length > 1,
       details: {
         recovery_fund: RECOVERY_FUND,
         signature_was_required: !input.hasSignedConditions,
@@ -534,16 +533,9 @@ export function prepareRevenueBuybacks(input: {
       arguments: { token },
     });
   }
-  const data = encodeFunctionData({
-    abi: REVENUE_BUYBACKS_ABI,
-    functionName: "multicall",
-    args: [calls],
-  });
-  const transaction = preparedTransaction(
-    input.chainId,
-    REVENUE_BUYBACKS,
-    data,
-    0n,
+  // One step per call, for the same reason as the recovery-fund claim above.
+  const transactions = calls.map((call) =>
+    preparedTransaction(input.chainId, REVENUE_BUYBACKS, call, 0n),
   );
 
   return preparedUiAction({
@@ -558,7 +550,11 @@ export function prepareRevenueBuybacks(input: {
       roll_tokens: input.rollTokens,
     },
     decodedCalls,
-    transaction,
+    steps: transactions.map((transaction) => ({
+      kind: "execution" as const,
+      transaction,
+    })),
+    atomicBatchRequired: transactions.length > 1,
     details: {
       permissionless_maintenance: true,
       revenue_buybacks_contract: REVENUE_BUYBACKS,

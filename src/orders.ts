@@ -142,6 +142,10 @@ export function prepareTwammOrder(input: {
 
   let tokenId: bigint | null = null;
   let calls: Hex[];
+  // The native value each call carries when the sell token is the native one.
+  // A multicall let one msg.value cover every inner call; as separate steps
+  // each call funds its own order, and the total is unchanged.
+  let callValues: bigint[];
   let decodedCalls: {
     order: number;
     function: string;
@@ -158,6 +162,7 @@ export function prepareTwammOrder(input: {
         args: [order.orderKey, order.amount, order.maxSaleRate],
       }),
     ];
+    callValues = [order.amount];
     decodedCalls = [
       {
         order: 1,
@@ -201,6 +206,7 @@ export function prepareTwammOrder(input: {
         }),
       ),
     ];
+    callValues = [0n, ...parsedOrders.map((order) => order.amount)];
     decodedCalls = [
       {
         order: 1,
@@ -219,15 +225,17 @@ export function prepareTwammOrder(input: {
       })),
     ];
   }
-  const data =
-    calls.length === 1
-      ? calls[0]
-      : encodeFunctionData({
-          abi: ORDERS_ABI,
-          functionName: "multicall",
-          args: [calls],
-        });
   const nativeValue = sellToken === NATIVE_TOKEN ? totalAmount : 0n;
+  // One step per call so the wallet decodes each, with each order funding
+  // itself instead of one msg.value covering an opaque payload.
+  const transactions = calls.map((call, index) =>
+    preparedTransaction(
+      input.chainId,
+      ORDERS_V3,
+      call,
+      sellToken === NATIVE_TOKEN ? callValues[index] : 0n,
+    ),
+  );
   const approvals =
     sellToken === NATIVE_TOKEN
       ? []
@@ -239,12 +247,6 @@ export function prepareTwammOrder(input: {
             totalAmount,
           ),
         ];
-  const transaction = preparedTransaction(
-    input.chainId,
-    ORDERS_V3,
-    data,
-    nativeValue,
-  );
 
   return preparedUiAction({
     action: "ekubo_create_twamm_order",
@@ -273,7 +275,11 @@ export function prepareTwammOrder(input: {
       })),
     ],
     approvals,
-    transaction,
+    steps: transactions.map((transaction) => ({
+      kind: "execution" as const,
+      transaction,
+    })),
+    atomicBatchRequired: transactions.length > 1,
     details: {
       orders_manager: ORDERS_V3,
       expected_token_id:
@@ -404,16 +410,11 @@ function prepareExistingOrderAction(
       });
     });
   }
-  const data = encodeFunctionData({
-    abi: ORDERS_ABI,
-    functionName: "multicall",
-    args: [calls],
-  });
-  const transaction = preparedTransaction(
-    input.chainId,
-    ordersAddress,
-    data,
-    0n,
+  // One step per call: an opaque `bytes[]` payload collapses the batch into a
+  // single allowlisted target the wallet cannot decode, and the atomic batch
+  // keeps the separate steps all-or-nothing.
+  const transactions = calls.map((call) =>
+    preparedTransaction(input.chainId, ordersAddress, call, 0n),
   );
   const ownerRead = encodeFunctionData({
     abi: ORDERS_ABI,
@@ -436,7 +437,11 @@ function prepareExistingOrderAction(
       mode: input.mode,
     },
     decodedCalls,
-    transaction,
+    steps: transactions.map((transaction) => ({
+      kind: "execution" as const,
+      transaction,
+    })),
+    atomicBatchRequired: transactions.length > 1,
     details: {
       manager_version: ordersAddress === ORDERS_V2 ? "v2" : "v3",
       collects_every_order_first: true,

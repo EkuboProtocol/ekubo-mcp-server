@@ -105,12 +105,18 @@ export function prepareAuctionCreate(input: {
       args: [tokenId, auctionKey, sellAmount],
     }),
   ];
-  const data = encodeFunctionData({
-    abi: AUCTIONS_ABI,
-    functionName: "multicall",
-    args: [calls],
-  });
   const nativeValue = sellToken === NATIVE_TOKEN ? sellAmount : 0n;
+  // One step per call. `mint` takes no value; `sellAmountByAuction` is the
+  // payable call that consumes the sell amount, so the value rides on it
+  // rather than on an opaque multicall wrapper.
+  const transactions = calls.map((call, index) =>
+    preparedTransaction(
+      input.chainId,
+      AUCTIONS_V3,
+      call,
+      index === calls.length - 1 ? nativeValue : 0n,
+    ),
+  );
   const approvals =
     sellToken === NATIVE_TOKEN
       ? []
@@ -122,12 +128,6 @@ export function prepareAuctionCreate(input: {
             sellAmount,
           ),
         ];
-  const transaction = preparedTransaction(
-    input.chainId,
-    AUCTIONS_V3,
-    data,
-    nativeValue,
-  );
 
   return preparedUiAction({
     action: "ekubo_create_auction",
@@ -167,7 +167,11 @@ export function prepareAuctionCreate(input: {
       },
     ],
     approvals,
-    transaction,
+    steps: transactions.map((transaction) => ({
+      kind: "execution" as const,
+      transaction,
+    })),
+    atomicBatchRequired: transactions.length > 1,
     details: {
       auctions_manager: AUCTIONS_V3,
       expected_token_id: tokenId.toString(),
@@ -226,15 +230,11 @@ export function prepareAuctionComplete(input: {
       args: [tokenId, auctionKey],
     }),
   ];
-  const data =
-    calls.length === 1
-      ? calls[0]
-      : encodeFunctionData({
-          abi: AUCTIONS_ABI,
-          functionName: "multicall",
-          args: [calls],
-        });
-  const transaction = preparedTransaction(input.chainId, AUCTIONS_V3, data, 0n);
+  // One step per call, so the wallet decodes each rather than one opaque
+  // `bytes[]` payload; the atomic batch keeps them all-or-nothing.
+  const transactions = calls.map((call) =>
+    preparedTransaction(input.chainId, AUCTIONS_V3, call, 0n),
+  );
 
   return preparedUiAction({
     action: "ekubo_complete_auction",
@@ -269,7 +269,11 @@ export function prepareAuctionComplete(input: {
         arguments: { token_id: tokenId.toString(), auction_key: auctionKey },
       },
     ],
-    transaction,
+    steps: transactions.map((transaction) => ({
+      kind: "execution" as const,
+      transaction,
+    })),
+    atomicBatchRequired: transactions.length > 1,
     details: {
       permissionless_completion: true,
       initializes_graduation_pool_if_needed: !input.graduationPoolInitialized,
