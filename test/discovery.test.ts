@@ -833,11 +833,6 @@ describe("Worker discovery", () => {
             url: string;
             integrity: { algorithm: string; value: `0x${string}` };
             bytes: number;
-            summary: {
-              chain_id: string;
-              sender: string;
-              step_count: number;
-            };
           };
         };
       };
@@ -856,12 +851,8 @@ describe("Worker discovery", () => {
     expect(reference).toMatchObject({
       kind: "artifact_reference",
       artifact_type: "execution_plan",
-      summary: {
-        chain_id: "4663",
-        sender: "0x1111111111111111111111111111111111111111",
-        step_count: 1,
-      },
     });
+    expect(reference).not.toHaveProperty("summary");
     expect(reference.url).toMatch(
       /^https:\/\/mcp\.ekubo\.org\/artifact\/[0-9a-f-]{36}$/,
     );

@@ -287,9 +287,10 @@ strings, never JSON numbers.
 
 Every executable preparation also includes a signer-neutral
 `execution_plan_reference` handoff: an `artifact_reference` envelope naming
-where the plan body is stored, an `integrity` block (keccak256 plus byte
-count) over its exact bytes, and a `summary` with the plan's `chain_id`,
-`sender`, and `step_count`. The agent relays only the envelope, unchanged; the
+where the plan body is stored and an `integrity` block (keccak256 plus byte
+count) over its exact bytes. The envelope describes none of the plan's
+contents; the integrity-verified body is the only source of truth. The agent
+relays only the envelope, unchanged; the
 wallet fetches the body itself, recomputes the digest, refuses a mismatch, and
 validates the plan as if it had been supplied inline. No timestamps travel in
 the envelope: plan validity is enforced by the wallet's simulation against
@@ -301,9 +302,10 @@ value of every approval, execution, and cleanup transaction in the sequence.
 
 Bind the actual wallet address as `sender` before preparation. Prefer the
 connected account and call/simulate/submit abstractions exposed by wallet
-tooling. Verify the observed chain and account against the envelope summary's
-`chain_id` and `sender`, then pass the whole envelope unchanged as the wallet
-MCP's `reference` argument for it to fetch, verify, and execute in order. The
+tooling; the wallet refuses a fetched plan whose chain or sender disagrees
+with its connected chain and account. Pass the whole envelope unchanged as the
+wallet MCP's `reference` argument for it to fetch, verify, and execute in
+order. The
 wallet executes multi-step plans as one atomic batch; a plan that lists a
 capability in `required_capabilities` the wallet does not implement must be
 rejected, not adapted. Use Cast only when the

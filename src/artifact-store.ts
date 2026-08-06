@@ -41,9 +41,6 @@ export interface ArtifactReference {
   integrity: { algorithm: "keccak256"; value: `0x${string}` };
   /** Exact stored byte length; consumers reject a body of any other size. */
   bytes: number;
-  summary:
-    | { chain_id: string; sender: string; step_count: number }
-    | { chain_id: string; call_count: number };
   instruction: string;
 }
 
@@ -61,12 +58,6 @@ export const artifactReferenceSchema = z.looseObject({
     value: z.string(),
   }),
   bytes: z.number().int(),
-  summary: z.looseObject({
-    chain_id: z.string(),
-    sender: z.string().optional(),
-    step_count: z.number().int().optional(),
-    call_count: z.number().int().optional(),
-  }),
   instruction: z.string(),
 });
 
@@ -111,17 +102,6 @@ export async function storeArtifact(
     // UTF-8 byte length, matching the Content-Length header the /artifact
     // route serves; string length would diverge on any non-ASCII byte.
     bytes: new TextEncoder().encode(body).length,
-    summary:
-      artifact.artifactType === "execution_plan"
-        ? {
-            chain_id: artifact.body.chain_id,
-            sender: artifact.body.sender,
-            step_count: artifact.body.ordered_steps.length,
-          }
-        : {
-            chain_id: artifact.body.chain_id,
-            call_count: artifact.body.calls.length,
-          },
     instruction:
       artifact.artifactType === "execution_plan"
         ? PLAN_INSTRUCTION

@@ -58,8 +58,14 @@ interface ReferenceShape {
   url: string;
   integrity: { algorithm: string; value: `0x${string}` };
   bytes: number;
-  summary: Record<string, unknown>;
   instruction: string;
+}
+
+async function storedBody(env: Env, reference: ReferenceShape | undefined) {
+  const id = reference?.url.split("/artifact/")[1] ?? "";
+  return JSON.parse((await loadArtifact(env, id)) ?? "null") as {
+    chain_id?: string;
+  } | null;
 }
 
 describe("artifact store", () => {
@@ -78,16 +84,14 @@ describe("artifact store", () => {
     const reference = result.execution_plan_reference;
     expect(reference.kind).toBe("artifact_reference");
     expect(reference.artifact_type).toBe("execution_plan");
-    expect(reference.summary).toEqual({
-      chain_id: "1",
-      sender: "0x1111111111111111111111111111111111111111",
-      step_count: 1,
-    });
     expect(reference.instruction).toContain("unchanged");
     // No wall-clock fields travel in the envelope: validity is expressed by
     // the calldata and enforced by simulation, storage expiry by a 404.
     expect(reference).not.toHaveProperty("expires_at");
     expect(reference).not.toHaveProperty("valid_until");
+    // No descriptive duplicate of the body travels either: the
+    // integrity-verified body is the only source of truth.
+    expect(reference).not.toHaveProperty("summary");
 
     const id = reference.url.split("/artifact/")[1] ?? "";
     expect(reference.url).toBe(`${ORIGIN}/artifact/${id}`);
@@ -123,7 +127,7 @@ describe("artifact store", () => {
     const reference = result.read_calls_reference;
     expect(reference.kind).toBe("artifact_reference");
     expect(reference.artifact_type).toBe("read_calls");
-    expect(reference.summary).toEqual({ chain_id: "1", call_count: 1 });
+    expect(reference).not.toHaveProperty("summary");
     expect(reference.instruction).toContain("wallet_batch_eth_call");
     expect(reference.instruction).toContain("unchanged");
 
@@ -154,12 +158,16 @@ describe("artifact store", () => {
         } | null;
       }[];
     };
-    expect(
-      result.quotes[0]?.execution?.execution_plan_reference?.summary.chain_id,
-    ).toBe("1");
-    expect(
-      result.quotes[1]?.execution?.execution_plan_reference?.summary.chain_id,
-    ).toBe("8453");
+    const firstPlan = await storedBody(
+      env,
+      result.quotes[0]?.execution?.execution_plan_reference,
+    );
+    const secondPlan = await storedBody(
+      env,
+      result.quotes[1]?.execution?.execution_plan_reference,
+    );
+    expect(firstPlan?.chain_id).toBe("1");
+    expect(secondPlan?.chain_id).toBe("8453");
     expect(result.quotes[0]?.execution?.execution_plan).toBeUndefined();
     expect(result.quotes[2]?.execution).toBeNull();
     const urls = result.quotes
@@ -195,14 +203,16 @@ describe("artifact store", () => {
     expect(result.execution_plan_reference?.artifact_type).toBe(
       "execution_plan",
     );
-    expect(
-      result.pools[0]?.current_state_query.read_calls_reference?.summary
-        .chain_id,
-    ).toBe("1");
-    expect(
-      result.pools[1]?.current_state_query.read_calls_reference?.summary
-        .chain_id,
-    ).toBe("8453");
+    const firstBundle = await storedBody(
+      env,
+      result.pools[0]?.current_state_query.read_calls_reference,
+    );
+    const secondBundle = await storedBody(
+      env,
+      result.pools[1]?.current_state_query.read_calls_reference,
+    );
+    expect(firstBundle?.chain_id).toBe("1");
+    expect(secondBundle?.chain_id).toBe("8453");
     expect(result.pools[0]?.current_state_query.read_calls).toBeUndefined();
     const urls = result.pools.map(
       (pool) => pool.current_state_query.read_calls_reference?.url,
