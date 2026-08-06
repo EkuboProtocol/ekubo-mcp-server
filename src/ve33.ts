@@ -35,7 +35,7 @@ import {
 import {
   type PreparedTransaction,
   transactionIdentity,
-  executionPlan,
+  executionPlanFromSteps,
 } from "./execution-plan.js";
 
 const VE_TOKEN_ABI = parseAbi([
@@ -1471,7 +1471,7 @@ export async function prepareVe33Reallocation(
       },
       onchain_validation: portfolioOnchainValidation(portfolio),
       safety: {
-        one_atomic_vetoken_multicall: true,
+        one_atomic_vetoken_batch: true,
         all_current_fee_claims_are_first: true,
         claims_are_unconditional_even_when_claimable_is_zero: true,
         stale_active_pool_reverts_before_any_split_or_vote: true,
@@ -1718,7 +1718,7 @@ function compactMaxLockReallocationPlan({
       },
       onchain_validation: portfolioOnchainValidation(portfolio),
       safety: {
-        one_atomic_vetoken_multicall: true,
+        one_atomic_vetoken_batch: true,
         every_vote_is_claimed_before_it_is_cleared: true,
         claims_are_unconditional_even_when_claimable_is_zero: true,
         destination_is_extended_before_merges: true,
@@ -3112,59 +3112,59 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
   value?: bigint;
 }) {
   const functionNames = calls.map(({ data }) => safeVeTokenFunctionName(data));
-  const calldata = calls.map(({ data }) => data);
-  const transactionData =
-    calldata.length === 0
-      ? null
-      : calldata.length === 1
-        ? calldata[0]
-        : encodeFunctionData({
-            abi: VE_TOKEN_ABI,
-            functionName: "multicall",
-            args: [calldata],
-          });
+  // Each veToken call is its own step rather than a `multicall` payload. A
+  // wallet cannot police what it cannot decode: an opaque `bytes[]` argument
+  // reduces the whole batch to one allowlisted target, while separate steps are
+  // each read, decoded, and authorized on their own. Atomicity is not lost —
+  // `atomic_batch` makes the wallet submit them as one all-or-nothing batch.
+  if (value !== 0n && calls.length > 1) {
+    throw new Error(
+      "internal execution plan error: native value cannot be split across veToken calls",
+    );
+  }
+  const transactions = calls.map(({ data }) => ({
+    chain_id: chainId,
+    to: getAddress(veToken),
+    data,
+    value: value.toString(),
+  }));
   const identity = {
     action,
     chain_id: chainId,
     sender: getAddress(sender),
     approvals: approvals.map(transactionIdentity),
-    transaction:
-      transactionData === null
-        ? null
-        : transactionIdentity({
-            chain_id: chainId,
-            to: getAddress(veToken),
-            data: transactionData,
-            value: value.toString(),
-          }),
+    transactions: transactions.map(transactionIdentity),
   };
-  const transaction =
-    transactionData === null
-      ? null
-      : {
-          chain_id: chainId,
-          to: getAddress(veToken),
-          data: transactionData,
-          value: value.toString(),
-        };
+  const transaction = transactions.length === 1 ? transactions[0] : null;
   return {
     schema_version: schemaVersion,
     action,
     plan_id: keccak256(stringToHex(JSON.stringify(identity))),
-    execution_plan_ready: transactionData !== null,
+    execution_plan_ready: transactions.length > 0,
     agent_confirmation_required: false,
     wallet_validation_required: true,
     approvals,
     calls,
     transaction,
+    transactions,
     execution_plan:
-      transaction === null
+      transactions.length === 0
         ? null
-        : executionPlan({
+        : executionPlanFromSteps({
             chainId,
             sender,
-            approvals,
-            transaction,
+            steps: [
+              ...approvals.map((prepared) => ({
+                kind: "approval" as const,
+                transaction: prepared,
+              })),
+              ...transactions.map((prepared) => ({
+                kind: "execution" as const,
+                transaction: prepared,
+              })),
+            ],
+            atomicBatchRequired:
+              approvals.length + transactions.length > 1,
           }),
     ...details,
     transaction_safety: {

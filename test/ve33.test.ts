@@ -110,7 +110,10 @@ describe("ve(3,3) call generation", () => {
     );
     expect(result.source_vote_is_preserved_with_reduced_weight).toBe(true);
     expect(result.split_token_starts_unvoted).toBe(true);
-    expect(result.transaction?.data).toStartWith("0x");
+    expect(result.transactions.length).toBeGreaterThan(0);
+    for (const { data } of result.transactions) {
+      expect(data).toStartWith("0x");
+    }
   });
 
   it("claims before split and re-vote when changing a current fee", () => {
@@ -158,7 +161,10 @@ describe("ve(3,3) call generation", () => {
     expect(
       result.safety.current_pool_fees_are_claimed_unconditionally_first,
     ).toBe(true);
-    expect(result.transaction?.data).toStartWith("0x");
+    expect(result.transactions.length).toBeGreaterThan(0);
+    for (const { data } of result.transactions) {
+      expect(data).toStartWith("0x");
+    }
   });
 
   it("claims even when keeping the source vote unchanged before splitting", () => {
@@ -317,7 +323,8 @@ describe("ve(3,3) call generation", () => {
     expect(result.calls.every((call) => call.type === "claim_pool_fees")).toBe(
       true,
     );
-    expect(result.transaction?.data).toStartWith("0xac9650d8");
+    expect(result.transaction).toBeNull();
+    expect(result.transactions).toHaveLength(2);
   });
 
   it("discovers every active owned vote and prepares one claim-all multicall", async () => {
@@ -426,14 +433,12 @@ describe("ve(3,3) call generation", () => {
       ve_id: "123",
       expected_pool_id: poolId(poolAArgument),
     });
-    const decoded = decodeFunctionData({
-      abi: parseAbi([
-        "function multicall(bytes[] data) payable returns (bytes[] results)",
-      ]),
-      data: result.transaction?.data ?? "0x",
-    });
-    expect(decoded.functionName).toBe("multicall");
-    expect(decoded.args[0]).toHaveLength(2);
+    // One step per claim rather than an opaque multicall payload.
+    expect(result.transaction).toBeNull();
+    expect(result.transactions).toHaveLength(2);
+    expect(result.execution_plan?.required_capabilities).toContain(
+      "atomic_batch",
+    );
   });
 
   it("builds the final full-amount approval and restake phase", async () => {

@@ -159,8 +159,13 @@ describe("LP position preparation", () => {
     expect(result.approvals[0]?.to).toBe(
       "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
     );
-    expect(result.transaction.value).toBe("100000000000000");
-    expect(result.transaction.data.slice(0, 10)).toBe("0xac9650d8");
+    // No outer multicall: each Positions call is its own decodable step, and
+    // the native value rides on the deposit rather than on a wrapper.
+    expect(result.transaction).toBeNull();
+    expect(result.transactions.map(({ value }) => value)).toEqual([
+      "100000000000000",
+      "0",
+    ]);
     expect(result.decoded_calls.map((call) => call.function)).toEqual([
       "mintAndDeposit",
       "refundNativeToken",
@@ -182,10 +187,15 @@ describe("LP position preparation", () => {
       result.wallet_policy_requirements.calldata_selectors.map(
         (selector) => selector.function,
       ),
-    ).toEqual(["approve", "multicall", "mintAndDeposit", "refundNativeToken"]);
+    ).toEqual(["approve", "mintAndDeposit", "refundNativeToken"]);
     expect(
       result.execution_plan.ordered_steps.map((step) => step.kind),
-    ).toEqual(["approval", "execution", "allowance_cleanup"]);
+    ).toEqual([
+      "approval",
+      "execution",
+      "execution",
+      "allowance_cleanup",
+    ]);
     expect(result.wallet_handoff.calldata_complete).toContain("reference argument");
   });
 
@@ -323,7 +333,8 @@ describe("LP position preparation", () => {
       "mintAndDeposit",
       "refundNativeToken",
     ]);
-    expect(result.transaction.data.slice(0, 10)).toBe("0xac9650d8");
+    expect(result.transaction).toBeNull();
+    expect(result.transactions).toHaveLength(3);
   });
 
   it("prepares standard fee collection without removing liquidity", async () => {

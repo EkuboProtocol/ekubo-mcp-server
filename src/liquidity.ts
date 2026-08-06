@@ -692,14 +692,12 @@ export async function prepareLpPositionDeposit(
           }),
         ]),
   ];
-  const transactionData =
-    calls.length === 1
-      ? calls[0]
-      : encodeFunctionData({
-          abi: POSITIONS_DEPOSIT_ABI,
-          functionName: "multicall",
-          args: [calls],
-        });
+  // One step per Positions call rather than a `multicall` payload. A wallet
+  // cannot police an opaque `bytes[]`, so nesting would reduce the whole
+  // deposit to a single allowlisted target; separate steps are each decoded and
+  // authorized. `refundNativeToken` still returns the unspent remainder because
+  // the batch is atomic and the contract sweeps its own balance either way.
+  const depositIndex = initializeCall === null ? 0 : 1;
   const approvals = [
     ...(poolKey.token0 === NATIVE_TOKEN
       ? []
@@ -730,12 +728,14 @@ export async function prepareLpPositionDeposit(
       erc20Approval(input.chainId, approval.token, positionsAddress, 0n)
         .transaction,
   );
-  const transaction: PreparedTransaction = {
+  const transactions: PreparedTransaction[] = calls.map((data, index) => ({
     chain_id: input.chainId,
     to: positionsAddress,
-    data: transactionData,
-    value: nativeValue.toString(),
-  };
+    data,
+    value: index === depositIndex ? nativeValue.toString() : "0",
+  }));
+  const transaction: PreparedTransaction | null =
+    transactions.length === 1 ? transactions[0] : null;
   const tokens = await getTokens(
     env,
     {
@@ -786,7 +786,7 @@ export async function prepareLpPositionDeposit(
     max_amount1: maxAmount1.toString(),
     min_liquidity: minLiquidity.toString(),
     approvals: approvalTransactions.map(transactionIdentity),
-    transaction: transactionIdentity(transaction),
+    transactions: transactions.map(transactionIdentity),
     cleanup: cleanupTransactions.map(transactionIdentity),
   };
   const depositArguments = {
@@ -892,18 +892,35 @@ export async function prepareLpPositionDeposit(
     ],
     approvals: approvalTransactions,
     transaction,
+    transactions,
     post_execution_transactions: cleanupTransactions,
     onchain_validation: {
       owner: ownerValidation,
       exact_transaction_simulation_required: true,
     },
-    execution_plan: executionPlan({
+    execution_plan: executionPlanFromSteps({
       chainId: input.chainId,
       sender,
-      approvals: approvalTransactions,
-      transaction,
-      postExecutionTransactions: cleanupTransactions,
-      revertDecode: errorResultDecodePlan(POSITIONS_DEPOSIT_ABI),
+      steps: [
+        ...approvalTransactions.map((prepared) => ({
+          kind: "approval" as const,
+          transaction: prepared,
+        })),
+        ...transactions.map((prepared) => ({
+          kind: "execution" as const,
+          transaction: prepared,
+          revertDecode: errorResultDecodePlan(POSITIONS_DEPOSIT_ABI),
+        })),
+        ...cleanupTransactions.map((prepared) => ({
+          kind: "allowance_cleanup" as const,
+          transaction: prepared,
+        })),
+      ],
+      atomicBatchRequired:
+        approvalTransactions.length +
+          transactions.length +
+          cleanupTransactions.length >
+        1,
     }),
     wallet_policy_requirements: {
       allowed_chain_id: input.chainId,
@@ -926,17 +943,6 @@ export async function prepareLpPositionDeposit(
                 selector: approvalSelector,
               },
             ]),
-        {
-          target: positionsAddress,
-          function: calls.length === 1 ? "deposit" : "multicall",
-          selector: transactionData.slice(0, 10),
-        },
-        {
-          target: positionsAddress,
-          function: input.mode === "mint_new" ? "mintAndDeposit" : "deposit",
-          selector: depositCall.slice(0, 10),
-          nested_in_multicall: calls.length > 1,
-        },
         ...(initializeCall === null
           ? []
           : [
@@ -944,9 +950,15 @@ export async function prepareLpPositionDeposit(
                 target: positionsAddress,
                 function: "maybeInitializePool",
                 selector: initializeCall.slice(0, 10),
-                nested_in_multicall: true,
+                nested_in_multicall: false,
               },
             ]),
+        {
+          target: positionsAddress,
+          function: input.mode === "mint_new" ? "mintAndDeposit" : "deposit",
+          selector: depositCall.slice(0, 10),
+          nested_in_multicall: false,
+        },
         ...(nativeValue === 0n
           ? []
           : [
@@ -954,7 +966,7 @@ export async function prepareLpPositionDeposit(
                 target: positionsAddress,
                 function: "refundNativeToken",
                 selector: refundSelector,
-                nested_in_multicall: true,
+                nested_in_multicall: false,
               },
             ]),
       ],
