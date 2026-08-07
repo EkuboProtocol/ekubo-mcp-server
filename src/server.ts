@@ -1137,15 +1137,31 @@ export const getLiquidityOpportunitiesSchema = z.object({
     ),
 });
 
-// Reads keep readOnlyHint even though storing a read bundle writes KV: the
-// storage is incidental caching of the tool's own result, not an observable
-// state change a client must treat as a side effect.
+// Reads keep readOnlyHint even though storing a read bundle writes the
+// artifact bucket: the storage is incidental caching of the tool's own
+// result, not an observable state change a client must treat as a side
+// effect.
 const readerAnnotations = {
   readOnlyHint: true,
   destructiveHint: false,
   idempotentHint: true,
   openWorldHint: true,
 } as const;
+
+// Two tools compute an answer from their arguments and nothing else — a
+// pool ID from a PoolKey, a config from its packed bytes. No indexer, no
+// RPC, no bucket. openWorldHint exists to say whether a call reaches
+// entities outside this process, so these say no; a client that avoids
+// open-world calls can still derive a pool ID offline.
+const localAnnotations = {
+  ...readerAnnotations,
+  openWorldHint: false,
+} as const;
+
+const LOCAL_TOOLS = new Set([
+  "ekubo_derive_pool_id",
+  "ekubo_decode_pool_config",
+]);
 
 // Preparation tools store plan bodies server-side, and the quotes tool buys
 // firm quotes from providers: neither is read-only, and repeating a call
@@ -1158,16 +1174,23 @@ const preparerAnnotations = {
 } as const;
 
 function toolAnnotations(name: string) {
-  return name.startsWith("ekubo_prepare_") ||
+  if (
+    name.startsWith("ekubo_prepare_") ||
     name === "ekubo_get_quotes_with_plans"
-    ? preparerAnnotations
-    : readerAnnotations;
+  ) {
+    return preparerAnnotations;
+  }
+  return LOCAL_TOOLS.has(name) ? localAnnotations : readerAnnotations;
 }
 
-// Output schemas for the handoff tools only: loose shapes that pin exactly
-// where artifact-reference envelopes appear in each result, so typed clients
-// can find the wallet handoff without the schema constraining anything else.
-// Pure informational tools declare no output schema.
+// Output schemas for the handoff tools only: loose shapes that pin where the
+// result's primary wallet handoff sits — the execution plan for a preparer,
+// the token list for an export, the read bundle a reader wants executed — so
+// typed clients can find it without the schema constraining anything else.
+// They are not an inventory of every envelope in a result: a preparation
+// tool's own validation reads travel under shapes that differ per tool, and
+// the plan is the handoff its schema names. Pure informational tools declare
+// no output schema.
 const preparedPlanOutputSchema = z.looseObject({
   execution_plan_reference: artifactReferenceSchema.optional(),
 });

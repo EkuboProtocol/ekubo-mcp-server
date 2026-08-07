@@ -188,7 +188,11 @@ describe("Worker discovery", () => {
         title: string;
         description: string;
         inputSchema: Record<string, unknown>;
-        annotations?: { readOnlyHint?: boolean; idempotentHint?: boolean };
+        annotations?: {
+          readOnlyHint?: boolean;
+          idempotentHint?: boolean;
+          openWorldHint?: boolean;
+        };
         outputSchema?: Record<string, unknown>;
         _meta?: Record<string, unknown>;
       }[];
@@ -268,6 +272,25 @@ describe("Worker discovery", () => {
       readOnlyHint: false,
       idempotentHint: false,
     });
+    // A tool that reaches an indexer, a provider, or the artifact bucket is
+    // open-world; the two that compute an answer from their arguments alone
+    // are not, and saying otherwise is the kind of overclaim that makes the
+    // hint worth nothing.
+    for (const name of ["ekubo_derive_pool_id", "ekubo_decode_pool_config"]) {
+      expect(annotationFor(name)).toMatchObject({
+        readOnlyHint: true,
+        openWorldHint: false,
+      });
+    }
+    for (const name of [
+      "ekubo_get_pool",
+      "ekubo_list_tokens",
+      "ekubo_export_tokens",
+      "ekubo_prepare_wrap_unwrap",
+      "ekubo_get_quotes_with_plans",
+    ]) {
+      expect(annotationFor(name)).toMatchObject({ openWorldHint: true });
+    }
     // outputSchema only on the handoff tools.
     const outputSchemaFor = (name: string) =>
       catalog.tools.find((tool) => tool.name === name)?.outputSchema;
