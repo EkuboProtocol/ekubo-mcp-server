@@ -1,6 +1,6 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
 const expectedServerVersion = "0.27.0";
-const expectedCatalogRevision = "2026-08-06.token-list-references";
+const expectedCatalogRevision = "2026-08-06.token-export-tool";
 const smokeNonce = `${Date.now()}-${Math.random()}`;
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
 
@@ -27,6 +27,7 @@ assert(openapi.openapi === "3.1.0", "OpenAPI endpoint is invalid");
 const catalog = await getJson("/tools");
 const expectedTools = [
   "ekubo_list_tokens",
+  "ekubo_export_tokens",
   "ekubo_get_token",
   "ekubo_get_tokens",
   "ekubo_get_quotes_with_plans",

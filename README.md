@@ -37,6 +37,11 @@ schemas after a Git-triggered deployment.
 - `ekubo_list_tokens` — list the canonical token list, ordered by descending
   `visibility_priority`, with optional symbol `search`, `chain_id`,
   `min_visibility_priority`, `page_size`, and `after_token` filters
+- `ekubo_export_tokens` — hand a wallet the canonical list without reading it:
+  returns only a `token_list_reference` envelope and a count, never entries.
+  Scoped by `chain_id`, capped by `max_tokens` (default 1,000, the wallet's
+  per-import limit), fixed at the interface's visibility threshold, and stored
+  with only the five fields a wallet acts on
 - `ekubo_get_token` — fetch token metadata by chain and address
 - `ekubo_get_tokens` — fetch metadata for 1–1,000 exact token identifiers,
   across chains, through one `prod-api` batch request
@@ -199,7 +204,7 @@ collecting authorization or signature, signing, and submission.
 
 Prepared execution plan bodies, read-call bundles — exact
 `wallet_batch_eth_call` argument objects, validated against the wallet
-boundary before storage — and token lists requested with `as_reference` are
+boundary before storage — and token lists exported by `ekubo_export_tokens` are
 stored in R2 — strongly consistent, so a fresh reference never 404s from replication lag — and served at
 `/artifact/<id>` so wallets fetch them by reference. All three travel as
 `artifact_reference` envelopes (under `execution_plan_reference`,
@@ -219,11 +224,22 @@ The token-list reference exists because a list is the largest thing an agent
 is ever asked to carry between two servers, and the cost is not in fetching it
 but in re-emitting it. The canonical list is 483 KB: about 146,000 tokens of
 context to read, and roughly 49,000 output tokens — minutes of generation — to
-write back out as a wallet's `propose_tokens` arguments. `ekubo_list_tokens`
-with `as_reference=true` returns the envelope instead, at a few hundred tokens
-either way, having first reduced each entry to the five fields a wallet acts
-on. Read the entries inline whenever you actually need them, such as resolving
-a symbol; reference them whenever they are merely passing through.
+write back out as a wallet's `propose_tokens` arguments.
+
+`ekubo_export_tokens` is the tool for that trip, and it is a separate tool
+rather than a flag on `ekubo_list_tokens` because it does a different job.
+Listing answers a question the model reasons about — which address is the USDC
+the user meant — so it returns entries and offers search, paging, and full
+metadata to serve that. Exporting answers no question: it hands a wallet a
+list to hold. So it returns a `token_list_reference` and a count and nothing
+else, its stored body carries only the five fields a wallet acts on, and its
+whole input surface is which chain and how many at most.
+
+Scope an export by chain. Ethereum mainnet carries over 5,000 tokens at the
+default visibility and BNB Chain nearly 3,000, while every one of the other 28
+indexed chains is comfortably under the 1,000 entries a wallet accepts in a
+single import — and an export past the importer's limit is refused whole
+rather than truncated, so a larger `max_tokens` is not a safer one.
 
 Position-state plans use one Multicall3 `eth_call` at `pending`. TWAMM virtual
 orders or Ve33 reward accumulation, when required, are simulated immediately

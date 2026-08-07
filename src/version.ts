@@ -5,4 +5,4 @@ export const MCP_SERVER_VERSION = "0.27.0";
 // and smoke tests can detect a cached catalog independently of the
 // application version.
 export const MCP_TOOL_CATALOG_REVISION =
-  "2026-08-06.token-list-references";
+  "2026-08-06.token-export-tool";

@@ -75,7 +75,7 @@ async function withStubbedUpstream<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
-async function callListTokens(args: Record<string, unknown>) {
+async function callTool(name: string, args: Record<string, unknown>) {
   const response = await worker.fetch(
     new Request("https://mcp.ekubo.org/mcp", {
       method: "POST",
@@ -84,7 +84,7 @@ async function callListTokens(args: Record<string, unknown>) {
         jsonrpc: "2.0",
         id: 1,
         method: "tools/call",
-        params: { name: "ekubo_list_tokens", arguments: args },
+        params: { name, arguments: args },
       }),
     }),
     env as never,
@@ -105,16 +105,32 @@ async function callListTokens(args: Record<string, unknown>) {
   }).result.structuredContent;
 }
 
-describe("ekubo_list_tokens as_reference", () => {
-  it("returns entries inline by default", async () => {
-    const content = await withStubbedUpstream(() => callListTokens({}));
+describe("ekubo_export_tokens", () => {
+  /// Listing and exporting are different jobs: the reader keeps returning
+  /// entries the model reasons about, and never an envelope.
+  it("leaves ekubo_list_tokens returning entries", async () => {
+    const content = await withStubbedUpstream(() =>
+      callTool("ekubo_list_tokens", {}),
+    );
     expect(Array.isArray(content.tokens)).toBe(true);
     expect(content.token_list_reference).toBeUndefined();
   });
 
+  /// The export returns the envelope and the count it stands for, and
+  /// nothing else — no entry may reach the model on this path.
+  it("returns only a reference and a count", async () => {
+    const content = await withStubbedUpstream(() =>
+      callTool("ekubo_export_tokens", {}),
+    );
+    expect(Object.keys(content).sort()).toEqual([
+      "count",
+      "token_list_reference",
+    ]);
+  });
+
   it("stores a verifiable list the wallet can fetch itself", async () => {
     const content = await withStubbedUpstream(() =>
-      callListTokens({ as_reference: true }),
+      callTool("ekubo_export_tokens", {}),
     );
 
     const reference = content.token_list_reference as {
@@ -128,7 +144,7 @@ describe("ekubo_list_tokens as_reference", () => {
     expect(reference.kind).toBe("artifact_reference");
     expect(reference.artifact_type).toBe("token_list");
     expect(content.tokens).toBeUndefined();
-    expect(content.tokens_referenced).toBe(2);
+    expect(content.count).toBe(2);
 
     // The wallet's side of the handoff: fetch the URL, recompute the digest
     // and the byte count, and refuse anything that disagrees.

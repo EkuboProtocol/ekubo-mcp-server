@@ -160,6 +160,15 @@ const amount = z
 // arguments; the interface visibility threshold and a context-sized page are
 // applied here instead of in the published schema.
 const DEFAULT_TOKEN_PAGE_SIZE = 20;
+/**
+ * How many entries an export carries when the caller names no limit.
+ *
+ * Set to what a wallet accepts in one import rather than to everything that
+ * exists, because an export past the importer's limit is refused whole: a
+ * larger default would turn "export mainnet" — over 5,000 tokens — from a
+ * short list into a failed one.
+ */
+const DEFAULT_TOKEN_EXPORT_SIZE = 1_000;
 
 export const listTokensSchema = z.object({
   chain_id: chainId
@@ -191,12 +200,6 @@ export const listTokensSchema = z.object({
     .max(1_000)
     .optional()
     .describe("Maximum tokens to return; defaults to 20"),
-  as_reference: z
-    .boolean()
-    .optional()
-    .describe(
-      "Return the matching tokens as a stored token_list_reference envelope instead of as entries. Use this when the list is destined for a wallet rather than for you to read — importing token names, or naming the addresses to read balances for — because entries you never reason about cost the same to receive and far more to pass on. The whole canonical list is 483 KB, about 146,000 tokens of context to read and roughly 49,000 output tokens to write back out; the envelope is a few hundred either way. Pass the envelope to the wallet unchanged. Omit this whenever you need to read the entries yourself, such as resolving a symbol to an address",
-    ),
   after_token: z
     .string()
     .regex(
@@ -206,6 +209,41 @@ export const listTokensSchema = z.object({
     .optional()
     .describe(
       "Keep only tokens whose (chain_id, address) pair sorts after this <chain_id>:<address> identifier. Results are ordered by visibility_priority rather than by that pair, so this filters the candidate set instead of continuing a page boundary",
+    ),
+});
+
+/**
+ * Exporting is a different job from listing, so it is a different tool rather
+ * than a flag on one.
+ *
+ * `ekubo_list_tokens` answers a question the model reasons about — which
+ * address is the USDC the user meant — and its search, paging, and full
+ * metadata all serve that. Export answers no question: it hands a wallet a
+ * list to hold. No entry ever reaches the model, so the knobs that shape what
+ * the model reads would be noise, and the metadata that makes a record
+ * readable is dead weight in a body only a wallet parses. What is left is the
+ * whole surface: which chain, and how many at most.
+ *
+ * The visibility threshold is fixed at the interface's own, rather than
+ * exposed. Reaching below it is how a caller asks for tokens the interface
+ * deliberately hides, and a bulk export destined for the screen where an
+ * owner grants names is the last place that should be reachable in one
+ * argument.
+ */
+export const exportTokensSchema = z.object({
+  chain_id: chainId
+    .optional()
+    .describe(
+      "Export only this EVM chain's tokens. Almost always pass this: a wallet holds names for the chain it is on, and every chain except Ethereum mainnet and BNB Chain exports well under the 1,000 entries a wallet accepts in one import. Omit to export across every indexed chain",
+    ),
+  max_tokens: z
+    .number()
+    .int()
+    .min(1)
+    .max(10_000)
+    .optional()
+    .describe(
+      "Largest number of entries to export; defaults to 1,000, which is what a wallet accepts in one import. Raise it only for a consumer you know accepts more. An export larger than the importer's limit is refused whole rather than truncated, so a bigger number is not a safer one",
     ),
 });
 
@@ -1131,6 +1169,15 @@ function toolAnnotations(name: string) {
 const preparedPlanOutputSchema = z.looseObject({
   execution_plan_reference: artifactReferenceSchema.optional(),
 });
+// Export returns the envelope and the count it stands for, and nothing else.
+// The count is what lets an agent say "991 tokens from the Ekubo canonical
+// list" without fetching a body meant for the wallet; it travels beside the
+// envelope, never inside it, and is never handed on, so it cannot become
+// something a consumer cross-checks against the bytes.
+const exportedTokenListOutputSchema = z.looseObject({
+  token_list_reference: artifactReferenceSchema,
+  count: z.number().int(),
+});
 const quotesOutputSchema = z.looseObject({
   quotes: z
     .array(
@@ -1161,6 +1208,8 @@ function toolOutputSchema(name: string) {
   if (name === "ekubo_get_quotes_with_plans") return quotesOutputSchema;
   if (name.startsWith("ekubo_prepare_")) return preparedPlanOutputSchema;
   switch (name) {
+    case "ekubo_export_tokens":
+      return exportedTokenListOutputSchema;
     case "ekubo_get_pool":
     case "ekubo_get_position":
       return currentStateQueryOutputSchema;
@@ -1204,6 +1253,13 @@ export const publicToolCatalog = [
     description:
       "First step for symbol-based swaps, including tokenized stocks and stablecoins: list the canonical Ekubo token list, ordered by descending visibility_priority so the preferred token wins ambiguous symbol matches. Pass search to match a symbol prefix or suffix, chain_id to stay on one chain, and min_visibility_priority to reach tokens the interface hides by default.",
     inputSchema: z.toJSONSchema(listTokensSchema),
+  },
+  {
+    name: "ekubo_export_tokens",
+    title: "Export Ekubo tokens for a wallet",
+    description:
+      "Hand a wallet the canonical token list without reading it. Returns only a token_list_reference envelope and the count it stands for: no entries, so nothing enters your context that you would only pass on. Use this to import token names into a wallet so it can label transactions, or to name the addresses for a bulk balance read; pass the envelope unchanged as the wallet tool's reference argument. The stored body carries exactly what a wallet acts on — chain ID, address, symbol, name, decimals — and none of the logo URLs, prices, supplies, or bridge maps that make the full list 483 KB. Scope it with chain_id: a wallet holds names for the chain it is on. Use ekubo_list_tokens instead whenever you need to read entries yourself, such as resolving a symbol the user typed.",
+    inputSchema: z.toJSONSchema(exportTokensSchema),
   },
   {
     name: "ekubo_get_token",
@@ -1663,36 +1719,53 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
       min_visibility_priority,
       page_size,
       after_token,
-      as_reference,
     }) =>
-      toolResult(async () => {
-        const tokens = await listTokens(env, {
+      toolResult(async () => ({
+        tokens: await listTokens(env, {
           chainId:
             chain_id === undefined ? undefined : canonicalChainId(chain_id),
           search,
           minVisibilityPriority: min_visibility_priority ?? 0,
-          // A list bound for a wallet is being moved, not read, so the
-          // default page of 20 would silently truncate the import it was
-          // asked for. Reading defaults to a page the caller can afford to
-          // hold in context.
-          pageSize:
-            page_size ?? (as_reference === true ? 1_000 : DEFAULT_TOKEN_PAGE_SIZE),
+          pageSize: page_size ?? DEFAULT_TOKEN_PAGE_SIZE,
           afterToken: after_token,
+        }),
+      })),
+  );
+
+  server.registerTool(
+    catalogEntry("ekubo_export_tokens").name,
+    {
+      title: catalogEntry("ekubo_export_tokens").title,
+      description: catalogEntry("ekubo_export_tokens").description,
+      inputSchema: exportTokensSchema,
+      annotations: toolAnnotations("ekubo_export_tokens"),
+      ...(toolOutputSchema("ekubo_export_tokens") === undefined
+        ? {}
+        : { outputSchema: toolOutputSchema("ekubo_export_tokens") }),
+    },
+    async ({ chain_id, max_tokens }) =>
+      toolResult(async () => {
+        const tokens = await listTokens(env, {
+          chainId:
+            chain_id === undefined ? undefined : canonicalChainId(chain_id),
+          // Fixed at the interface's own threshold. Reaching below it is how
+          // a caller asks for tokens the interface hides, and a bulk export
+          // bound for the screen where an owner grants names is the last
+          // place that should be reachable in one argument.
+          minVisibilityPriority: 0,
+          // A list being moved rather than read is truncated by its page, so
+          // the reading default of twenty would quietly export twenty tokens
+          // and call it the chain's list. The default here is instead what
+          // the consumer accepts in one import.
+          pageSize: max_tokens ?? DEFAULT_TOKEN_EXPORT_SIZE,
         });
-        if (as_reference !== true) return { tokens };
         const entries = tokenListEntries(tokens);
         return {
           token_list_reference: await storeArtifact(env, origin, {
             artifactType: "token_list",
             body: { name: CANONICAL_TOKEN_LIST_NAME, tokens: entries },
           }),
-          // For the agent to say what it is about to hand over — "991 tokens
-          // from the Ekubo canonical list" — without fetching a body meant
-          // for the wallet. It travels beside the envelope and never inside
-          // it, and the wallet is never given it, so unlike the summary
-          // fields this envelope used to carry it cannot become something a
-          // consumer cross-checks against the body.
-          tokens_referenced: entries.length,
+          count: entries.length,
         };
       }),
   );
@@ -2970,7 +3043,7 @@ Intent shortcut: for "my Ekubo STONX allocations", "STONX vote allocations", or 
 
 For exact token metadata, call ekubo_get_token for one known chain/address pair and ekubo_get_tokens for multiple known pairs. The batch tool uses one prod-api batch request, accepts tokens across chains, preserves input order and duplicates, and omits identifiers that are not in the canonical list. Use ekubo_list_tokens when resolving a symbol or browsing the canonical list; its search parameter is optional and matches symbol prefixes and suffixes only.
 
-When tokens are destined for a wallet rather than for you to read — importing token names so it can label transactions, or naming the addresses to read balances for — call ekubo_list_tokens with as_reference=true and pass the returned token_list_reference envelope to the wallet unchanged, with no inline tokens. Entries you never reason about cost the same to receive as ones you do and far more to pass on: the canonical list is 483 KB, roughly 146,000 tokens of context to read and 49,000 output tokens to write back out, against a few hundred either way for the envelope. The general rule this is an instance of: whenever you are about to re-emit a large result you just read from another tool, stop and look for a reference form of it instead. Omit as_reference whenever you genuinely need to read the entries, such as resolving a symbol the user typed to an exact address.
+When tokens are destined for a wallet rather than for you to read — importing token names so it can label transactions, or naming the addresses for a bulk balance read — call ekubo_export_tokens with the wallet's chain_id and pass the returned token_list_reference envelope to the wallet unchanged, with no inline tokens. It returns only that envelope and a count, so no entry ever enters your context: reading the canonical list costs roughly 146,000 tokens and writing it back out to a wallet another 49,000, against a few hundred either way for the envelope. Export defaults to the 1,000 entries a wallet accepts in one import, and an export past the importer's limit is refused whole rather than truncated, so scope by chain instead of raising max_tokens — Ethereum mainnet has over 5,000 tokens at the default visibility and BNB Chain nearly 3,000, while every other chain is well under the limit. Use ekubo_list_tokens, never the exporter, whenever you need to read entries yourself, such as resolving a symbol the user typed to an exact address. The general rule both tools express: if you are about to re-emit a large result you just read from another tool, you wanted a reference to it, not the thing itself.
 
 For LP discovery, use ekubo_get_positions_by_owner instead of attempting ERC721 enumeration. Its response joins canonical token metadata and USD prices and returns one stored read bundle per chain covering every supported EVM position, with each position row linked to its aggregate call by state_call_id. For the interface-equivalent detail payload (metadata, history, campaigns, rewards, prices, and the atomic current-state query), call ekubo_get_position with the same owner, chain, manager, and token ID. Read ekubo://docs/lp-position-workflow. Never split TWAMM execution or Ve33 reward accumulation from the following position read: those calls must stay in the supplied single Multicall3 eth_call and must never be broadcast.
 

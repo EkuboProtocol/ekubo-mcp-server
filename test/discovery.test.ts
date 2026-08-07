@@ -198,6 +198,7 @@ describe("Worker discovery", () => {
     expect(catalog.tool_count).toBe(publicToolCatalog.length);
     expect(catalog.tools.map((tool) => tool.name)).toEqual([
       "ekubo_list_tokens",
+      "ekubo_export_tokens",
       "ekubo_get_token",
       "ekubo_get_tokens",
       "ekubo_get_quotes_with_plans",
