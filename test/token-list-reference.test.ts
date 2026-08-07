@@ -123,9 +123,27 @@ describe("ekubo_export_tokens", () => {
       callTool("ekubo_export_tokens", {}),
     );
     expect(Object.keys(content).sort()).toEqual([
+      "complete",
       "count",
       "token_list_reference",
     ]);
+  });
+
+  /// An export the agent never reads is one it cannot notice is short, so a
+  /// prefix has to say so. Two upstream tokens with max_tokens=1 is the
+  /// smallest case that distinguishes a full page from a finished list.
+  it("reports a truncated export rather than passing a prefix off as the list", async () => {
+    const truncated = await withStubbedUpstream(() =>
+      callTool("ekubo_export_tokens", { max_tokens: 1 }),
+    );
+    expect(truncated.count).toBe(1);
+    expect(truncated.complete).toBe(false);
+
+    const whole = await withStubbedUpstream(() =>
+      callTool("ekubo_export_tokens", { max_tokens: 50 }),
+    );
+    expect(whole.count).toBe(2);
+    expect(whole.complete).toBe(true);
   });
 
   it("stores a verifiable list the wallet can fetch itself", async () => {
@@ -145,6 +163,7 @@ describe("ekubo_export_tokens", () => {
     expect(reference.artifact_type).toBe("token_list");
     expect(content.tokens).toBeUndefined();
     expect(content.count).toBe(2);
+    expect(content.complete).toBe(true);
 
     // The wallet's side of the handoff: fetch the URL, recompute the digest
     // and the byte count, and refuse anything that disagrees.

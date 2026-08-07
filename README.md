@@ -235,11 +235,17 @@ list to hold. So it returns a `token_list_reference` and a count and nothing
 else, its stored body carries only the five fields a wallet acts on, and its
 whole input surface is which chain and how many at most.
 
-Scope an export by chain. Ethereum mainnet carries over 5,000 tokens at the
-default visibility and BNB Chain nearly 3,000, while every one of the other 28
-indexed chains is comfortably under the 1,000 entries a wallet accepts in a
-single import — and an export past the importer's limit is refused whole
-rather than truncated, so a larger `max_tokens` is not a safer one.
+Scope an export by chain, but do not assume that fits it under a consumer's
+limit. At the interface visibility threshold Ethereum carries roughly 5,600
+tokens, BNB Chain 3,600, Base 2,600, and Arbitrum and Polygon about 1,000
+each, against the 1,000 entries a wallet accepts in a single import. An export
+past the importer's limit is refused whole rather than truncated, so a larger
+`max_tokens` is not a safer one.
+
+Every export therefore reports `complete`. False means more tokens exist at
+that visibility than `max_tokens` allowed, and the stored list is a prefix
+rather than the chain's list — a distinction nothing downstream could
+otherwise draw, because the agent never sees an entry to miss.
 
 Position-state plans use one Multicall3 `eth_call` at `pending`. TWAMM virtual
 orders or Ve33 reward accumulation, when required, are simulated immediately
