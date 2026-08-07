@@ -245,6 +245,51 @@ export async function listTokens(
   });
 }
 
+/**
+ * The canonical list's name, recorded as the source of any suggestion made
+ * from it. A wallet's owner reviews suggestions grouped under this, deciding
+ * a whole list at once, so it has to name the real curator rather than the
+ * tool that relayed it.
+ */
+export const CANONICAL_TOKEN_LIST_NAME = "Ekubo canonical token list";
+
+/**
+ * Reduce canonical token records to the five fields a wallet acts on.
+ *
+ * Everything else the API returns — logo URLs, prices, supplies, per-chain
+ * bridge maps — is display data for this server's own callers and makes up
+ * most of the 483 KB the full list weighs. A wallet needs only the claim
+ * "this address is called this and scales by this", so that is all the
+ * stored artifact says, and all its integrity digest commits to.
+ *
+ * Entries missing any of those fields are dropped: a wallet cannot name a
+ * token it has no symbol for, and a half-entry is worse than an absent one.
+ */
+export function tokenListEntries(
+  tokens: Record<string, unknown>[],
+): { chain_id: string; address: string; symbol: string; name: string; decimals: number }[] {
+  return tokens.flatMap((token) => {
+    const { chain_id, address, symbol, name, decimals } = token;
+    if (
+      typeof chain_id !== "string" ||
+      typeof address !== "string" ||
+      typeof symbol !== "string" ||
+      typeof decimals !== "number"
+    ) {
+      return [];
+    }
+    return [
+      {
+        chain_id,
+        address,
+        symbol,
+        name: typeof name === "string" ? name : symbol,
+        decimals,
+      },
+    ];
+  });
+}
+
 export async function getToken(
   env: Env,
   input: { chainId: string; address: string },

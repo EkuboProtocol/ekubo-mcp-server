@@ -6,6 +6,7 @@ import {
   ARTIFACT_TTL_SECONDS,
   loadArtifact,
   referenceWalletArtifacts,
+  storeArtifact,
 } from "../src/artifact-store.js";
 
 const ORIGIN = "https://mcp.ekubo.org";
@@ -270,5 +271,59 @@ describe("artifact store", () => {
     expect(replaced).toBe(0);
     expect(value).toEqual(input);
     expect(store.entries.size).toBe(0);
+  });
+});
+
+describe("token list artifacts", () => {
+  it("stores a list and commits to the exact bytes served", async () => {
+    const env = { ARTIFACT_STORE: fakeArtifactStore() } as unknown as Env;
+    const body = {
+      name: "Ekubo canonical token list",
+      tokens: [
+        {
+          chain_id: "1",
+          address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+          symbol: "USDC",
+          name: "USD Coin",
+          decimals: 6,
+        },
+      ],
+    };
+    const reference = await storeArtifact(env, ORIGIN, {
+      artifactType: "token_list",
+      body,
+    });
+
+    expect(reference.kind).toBe("artifact_reference");
+    expect(reference.artifact_type).toBe("token_list");
+    expect(reference.instruction).toContain("propose-tokens");
+
+    const stored = await loadArtifact(
+      env,
+      reference.url.slice(`${ORIGIN}/artifact/`.length),
+    );
+    expect(stored).not.toBeNull();
+    expect(reference.integrity.value).toBe(
+      keccak256(stringToHex(stored as string)),
+    );
+    expect(reference.bytes).toBe(
+      new TextEncoder().encode(stored as string).length,
+    );
+    expect(JSON.parse(stored as string)).toEqual(body);
+  });
+
+  /// A token list is not a plan and not a read bundle; nothing about the
+  /// envelope should let one stand in for another.
+  it("does not share an instruction with the other artifact types", async () => {
+    const env = { ARTIFACT_STORE: fakeArtifactStore() } as unknown as Env;
+    const list = await storeArtifact(env, ORIGIN, {
+      artifactType: "token_list",
+      body: { name: "L", tokens: [] },
+    });
+    const plan = await storeArtifact(env, ORIGIN, {
+      artifactType: "execution_plan",
+      body: planFixture(),
+    });
+    expect(list.instruction).not.toBe(plan.instruction);
   });
 });

@@ -16,6 +16,7 @@ import {
   contractDirectory,
 } from "./contracts.js";
 import {
+  CANONICAL_TOKEN_LIST_NAME,
   type Env,
   getQuotesWithPlans,
   getToken,
@@ -24,6 +25,7 @@ import {
   prepareSwap,
   type QuoteSource,
   ServiceError,
+  tokenListEntries,
 } from "./core.js";
 import {
   canonicalChainId,
@@ -92,6 +94,7 @@ import {
 import {
   artifactReferenceSchema,
   referenceWalletArtifacts,
+  storeArtifact,
 } from "./artifact-store.js";
 import { MCP_SERVER_VERSION, MCP_TOOL_CATALOG_REVISION } from "./version.js";
 
@@ -188,6 +191,12 @@ export const listTokensSchema = z.object({
     .max(1_000)
     .optional()
     .describe("Maximum tokens to return; defaults to 20"),
+  as_reference: z
+    .boolean()
+    .optional()
+    .describe(
+      "Return the matching tokens as a stored token_list_reference envelope instead of as entries. Use this when the list is destined for a wallet rather than for you to read — importing token names, or naming the addresses to read balances for — because entries you never reason about cost the same to receive and far more to pass on. The whole canonical list is 483 KB, about 146,000 tokens of context to read and roughly 49,000 output tokens to write back out; the envelope is a few hundred either way. Pass the envelope to the wallet unchanged. Omit this whenever you need to read the entries yourself, such as resolving a symbol to an address",
+    ),
   after_token: z
     .string()
     .regex(
@@ -1654,17 +1663,38 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
       min_visibility_priority,
       page_size,
       after_token,
+      as_reference,
     }) =>
-      toolResult(async () => ({
-        tokens: await listTokens(env, {
+      toolResult(async () => {
+        const tokens = await listTokens(env, {
           chainId:
             chain_id === undefined ? undefined : canonicalChainId(chain_id),
           search,
           minVisibilityPriority: min_visibility_priority ?? 0,
-          pageSize: page_size ?? DEFAULT_TOKEN_PAGE_SIZE,
+          // A list bound for a wallet is being moved, not read, so the
+          // default page of 20 would silently truncate the import it was
+          // asked for. Reading defaults to a page the caller can afford to
+          // hold in context.
+          pageSize:
+            page_size ?? (as_reference === true ? 1_000 : DEFAULT_TOKEN_PAGE_SIZE),
           afterToken: after_token,
-        }),
-      })),
+        });
+        if (as_reference !== true) return { tokens };
+        const entries = tokenListEntries(tokens);
+        return {
+          token_list_reference: await storeArtifact(env, origin, {
+            artifactType: "token_list",
+            body: { name: CANONICAL_TOKEN_LIST_NAME, tokens: entries },
+          }),
+          // For the agent to say what it is about to hand over — "991 tokens
+          // from the Ekubo canonical list" — without fetching a body meant
+          // for the wallet. It travels beside the envelope and never inside
+          // it, and the wallet is never given it, so unlike the summary
+          // fields this envelope used to carry it cannot become something a
+          // consumer cross-checks against the body.
+          tokens_referenced: entries.length,
+        };
+      }),
   );
 
   server.registerTool(
@@ -2939,6 +2969,8 @@ Every prepared onchain read is returned as read_calls_reference: the same artifa
 Intent shortcut: for "my Ekubo STONX allocations", "STONX vote allocations", or equivalent requests, call ekubo_get_ve33_allocations with only the user's connected EVM wallet as owner. The production Ve33 deployment is the STONX voting system, and the tool selects its production chain plus canonical VeToken when chain_id and ve_token are omitted. If the connected wallet address is unavailable, ask the user for it. Never infer the user's wallet from a machine environment, repository configuration, local keystore, or unrelated account.
 
 For exact token metadata, call ekubo_get_token for one known chain/address pair and ekubo_get_tokens for multiple known pairs. The batch tool uses one prod-api batch request, accepts tokens across chains, preserves input order and duplicates, and omits identifiers that are not in the canonical list. Use ekubo_list_tokens when resolving a symbol or browsing the canonical list; its search parameter is optional and matches symbol prefixes and suffixes only.
+
+When tokens are destined for a wallet rather than for you to read — importing token names so it can label transactions, or naming the addresses to read balances for — call ekubo_list_tokens with as_reference=true and pass the returned token_list_reference envelope to the wallet unchanged, with no inline tokens. Entries you never reason about cost the same to receive as ones you do and far more to pass on: the canonical list is 483 KB, roughly 146,000 tokens of context to read and 49,000 output tokens to write back out, against a few hundred either way for the envelope. The general rule this is an instance of: whenever you are about to re-emit a large result you just read from another tool, stop and look for a reference form of it instead. Omit as_reference whenever you genuinely need to read the entries, such as resolving a symbol the user typed to an exact address.
 
 For LP discovery, use ekubo_get_positions_by_owner instead of attempting ERC721 enumeration. Its response joins canonical token metadata and USD prices and returns one stored read bundle per chain covering every supported EVM position, with each position row linked to its aggregate call by state_call_id. For the interface-equivalent detail payload (metadata, history, campaigns, rewards, prices, and the atomic current-state query), call ekubo_get_position with the same owner, chain, manager, and token ID. Read ekubo://docs/lp-position-workflow. Never split TWAMM execution or Ve33 reward accumulation from the following position read: those calls must stay in the supplied single Multicall3 eth_call and must never be broadcast.
 

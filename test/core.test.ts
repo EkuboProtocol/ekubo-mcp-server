@@ -7,7 +7,13 @@ import {
   planTransactions,
   planValues,
 } from "./plan-helpers.js";
-import { type Env, getQuotesWithPlans, getTokens, prepareSwap } from "../src/core.js";
+import {
+  type Env,
+  getQuotesWithPlans,
+  getTokens,
+  prepareSwap,
+  tokenListEntries,
+} from "../src/core.js";
 
 const token0 = "0x0000000000000000000000000000000000000000";
 const token1 = "0x1111111111111111111111111111111111111111";
@@ -210,5 +216,59 @@ describe("MCP service core", () => {
       "atomic_batch",
     ]);
     expect(result.client_execution.must_revalidate_before_signing).toBe(true);
+  });
+});
+
+describe("tokenListEntries", () => {
+  const usdc = {
+    chain_id: "1",
+    name: "USDC",
+    symbol: "USDC",
+    decimals: 6,
+    address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    logo_url: "https://example.com/logo",
+    total_supply: 71781369987.4076,
+    usd_price: 1.0000001373549674,
+    sort_order: 6,
+    visibility_priority: 3,
+    bridgeInfos: { "10": { bridge_address: "0x0b2c" } },
+  };
+
+  it("keeps only what a wallet acts on", () => {
+    expect(tokenListEntries([usdc])).toEqual([
+      {
+        chain_id: "1",
+        address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        symbol: "USDC",
+        name: "USDC",
+        decimals: 6,
+      },
+    ]);
+  });
+
+  /**
+   * The canonical list carries Starknet rows whose chain ID exceeds
+   * Number.MAX_SAFE_INTEGER. Writing one as a JSON number would store a
+   * different chain than the API reported, and nothing downstream could
+   * notice, so the entry has to stay a string end to end.
+   */
+  it("does not round a chain ID past the safe integer range", () => {
+    const starknet = { ...usdc, chain_id: "23448594291968334" };
+    const [entry] = tokenListEntries([starknet]);
+    expect(entry.chain_id).toBe("23448594291968334");
+    expect(Number(entry.chain_id)).toBeGreaterThan(Number.MAX_SAFE_INTEGER);
+    // The value that would have been stored had this been a JSON number.
+    expect(String(Number("23448594291968334"))).not.toBe("23448594291968334");
+  });
+
+  it("falls back to the symbol when a list carries no name", () => {
+    const { name: _dropped, ...unnamed } = usdc;
+    expect(tokenListEntries([unnamed])[0].name).toBe("USDC");
+  });
+
+  it("drops an entry missing a field a wallet needs", () => {
+    const { symbol: _noSymbol, ...symbolless } = usdc;
+    const { decimals: _noDecimals, ...decimalless } = usdc;
+    expect(tokenListEntries([symbolless, decimalless, usdc])).toHaveLength(1);
   });
 });

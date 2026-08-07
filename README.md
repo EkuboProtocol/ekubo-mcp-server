@@ -197,12 +197,14 @@ The agent does not ask for a separate confirmation first: wallet tooling is
 responsible for current-state simulation, presenting the simulated result,
 collecting authorization or signature, signing, and submission.
 
-Prepared execution plan bodies and read-call bundles — exact
+Prepared execution plan bodies, read-call bundles — exact
 `wallet_batch_eth_call` argument objects, validated against the wallet
-boundary before storage — are stored in R2 — strongly consistent, so a fresh reference never 404s from replication lag — and served at
-`/artifact/<id>` so wallets fetch them by reference. Both travel as
-`artifact_reference` envelopes (under `execution_plan_reference` and
-`read_calls_reference`) whose `integrity.value` keccak256 and `bytes` count
+boundary before storage — and token lists requested with `as_reference` are
+stored in R2 — strongly consistent, so a fresh reference never 404s from replication lag — and served at
+`/artifact/<id>` so wallets fetch them by reference. All three travel as
+`artifact_reference` envelopes (under `execution_plan_reference`,
+`read_calls_reference`, and `token_list_reference`) whose `integrity.value`
+keccak256 and `bytes` count
 bind the exact stored bytes; the agent passes the envelope unchanged as the
 wallet tool's `reference` argument. No other tool
 result is stored or replayed, and `/mcp` responses use
@@ -212,6 +214,16 @@ semantics. Indexed pool-state snapshots may be cached upstream for 180 seconds,
 while PoolKeys and tick-liquidity data may be cached for 1,800 seconds. Polling
 more frequently than those freshness windows does not produce fresher pool
 data.
+
+The token-list reference exists because a list is the largest thing an agent
+is ever asked to carry between two servers, and the cost is not in fetching it
+but in re-emitting it. The canonical list is 483 KB: about 146,000 tokens of
+context to read, and roughly 49,000 output tokens — minutes of generation — to
+write back out as a wallet's `propose_tokens` arguments. `ekubo_list_tokens`
+with `as_reference=true` returns the envelope instead, at a few hundred tokens
+either way, having first reduced each entry to the five fields a wallet acts
+on. Read the entries inline whenever you actually need them, such as resolving
+a symbol; reference them whenever they are merely passing through.
 
 Position-state plans use one Multicall3 `eth_call` at `pending`. TWAMM virtual
 orders or Ve33 reward accumulation, when required, are simulated immediately

@@ -19,7 +19,7 @@ import { walletBatchEthCallInputSchema } from "./wallet-compatibility.js";
  */
 export const ARTIFACT_TTL_SECONDS = 3600;
 
-export type ArtifactType = "execution_plan" | "read_calls";
+export type ArtifactType = "execution_plan" | "read_calls" | "token_list";
 
 /**
  * The compact handoff an agent relays instead of a wallet payload's body.
@@ -51,7 +51,7 @@ export interface ArtifactReference {
  */
 export const artifactReferenceSchema = z.looseObject({
   kind: z.literal("artifact_reference"),
-  artifact_type: z.enum(["execution_plan", "read_calls"]),
+  artifact_type: z.enum(["execution_plan", "read_calls", "token_list"]),
   url: z.string(),
   integrity: z.looseObject({
     algorithm: z.literal("keccak256"),
@@ -73,18 +73,52 @@ interface StorableReadCalls {
   calls: unknown[];
 }
 
+/**
+ * A curated token list, stored in the shape a wallet's token-list parser
+ * reads and nothing more.
+ *
+ * Only the five fields a wallet acts on are kept — the logo URLs, prices,
+ * supplies, and per-chain bridge maps that make the canonical list 483 KB are
+ * display data for this server's own callers, not for a wallet. Stripping
+ * them makes the stored body roughly a quarter the size and makes the
+ * integrity digest cover exactly the claim being made: these addresses are
+ * called these things and scale by these decimals.
+ */
+export interface StorableTokenList {
+  name: string;
+  tokens: {
+    /**
+     * Decimal, as a string. The token-list convention writes this as a JSON
+     * number, but the canonical list carries Starknet rows whose chain ID is
+     * 23448594291968334 — larger than `Number.MAX_SAFE_INTEGER`, so a number
+     * here would silently store a different chain than the one the API
+     * reported. A consumer that wants an integer can parse one; a consumer
+     * handed a rounded number has no way to notice.
+     */
+    chain_id: string;
+    address: string;
+    symbol: string;
+    name: string;
+    decimals: number;
+  }[];
+}
+
 const PLAN_INSTRUCTION =
   "Pass this reference object unchanged as the wallet's reference argument for simulating and sending. Do not fetch, restate, or reconstruct the plan; the wallet fetches it, verifies integrity, and validates it. A fetch 404 means the reference expired: re-run the Ekubo preparation tool for a fresh plan.";
 
 const READ_CALLS_INSTRUCTION =
   "Pass this reference object unchanged as wallet_batch_eth_call's reference argument, with no inline calls; the wallet fetches, verifies, and executes the stored calls itself. Do not fetch or restate the calls. A fetch 404 means the reference expired: re-run the tool that produced it.";
 
+const TOKEN_LIST_INSTRUCTION =
+  "Pass this reference object unchanged as the reference argument of the wallet's propose-tokens tool (to suggest these names to its owner) or its get-balances tool (to read balances for these addresses), with no inline tokens; the wallet fetches and integrity-verifies the list itself. Do not fetch or restate the entries — writing out a thousand-token list costs roughly fifty thousand output tokens and this envelope costs a few hundred. A fetch 404 means the reference expired: re-run the tool that produced it.";
+
 export async function storeArtifact(
   env: Env,
   origin: string,
   artifact:
     | { artifactType: "execution_plan"; body: StorableExecutionPlan }
-    | { artifactType: "read_calls"; body: StorableReadCalls },
+    | { artifactType: "read_calls"; body: StorableReadCalls }
+    | { artifactType: "token_list"; body: StorableTokenList },
 ): Promise<ArtifactReference> {
   const body = JSON.stringify(artifact.body);
   const id = crypto.randomUUID();
@@ -102,12 +136,15 @@ export async function storeArtifact(
     // UTF-8 byte length, matching the Content-Length header the /artifact
     // route serves; string length would diverge on any non-ASCII byte.
     bytes: new TextEncoder().encode(body).length,
-    instruction:
-      artifact.artifactType === "execution_plan"
-        ? PLAN_INSTRUCTION
-        : READ_CALLS_INSTRUCTION,
+    instruction: INSTRUCTIONS[artifact.artifactType],
   };
 }
+
+const INSTRUCTIONS: Record<ArtifactType, string> = {
+  execution_plan: PLAN_INSTRUCTION,
+  read_calls: READ_CALLS_INSTRUCTION,
+  token_list: TOKEN_LIST_INSTRUCTION,
+};
 
 export async function loadArtifact(
   env: Env,
