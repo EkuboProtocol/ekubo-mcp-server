@@ -1230,7 +1230,7 @@ const chainReadBundleListSchema = z.array(
     read_calls_reference: artifactReferenceSchema,
   }),
 );
-function toolOutputSchema(name: string) {
+export function toolOutputSchema(name: string) {
   if (name === "ekubo_get_quotes_with_plans") return quotesOutputSchema;
   if (name.startsWith("ekubo_prepare_")) return preparedPlanOutputSchema;
   switch (name) {
@@ -1261,11 +1261,14 @@ function toolOutputSchema(name: string) {
       });
     case "ekubo_get_liquidity_opportunities":
       return z.looseObject({
+        // Null is the answer, not the absence of one: a ranking that needed no
+        // wallet-local emission read says so by naming the slot and emptying
+        // it, the way the result's other inapplicable fields do.
         local_read_requirement: z
           .looseObject({
             read_calls_reference: artifactReferenceSchema.optional(),
           })
-          .optional(),
+          .nullish(),
       });
     default:
       return undefined;

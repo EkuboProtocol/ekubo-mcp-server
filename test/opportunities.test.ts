@@ -2,6 +2,7 @@ import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
 import type { Env } from "../src/core.js";
 import { getLiquidityOpportunities } from "../src/opportunities.js";
+import { toolOutputSchema } from "../src/server.js";
 import { derivePoolId } from "../src/pools.js";
 
 const env = {
@@ -313,5 +314,34 @@ describe("liquidity opportunities", () => {
     expect(result.status).toBe("complete");
     expect(result.local_read_requirement).toBeNull();
     expect(result.opportunities).toHaveLength(1);
+  });
+
+  // The two branches above were each asserted against the producer and never
+  // against the contract the server actually validates results with, so a
+  // schema that accepted only the requiring branch looked correct in tests
+  // while rejecting every completed ranking at the wire.
+  it("validates both branches against the declared output schema", async () => {
+    const schema = toolOutputSchema("ekubo_get_liquidity_opportunities");
+    if (schema === undefined) {
+      throw new Error("expected a declared output schema for the tool");
+    }
+
+    const requiringRead = await getLiquidityOpportunities(
+      env,
+      { types: ["boosted_fees", "incentive", "ve33_emissions"], limit: 25 },
+      fixtureFetch([]),
+      nowMs,
+    );
+    expect(requiringRead.local_read_requirement).not.toBeNull();
+    expect(schema.safeParse(requiringRead).success).toBe(true);
+
+    const noReadRequired = await getLiquidityOpportunities(
+      env,
+      { chainId, types: ["boosted_fees"], limit: 1 },
+      fixtureFetch([]),
+      nowMs,
+    );
+    expect(noReadRequired.local_read_requirement).toBeNull();
+    expect(schema.safeParse(noReadRequired).success).toBe(true);
   });
 });
