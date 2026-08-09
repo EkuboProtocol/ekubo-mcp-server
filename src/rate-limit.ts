@@ -269,9 +269,17 @@ function toolCallName(message: unknown): string | null {
 /**
  * Draw one request from the two request-level budgets. Applies to every route
  * the Worker serves, not just `/mcp`: a stored-artifact fetch costs an R2 read
- * and the uncached discovery routes rebuild the tool catalog, so neither is
- * free to hammer, and a query string is enough to walk past the edge cache in
- * front of the cached ones.
+ * and `/tools` rebuilds the catalog, so neither is free to hammer.
+ *
+ * Those are also the routes where this actually bites, because every one of
+ * them sends `no-store` and so always reaches the Worker. The routes that do
+ * carry a `max-age` — `/`, `/openapi.json`, `/llms.txt`, `/robots.txt` — are
+ * mostly absorbed by the edge cache before this code runs. Measured against
+ * production: 45 requests to `/?cachebust=<n>`, every one with a distinct
+ * query string, produced 6 Worker invocations. A unique query string is not
+ * the cache bypass it is often assumed to be, so do not reason about this
+ * budget as though it meters those routes; it meters the ones that cost
+ * something, which is what it is for.
  *
  * Both budgets are drawn even when the first one rejects. They are per-request
  * counters over different windows, and a caller parked just under the burst

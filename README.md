@@ -518,6 +518,22 @@ counters are per-colo rather than globally consistent, which is the right trade
 for a per-caller limit — one caller's requests land in one colo — and leaves
 the distributed case to the edge rule below.
 
+They are also eventually consistent *within* a colo, which matters the moment
+anyone tries to verify this by hand. Measured against production: 60 requests
+issued back to back over one keep-alive connection, 1.3 seconds total, returned
+31 × 200 and then 429 from request 32 with `Retry-After: 10` — the burst budget
+behaving exactly as configured. The same 60 requests fired 25-at-a-time all
+returned 200, because concurrent requests read the counter before any of their
+increments land. A burst test that passes proves nothing; test sequentially.
+
+Verifying `RATE_LIMITER_TOOLS` does not require spending anything upstream.
+Cost is charged from the tool name before dispatch, so calling an expensive
+tool with arguments that fail schema validation draws its full price and never
+reaches a provider: 16 calls to `ekubo_prepare_ve33_reinvest` (8 units each)
+crossed the 120-unit budget and returned the `tool_units` rejection with no
+upstream request made. Do not burst-test `RATE_LIMITER_METERED` the same way —
+those calls spend real 0x and Dune credit.
+
 Requests are also capped at 262,144 bytes (HTTP 413), 20 JSON-RPC messages, and
 40 tool units (both HTTP 400), so one request cannot carry an unbounded number
 of billable calls. The unit ceiling refuses rather than clamps: charging a
