@@ -2,6 +2,7 @@ import {
   encodeFunctionData,
   getAddress,
   multicall3Abi,
+  numberToHex,
   parseAbi,
   type Address,
   type Hex,
@@ -188,7 +189,7 @@ export function prepareRewardsClaim(input: {
   sender: string;
   claims: RewardsClaimInput[];
 }) {
-  const sender = getAddress(input.sender);
+  const sender = normalizeAddress(input.sender, "sender");
   if (input.claims.length === 0 || input.claims.length > 200) {
     throw new ServiceError(
       "invalid_claims",
@@ -196,9 +197,15 @@ export function prepareRewardsClaim(input: {
     );
   }
   const claims = input.claims.map((item, index) => {
-    const dropAddress = getAddress(item.dropAddress);
-    const owner = getAddress(item.key.owner);
-    const account = getAddress(item.claim.account);
+    const dropAddress = normalizeAddress(
+      item.dropAddress,
+      `claims[${index}].drop_address`,
+    );
+    const owner = normalizeAddress(item.key.owner, `claims[${index}].key.owner`);
+    const account = normalizeAddress(
+      item.claim.account,
+      `claims[${index}].claim.account`,
+    );
     if (owner !== sender || account !== sender) {
       throw new ServiceError(
         "claim_owner_mismatch",
@@ -219,7 +226,11 @@ export function prepareRewardsClaim(input: {
     }
     return {
       dropAddress,
-      key: { owner, token: getAddress(item.key.token), root: item.key.root },
+      key: {
+        owner,
+        token: normalizeAddress(item.key.token, `claims[${index}].key.token`),
+        root: item.key.root,
+      },
       claim: {
         index: unsigned(item.claim.index, 256, `claims[${index}].index`),
         account,
@@ -543,17 +554,23 @@ function normalizeIndexedRewardClaim(
       throw new Error("chainId must be positive");
     }
     const chainId = BigInt(chainIdRaw).toString();
-    const dropAddress = getAddress(String(value.dropAddress));
+    const dropAddress = normalizeAddress(
+      String(value.dropAddress),
+      "drop_address",
+    );
     const key = {
-      owner: getAddress(String(value.key.owner)),
-      token: getAddress(String(value.key.token)),
+      owner: normalizeAddress(String(value.key.owner), "key.owner"),
+      token: normalizeAddress(String(value.key.token), "key.token"),
       root: String(value.key.root) as Hex,
     };
     if (!/^0x[0-9a-fA-F]{64}$/.test(key.root)) {
       throw new Error("root must be bytes32");
     }
     const claimIndex = unsigned(String(value.claim.index), 256, "claim.index");
-    const account = getAddress(String(value.claim.account));
+    const account = normalizeAddress(
+      String(value.claim.account),
+      "claim.account",
+    );
     const amount = positiveUnsigned(
       String(value.claim.amount),
       128,
@@ -615,6 +632,22 @@ function positiveUnsigned(value: string, bits: number, label: string) {
     throw new ServiceError("invalid_integer", `${label} must be positive`);
   }
   return parsed;
+}
+
+// The claims API serializes addresses as unpadded hex integers, so a value with
+// leading zero nibbles arrives shorter than 20 bytes (the EKUBO token reaches us
+// as 0x4c46...d0f rather than 0x04c46...d0f). Widening to 20 bytes recovers the
+// exact same address, and `numberToHex` still rejects anything that does not fit,
+// so no value can be coerced into a different address.
+function normalizeAddress(value: string, label: string): Address {
+  try {
+    return getAddress(numberToHex(BigInt(value), { size: 20 }));
+  } catch {
+    throw new ServiceError(
+      "invalid_address",
+      `${label} must be an address that fits in 20 bytes: ${value}`,
+    );
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
