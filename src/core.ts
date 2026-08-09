@@ -19,13 +19,27 @@ import {
   executionPlan,
 } from "./execution-plan.js";
 
-export type Env = Cloudflare.Env & {
-  ZERO_X_API_URL?: string;
-  ACROSS_API_URL?: string;
-  ALLOWED_HOSTNAMES?: string;
-  ALLOWED_ORIGINS?: string;
-  RATE_LIMITER?: RateLimit;
-};
+/**
+ * Rate limiter bindings are declared in `wrangler.jsonc`, so generated types
+ * make them required, but the code treats every one of them as absent-tolerant
+ * on purpose: `wrangler dev` and any deployment that has not provisioned the
+ * namespaces must still serve, with abuse protection degraded rather than the
+ * endpoint down. Widening them back to optional here keeps that contract in
+ * the type system instead of only in the comments.
+ */
+type OptionalBindings =
+  | "RATE_LIMITER"
+  | "RATE_LIMITER_BURST"
+  | "RATE_LIMITER_TOOLS"
+  | "RATE_LIMITER_METERED";
+
+export type Env = Omit<Cloudflare.Env, OptionalBindings> &
+  Partial<Pick<Cloudflare.Env, OptionalBindings>> & {
+    ZERO_X_API_URL?: string;
+    ACROSS_API_URL?: string;
+    ALLOWED_HOSTNAMES?: string;
+    ALLOWED_ORIGINS?: string;
+  };
 
 export type QuoteSource = "ekubo" | "0x" | "across";
 

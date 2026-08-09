@@ -24,6 +24,45 @@
       "bucket_name": "mcp-artifacts"
     }
   ],
+  // Per-caller budgets. The endpoint is unauthenticated, so the caller is an
+  // IPv4 address or an IPv6 /64, and these numbers are the whole of what one
+  // of them may spend. See src/rate-limit.ts for what each budget bounds and
+  // README.md for the edge rule that sits in front of them.
+  //
+  // Namespace IDs are arbitrary and only have to stay unique and stable within
+  // this Worker: changing one resets its counters.
+  "ratelimits": [
+    {
+      "name": "RATE_LIMITER_BURST",
+      "namespace_id": "1001",
+      // A flood is visible within ten seconds instead of after a minute of it.
+      // Sized above any legitimate client's start-up burst: an MCP session
+      // opens with initialize, tools/list, and resources/list back to back.
+      "simple": { "limit": 30, "period": 10 }
+    },
+    {
+      "name": "RATE_LIMITER",
+      "namespace_id": "1002",
+      // Sustained requests across every route, tool calls included.
+      "simple": { "limit": 120, "period": 60 }
+    },
+    {
+      "name": "RATE_LIMITER_TOOLS",
+      "namespace_id": "1003",
+      // Weighted tool cost, where 1 unit is one ordinary prod-api read. At 120
+      // a caller gets roughly ten full swap flows a minute, or a hundred
+      // catalog reads, and a catalog scrape stalls within seconds.
+      "simple": { "limit": 120, "period": 60 }
+    },
+    {
+      "name": "RATE_LIMITER_METERED",
+      "namespace_id": "1004",
+      // Calls that spend 0x, Across, or Dune credit. Small and separate on
+      // purpose: this is the budget that maps to an invoice, and no amount of
+      // cheap traffic should be able to buy headroom in it.
+      "simple": { "limit": 20, "period": 60 }
+    }
+  ],
   "observability": {
     "enabled": true
   }

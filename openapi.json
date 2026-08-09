@@ -38,6 +38,9 @@
           },
           "404": {
             "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         }
       }
@@ -84,6 +87,9 @@
           },
           "404": {
             "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         }
       }
@@ -105,6 +111,9 @@
           },
           "404": {
             "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         }
       }
@@ -119,6 +128,9 @@
           },
           "405": {
             "description": "No stream is available for the request"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         }
       },
@@ -156,10 +168,14 @@
             "description": "MCP notification accepted"
           },
           "400": {
-            "description": "Invalid MCP request"
+            "description": "Invalid MCP request, more than 20 JSON-RPC messages in one request, or tool calls whose combined cost exceeds the 40-unit per-request ceiling"
+          },
+          "413": {
+            "description": "Request body larger than 262144 bytes",
+            "$ref": "#/components/responses/Error"
           },
           "429": {
-            "description": "Rate limit exceeded"
+            "$ref": "#/components/responses/RateLimited"
           }
         }
       }
@@ -167,6 +183,32 @@
   },
   "components": {
     "responses": {
+      "RateLimited": {
+        "description": "Per-caller rate limit exceeded. Limits apply per IPv4 address or IPv6 /64 over four budgets: requests per few seconds, requests per minute, weighted tool cost per minute, and calls per minute to tools that buy quotes or recommendations from a third party. Honor Retry-After rather than retrying on a fixed interval.",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds to wait before retrying.",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/JsonRpcRateLimitError"
+                }
+              ]
+            }
+          }
+        }
+      },
       "Error": {
         "description": "Request failed",
         "content": {
@@ -197,6 +239,74 @@
               },
               "message": {
                 "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "JsonRpcRateLimitError": {
+        "description": "Returned when the rejected request was a single identified JSON-RPC call, so the client can attach the refusal to that call.",
+        "type": "object",
+        "required": [
+          "jsonrpc",
+          "id",
+          "error"
+        ],
+        "properties": {
+          "jsonrpc": {
+            "type": "string",
+            "const": "2.0"
+          },
+          "id": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message",
+              "data"
+            ],
+            "properties": {
+              "code": {
+                "type": "integer",
+                "const": -32029
+              },
+              "message": {
+                "type": "string"
+              },
+              "data": {
+                "type": "object",
+                "required": [
+                  "reason",
+                  "scope",
+                  "retry_after_seconds"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "const": "rate_limited"
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "burst",
+                      "sustained",
+                      "tool_units",
+                      "metered_providers"
+                    ]
+                  },
+                  "retry_after_seconds": {
+                    "type": "integer"
+                  }
+                }
               }
             }
           }

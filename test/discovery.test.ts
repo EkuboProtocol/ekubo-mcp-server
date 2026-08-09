@@ -26,6 +26,11 @@ import {
 } from "../src/server.js";
 import { storeArtifact } from "../src/artifact-store.js";
 import {
+  MAX_BATCH_LENGTH,
+  MAX_MCP_BODY_BYTES,
+  MAX_UNITS_PER_REQUEST,
+} from "../src/rate-limit.js";
+import {
   MCP_SERVER_VERSION,
   MCP_TOOL_CATALOG_REVISION,
 } from "../src/version.js";
@@ -122,7 +127,17 @@ describe("Worker discovery", () => {
         custom_bytes: { input: string; raw_return_data_preserved: boolean };
       };
       operational_semantics: {
-        rate_limit_contract: string;
+        rate_limit_contract: {
+          quota: string;
+          scopes: Record<string, string>;
+          response: string;
+          client_obligation: string;
+          request_limits: {
+            max_body_bytes: number;
+            max_jsonrpc_messages_per_request: number;
+            max_tool_units_per_request: number;
+          };
+        };
         polling_guidance: { pool_liquidity_depth_seconds: number };
       };
     };
@@ -152,9 +167,23 @@ describe("Worker discovery", () => {
         raw_return_data_preserved: true,
       },
     });
-    expect(metadata.operational_semantics.rate_limit_contract).toContain(
-      "Retry-After: 60",
-    );
+    const rateLimitContract =
+      metadata.operational_semantics.rate_limit_contract;
+    expect(rateLimitContract.response).toContain("Retry-After");
+    expect(rateLimitContract.response).toContain("-32029");
+    // Every scope the Worker can reject with is named, so a client can branch
+    // on data.scope without guessing what values exist.
+    expect(Object.keys(rateLimitContract.scopes).sort()).toEqual([
+      "burst",
+      "metered_providers",
+      "sustained",
+      "tool_units",
+    ]);
+    expect(rateLimitContract.request_limits).toEqual({
+      max_body_bytes: MAX_MCP_BODY_BYTES,
+      max_jsonrpc_messages_per_request: MAX_BATCH_LENGTH,
+      max_tool_units_per_request: MAX_UNITS_PER_REQUEST,
+    });
     expect(
       metadata.operational_semantics.polling_guidance
         .pool_liquidity_depth_seconds,

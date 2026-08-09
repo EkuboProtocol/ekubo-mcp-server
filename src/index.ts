@@ -3,6 +3,16 @@ import openapi from "../openapi.json";
 import type { Env } from "./core.js";
 import { ARTIFACT_TTL_SECONDS, loadArtifact } from "./artifact-store.js";
 import {
+  chargeForMcpBody,
+  enforceRequestRate,
+  enforceToolRate,
+  MAX_BATCH_LENGTH,
+  MAX_MCP_BODY_BYTES,
+  MAX_UNITS_PER_REQUEST,
+  rateLimitActor,
+  type RateLimitRejection,
+} from "./rate-limit.js";
+import {
   createEkuboServer,
   publicToolCatalog,
   publicToolCatalogWithOutputs,
@@ -12,12 +22,23 @@ import { MCP_SERVER_VERSION, MCP_TOOL_CATALOG_REVISION } from "./version.js";
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const url = new URL(request.url);
+    const actor = rateLimitActor(request);
+
+    // A CORS preflight carries no body and does no work; limiting it only
+    // breaks browser clients without denying an abuser anything.
+    if (request.method !== "OPTIONS") {
+      const rejection = await enforceRequestRate(env, actor);
+      if (rejection !== null) return rateLimited(rejection, null);
+    }
 
     if (url.pathname === "/mcp") {
-      const limited = await rateLimit(request, env);
-      if (limited !== null) return limited;
+      const admitted = await admitMcpRequest(request, env, actor);
+      if (admitted.rejection !== null) return admitted.rejection;
+      // Pricing a call means reading the body, so what reaches the MCP handler
+      // is a replay of this request carrying those same bytes.
+      const mcpRequest = admitted.request;
 
-      const requestOrigin = request.headers.get("origin");
+      const requestOrigin = mcpRequest.headers.get("origin");
       const handler = createMcpHandler(() => createEkuboServer(env, url.origin), {
         route: "/mcp",
         allowedHostnames:
@@ -34,7 +55,7 @@ export default {
         },
         allowedOriginHostnames: allowedOriginHostnames(env, url.hostname),
       });
-      const response = withSecurityHeaders(await handler(request, env, ctx));
+      const response = withSecurityHeaders(await handler(mcpRequest, env, ctx));
       response.headers.set("cache-control", "no-store");
       return response;
     }
@@ -175,8 +196,33 @@ export default {
               },
               mcp_http_cache:
                 "no-store; tool calls are not replayed from an MCP cache",
-              rate_limit_contract:
-                "No fixed request quota is guaranteed. A configured deployment limiter returns HTTP 429 with Retry-After: 60; clients must back off and honor that header.",
+              // Shapes, not numbers. A client needs to know which budget it
+              // hit and how to stop hitting it; a scraper given the exact
+              // ceilings would simply run just underneath them.
+              rate_limit_contract: {
+                quota:
+                  "No fixed request quota is guaranteed. Limits are enforced per caller, where a caller is one IPv4 address or one IPv6 /64.",
+                scopes: {
+                  burst: "requests over a few seconds, across every route",
+                  sustained: "requests over one minute, across every route",
+                  tool_units:
+                    "weighted tool cost over one minute; a bulk, fan-out, or provider-backed call costs several times an ordinary read, and a purely local one costs nothing",
+                  metered_providers:
+                    "calls over one minute to the tools that buy quotes or recommendations from a third party",
+                },
+                response:
+                  "HTTP 429 with Retry-After in seconds. A single identified JSON-RPC call is answered with JSON-RPC error code -32029 carrying data.scope and data.retry_after_seconds.",
+                client_obligation:
+                  "Honor Retry-After rather than retrying on a fixed interval. Batch identifiers into one call instead of paging the catalog, narrow filters instead of enumerating, and reuse a quote already held instead of re-fetching it.",
+                request_limits: {
+                  max_body_bytes: MAX_MCP_BODY_BYTES,
+                  max_jsonrpc_messages_per_request: MAX_BATCH_LENGTH,
+                  // An over-ceiling request is refused rather than served at a
+                  // discount. No individual tool reaches the ceiling, so this
+                  // only ever asks a client to split a batch.
+                  max_tool_units_per_request: MAX_UNITS_PER_REQUEST,
+                },
+              },
               polling_guidance: {
                 positions_by_owner:
                   "Upstream uses no-cache; poll only when ownership or liquidity may have changed.",
@@ -280,24 +326,135 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-async function rateLimit(request: Request, env: Env): Promise<Response | null> {
-  if (env.RATE_LIMITER === undefined || request.method === "OPTIONS") {
-    return null;
+/**
+ * Price an MCP request against the per-tool budgets before the MCP handler
+ * sees it.
+ *
+ * Deciding what a call costs means knowing which tool it names, and the only
+ * place that is knowable before the work starts is the JSON-RPC body. So the
+ * body is read here and the request is rebuilt around those same bytes for the
+ * handler; a `GET` (the SSE stream) has no body and passes straight through.
+ *
+ * Rejecting here rather than inside a tool is deliberate: an HTTP 429 with
+ * `Retry-After` is a status every client already knows how to back off from,
+ * and it costs no upstream call to produce.
+ */
+async function admitMcpRequest(
+  request: Request,
+  env: Env,
+  actor: string,
+): Promise<{ request: Request; rejection: Response | null }> {
+  if (request.method !== "POST") return { request, rejection: null };
+
+  const declaredLength = Number(request.headers.get("content-length") ?? "0");
+  if (declaredLength > MAX_MCP_BODY_BYTES) {
+    return { request, rejection: bodyTooLarge() };
   }
-  const actor = request.headers.get("cf-connecting-ip") ?? "anonymous";
-  const { success } = await env.RATE_LIMITER.limit({ key: `mcp:${actor}` });
-  return success
-    ? null
-    : json(
-        {
+  const body = await request.text();
+  if (new TextEncoder().encode(body).length > MAX_MCP_BODY_BYTES) {
+    return { request, rejection: bodyTooLarge() };
+  }
+  // The handler is given the bytes we priced, not a second read of a stream
+  // that has already been consumed. Rebuilt from the URL rather than cloned so
+  // it does not depend on how a runtime treats a Request whose body was read.
+  const replayed = new Request(request.url, {
+    method: request.method,
+    headers: request.headers,
+    body,
+  });
+
+  const priced = chargeForMcpBody(body);
+  if (!priced.ok) {
+    // An unparseable body is the MCP handler's error to report, not ours: it
+    // owns the JSON-RPC parse-error contract and the session semantics around
+    // it. The oversized asks are refused here, because serving them is what we
+    // are declining to do.
+    if (priced.reason === "unparseable") {
+      return { request: replayed, rejection: null };
+    }
+    return {
+      request: replayed,
+      rejection:
+        priced.reason === "too_many_calls"
+          ? json(
+              {
+                error: {
+                  code: "batch_too_large",
+                  message: `Send at most ${MAX_BATCH_LENGTH} JSON-RPC messages per request.`,
+                },
+              },
+              400,
+            )
+          : json(
+              {
+                error: {
+                  code: "batch_too_expensive",
+                  message: `The tool calls in this request cost more than the ${MAX_UNITS_PER_REQUEST}-unit per-request ceiling. Split them across separate requests; every individual tool call is under the ceiling on its own.`,
+                },
+              },
+              400,
+            ),
+    };
+  }
+
+  const rejection = await enforceToolRate(env, actor, priced.charge);
+  return {
+    request: replayed,
+    rejection: rejection === null ? null : rateLimited(rejection, priced.id),
+  };
+}
+
+function bodyTooLarge() {
+  return json(
+    {
+      error: {
+        code: "request_too_large",
+        message: `MCP request bodies are limited to ${MAX_MCP_BODY_BYTES} bytes.`,
+      },
+    },
+    413,
+  );
+}
+
+/**
+ * One rejection, said twice: as the HTTP status and `Retry-After` header a
+ * transport backs off on, and — when the request was a single identified
+ * JSON-RPC call — as an error body the client can attach to that call, so the
+ * agent driving it reads why it was refused instead of only that it was.
+ */
+function rateLimited(
+  rejection: RateLimitRejection,
+  id: string | number | null,
+) {
+  const body =
+    id === null
+      ? {
           error: {
             code: "rate_limited",
-            message: "Too many MCP requests; retry later",
+            scope: rejection.scope,
+            message: rejection.message,
+            retry_after_seconds: rejection.retryAfterSeconds,
           },
-        },
-        429,
-        { "retry-after": "60" },
-      );
+        }
+      : {
+          jsonrpc: "2.0",
+          id,
+          error: {
+            // Implementation-defined server error; the JSON-RPC range
+            // -32000..-32099 is reserved for exactly this.
+            code: -32029,
+            message: rejection.message,
+            data: {
+              reason: "rate_limited",
+              scope: rejection.scope,
+              retry_after_seconds: rejection.retryAfterSeconds,
+            },
+          },
+        };
+  return json(body, 429, {
+    "retry-after": String(rejection.retryAfterSeconds),
+    "cache-control": "no-store",
+  });
 }
 
 function allowedOriginHostnames(env: Env, requestHostname: string): string[] {
@@ -379,7 +536,7 @@ EVM contract directory: ekubo://contracts/evm
 Operational semantics:
 - Execution plan bodies, read-call bundles (exact wallet_batch_eth_call argument objects), and token lists exported by ekubo_export_tokens are stored at ${origin}/artifact/<id> and returned as artifact_reference envelopes under execution_plan_reference, read_calls_reference, and token_list_reference. Pass the whole envelope unchanged as the wallet tool's reference argument; the wallet fetches the body itself and verifies integrity. A 404 means the reference expired: re-run the tool that produced it. No other tool results are stored or replayed.
 - Onchain read plans carry canonical ABIs for local wallet decoding. Raw return bytes are included by default and preserved on failure. semantic_value passes a custom non-ABI raw result through a locally installed allowlisted codec; remote plans never supply executable code.
-- No fixed request quota is guaranteed. If the deployment limiter returns HTTP 429, honor Retry-After: 60 and back off.
+- No fixed request quota is guaranteed. Limits are per caller (one IPv4 address or one IPv6 /64) and are enforced over four budgets: requests per few seconds, requests per minute, weighted tool cost per minute, and calls per minute to tools that buy quotes or recommendations from a third party. A bulk, fan-out, or provider-backed tool costs several times an ordinary read; a purely local one costs nothing. Rejection is HTTP 429 with Retry-After in seconds, and a single identified JSON-RPC call also gets error code -32029 with data.scope. Honor Retry-After instead of retrying on a fixed interval, batch identifiers into one call instead of paging the catalog, and reuse a quote already held instead of re-fetching it. Request bodies are limited to ${MAX_MCP_BODY_BYTES} bytes, ${MAX_BATCH_LENGTH} JSON-RPC messages, and ${MAX_UNITS_PER_REQUEST} tool units; no single tool call reaches that ceiling, so it only ever asks a batch to be split.
 - Owner positions use upstream no-cache semantics. Position tools join canonical token metadata and USD prices and provide exact atomic pending eth_call plans for current position state. Pair-pool discovery defaults to a zero TVL floor and returns verified PoolKeys plus the correct position manager. Liquidity opportunities match the interface's boosted-fee, active-incentive, and Ve33-emission feed; pair/boost data is cached upstream for up to 600 seconds, campaigns for 300 seconds, and Ve33 pools for 30 seconds. Every EVM interface transaction path has a first-class prepare tool returning complete wallet execution plans; wallet tooling never constructs or appends calls. Indexed pool state is cached upstream for up to 180 seconds; tick liquidity and pool keys for up to 1,800 seconds. STONX recommendations are at most 86,400 seconds old.
 
 STONX allocation shortcut:

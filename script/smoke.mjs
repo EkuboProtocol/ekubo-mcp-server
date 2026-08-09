@@ -1,5 +1,5 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-const expectedServerVersion = "0.27.0";
+const expectedServerVersion = "0.28.0";
 const expectedCatalogRevision = "2026-08-07.local-tool-annotations";
 const smokeNonce = `${Date.now()}-${Math.random()}`;
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
@@ -19,6 +19,18 @@ assert(
 assert(
   metadata.tool_catalog_revision === expectedCatalogRevision,
   "root tool catalog revision is stale",
+);
+// The limiter bindings are provisioned outside this repository, so a deploy
+// can silently come up with abuse protection missing. The published contract
+// is the one part of it a smoke run can see from outside.
+assert(
+  ["burst", "sustained", "tool_units", "metered_providers"].every(
+    (scope) =>
+      typeof metadata.operational_semantics?.rate_limit_contract?.scopes?.[
+        scope
+      ] === "string",
+  ),
+  "root rate limit contract is missing a scope",
 );
 
 const openapi = await getJson("/openapi.json");

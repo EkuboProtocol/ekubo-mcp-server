@@ -214,7 +214,7 @@ bind the exact stored bytes; the agent passes the envelope unchanged as the
 wallet tool's `reference` argument. No other tool
 result is stored or replayed, and `/mcp` responses use
 `Cache-Control: no-store`. No fixed request quota is guaranteed; clients must
-honor HTTP 429 and `Retry-After: 60`. Owner positions use upstream `no-cache`
+honor HTTP 429 and the `Retry-After` header it carries. Owner positions use upstream `no-cache`
 semantics. Indexed pool-state snapshots may be cached upstream for 180 seconds,
 while PoolKeys and tick-liquidity data may be cached for 1,800 seconds. Polling
 more frequently than those freshness windows does not produce fresher pool
@@ -473,11 +473,89 @@ variables if the deployment needs a stricter host list or cross-origin browser
 MCP clients. The request's own hostname is always accepted as a browser origin;
 non-browser MCP clients normally omit `Origin`.
 
-For production abuse protection, add a Cloudflare Workers Rate Limiting
-binding named `RATE_LIMITER` or enforce an equivalent account-level rule. The
-Worker automatically uses that binding when present and returns HTTP 429 after
-the configured limit. See the [Cloudflare Rate Limiting binding
-documentation](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/).
+## Abuse protection
+
+The endpoint is public and unauthenticated, so there is no account to bill or
+suspend. A caller is an IPv4 address or an IPv6 /64 — a single v6 address is
+not an identity, since the smallest allocation a residential or cloud customer
+receives is a /64 — taken from `cf-connecting-ip`, which Cloudflare sets on the
+way in. `x-forwarded-for` is client-supplied and deliberately never consulted.
+
+### Worker budgets
+
+Four [Rate Limiting
+bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)
+are declared in `wrangler.jsonc`. They exist separately because the failure
+modes have different shapes and one requests-per-minute number cannot express
+any two of them at once. `src/rate-limit.ts` holds the cost table.
+
+| Binding | Window | Default | Bounds |
+| --- | --- | --- | --- |
+| `RATE_LIMITER_BURST` | 10s | 30 requests | A flood, visible within ten seconds rather than after a minute of it |
+| `RATE_LIMITER` | 60s | 120 requests | Sustained request volume across every route |
+| `RATE_LIMITER_TOOLS` | 60s | 120 units | Weighted tool cost: scraping and upstream load |
+| `RATE_LIMITER_METERED` | 60s | 20 calls | Calls that spend 0x, Across, or Dune credit |
+
+The unit scale is anchored at 1 = one ordinary `prod-api` read. A bulk or
+fan-out read costs 3–4, a preparation that writes an artifact costs 3, a quote
+comparison costs 10, and a STONX recommendation costs 20; `ekubo_derive_pool_id`
+and `ekubo_decode_pool_config` touch nothing and cost nothing. A tool with no
+entry in the table is charged 3 if it is a preparation and 2 otherwise, so a
+tool added later without a deliberate price is over-charged rather than free.
+At the defaults a caller gets roughly ten complete swap flows or a hundred
+catalog reads a minute, and a catalog scrape stalls within seconds.
+
+`RATE_LIMITER_METERED` is separate from `RATE_LIMITER_TOOLS` on purpose: it is
+the budget that maps to an invoice, and no volume of cheap local calls should
+be able to buy headroom in it. Tune any of these by editing `simple.limit` in
+`wrangler.jsonc`; changing a `namespace_id` resets that budget's counters.
+
+Every binding is optional at runtime. An unbound limiter admits everything,
+which is what makes `wrangler dev` and an unprovisioned preview deployment
+usable, and a limiter that throws also admits and logs
+`rate_limiter_unavailable`: losing a counter must not lose the endpoint. The
+counters are per-colo rather than globally consistent, which is the right trade
+for a per-caller limit — one caller's requests land in one colo — and leaves
+the distributed case to the edge rule below.
+
+Requests are also capped at 262,144 bytes (HTTP 413), 20 JSON-RPC messages, and
+40 tool units (both HTTP 400), so one request cannot carry an unbounded number
+of billable calls. The unit ceiling refuses rather than clamps: charging a
+160-unit batch 40 units and serving it is precisely the hole a cost model is
+supposed to close. No single tool reaches 40, so the ceiling only ever asks a
+client to split a batch — and JSON-RPC batching was removed from the protocol
+in revision 2025-06-18 anyway.
+
+A rejection is an HTTP 429 with `Retry-After` in seconds. When the request was
+a single identified JSON-RPC call it also carries a JSON-RPC error with code
+`-32029` and a `data.scope` of `burst`, `sustained`, `tool_units`, or
+`metered_providers`, so the agent driving the client reads why it was refused
+and what to do differently rather than only that it was refused.
+
+### Edge rule
+
+The Worker budgets run per request, which means a volumetric flood still pays
+for a Worker invocation each time. Put a zone-level [WAF rate limiting
+rule](https://developers.cloudflare.com/waf/rate-limiting-rules/) on
+`ekubo.org` in front of them so the flood is dropped before it reaches this
+code, and so a distributed attack — which per-colo counters see only a slice of
+— is handled where the aggregate is visible:
+
+- **When incoming requests match:** `(http.host eq "mcp.ekubo.org")`
+- **Characteristics:** IP with NAT support
+- **Rate:** 600 requests per 60 seconds
+- **Action:** Block, for 60 seconds, with a custom JSON response carrying
+  `Retry-After: 60`
+
+Set it well above the Worker budgets. It is a circuit breaker for traffic that
+is not worth a Worker invocation, not the limit that shapes normal use; the
+Worker budgets are what actually bound cost and scraping, because only they
+know what a request is asking for.
+
+One caveat: **`workers_dev` is currently `true`**, so the Worker is also
+reachable at its `*.workers.dev` hostname, and a zone rule on `mcp.ekubo.org`
+does not apply there. Anything that must not be bypassed belongs in the Worker.
+Set `workers_dev: false` once `mcp.ekubo.org` is the only intended entry point.
 
 ## Development
 
