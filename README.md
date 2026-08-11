@@ -182,7 +182,12 @@ select a quote. Same-chain requests return every Ekubo and 0x option in
 choose. Supply `sender` and `slippage_bps` together and each option also
 carries the `execution_plan_reference` that executes it, so a chosen plan goes
 straight to a wallet with no second round trip and the compared quote is the
-executed one. Omit both for an indicative comparison, and set `include_raw_quotes` to
+executed one. Unless the user specifies a tolerance, choose `slippage_bps` so
+the maximum value exposed to slippage is approximately one estimated gas fee
+(`10_000 * gas cost / swap notional`, with both values in the same currency),
+not a generic 50 bps/0.5%. Prefer re-quoting and preparing new calldata after
+a slippage failure to widening that bound; never resubmit reverted calldata
+unchanged. Omit both for an indicative comparison, and set `include_raw_quotes` to
 add the untouched provider responses, which are otherwise left out as the
 largest and least useful part of a response.
 If a configured provider fails, the response reports it in

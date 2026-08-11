@@ -548,7 +548,7 @@ Safe swap and bridge sequence:
 1. Use ekubo_list_tokens with search when resolving a symbol. Use ekubo_get_token for one known chain/address pair, or ekubo_get_tokens for 1–1,000 known pairs in one batch request. Batch results preserve input order and duplicates while omitting unknown identifiers. Show the selected chains and addresses.
 2. Convert the amount to base units using token decimals.
 3. Use ekubo_get_quotes_with_plans with exact input/output intent and destination_chain_id.
-4. Choose slippage before generating calldata.
+4. Choose slippage before generating calldata. Honor an explicit user preference. Otherwise set slippage_bps approximately to 10,000 times estimated gas-cost value divided by swap-notional value, with both valued in the same currency, so the maximum tolerated slippage loss is near one gas fee. Do not use a generic 50 bps (0.5%) default, especially on Ethereum mainnet. Prefer re-quoting and preparing a new transaction after a slippage failure to widening the bound; never retry reverted calldata unchanged.
 5. Only treat a plan as executable when execution_plan_ready is true.
 6. Include the source, exact plan ID, chains, bounds, approvals, recipient, execution transaction, and any allowance reset in the wallet handoff.
 7. Pass the chosen option's execution_plan_reference object unchanged as the wallet's reference argument for balance, allowance, policy, and exact-transaction simulation. Do not ask for separate agent-level confirmation.

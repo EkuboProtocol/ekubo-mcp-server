@@ -285,6 +285,19 @@ describe("Worker discovery", () => {
     // per-tool _meta.
     expect(catalog.catalog_revision).toBe(MCP_TOOL_CATALOG_REVISION);
     expect(catalog.tools.every((tool) => !("_meta" in tool))).toBe(true);
+    const swapTool = catalog.tools.find(
+      (tool) => tool.name === "ekubo_get_quotes_with_plans",
+    );
+    expect(swapTool?.description).toContain(
+      "maximum value impact is approximately one estimated gas fee",
+    );
+    expect(swapTool?.description).toContain("not a generic 50 bps/0.5%");
+    expect(
+      (
+        (swapTool?.inputSchema.properties as Record<string, unknown>)
+          .slippage_bps as { description?: string }
+      ).description,
+    ).toContain("Honor an explicit user preference");
     // Annotations are per tool: preparation tools and the quotes tool are not
     // read-only or idempotent; true reads are.
     const annotationFor = (name: string) =>
@@ -574,6 +587,15 @@ describe("Worker discovery", () => {
     expect(initializeResult.result.instructions).not.toContain("Robinhood");
     expect(initializeResult.result.instructions).toContain(
       "A quote is only worth what it can still execute for",
+    );
+    expect(initializeResult.result.instructions).toContain(
+      "maximum value impact is approximately one gas fee",
+    );
+    expect(initializeResult.result.instructions).toContain(
+      "Never substitute a generic 50 bps (0.5%) default",
+    );
+    expect(initializeResult.result.instructions).toContain(
+      "never the reverted calldata unchanged",
     );
     expect(initializeResult.result.instructions).toContain(
       'For "all", "max", or "entire balance" swaps',
