@@ -15,8 +15,8 @@
  *   that also covers non-tool traffic: `initialize`, `tools/list`, stored
  *   artifact fetches, and the uncached discovery routes.
  * - `RATE_LIMITER_TOOLS` (60s) is spent in *units* rather than requests,
- *   because `ekubo_get_tokens` with a thousand identifiers and
- *   `ekubo_derive_pool_id` are the same one request and nothing alike in what
+ *   because `get_tokens` with a thousand identifiers and
+ *   `derive_pool_id` are the same one request and nothing alike in what
  *   they cost us. This is the budget that bounds scraping and upstream load.
  * - `RATE_LIMITER_METERED` (60s) is a separate, much smaller ceiling on the
  *   tools that spend metered third-party credit — 0x, Across, and Dune. It is
@@ -82,9 +82,9 @@ export const MAX_BATCH_LENGTH = 20;
  */
 const METERED_TOOLS = new Set([
   // 0x Swap API for the comparison leg, and Across for any cross-chain leg.
-  "ekubo_get_quotes_with_plans",
+  "get_quotes_with_plans",
   // Dune, plus a refresh this Worker awaits for up to twenty seconds.
-  "ekubo_get_stonx_allocation_recommendation",
+  "get_stonx_allocation_recommendation",
 ]);
 
 /**
@@ -101,37 +101,38 @@ const METERED_TOOLS = new Set([
 const TOOL_COST: Record<string, number> = {
   // Pure local derivation. No network, no storage; the request-level budgets
   // already bound how often it can be called at all.
-  ekubo_derive_pool_id: 0,
-  ekubo_decode_pool_config: 0,
+  derive_pool_id: 0,
+  decode_pool_config: 0,
+  get_aave_v3_markets: 0,
 
   // One upstream read.
-  ekubo_get_token: 1,
-  ekubo_get_pool: 1,
-  ekubo_get_pool_liquidity: 1,
-  ekubo_list_pool_keys: 1,
-  ekubo_list_tokens: 1,
-  ekubo_get_positions_by_owner: 1,
-  ekubo_get_rewards_claims_by_owner: 1,
+  get_token: 1,
+  get_pool: 1,
+  get_pool_liquidity: 1,
+  list_pool_keys: 1,
+  list_tokens: 1,
+  get_positions_by_owner: 1,
+  get_rewards_claims_by_owner: 1,
 
   // Reads that fan out across several upstream calls, join metadata and USD
   // prices, or walk a whole chain's catalog. These are the scraping surface.
-  ekubo_get_tokens: 4,
-  ekubo_export_tokens: 4,
-  ekubo_get_position: 3,
-  ekubo_get_position_pool_candidates: 3,
-  ekubo_get_ve33_allocations: 3,
-  ekubo_get_liquidity_opportunities: 4,
+  get_tokens: 4,
+  export_tokens: 4,
+  get_position: 3,
+  get_position_pool_candidates: 3,
+  get_ve33_allocations: 3,
+  get_liquidity_opportunities: 4,
 
   // Metered third parties. Priced so that a caller who does nothing else still
   // runs out of units at a rate a person driving an agent will not reach.
-  ekubo_get_quotes_with_plans: 10,
-  ekubo_get_stonx_allocation_recommendation: 20,
+  get_quotes_with_plans: 10,
+  get_stonx_allocation_recommendation: 20,
 
   // Preparations that fan out over every position, vote, or fee balance an
   // owner holds before they can produce a plan.
-  ekubo_prepare_ve33_reinvest: 8,
-  ekubo_prepare_ve33_claim_all_fees: 6,
-  ekubo_prepare_ve33_reallocation: 6,
+  prepare_ve33_reinvest: 8,
+  prepare_ve33_claim_all_fees: 6,
+  prepare_ve33_reallocation: 6,
 };
 
 /**
@@ -140,7 +141,7 @@ const TOOL_COST: Record<string, number> = {
  * did; anything else is charged as a small fan-out read.
  */
 function defaultToolCost(name: string): number {
-  return name.startsWith("ekubo_prepare_") ? 3 : 2;
+  return name.startsWith("prepare_") ? 3 : 2;
 }
 
 export function toolCost(name: string): number {

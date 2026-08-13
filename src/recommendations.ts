@@ -262,9 +262,9 @@ export async function getStonxAllocationRecommendation(
     },
     safe_execution_workflow: {
       instructions: [
-        "Call ekubo_get_ve33_allocations with the connected wallet and show its complete state.",
+        "Call get_ve33_allocations with the connected wallet and show its complete state.",
         "Execute and decode that tool's onchain_validation.eth_call through the connected provider.",
-        "Pass the exact returned state_id plus this result's targets and strategy=compact_max_lock to ekubo_prepare_ve33_reallocation.",
+        "Pass the exact returned state_id plus this result's targets and strategy=compact_max_lock to prepare_ve33_reallocation.",
         "Pass the max-lock extension, surviving NFT, burned source NFT IDs, final NFT count, every decoded call, and complete plan to the wallet; let the wallet simulate, present the result, and collect authorization or signature.",
       ],
       every_current_vote_is_claimed_before_it_is_cleared_or_moved: true,

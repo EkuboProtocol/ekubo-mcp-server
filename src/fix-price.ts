@@ -185,7 +185,7 @@ export async function prepareFixPoolPrice(
         decode_as: "(uint96 sqrtRatio,int32 tick)",
         read_calls: currentPriceReadCalls(),
         resume: {
-          tool: "ekubo_prepare_fix_pool_price",
+          tool: "prepare_fix_pool_price",
           preserve_original_arguments: true,
           arguments: {
             pending_current_sqrt_ratio:
@@ -260,7 +260,7 @@ export async function prepareFixPoolPrice(
           "(address specifiedToken,address calculatedToken,int256 specifiedAmount,int256 calculatedAmount)",
         read_calls: quoteReadCalls(),
         resume: {
-          tool: "ekubo_prepare_fix_pool_price",
+          tool: "prepare_fix_pool_price",
           preserve_original_arguments: true,
           arguments: {
             quote_result: {

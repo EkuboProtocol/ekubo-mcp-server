@@ -339,7 +339,7 @@ export type PositionStateReadPlan = ReturnType<
  * `read_calls_reference` envelope for wallet_batch_eth_call.
  *
  * `includeAggregateCall` additionally keeps the aggregate's to/data inline —
- * only ekubo_get_position sets it, so an agent can replay the identical read
+ * only get_position sets it, so an agent can replay the identical read
  * at a historical block for APR estimation; everywhere else the calldata
  * lives solely in the stored bundle.
  */

@@ -517,7 +517,7 @@ function ve33EmissionStateReadRequirement() {
     }),
     resume:
       {
-        tool: "ekubo_get_liquidity_opportunities",
+        tool: "get_liquidity_opportunities",
         preserve_original_arguments: true,
         arguments: {
           ve33_emission_state: {
@@ -632,7 +632,7 @@ function exactEvmPool(pool: JsonRecord, chainId: string) {
 function exactPoolNextStep(pool: ReturnType<typeof exactEvmPool>) {
   return {
     inspect: {
-      tool: "ekubo_get_pool",
+      tool: "get_pool",
       arguments: {
         chain_id: pool.chain_id,
         core_address: pool.core_address,
@@ -640,7 +640,7 @@ function exactPoolNextStep(pool: ReturnType<typeof exactEvmPool>) {
       },
     },
     prepare_deposit: {
-      tool: "ekubo_prepare_lp_position_deposit",
+      tool: "prepare_lp_position_deposit",
       arguments_template: {
         chain_id: pool.chain_id,
         sender: "<connected wallet address>",
@@ -672,7 +672,7 @@ function incentiveNextStep(
     };
   }
   return {
-    tool: "ekubo_get_position_pool_candidates",
+    tool: "get_position_pool_candidates",
     arguments: {
       chain_id: chainId,
       token_a: token0.address,

@@ -491,8 +491,8 @@ export function prepareVe33Vote(intent: PrepareVe33VoteIntent) {
         current_pool_fees_are_claimed_unconditionally_first: true,
         caller_supplied_source_amount_requires_provider_validation: true,
         preferred_complete_portfolio_workflow: [
-          "ekubo_get_ve33_allocations",
-          "ekubo_prepare_ve33_reallocation",
+          "get_ve33_allocations",
+          "prepare_ve33_reallocation",
         ],
       },
     },
@@ -2012,7 +2012,7 @@ export async function prepareVe33Reinvest(
       exact_input_full_balance_swaps: swapPlans,
       stake_token_amount_already_claimed: directStakeAmount.toString(),
       next_phase:
-        "After every individual swap receipt confirms, measure the sender's exact stake-token increase, including directly claimed stake token. Refresh ekubo_get_ve33_allocations, then call phase=stake_all with its state_id and that full amount to increase every existing active allocation, or phase=stake with one explicit ve_id.",
+        "After every individual swap receipt confirms, measure the sender's exact stake-token increase, including directly claimed stake token. Refresh get_ve33_allocations, then call phase=stake_all with its state_id and that full amount to increase every existing active allocation, or phase=stake with one explicit ve_id.",
     };
   }
 

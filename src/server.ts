@@ -97,6 +97,15 @@ import {
   storeArtifact,
 } from "./artifact-store.js";
 import { MCP_SERVER_VERSION, MCP_TOOL_CATALOG_REVISION } from "./version.js";
+import {
+  getAaveV3Markets,
+  prepareAaveV3Borrow,
+  prepareAaveV3Collateral,
+  prepareAaveV3EMode,
+  prepareAaveV3Repay,
+  prepareAaveV3Supply,
+  prepareAaveV3Withdraw,
+} from "./aave.js";
 
 export const ROBINHOOD_STONX_CHAIN_ID = "4663";
 export const ROBINHOOD_STONX_VE_TOKEN = getAddress(
@@ -218,7 +227,7 @@ export const listTokensSchema = z.object({
  * Exporting is a different job from listing, so it is a different tool rather
  * than a flag on one.
  *
- * `ekubo_list_tokens` answers a question the model reasons about — which
+ * `list_tokens` answers a question the model reasons about — which
  * address is the USDC the user meant — and its search, paging, and full
  * metadata all serve that. Export answers no question: it hands a wallet a
  * list to hold. No entry ever reaches the model, so the knobs that shape what
@@ -997,7 +1006,7 @@ export const prepareVe33ReallocationSchema = z.object({
     "VeToken owner that will execute the atomic batch",
   ),
   current_state_id: bytes32.describe(
-    "Exact state_id returned by ekubo_get_ve33_allocations; preparation fails if indexed state changed",
+    "Exact state_id returned by get_ve33_allocations; preparation fails if indexed state changed",
   ),
   targets: z
     .array(
@@ -1137,6 +1146,86 @@ export const getLiquidityOpportunitiesSchema = z.object({
     ),
 });
 
+export const getAaveV3MarketsSchema = z.object({
+  chain_id: chainId
+    .optional()
+    .describe(
+      "Optional exact chain filter. Omit to return every fixed Aave V3 core market supported by the preparation tools.",
+    ),
+});
+
+const aaveV3ReserveActionSchema = z.object({
+  chain_id: chainId.describe(
+    "Chain of a fixed Aave V3 core market returned by get_aave_v3_markets",
+  ),
+  sender: address.describe("Wallet that will execute the Aave action"),
+  asset: address.describe(
+    "Exact underlying ERC-20 address from the selected market's fixed major-reserve list",
+  ),
+});
+
+export const prepareAaveV3SupplySchema = aaveV3ReserveActionSchema.extend({
+  amount: amount.describe("Positive underlying-token amount in base units"),
+  on_behalf_of: address
+    .optional()
+    .describe("aToken recipient; defaults to sender"),
+});
+
+export const prepareAaveV3WithdrawSchema = aaveV3ReserveActionSchema.extend({
+  amount: amount.describe(
+    "Positive underlying-token amount in base units; uint256 maximum requests all available balance",
+  ),
+  recipient: address
+    .optional()
+    .describe("Underlying-token recipient; defaults to sender"),
+});
+
+export const prepareAaveV3BorrowSchema = aaveV3ReserveActionSchema.extend({
+  amount: amount.describe("Positive borrow amount in base units"),
+  on_behalf_of: address
+    .optional()
+    .describe(
+      "Debt owner; defaults to sender. A different owner must already have delegated variable debt to sender.",
+    ),
+});
+
+export const prepareAaveV3RepaySchema = aaveV3ReserveActionSchema.extend({
+  amount: amount.describe(
+    "Positive repayment amount in base units; uint256 maximum requests all available variable debt",
+  ),
+  on_behalf_of: address
+    .optional()
+    .describe("Debt owner; defaults to sender"),
+  funding_source: z
+    .enum(["underlying", "a_token"])
+    .default("underlying")
+    .describe(
+      "Use underlying ERC-20 with a temporary exact Pool approval, or burn sender-owned aTokens with repayWithATokens",
+    ),
+});
+
+export const prepareAaveV3CollateralSchema =
+  aaveV3ReserveActionSchema.extend({
+    use_as_collateral: z
+      .boolean()
+      .describe("True enables this supplied reserve as collateral; false disables it"),
+  });
+
+export const prepareAaveV3EModeSchema = z.object({
+  chain_id: chainId.describe(
+    "Chain of a fixed Aave V3 core market returned by get_aave_v3_markets",
+  ),
+  sender: address.describe("Wallet whose eMode selection will change"),
+  category_id: z
+    .number()
+    .int()
+    .min(0)
+    .max(255)
+    .describe(
+      "Current onchain Aave eMode category; zero disables eMode. Obtain nonzero category IDs from Aave's public GraphQL API, because this server does not query them.",
+    ),
+});
+
 // Reads keep readOnlyHint even though storing a read bundle writes the
 // artifact bucket: the storage is incidental caching of the tool's own
 // result, not an observable state change a client must treat as a side
@@ -1148,19 +1237,20 @@ const readerAnnotations = {
   openWorldHint: true,
 } as const;
 
-// Two tools compute an answer from their arguments and nothing else — a
-// pool ID from a PoolKey, a config from its packed bytes. No indexer, no
-// RPC, no bucket. openWorldHint exists to say whether a call reaches
-// entities outside this process, so these say no; a client that avoids
-// open-world calls can still derive a pool ID offline.
+// These tools compute from arguments or checked-in constants only: pool IDs,
+// packed configs, and fixed Aave deployment discovery. No indexer, RPC, API,
+// or artifact bucket. openWorldHint exists
+// to say whether a call reaches entities outside this process, so these say
+// no; a client that avoids open-world calls can still use all of them.
 const localAnnotations = {
   ...readerAnnotations,
   openWorldHint: false,
 } as const;
 
 const LOCAL_TOOLS = new Set([
-  "ekubo_derive_pool_id",
-  "ekubo_decode_pool_config",
+  "derive_pool_id",
+  "decode_pool_config",
+  "get_aave_v3_markets",
 ]);
 
 // Preparation tools store plan bodies server-side, and the quotes tool buys
@@ -1175,8 +1265,8 @@ const preparerAnnotations = {
 
 function toolAnnotations(name: string) {
   if (
-    name.startsWith("ekubo_prepare_") ||
-    name === "ekubo_get_quotes_with_plans"
+    name.startsWith("prepare_") ||
+    name === "get_quotes_with_plans"
   ) {
     return preparerAnnotations;
   }
@@ -1231,19 +1321,19 @@ const chainReadBundleListSchema = z.array(
   }),
 );
 export function toolOutputSchema(name: string) {
-  if (name === "ekubo_get_quotes_with_plans") return quotesOutputSchema;
-  if (name.startsWith("ekubo_prepare_")) return preparedPlanOutputSchema;
+  if (name === "get_quotes_with_plans") return quotesOutputSchema;
+  if (name.startsWith("prepare_")) return preparedPlanOutputSchema;
   switch (name) {
-    case "ekubo_export_tokens":
+    case "export_tokens":
       return exportedTokenListOutputSchema;
-    case "ekubo_get_pool":
-    case "ekubo_get_position":
+    case "get_pool":
+    case "get_position":
       return currentStateQueryOutputSchema;
-    case "ekubo_get_positions_by_owner":
+    case "get_positions_by_owner":
       return z.looseObject({
         current_state_reads: chainReadBundleListSchema.optional(),
       });
-    case "ekubo_get_rewards_claims_by_owner":
+    case "get_rewards_claims_by_owner":
       return z.looseObject({
         onchain_validation: z
           .looseObject({
@@ -1251,7 +1341,7 @@ export function toolOutputSchema(name: string) {
           })
           .optional(),
       });
-    case "ekubo_get_ve33_allocations":
+    case "get_ve33_allocations":
       return z.looseObject({
         onchain_validation: z
           .looseObject({
@@ -1259,7 +1349,7 @@ export function toolOutputSchema(name: string) {
           })
           .optional(),
       });
-    case "ekubo_get_liquidity_opportunities":
+    case "get_liquidity_opportunities":
       return z.looseObject({
         // Null is the answer, not the absence of one: a ranking that needed no
         // wallet-local emission read says so by naming the slot and emptying
@@ -1277,347 +1367,396 @@ export function toolOutputSchema(name: string) {
 
 export const publicToolCatalog = [
   {
-    name: "ekubo_list_tokens",
+    name: "list_tokens",
     title: "List Ekubo tokens",
     description:
       "First step for symbol-based swaps, including tokenized stocks and stablecoins: list the canonical Ekubo token list, ordered by descending visibility_priority so the preferred token wins ambiguous symbol matches. Pass search to match a symbol prefix or suffix, chain_id to stay on one chain, and min_visibility_priority to reach tokens the interface hides by default.",
     inputSchema: z.toJSONSchema(listTokensSchema),
   },
   {
-    name: "ekubo_export_tokens",
+    name: "export_tokens",
     title: "Export Ekubo tokens for a wallet",
     description:
-      "Hand a wallet the canonical token list without reading it. Returns only a token_list_reference envelope and the count it stands for: no entries, so nothing enters your context that you would only pass on. Use this to import token names into a wallet so it can label transactions, or to name the addresses for a bulk balance read; pass the envelope unchanged as the wallet tool's reference argument. The stored body carries exactly what a wallet acts on — chain ID, address, symbol, name, decimals — and none of the logo URLs, prices, supplies, or bridge maps that make the full list 483 KB. Scope it with chain_id: a wallet holds names for the chain it is on. Check complete in the result — false means the chain has more tokens at this visibility than max_tokens allowed and the export is a prefix, not the chain's list; the busiest chains carry several thousand each, well past the 1,000 a wallet accepts in one import. Use ekubo_list_tokens instead whenever you need to read entries yourself, such as resolving a symbol the user typed.",
+      "Hand a wallet the canonical token list without reading it. Returns only a token_list_reference envelope and the count it stands for: no entries, so nothing enters your context that you would only pass on. Use this to import token names into a wallet so it can label transactions, or to name the addresses for a bulk balance read; pass the envelope unchanged as the wallet tool's reference argument. The stored body carries exactly what a wallet acts on — chain ID, address, symbol, name, decimals — and none of the logo URLs, prices, supplies, or bridge maps that make the full list 483 KB. Scope it with chain_id: a wallet holds names for the chain it is on. Check complete in the result — false means the chain has more tokens at this visibility than max_tokens allowed and the export is a prefix, not the chain's list; the busiest chains carry several thousand each, well past the 1,000 a wallet accepts in one import. Use list_tokens instead whenever you need to read entries yourself, such as resolving a symbol the user typed.",
     inputSchema: z.toJSONSchema(exportTokensSchema),
   },
   {
-    name: "ekubo_get_token",
+    name: "get_token",
     title: "Get an Ekubo token",
     description:
       "Fetch canonical token metadata for an exact chain and address.",
     inputSchema: z.toJSONSchema(getTokenSchema),
   },
   {
-    name: "ekubo_get_tokens",
+    name: "get_tokens",
     title: "Get multiple Ekubo tokens",
     description:
       "Fetch canonical metadata for 1 to 1,000 exact token identifiers in one batch request. Tokens may span chains. Results preserve input order and duplicates; identifiers absent from the canonical token list are omitted.",
     inputSchema: z.toJSONSchema(getTokensSchema),
   },
   {
-    name: "ekubo_get_quotes_with_plans",
+    name: "get_quotes_with_plans",
     title: "Get swap or bridge quotes with execution plans",
     description:
       "The whole non-browser swap path for onchain swap, trade, exchange, or convert requests on supported EVM chains: one call returns every available Ekubo and 0x quote for a same-chain swap, each already carrying the execution_plan_reference that executes it, without accepting or selecting a source. Choose an option and pass its execution.execution_plan_reference envelope unchanged as the wallet's reference argument; the wallet fetches and verifies the plan body itself; there is no second preparation step, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Do not call this tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the request. Omit sender and slippage_bps for an indicative comparison that fetches no calldata; supply both for plans. Unless the user specifies otherwise, choose a low slippage_bps whose maximum value impact is approximately one estimated gas fee (10,000 * gas-cost value / swap-notional value), not a generic 50 bps/0.5%; prefer re-quoting and retrying with a newly prepared transaction after slippage failure to exposing the trade to a wider bound. Never retry reverted calldata unchanged. Uses Across for cross-chain swaps. Provider failures are reported separately in unavailable_sources, and an option that could not be made executable reports its own execution_unavailable while the rest stand. Set include_raw_quotes only to diagnose a provider; the normalized amounts already carry every field a choice turns on. Supports EIP-155 token identifiers.",
     inputSchema: z.toJSONSchema(getQuotesWithPlansSchema),
   },
   {
-    name: "ekubo_prepare_ve33_vote",
+    name: "prepare_ve33_vote",
     title: "Prepare one ve(3,3) NFT vote change",
     description:
       "Compile one actively voted ve-token into multiple allocations. Unconditionally claims its current pool first, then splits and changes votes in one atomic batch of decodable VeToken steps. Prefer the portfolio reallocation workflow for complete state validation.",
     inputSchema: z.toJSONSchema(prepareVe33VoteSchema),
   },
   {
-    name: "ekubo_prepare_ve33_extend",
+    name: "prepare_ve33_extend",
     title: "Prepare a ve-token extension",
     description:
       "Prepare a direct extension for an unvoted VeToken or an atomic claim-and-extend call when current_pool_key identifies an active vote, so pending voter fees are preserved.",
     inputSchema: z.toJSONSchema(prepareVe33ExtendSchema),
   },
   {
-    name: "ekubo_prepare_ve33_stake",
+    name: "prepare_ve33_stake",
     title: "Prepare a new ve-token stake",
     description:
       "Create a new VeToken stake with an exact stake-token approval. Max duration is the safe default for new stakes; an explicit shorter duration is optional and no existing NFT, vote, fee balance, or ownership is changed.",
     inputSchema: z.toJSONSchema(prepareVe33StakeSchema),
   },
   {
-    name: "ekubo_prepare_ve33_split",
+    name: "prepare_ve33_split",
     title: "Prepare a ve-token split",
     description:
       "Split a source ve-token with an explicit salt and return the deterministic child token ID; the source vote is preserved and the child starts unvoted.",
     inputSchema: z.toJSONSchema(prepareVe33SplitSchema),
   },
   {
-    name: "ekubo_prepare_ve33_claim_fees",
+    name: "prepare_ve33_claim_fees",
     title: "Prepare ve-token fee claims",
     description:
       "Generate one call, or an atomic batch of decodable VeToken steps, claiming voter fees from one or more ve-tokens.",
     inputSchema: z.toJSONSchema(prepareVe33ClaimSchema),
   },
   {
-    name: "ekubo_prepare_ve33_reinvest",
+    name: "prepare_ve33_reinvest",
     title: "Prepare ve-token fee reinvestment",
     description:
       "Build the safe phased workflow for 'reinvest my fees': automatically claim all active voter fees, prepare one exact-input swap per claimed non-stake token, then increase one VeToken or every existing active allocation without changing ownership or replacing votes.",
     inputSchema: z.toJSONSchema(prepareVe33ReinvestSchema),
   },
   {
-    name: "ekubo_prepare_ve33_claim_all_fees",
+    name: "prepare_ve33_claim_all_fees",
     title: "Prepare all ve-token fee claims",
     description:
       "Discover every active vote on VeTokens owned by the sender and generate one atomic batch of decodable VeToken steps claiming all indexed pool fees, with ownerOf and voteState validation calldata.",
     inputSchema: z.toJSONSchema(prepareAllVe33FeeClaimsSchema),
   },
   {
-    name: "ekubo_get_ve33_allocations",
+    name: "get_ve33_allocations",
     title: "Show Ekubo STONX / ve(3,3) allocations",
     description:
       "Use for requests such as 'show all my Ekubo STONX allocations'. The production Ekubo ve(3,3) deployment is the STONX voting system, so pass only owner to select its production chain and canonical VeToken automatically. Returns every pool, selected swap fee, NFT, applied vote weight, totals, state_id, and an onchain_validation request explicitly marked not_executed until the client runs its eth_call. Pass chain_id and ve_token together only for another deployment.",
     inputSchema: z.toJSONSchema(getVe33AllocationsSchema),
   },
   {
-    name: "ekubo_get_stonx_allocation_recommendation",
+    name: "get_stonx_allocation_recommendation",
     title: "Get suggested STONX allocations",
     description:
       "Return a provider-neutral STONX allocation recommendation and an exactly 10,000-bps executable target list capped at 25 initialized canonical Ve33 pools. The upstream snapshot refreshes at most once a day: past a day old a refresh is attempted and awaited, but the existing snapshot still answers the request when that refresh does not land, and only a snapshot older than a week is refused. Read snapshot_age_seconds to see how old the answer actually is. The tool constructs no transaction; use compact_max_lock for one final voting NFT per target.",
     inputSchema: z.toJSONSchema(getStonxAllocationRecommendationSchema),
   },
   {
-    name: "ekubo_prepare_ve33_reallocation",
+    name: "prepare_ve33_reallocation",
     title: "Prepare atomic ve(3,3) reallocation",
     description:
       "Compile a reviewed current allocation into at most 25 target pool-weight shares as one atomic batch of decodable VeToken steps. The optional compact_max_lock strategy fee-safely consolidates active NFTs, extends the survivor to four years, then creates exactly one voting NFT per target; it explicitly discloses burned source IDs and lock extension.",
     inputSchema: z.toJSONSchema(prepareVe33ReallocationSchema),
   },
   {
-    name: "ekubo_get_positions_by_owner",
+    name: "get_positions_by_owner",
     title: "Get Ekubo positions by owner",
     description:
       "Enumerate an owner's indexed Ekubo position NFTs without relying on ERC721 enumeration. Returns pool keys, bounds, liquidity, current indexed pool state, rewards, and pagination. Optionally filter by chain and opened/closed state.",
     inputSchema: z.toJSONSchema(getPositionsByOwnerSchema),
   },
   {
-    name: "ekubo_get_pool",
+    name: "get_pool",
     title: "Get an Ekubo pool",
     description:
       "Resolve an exact chain/core/pool ID to its PoolKey and decoded config, verify that the key hashes back to the requested ID, and return the latest indexed pool-state snapshot plus a current_state_query read bundle: pass its read_calls_reference unchanged as wallet_batch_eth_call's reference argument for fresh on-chain sqrtRatio, tick, and liquidity.",
     inputSchema: z.toJSONSchema(getPoolSchema),
   },
   {
-    name: "ekubo_get_pool_liquidity",
+    name: "get_pool_liquidity",
     title: "Get Ekubo pool liquidity depth",
     description:
       "Return tick-level net liquidity deltas for one exact chain/core/pool ID. Accumulate the deltas in ascending tick order to reconstruct active liquidity depth.",
     inputSchema: z.toJSONSchema(getPoolLiquiditySchema),
   },
   {
-    name: "ekubo_list_pool_keys",
+    name: "list_pool_keys",
     title: "List Ekubo pool keys",
     description:
       "Discover initialized pools for one chain and Core deployment with keyset pagination: pools are ordered by ascending pool_id and after_pool_id fetches the next page. Filter by one token, an exact pair, or an extension (zero address means extensionless). Every returned pool_id is independently re-derived from its PoolKey, and each row carries the indexed state snapshot (null until the pool has indexed state).",
     inputSchema: z.toJSONSchema(listPoolKeysSchema),
   },
   {
-    name: "ekubo_derive_pool_id",
+    name: "derive_pool_id",
     title: "Derive an Ekubo pool ID",
     description:
       "Pack or accept an exact PoolKey config and derive pool_id = keccak256(abi.encode(PoolKey)). The uint64 Q64 fee is string-only so JavaScript cannot silently round it.",
     inputSchema: z.toJSONSchema(derivePoolIdSchema),
   },
   {
-    name: "ekubo_decode_pool_config",
+    name: "decode_pool_config",
     title: "Decode an Ekubo pool config",
     description:
       "Decode the packed bytes32 extension, exact uint64 Q64 fee, concentrated/stableswap discriminator, and tick spacing or stableswap parameters. The fee is never returned as a JSON number.",
     inputSchema: z.toJSONSchema(decodePoolConfigSchema),
   },
   {
-    name: "ekubo_get_position",
+    name: "get_position",
     title: "Get complete Ekubo position details",
     description:
       "Hydrate one indexed owner position with the same inputs used by the interface: pool key, bounds, indexed liquidity and pool state, NFT metadata, event history, campaigns and earned rewards, token metadata and USD prices, plus an exact pending Multicall3 eth_call and nested decode plan for current principal, fees or Ve33 rewards, and owner.",
     inputSchema: z.toJSONSchema(getPositionSchema),
   },
   {
-    name: "ekubo_get_position_pool_candidates",
+    name: "get_position_pool_candidates",
     title: "Find pools for an LP position",
     description:
       "List existing indexed pools for a token pair without browsing the data API or reading contract ABIs. Returns v2/v3 Core generation, independently verified exact PoolKeys and pool IDs, pool type and extension classification, token USD metadata, 24-hour TVL/volume/fee/depth statistics, and the correct Positions or Ve33Positions manager for each candidate. Defaults to min_tvl_usd=0 so initialized low-liquidity pools remain visible.",
     inputSchema: z.toJSONSchema(getPositionPoolCandidatesSchema),
   },
   {
-    name: "ekubo_prepare_lp_position_deposit",
+    name: "prepare_lp_position_deposit",
     title: "Prepare an LP position deposit",
     description:
       "Prepare a new v3 position mint or add liquidity to an existing position in one first-class workflow. Resolves and verifies an indexed pool or derives an exact supplied PoolKey, initializes a new pool at initial_tick when requested, selects Positions or Ve33Positions, computes a nonzero minimum liquidity, and returns every approval, execution, refund, and cleanup transaction. No Cast encoding is required. Ekubo ticks use base 1.000001, so tick = ln(price in base units) x 10^6 and a Uniswap-style 1.0001 calculation is 100x too small. A position's token ratio follows the range and the current pool price, not the amounts deposited, so when a target composition matters do every swap first, re-read the tick with the pool's current_state_query, and mint once against that tick: a swap after the mint moves the tick and re-skews the position immediately.",
     inputSchema: z.toJSONSchema(prepareLpPositionDepositSchema),
   },
   {
-    name: "ekubo_prepare_lp_position_earnings_claim",
+    name: "prepare_lp_position_earnings_claim",
     title: "Prepare an LP fee or reward claim",
     description:
       "Prepare collection of all currently accrued fees from an owned standard position or all currently accrued rewards from an owned Ve33 position. Resolves the indexed PoolKey and bounds, automatically chooses v2 withdraw-with-zero-liquidity, v3 collectFees, or Ve33 claimRewards, preserves all liquidity and the NFT, supplies an atomic pending ownership/earnings read, exact decoded calldata and result fields, and a signer-neutral plan delivered as execution_plan_reference. No Cast encoding is required.",
     inputSchema: z.toJSONSchema(prepareLpPositionEarningsClaimSchema),
   },
   {
-    name: "ekubo_prepare_lp_position_withdraw",
+    name: "prepare_lp_position_withdraw",
     title: "Prepare one or more LP position withdrawals",
     description:
       "Prepare partial or full liquidity withdrawals from one or more owned EVM positions with one complete wallet-batch-capable plan. Pass withdrawals, one entry per position. Resolves each indexed PoolKey and bounds, uses each exact requested uint128 liquidity, automatically collects standard-position fees or Ve33 rewards as the interface does, supports explicit recipients, preserves the NFTs, and supplies pending ownership/liquidity/earnings validation, and exact decoded calldata and result fields. The wallet never constructs calldata.",
     inputSchema: z.toJSONSchema(prepareLpPositionWithdrawSchema),
   },
   {
-    name: "ekubo_prepare_wrap_unwrap",
+    name: "prepare_wrap_unwrap",
     title: "Prepare direct WETH wrap or unwrap",
     description:
       "Prepare the Ethereum interface's direct WETH deposit or withdrawal with exact calldata and native value.",
     inputSchema: z.toJSONSchema(prepareWrapUnwrapSchema),
   },
   {
-    name: "ekubo_prepare_lp_position_transfer",
+    name: "prepare_lp_position_transfer",
     title: "Prepare an LP position transfer",
     description:
       "Prepare the exact safeTransferFrom transaction for an owned LP position and include pending ownership validation. The position, liquidity, and unclaimed earnings move together.",
     inputSchema: z.toJSONSchema(prepareLpPositionTransferSchema),
   },
   {
-    name: "ekubo_prepare_fix_pool_price",
+    name: "prepare_fix_pool_price",
     title: "Prepare a pool price correction",
     description:
       "Run the interface-equivalent phased fix-price workflow: provide exact pending pool-price read calldata, then exact router quote calldata, then approvals and target-price execution calldata. The wallet never constructs a route or transaction.",
     inputSchema: z.toJSONSchema(prepareFixPoolPriceSchema),
   },
   {
-    name: "ekubo_prepare_twamm_order",
+    name: "prepare_twamm_order",
     title: "Prepare a TWAMM or DCA order",
     description:
       "Prepare one or many current-interface TWAMM order splits, including deterministic minting, exact approval and per-order native value, and the complete plan as one atomic batch of decodable steps.",
     inputSchema: z.toJSONSchema(prepareTwammOrderSchema),
   },
   {
-    name: "ekubo_prepare_twamm_order_collection",
+    name: "prepare_twamm_order_collection",
     title: "Prepare TWAMM proceeds collection",
     description:
       "Prepare collection of every selected order key through the exact current or legacy Orders manager, as one atomic batch of decodable steps, with pending owner validation.",
     inputSchema: z.toJSONSchema(prepareTwammOrderCollectionSchema),
   },
   {
-    name: "ekubo_prepare_twamm_order_stop",
+    name: "prepare_twamm_order_stop",
     title: "Prepare stopping a TWAMM order",
     description:
       "Prepare the interface's complete stop flow: collect every selected order and decrease every still-active sale rate in one atomic batch of decodable steps.",
     inputSchema: z.toJSONSchema(prepareTwammOrderStopSchema),
   },
   {
-    name: "ekubo_prepare_twamm_virtual_orders",
+    name: "prepare_twamm_virtual_orders",
     title: "Prepare TWAMM virtual-order execution",
     description:
       "Prepare the permissionless lockAndExecuteVirtualOrders maintenance call for a current or legacy TWAMM pool.",
     inputSchema: z.toJSONSchema(prepareTwammVirtualOrdersSchema),
   },
   {
-    name: "ekubo_prepare_auction_create",
+    name: "prepare_auction_create",
     title: "Prepare auction creation",
     description:
       "Pack the exact interface auction config and prepare mint plus sellAmountByAuction, including approval or native value and deterministic token ID.",
     inputSchema: z.toJSONSchema(prepareAuctionCreateSchema),
   },
   {
-    name: "ekubo_prepare_auction_complete",
+    name: "prepare_auction_complete",
     title: "Prepare auction completion",
     description:
       "Prepare permissionless auction completion and, when necessary, graduation-pool initialization in the same atomic batch.",
     inputSchema: z.toJSONSchema(prepareAuctionCompleteSchema),
   },
   {
-    name: "ekubo_prepare_auction_creator_proceeds",
+    name: "prepare_auction_creator_proceeds",
     title: "Prepare auction creator proceeds collection",
     description:
       "Prepare collection of creator proceeds for an auction NFT with pending owner validation.",
     inputSchema: z.toJSONSchema(prepareAuctionCreatorProceedsSchema),
   },
   {
-    name: "ekubo_prepare_manual_pool_boost",
+    name: "prepare_manual_pool_boost",
     title: "Prepare a manual pool boost",
     description:
       "Compute the exact Q32 boost rates and prepare all token approvals, native value, and boost calldata used by the interface.",
     inputSchema: z.toJSONSchema(prepareManualPoolBoostSchema),
   },
   {
-    name: "ekubo_prepare_oracle_capacity_expansion",
+    name: "prepare_oracle_capacity_expansion",
     title: "Prepare oracle capacity expansion",
     description:
       "Prepare the interface's permissionless Oracle expandCapacity call for one ERC-20 token.",
     inputSchema: z.toJSONSchema(prepareOracleCapacityExpansionSchema),
   },
   {
-    name: "ekubo_prepare_approval_revocations",
+    name: "prepare_approval_revocations",
     title: "Prepare ERC-20 approval revocations",
     description:
       "Prepare every approve(spender,0) as an exact ordered multi-transaction execution plan. The wallet must not discover or construct the transaction list.",
     inputSchema: z.toJSONSchema(prepareApprovalRevocationsSchema),
   },
   {
-    name: "ekubo_prepare_old_gekubo_unwrap",
+    name: "prepare_old_gekubo_unwrap",
     title: "Prepare old gEKUBO unwrapping",
     description:
       "Prepare the exact Ethereum HyperRouter byte route and approval used by the interface to unwrap old gEKUBO into EKUBO.",
     inputSchema: z.toJSONSchema(prepareOldGekuboUnwrapSchema),
   },
   {
-    name: "ekubo_get_rewards_claims_by_owner",
+    name: "get_rewards_claims_by_owner",
     title: "Get incentive rewards claims by owner",
     description:
       "Fetch canonical reward-claim records and supply the exact per-chain isClaimed/isAvailable eth_call list used by the interface before preparing claim transactions.",
     inputSchema: z.toJSONSchema(getRewardsClaimsByOwnerSchema),
   },
   {
-    name: "ekubo_prepare_rewards_claim",
+    name: "prepare_rewards_claim",
     title: "Prepare incentive reward claims",
     description:
       "Prepare one Incentives claim or the interface's allow-failure Multicall3 aggregate for multiple claims.",
     inputSchema: z.toJSONSchema(prepareRewardsClaimSchema),
   },
   {
-    name: "ekubo_prepare_recovery_fund_claim",
+    name: "prepare_recovery_fund_claim",
     title: "Prepare a Recovery Fund claim",
     description:
       "Return the exact EIP-712 signature request when needed, then prepare agreement and all selected recovery claims in one atomic batch of decodable steps.",
     inputSchema: z.toJSONSchema(prepareRecoveryFundClaimSchema),
   },
   {
-    name: "ekubo_prepare_revenue_buybacks",
+    name: "prepare_revenue_buybacks",
     title: "Prepare revenue buyback maintenance",
     description:
       "Prepare the exact selected ended-order collections, protocol-fee withdrawals, and token rolls in interface order within one atomic batch of decodable steps.",
     inputSchema: z.toJSONSchema(prepareRevenueBuybacksSchema),
   },
   {
-    name: "ekubo_prepare_ve33_increase_stake",
+    name: "prepare_ve33_increase_stake",
     title: "Prepare increasing a ve-token stake",
     description:
       "Prepare the exact approval/native value and increaseStakeAmount call while preserving the existing vote and fee accounting.",
     inputSchema: z.toJSONSchema(prepareVe33IncreaseStakeSchema),
   },
   {
-    name: "ekubo_prepare_ve33_merge",
+    name: "prepare_ve33_merge",
     title: "Prepare merging ve-token stakes",
     description:
       "Prepare fee-safe merging of one or more source NFTs into a destination, including required claims and the selected resulting vote in one atomic batch of decodable steps.",
     inputSchema: z.toJSONSchema(prepareVe33MergeSchema),
   },
   {
-    name: "ekubo_prepare_ve33_withdraw",
+    name: "prepare_ve33_withdraw",
     title: "Prepare expired ve-token withdrawal",
     description:
       "Prepare fee-safe withdrawal of an expired ve-token stake, claiming the active pool first when voted and returning pending owner/stake validation.",
     inputSchema: z.toJSONSchema(prepareVe33WithdrawSchema),
   },
   {
-    name: "ekubo_get_liquidity_opportunities",
+    name: "get_liquidity_opportunities",
     title: "Find Ekubo liquidity opportunities",
     description:
       "Return the same boosted-fee, active-incentive, and projected ve(3,3)-emission opportunities shown by the Ekubo interface, ranked by APR with canonical token metadata, exact actionable pools or pair-level pool-discovery handoffs, source freshness, and risk context. A request whose ranking includes Ve33 projections supplies a wallet-local emission-state read; pass its locally decoded values back to complete the final ranking.",
     inputSchema: z.toJSONSchema(getLiquidityOpportunitiesSchema),
   },
   {
-    name: "ekubo_prepare_pool_initialization",
+    name: "prepare_pool_initialization",
     title: "Prepare standalone pool initialization",
     description:
-      "Prepare one exact permissionless maybeInitializePool transaction for a supplied v3 PoolKey and initial tick. This is the standalone alternative to the atomic maybeInitializePool plus mintAndDeposit batch returned by ekubo_prepare_lp_position_deposit when pool_initialized=false.",
+      "Prepare one exact permissionless maybeInitializePool transaction for a supplied v3 PoolKey and initial tick. This is the standalone alternative to the atomic maybeInitializePool plus mintAndDeposit batch returned by prepare_lp_position_deposit when pool_initialized=false.",
     inputSchema: z.toJSONSchema(preparePoolInitializationSchema),
+  },
+  {
+    name: "get_aave_v3_markets",
+    title: "List fixed Aave V3 markets",
+    description:
+      "Locally return six major Aave V3 core deployments and a bounded set of popular reserve, aToken, and variable-debt-token addresses from a pinned official Aave address-book snapshot. This tool makes no RPC, indexer, API, or other network request. For live rates, caps, pause state, liquidity, collateral settings, eMode categories, and account data, an agent may call Aave's public GraphQL API at https://api.v3.aave.com/graphql directly; this server is not in that data path. Intersect the API result with this fixed list before calling a preparation tool.",
+    inputSchema: z.toJSONSchema(getAaveV3MarketsSchema),
+  },
+  {
+    name: "prepare_aave_v3_supply",
+    title: "Prepare an Aave V3 supply",
+    description:
+      "Prepare a fixed-market Aave V3 Pool supply with an exact ERC-20 approval, supply calldata, and allowance cleanup as one atomic wallet plan. No live balance, allowance, reserve, cap, pause, or rate data is queried.",
+    inputSchema: z.toJSONSchema(prepareAaveV3SupplySchema),
+  },
+  {
+    name: "prepare_aave_v3_withdraw",
+    title: "Prepare an Aave V3 withdrawal",
+    description:
+      "Prepare a direct Aave V3 Pool withdrawal for a supported fixed reserve. Pass uint256 maximum as amount to request the available aToken balance. The wallet establishes balance, health-factor, collateral, and liquidity validity by exact simulation.",
+    inputSchema: z.toJSONSchema(prepareAaveV3WithdrawSchema),
+  },
+  {
+    name: "prepare_aave_v3_borrow",
+    title: "Prepare an Aave V3 variable borrow",
+    description:
+      "Prepare a direct Aave V3 variable-rate borrow from a supported fixed reserve, including optional on-behalf-of credit delegation. This server does not query collateral, delegation, health factor, caps, or available liquidity.",
+    inputSchema: z.toJSONSchema(prepareAaveV3BorrowSchema),
+  },
+  {
+    name: "prepare_aave_v3_repay",
+    title: "Prepare an Aave V3 variable-debt repayment",
+    description:
+      "Prepare variable-debt repayment with underlying tokens or sender-owned aTokens. Underlying repayment carries an exact ERC-20 approval and cleanup in one atomic plan; uint256 maximum requests all available debt.",
+    inputSchema: z.toJSONSchema(prepareAaveV3RepaySchema),
+  },
+  {
+    name: "prepare_aave_v3_collateral",
+    title: "Prepare an Aave V3 collateral toggle",
+    description:
+      "Prepare setUserUseReserveAsCollateral for a supported fixed reserve. Disabling collateral can reduce health factor or revert when open debt needs it, so exact wallet simulation is mandatory.",
+    inputSchema: z.toJSONSchema(prepareAaveV3CollateralSchema),
+  },
+  {
+    name: "prepare_aave_v3_emode",
+    title: "Prepare an Aave V3 eMode change",
+    description:
+      "Prepare setUserEMode with a caller-supplied current uint8 category ID; zero disables eMode. Discover live category configuration through Aave's public GraphQL API directly, because this server makes no data or RPC request.",
+    inputSchema: z.toJSONSchema(prepareAaveV3EModeSchema),
   },
 ] as const;
 
@@ -1732,15 +1871,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   };
 
   server.registerTool(
-    catalogEntry("ekubo_list_tokens").name,
+    catalogEntry("list_tokens").name,
     {
-      title: catalogEntry("ekubo_list_tokens").title,
-      description: catalogEntry("ekubo_list_tokens").description,
+      title: catalogEntry("list_tokens").title,
+      description: catalogEntry("list_tokens").description,
       inputSchema: listTokensSchema,
-      annotations: toolAnnotations("ekubo_list_tokens"),
-      ...(toolOutputSchema("ekubo_list_tokens") === undefined
+      annotations: toolAnnotations("list_tokens"),
+      ...(toolOutputSchema("list_tokens") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_list_tokens") }),
+        : { outputSchema: toolOutputSchema("list_tokens") }),
     },
     async ({
       chain_id,
@@ -1762,15 +1901,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_export_tokens").name,
+    catalogEntry("export_tokens").name,
     {
-      title: catalogEntry("ekubo_export_tokens").title,
-      description: catalogEntry("ekubo_export_tokens").description,
+      title: catalogEntry("export_tokens").title,
+      description: catalogEntry("export_tokens").description,
       inputSchema: exportTokensSchema,
-      annotations: toolAnnotations("ekubo_export_tokens"),
-      ...(toolOutputSchema("ekubo_export_tokens") === undefined
+      annotations: toolAnnotations("export_tokens"),
+      ...(toolOutputSchema("export_tokens") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_export_tokens") }),
+        : { outputSchema: toolOutputSchema("export_tokens") }),
     },
     async ({ chain_id, max_tokens }) =>
       toolResult(async () => {
@@ -1807,15 +1946,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_get_token").name,
+    catalogEntry("get_token").name,
     {
-      title: catalogEntry("ekubo_get_token").title,
-      description: catalogEntry("ekubo_get_token").description,
+      title: catalogEntry("get_token").title,
+      description: catalogEntry("get_token").description,
       inputSchema: getTokenSchema,
-      annotations: toolAnnotations("ekubo_get_token"),
-      ...(toolOutputSchema("ekubo_get_token") === undefined
+      annotations: toolAnnotations("get_token"),
+      ...(toolOutputSchema("get_token") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_get_token") }),
+        : { outputSchema: toolOutputSchema("get_token") }),
     },
     async ({ chain_id, address: tokenAddress }) =>
       toolResult(async () => ({
@@ -1827,15 +1966,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_get_tokens").name,
+    catalogEntry("get_tokens").name,
     {
-      title: catalogEntry("ekubo_get_tokens").title,
-      description: catalogEntry("ekubo_get_tokens").description,
+      title: catalogEntry("get_tokens").title,
+      description: catalogEntry("get_tokens").description,
       inputSchema: getTokensSchema,
-      annotations: toolAnnotations("ekubo_get_tokens"),
-      ...(toolOutputSchema("ekubo_get_tokens") === undefined
+      annotations: toolAnnotations("get_tokens"),
+      ...(toolOutputSchema("get_tokens") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_get_tokens") }),
+        : { outputSchema: toolOutputSchema("get_tokens") }),
     },
     async (input) =>
       toolResult(async () => ({
@@ -1849,7 +1988,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   registerCatalogTool(
-    "ekubo_get_quotes_with_plans",
+    "get_quotes_with_plans",
     getQuotesWithPlansSchema,
     (input) => {
       const inputChainId = canonicalChainId(input.chain_id);
@@ -1876,15 +2015,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_prepare_ve33_vote").name,
+    catalogEntry("prepare_ve33_vote").name,
     {
-      title: catalogEntry("ekubo_prepare_ve33_vote").title,
-      description: catalogEntry("ekubo_prepare_ve33_vote").description,
+      title: catalogEntry("prepare_ve33_vote").title,
+      description: catalogEntry("prepare_ve33_vote").description,
       inputSchema: prepareVe33VoteSchema,
-      annotations: toolAnnotations("ekubo_prepare_ve33_vote"),
-      ...(toolOutputSchema("ekubo_prepare_ve33_vote") === undefined
+      annotations: toolAnnotations("prepare_ve33_vote"),
+      ...(toolOutputSchema("prepare_ve33_vote") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_prepare_ve33_vote") }),
+        : { outputSchema: toolOutputSchema("prepare_ve33_vote") }),
     },
     async (input) =>
       toolResult(() =>
@@ -1912,15 +2051,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_prepare_ve33_extend").name,
+    catalogEntry("prepare_ve33_extend").name,
     {
-      title: catalogEntry("ekubo_prepare_ve33_extend").title,
-      description: catalogEntry("ekubo_prepare_ve33_extend").description,
+      title: catalogEntry("prepare_ve33_extend").title,
+      description: catalogEntry("prepare_ve33_extend").description,
       inputSchema: prepareVe33ExtendSchema,
-      annotations: toolAnnotations("ekubo_prepare_ve33_extend"),
-      ...(toolOutputSchema("ekubo_prepare_ve33_extend") === undefined
+      annotations: toolAnnotations("prepare_ve33_extend"),
+      ...(toolOutputSchema("prepare_ve33_extend") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_prepare_ve33_extend") }),
+        : { outputSchema: toolOutputSchema("prepare_ve33_extend") }),
     },
     async (input) =>
       toolResult(() =>
@@ -1940,15 +2079,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_prepare_ve33_stake").name,
+    catalogEntry("prepare_ve33_stake").name,
     {
-      title: catalogEntry("ekubo_prepare_ve33_stake").title,
-      description: catalogEntry("ekubo_prepare_ve33_stake").description,
+      title: catalogEntry("prepare_ve33_stake").title,
+      description: catalogEntry("prepare_ve33_stake").description,
       inputSchema: prepareVe33StakeSchema,
-      annotations: toolAnnotations("ekubo_prepare_ve33_stake"),
-      ...(toolOutputSchema("ekubo_prepare_ve33_stake") === undefined
+      annotations: toolAnnotations("prepare_ve33_stake"),
+      ...(toolOutputSchema("prepare_ve33_stake") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_prepare_ve33_stake") }),
+        : { outputSchema: toolOutputSchema("prepare_ve33_stake") }),
     },
     async (input) =>
       toolResult(() =>
@@ -1967,15 +2106,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_prepare_ve33_split").name,
+    catalogEntry("prepare_ve33_split").name,
     {
-      title: catalogEntry("ekubo_prepare_ve33_split").title,
-      description: catalogEntry("ekubo_prepare_ve33_split").description,
+      title: catalogEntry("prepare_ve33_split").title,
+      description: catalogEntry("prepare_ve33_split").description,
       inputSchema: prepareVe33SplitSchema,
-      annotations: toolAnnotations("ekubo_prepare_ve33_split"),
-      ...(toolOutputSchema("ekubo_prepare_ve33_split") === undefined
+      annotations: toolAnnotations("prepare_ve33_split"),
+      ...(toolOutputSchema("prepare_ve33_split") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_prepare_ve33_split") }),
+        : { outputSchema: toolOutputSchema("prepare_ve33_split") }),
     },
     async (input) =>
       toolResult(() =>
@@ -1991,15 +2130,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_prepare_ve33_claim_fees").name,
+    catalogEntry("prepare_ve33_claim_fees").name,
     {
-      title: catalogEntry("ekubo_prepare_ve33_claim_fees").title,
-      description: catalogEntry("ekubo_prepare_ve33_claim_fees").description,
+      title: catalogEntry("prepare_ve33_claim_fees").title,
+      description: catalogEntry("prepare_ve33_claim_fees").description,
       inputSchema: prepareVe33ClaimSchema,
-      annotations: toolAnnotations("ekubo_prepare_ve33_claim_fees"),
-      ...(toolOutputSchema("ekubo_prepare_ve33_claim_fees") === undefined
+      annotations: toolAnnotations("prepare_ve33_claim_fees"),
+      ...(toolOutputSchema("prepare_ve33_claim_fees") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_prepare_ve33_claim_fees") }),
+        : { outputSchema: toolOutputSchema("prepare_ve33_claim_fees") }),
     },
     async (input) =>
       toolResult(() =>
@@ -2017,15 +2156,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_prepare_ve33_reinvest").name,
+    catalogEntry("prepare_ve33_reinvest").name,
     {
-      title: catalogEntry("ekubo_prepare_ve33_reinvest").title,
-      description: catalogEntry("ekubo_prepare_ve33_reinvest").description,
+      title: catalogEntry("prepare_ve33_reinvest").title,
+      description: catalogEntry("prepare_ve33_reinvest").description,
       inputSchema: prepareVe33ReinvestSchema,
-      annotations: toolAnnotations("ekubo_prepare_ve33_reinvest"),
-      ...(toolOutputSchema("ekubo_prepare_ve33_reinvest") === undefined
+      annotations: toolAnnotations("prepare_ve33_reinvest"),
+      ...(toolOutputSchema("prepare_ve33_reinvest") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_prepare_ve33_reinvest") }),
+        : { outputSchema: toolOutputSchema("prepare_ve33_reinvest") }),
     },
     async (input) =>
       toolResult(() => {
@@ -2077,15 +2216,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_prepare_ve33_claim_all_fees").name,
+    catalogEntry("prepare_ve33_claim_all_fees").name,
     {
-      title: catalogEntry("ekubo_prepare_ve33_claim_all_fees").title,
-      description: catalogEntry("ekubo_prepare_ve33_claim_all_fees").description,
+      title: catalogEntry("prepare_ve33_claim_all_fees").title,
+      description: catalogEntry("prepare_ve33_claim_all_fees").description,
       inputSchema: prepareAllVe33FeeClaimsSchema,
-      annotations: toolAnnotations("ekubo_prepare_ve33_claim_all_fees"),
-      ...(toolOutputSchema("ekubo_prepare_ve33_claim_all_fees") === undefined
+      annotations: toolAnnotations("prepare_ve33_claim_all_fees"),
+      ...(toolOutputSchema("prepare_ve33_claim_all_fees") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_prepare_ve33_claim_all_fees") }),
+        : { outputSchema: toolOutputSchema("prepare_ve33_claim_all_fees") }),
     },
     async (input) =>
       toolResult(() =>
@@ -2099,15 +2238,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_get_ve33_allocations").name,
+    catalogEntry("get_ve33_allocations").name,
     {
-      title: catalogEntry("ekubo_get_ve33_allocations").title,
-      description: catalogEntry("ekubo_get_ve33_allocations").description,
+      title: catalogEntry("get_ve33_allocations").title,
+      description: catalogEntry("get_ve33_allocations").description,
       inputSchema: getVe33AllocationsSchema,
-      annotations: toolAnnotations("ekubo_get_ve33_allocations"),
-      ...(toolOutputSchema("ekubo_get_ve33_allocations") === undefined
+      annotations: toolAnnotations("get_ve33_allocations"),
+      ...(toolOutputSchema("get_ve33_allocations") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_get_ve33_allocations") }),
+        : { outputSchema: toolOutputSchema("get_ve33_allocations") }),
     },
     async (input) =>
       toolResult(() =>
@@ -2123,15 +2262,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_get_stonx_allocation_recommendation").name,
+    catalogEntry("get_stonx_allocation_recommendation").name,
     {
-      title: catalogEntry("ekubo_get_stonx_allocation_recommendation").title,
-      description: catalogEntry("ekubo_get_stonx_allocation_recommendation").description,
+      title: catalogEntry("get_stonx_allocation_recommendation").title,
+      description: catalogEntry("get_stonx_allocation_recommendation").description,
       inputSchema: getStonxAllocationRecommendationSchema,
-      annotations: toolAnnotations("ekubo_get_stonx_allocation_recommendation"),
-      ...(toolOutputSchema("ekubo_get_stonx_allocation_recommendation") === undefined
+      annotations: toolAnnotations("get_stonx_allocation_recommendation"),
+      ...(toolOutputSchema("get_stonx_allocation_recommendation") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_get_stonx_allocation_recommendation") }),
+        : { outputSchema: toolOutputSchema("get_stonx_allocation_recommendation") }),
     },
     async () =>
       toolResult(() =>
@@ -2144,15 +2283,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_prepare_ve33_reallocation").name,
+    catalogEntry("prepare_ve33_reallocation").name,
     {
-      title: catalogEntry("ekubo_prepare_ve33_reallocation").title,
-      description: catalogEntry("ekubo_prepare_ve33_reallocation").description,
+      title: catalogEntry("prepare_ve33_reallocation").title,
+      description: catalogEntry("prepare_ve33_reallocation").description,
       inputSchema: prepareVe33ReallocationSchema,
-      annotations: toolAnnotations("ekubo_prepare_ve33_reallocation"),
-      ...(toolOutputSchema("ekubo_prepare_ve33_reallocation") === undefined
+      annotations: toolAnnotations("prepare_ve33_reallocation"),
+      ...(toolOutputSchema("prepare_ve33_reallocation") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_prepare_ve33_reallocation") }),
+        : { outputSchema: toolOutputSchema("prepare_ve33_reallocation") }),
     },
     async (input) =>
       toolResult(() =>
@@ -2173,15 +2312,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_get_positions_by_owner").name,
+    catalogEntry("get_positions_by_owner").name,
     {
-      title: catalogEntry("ekubo_get_positions_by_owner").title,
-      description: catalogEntry("ekubo_get_positions_by_owner").description,
+      title: catalogEntry("get_positions_by_owner").title,
+      description: catalogEntry("get_positions_by_owner").description,
       inputSchema: getPositionsByOwnerSchema,
-      annotations: toolAnnotations("ekubo_get_positions_by_owner"),
-      ...(toolOutputSchema("ekubo_get_positions_by_owner") === undefined
+      annotations: toolAnnotations("get_positions_by_owner"),
+      ...(toolOutputSchema("get_positions_by_owner") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_get_positions_by_owner") }),
+        : { outputSchema: toolOutputSchema("get_positions_by_owner") }),
     },
     async (input) =>
       toolResult(() =>
@@ -2199,15 +2338,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_get_pool").name,
+    catalogEntry("get_pool").name,
     {
-      title: catalogEntry("ekubo_get_pool").title,
-      description: catalogEntry("ekubo_get_pool").description,
+      title: catalogEntry("get_pool").title,
+      description: catalogEntry("get_pool").description,
       inputSchema: getPoolSchema,
-      annotations: toolAnnotations("ekubo_get_pool"),
-      ...(toolOutputSchema("ekubo_get_pool") === undefined
+      annotations: toolAnnotations("get_pool"),
+      ...(toolOutputSchema("get_pool") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_get_pool") }),
+        : { outputSchema: toolOutputSchema("get_pool") }),
     },
     async (input) =>
       toolResult(() =>
@@ -2220,15 +2359,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_get_pool_liquidity").name,
+    catalogEntry("get_pool_liquidity").name,
     {
-      title: catalogEntry("ekubo_get_pool_liquidity").title,
-      description: catalogEntry("ekubo_get_pool_liquidity").description,
+      title: catalogEntry("get_pool_liquidity").title,
+      description: catalogEntry("get_pool_liquidity").description,
       inputSchema: getPoolLiquiditySchema,
-      annotations: toolAnnotations("ekubo_get_pool_liquidity"),
-      ...(toolOutputSchema("ekubo_get_pool_liquidity") === undefined
+      annotations: toolAnnotations("get_pool_liquidity"),
+      ...(toolOutputSchema("get_pool_liquidity") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_get_pool_liquidity") }),
+        : { outputSchema: toolOutputSchema("get_pool_liquidity") }),
     },
     async (input) =>
       toolResult(() =>
@@ -2241,15 +2380,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_list_pool_keys").name,
+    catalogEntry("list_pool_keys").name,
     {
-      title: catalogEntry("ekubo_list_pool_keys").title,
-      description: catalogEntry("ekubo_list_pool_keys").description,
+      title: catalogEntry("list_pool_keys").title,
+      description: catalogEntry("list_pool_keys").description,
       inputSchema: listPoolKeysSchema,
-      annotations: toolAnnotations("ekubo_list_pool_keys"),
-      ...(toolOutputSchema("ekubo_list_pool_keys") === undefined
+      annotations: toolAnnotations("list_pool_keys"),
+      ...(toolOutputSchema("list_pool_keys") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_list_pool_keys") }),
+        : { outputSchema: toolOutputSchema("list_pool_keys") }),
     },
     async (input) =>
       toolResult(() =>
@@ -2266,45 +2405,45 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_derive_pool_id").name,
+    catalogEntry("derive_pool_id").name,
     {
-      title: catalogEntry("ekubo_derive_pool_id").title,
-      description: catalogEntry("ekubo_derive_pool_id").description,
+      title: catalogEntry("derive_pool_id").title,
+      description: catalogEntry("derive_pool_id").description,
       inputSchema: derivePoolIdSchema,
-      annotations: toolAnnotations("ekubo_derive_pool_id"),
-      ...(toolOutputSchema("ekubo_derive_pool_id") === undefined
+      annotations: toolAnnotations("derive_pool_id"),
+      ...(toolOutputSchema("derive_pool_id") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_derive_pool_id") }),
+        : { outputSchema: toolOutputSchema("derive_pool_id") }),
     },
     async (input) =>
       toolResult(() => derivePoolId(mapExactPoolKey(input.pool_key))),
   );
 
   server.registerTool(
-    catalogEntry("ekubo_decode_pool_config").name,
+    catalogEntry("decode_pool_config").name,
     {
-      title: catalogEntry("ekubo_decode_pool_config").title,
-      description: catalogEntry("ekubo_decode_pool_config").description,
+      title: catalogEntry("decode_pool_config").title,
+      description: catalogEntry("decode_pool_config").description,
       inputSchema: decodePoolConfigSchema,
-      annotations: toolAnnotations("ekubo_decode_pool_config"),
-      ...(toolOutputSchema("ekubo_decode_pool_config") === undefined
+      annotations: toolAnnotations("decode_pool_config"),
+      ...(toolOutputSchema("decode_pool_config") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_decode_pool_config") }),
+        : { outputSchema: toolOutputSchema("decode_pool_config") }),
     },
     async ({ config }) =>
       toolResult(() => ({ decoded_config: decodePoolConfig(config as Hex) })),
   );
 
   server.registerTool(
-    catalogEntry("ekubo_get_position").name,
+    catalogEntry("get_position").name,
     {
-      title: catalogEntry("ekubo_get_position").title,
-      description: catalogEntry("ekubo_get_position").description,
+      title: catalogEntry("get_position").title,
+      description: catalogEntry("get_position").description,
       inputSchema: getPositionSchema,
-      annotations: toolAnnotations("ekubo_get_position"),
-      ...(toolOutputSchema("ekubo_get_position") === undefined
+      annotations: toolAnnotations("get_position"),
+      ...(toolOutputSchema("get_position") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_get_position") }),
+        : { outputSchema: toolOutputSchema("get_position") }),
     },
     async (input) =>
       toolResult(() =>
@@ -2318,15 +2457,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_get_position_pool_candidates").name,
+    catalogEntry("get_position_pool_candidates").name,
     {
-      title: catalogEntry("ekubo_get_position_pool_candidates").title,
-      description: catalogEntry("ekubo_get_position_pool_candidates").description,
+      title: catalogEntry("get_position_pool_candidates").title,
+      description: catalogEntry("get_position_pool_candidates").description,
       inputSchema: getPositionPoolCandidatesSchema,
-      annotations: toolAnnotations("ekubo_get_position_pool_candidates"),
-      ...(toolOutputSchema("ekubo_get_position_pool_candidates") === undefined
+      annotations: toolAnnotations("get_position_pool_candidates"),
+      ...(toolOutputSchema("get_position_pool_candidates") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_get_position_pool_candidates") }),
+        : { outputSchema: toolOutputSchema("get_position_pool_candidates") }),
     },
     async (input) =>
       toolResult(() =>
@@ -2343,15 +2482,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_prepare_lp_position_deposit").name,
+    catalogEntry("prepare_lp_position_deposit").name,
     {
-      title: catalogEntry("ekubo_prepare_lp_position_deposit").title,
-      description: catalogEntry("ekubo_prepare_lp_position_deposit").description,
+      title: catalogEntry("prepare_lp_position_deposit").title,
+      description: catalogEntry("prepare_lp_position_deposit").description,
       inputSchema: prepareLpPositionDepositSchema,
-      annotations: toolAnnotations("ekubo_prepare_lp_position_deposit"),
-      ...(toolOutputSchema("ekubo_prepare_lp_position_deposit") === undefined
+      annotations: toolAnnotations("prepare_lp_position_deposit"),
+      ...(toolOutputSchema("prepare_lp_position_deposit") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_prepare_lp_position_deposit") }),
+        : { outputSchema: toolOutputSchema("prepare_lp_position_deposit") }),
     },
     async (input) =>
       toolResult(() =>
@@ -2378,15 +2517,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_prepare_lp_position_earnings_claim").name,
+    catalogEntry("prepare_lp_position_earnings_claim").name,
     {
-      title: catalogEntry("ekubo_prepare_lp_position_earnings_claim").title,
-      description: catalogEntry("ekubo_prepare_lp_position_earnings_claim").description,
+      title: catalogEntry("prepare_lp_position_earnings_claim").title,
+      description: catalogEntry("prepare_lp_position_earnings_claim").description,
       inputSchema: prepareLpPositionEarningsClaimSchema,
-      annotations: toolAnnotations("ekubo_prepare_lp_position_earnings_claim"),
-      ...(toolOutputSchema("ekubo_prepare_lp_position_earnings_claim") === undefined
+      annotations: toolAnnotations("prepare_lp_position_earnings_claim"),
+      ...(toolOutputSchema("prepare_lp_position_earnings_claim") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_prepare_lp_position_earnings_claim") }),
+        : { outputSchema: toolOutputSchema("prepare_lp_position_earnings_claim") }),
     },
     async (input) =>
       toolResult(() =>
@@ -2401,15 +2540,15 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
   );
 
   server.registerTool(
-    catalogEntry("ekubo_prepare_lp_position_withdraw").name,
+    catalogEntry("prepare_lp_position_withdraw").name,
     {
-      title: catalogEntry("ekubo_prepare_lp_position_withdraw").title,
-      description: catalogEntry("ekubo_prepare_lp_position_withdraw").description,
+      title: catalogEntry("prepare_lp_position_withdraw").title,
+      description: catalogEntry("prepare_lp_position_withdraw").description,
       inputSchema: prepareLpPositionWithdrawSchema,
-      annotations: toolAnnotations("ekubo_prepare_lp_position_withdraw"),
-      ...(toolOutputSchema("ekubo_prepare_lp_position_withdraw") === undefined
+      annotations: toolAnnotations("prepare_lp_position_withdraw"),
+      ...(toolOutputSchema("prepare_lp_position_withdraw") === undefined
         ? {}
-        : { outputSchema: toolOutputSchema("ekubo_prepare_lp_position_withdraw") }),
+        : { outputSchema: toolOutputSchema("prepare_lp_position_withdraw") }),
     },
     async (input) =>
       toolResult(() =>
@@ -2426,7 +2565,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
       ),
   );
 
-  registerCatalogTool("ekubo_prepare_wrap_unwrap", prepareWrapUnwrapSchema, (input) =>
+  registerCatalogTool("prepare_wrap_unwrap", prepareWrapUnwrapSchema, (input) =>
     prepareWrapUnwrap({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2435,7 +2574,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_lp_position_transfer", prepareLpPositionTransferSchema, (input) =>
+  registerCatalogTool("prepare_lp_position_transfer", prepareLpPositionTransferSchema, (input) =>
     prepareLpPositionTransfer(env, {
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2445,7 +2584,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_fix_pool_price", prepareFixPoolPriceSchema, (input) =>
+  registerCatalogTool("prepare_fix_pool_price", prepareFixPoolPriceSchema, (input) =>
     prepareFixPoolPrice(env, {
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2468,7 +2607,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_twamm_order", prepareTwammOrderSchema, (input) =>
+  registerCatalogTool("prepare_twamm_order", prepareTwammOrderSchema, (input) =>
     prepareTwammOrder({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2486,7 +2625,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_twamm_order_collection", prepareTwammOrderCollectionSchema, (input) =>
+  registerCatalogTool("prepare_twamm_order_collection", prepareTwammOrderCollectionSchema, (input) =>
     prepareTwammOrderCollection({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2496,7 +2635,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_twamm_order_stop", prepareTwammOrderStopSchema, (input) =>
+  registerCatalogTool("prepare_twamm_order_stop", prepareTwammOrderStopSchema, (input) =>
     prepareTwammOrderStop({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2511,7 +2650,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_twamm_virtual_orders", prepareTwammVirtualOrdersSchema, (input) =>
+  registerCatalogTool("prepare_twamm_virtual_orders", prepareTwammVirtualOrdersSchema, (input) =>
     prepareExecuteTwammVirtualOrders({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2519,7 +2658,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_auction_create", prepareAuctionCreateSchema, (input) =>
+  registerCatalogTool("prepare_auction_create", prepareAuctionCreateSchema, (input) =>
     prepareAuctionCreate({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2536,7 +2675,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_auction_complete", prepareAuctionCompleteSchema, (input) =>
+  registerCatalogTool("prepare_auction_complete", prepareAuctionCompleteSchema, (input) =>
     prepareAuctionComplete({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2547,7 +2686,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_auction_creator_proceeds", prepareAuctionCreatorProceedsSchema, (input) =>
+  registerCatalogTool("prepare_auction_creator_proceeds", prepareAuctionCreatorProceedsSchema, (input) =>
     prepareAuctionCreatorProceeds({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2556,7 +2695,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_manual_pool_boost", prepareManualPoolBoostSchema, (input) =>
+  registerCatalogTool("prepare_manual_pool_boost", prepareManualPoolBoostSchema, (input) =>
     prepareManualPoolBoost({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2568,7 +2707,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_oracle_capacity_expansion", prepareOracleCapacityExpansionSchema, (input) =>
+  registerCatalogTool("prepare_oracle_capacity_expansion", prepareOracleCapacityExpansionSchema, (input) =>
     prepareOracleCapacityExpansion({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2577,7 +2716,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_approval_revocations", prepareApprovalRevocationsSchema, (input) =>
+  registerCatalogTool("prepare_approval_revocations", prepareApprovalRevocationsSchema, (input) =>
     prepareApprovalRevocations({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2585,7 +2724,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_old_gekubo_unwrap", prepareOldGekuboUnwrapSchema, (input) =>
+  registerCatalogTool("prepare_old_gekubo_unwrap", prepareOldGekuboUnwrapSchema, (input) =>
     prepareOldGekuboUnwrap({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2593,11 +2732,11 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_get_rewards_claims_by_owner", getRewardsClaimsByOwnerSchema, (input) =>
+  registerCatalogTool("get_rewards_claims_by_owner", getRewardsClaimsByOwnerSchema, (input) =>
     getRewardsClaimsByOwner(env, { owner: input.owner }),
   );
 
-  registerCatalogTool("ekubo_prepare_rewards_claim", prepareRewardsClaimSchema, (input) =>
+  registerCatalogTool("prepare_rewards_claim", prepareRewardsClaimSchema, (input) =>
     prepareRewardsClaim({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2614,7 +2753,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_recovery_fund_claim", prepareRecoveryFundClaimSchema, (input) =>
+  registerCatalogTool("prepare_recovery_fund_claim", prepareRecoveryFundClaimSchema, (input) =>
     prepareRecoveryFundClaim({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2624,7 +2763,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_revenue_buybacks", prepareRevenueBuybacksSchema, (input) =>
+  registerCatalogTool("prepare_revenue_buybacks", prepareRevenueBuybacksSchema, (input) =>
     prepareRevenueBuybacks({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2638,7 +2777,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_ve33_increase_stake", prepareVe33IncreaseStakeSchema, (input) =>
+  registerCatalogTool("prepare_ve33_increase_stake", prepareVe33IncreaseStakeSchema, (input) =>
     prepareVe33IncreaseStake({
       chainId: canonicalChainId(input.chain_id),
       veToken: input.ve_token as Address,
@@ -2649,7 +2788,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_ve33_merge", prepareVe33MergeSchema, (input) =>
+  registerCatalogTool("prepare_ve33_merge", prepareVe33MergeSchema, (input) =>
     prepareVe33Merge({
       chainId: canonicalChainId(input.chain_id),
       veToken: input.ve_token as Address,
@@ -2678,7 +2817,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_ve33_withdraw", prepareVe33WithdrawSchema, (input) =>
+  registerCatalogTool("prepare_ve33_withdraw", prepareVe33WithdrawSchema, (input) =>
     prepareVe33Withdraw({
       chainId: canonicalChainId(input.chain_id),
       veToken: input.ve_token as Address,
@@ -2691,7 +2830,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_get_liquidity_opportunities", getLiquidityOpportunitiesSchema, (input) =>
+  registerCatalogTool("get_liquidity_opportunities", getLiquidityOpportunitiesSchema, (input) =>
     getLiquidityOpportunities(env, {
       chainId:
         input.chain_id === undefined
@@ -2714,7 +2853,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("ekubo_prepare_pool_initialization", preparePoolInitializationSchema, (input) =>
+  registerCatalogTool("prepare_pool_initialization", preparePoolInitializationSchema, (input) =>
     preparePoolInitialization({
       chainId: canonicalChainId(input.chain_id),
       sender: input.sender,
@@ -2722,6 +2861,91 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
       poolKey: mapEncodedPoolKey(input.pool_key),
       initialTick: input.initial_tick,
     }),
+  );
+
+  registerCatalogTool("get_aave_v3_markets", getAaveV3MarketsSchema, (input) =>
+    getAaveV3Markets({
+      chainId:
+        input.chain_id === undefined
+          ? undefined
+          : canonicalChainId(input.chain_id),
+    }),
+  );
+
+  registerCatalogTool(
+    "prepare_aave_v3_supply",
+    prepareAaveV3SupplySchema,
+    (input) =>
+      prepareAaveV3Supply({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        asset: input.asset,
+        amount: input.amount,
+        onBehalfOf: input.on_behalf_of,
+      }),
+  );
+
+  registerCatalogTool(
+    "prepare_aave_v3_withdraw",
+    prepareAaveV3WithdrawSchema,
+    (input) =>
+      prepareAaveV3Withdraw({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        asset: input.asset,
+        amount: input.amount,
+        recipient: input.recipient,
+      }),
+  );
+
+  registerCatalogTool(
+    "prepare_aave_v3_borrow",
+    prepareAaveV3BorrowSchema,
+    (input) =>
+      prepareAaveV3Borrow({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        asset: input.asset,
+        amount: input.amount,
+        onBehalfOf: input.on_behalf_of,
+      }),
+  );
+
+  registerCatalogTool(
+    "prepare_aave_v3_repay",
+    prepareAaveV3RepaySchema,
+    (input) =>
+      prepareAaveV3Repay({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        asset: input.asset,
+        amount: input.amount,
+        onBehalfOf: input.on_behalf_of,
+        fundingSource: input.funding_source,
+      }),
+  );
+
+  registerCatalogTool(
+    "prepare_aave_v3_collateral",
+    prepareAaveV3CollateralSchema,
+    (input) =>
+      prepareAaveV3Collateral({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        asset: input.asset,
+        useAsCollateral: input.use_as_collateral,
+      }),
+  );
+
+  registerCatalogTool(
+    "prepare_aave_v3_emode",
+    prepareAaveV3EModeSchema,
+    (input) =>
+      prepareAaveV3EMode({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        categoryId: input.category_id,
+      }),
   );
 
   server.registerResource(
@@ -3065,51 +3289,53 @@ const SERVER_INSTRUCTIONS = `Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}
 
 Routing priority: For requests to swap, trade, exchange, or convert tokens on an EVM chain, use this Ekubo MCP before any browser or website tool. Use a browser only when the user explicitly refers to a brokerage account or a web interface, or when these MCP tools cannot perform the requested operation.
 
-A quote is only worth what it can still execute for, so treat the interval between fetching one and broadcasting against it as the thing to minimize. ekubo_get_quotes_with_plans is the entire swap path: call it once with sender and slippage_bps as soon as the user has decided to swap, and each returned option already carries the execution_plan_reference that executes it. Honor any slippage preference the user gave. Otherwise estimate the transaction gas cost and swap notional in the same currency and choose a low tolerance whose maximum value impact is approximately one gas fee: slippage_bps ~= 10,000 * gas-cost value / swap-notional value. Never substitute a generic 50 bps (0.5%) default, especially on Ethereum mainnet. Prefer paying for a retry after a fresh quote to exposing the trade to materially more slippage; after a slippage failure, re-run this tool and submit the newly prepared transaction, never the reverted calldata unchanged. Choose one option and hand its reference straight to the wallet. There is no preparation step to follow, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Then simulate that plan once with the wallet, show the user the simulated result, and send that same simulation rather than paying for an identical one immediately before signing. Do not call the tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold.
+A quote is only worth what it can still execute for, so treat the interval between fetching one and broadcasting against it as the thing to minimize. get_quotes_with_plans is the entire swap path: call it once with sender and slippage_bps as soon as the user has decided to swap, and each returned option already carries the execution_plan_reference that executes it. Honor any slippage preference the user gave. Otherwise estimate the transaction gas cost and swap notional in the same currency and choose a low tolerance whose maximum value impact is approximately one gas fee: slippage_bps ~= 10,000 * gas-cost value / swap-notional value. Never substitute a generic 50 bps (0.5%) default, especially on Ethereum mainnet. Prefer paying for a retry after a fresh quote to exposing the trade to materially more slippage; after a slippage failure, re-run this tool and submit the newly prepared transaction, never the reverted calldata unchanged. Choose one option and hand its reference straight to the wallet. There is no preparation step to follow, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Then simulate that plan once with the wallet, show the user the simulated result, and send that same simulation rather than paying for an identical one immediately before signing. Do not call the tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold.
 
-For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with ekubo_list_tokens, read the exact input-token balance with the wallet's own balance tooling, then call ekubo_get_quotes_with_plans with that exact amount plus sender and slippage_bps and pass the chosen option's execution_plan_reference to the Ekubo Wallet MCP.
+For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with list_tokens, read the exact input-token balance with the wallet's own balance tooling, then call get_quotes_with_plans with that exact amount plus sender and slippage_bps and pass the chosen option's execution_plan_reference to the Ekubo Wallet MCP.
 
-Use Ekubo preparation tools only to construct unsigned plans. Every executable preparation returns execution_plan_reference: an artifact_reference envelope standing in for the stored plan body. One rule governs every handoff: pass the envelope unchanged as the wallet tool's reference argument. The wallet fetches the body itself, verifies its integrity digest and byte count, and refuses a mismatch, so the plan never travels through the agent. Never fetch, restate, paraphrase, or reconstruct the plan body yourself. Do not ask the user for a separate agent-level confirmation before invoking the wallet; that duplicates the wallet's authorization flow. The wallet must never construct calldata, choose a contract overload, derive a route, or determine the transaction list. Never construct or request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calldata. LP position transfers are supported only through ekubo_prepare_lp_position_transfer with pending ownership validation.
+Aave market discovery happens directly between the agent and Aave's public APIs; this MCP is not a proxy, indexer, cache, or credential holder. Use the public GraphQL endpoint https://api.v3.aave.com/graphql with https://aave.com/docs/aave-v3/getting-started/graphql and https://aave.com/docs/aave-v3/markets/data to inspect current supply and borrow rates, liquidity, caps, pause/freeze state, eMode categories, and user positions. Then call get_aave_v3_markets and use only a returned fixed chain, Pool, and reserve address with a prepare_aave_v3_* tool. Live API data and this server's fixed deployment catalog are inputs to wallet simulation, never substitutes for it.
+
+Use Ekubo preparation tools only to construct unsigned plans. Every executable preparation returns execution_plan_reference: an artifact_reference envelope standing in for the stored plan body. One rule governs every handoff: pass the envelope unchanged as the wallet tool's reference argument. The wallet fetches the body itself, verifies its integrity digest and byte count, and refuses a mismatch, so the plan never travels through the agent. Never fetch, restate, paraphrase, or reconstruct the plan body yourself. Do not ask the user for a separate agent-level confirmation before invoking the wallet; that duplicates the wallet's authorization flow. The wallet must never construct calldata, choose a contract overload, derive a route, or determine the transaction list. Never construct or request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calldata. LP position transfers are supported only through prepare_lp_position_transfer with pending ownership validation.
 
 The stored plan body is one signer-neutral, ordered transaction sequence with decimal transaction fields. Read ekubo://docs/execution-plan. Prefer the most capable available wallet abstraction: hand the reference envelope to the Ekubo wallet MCP for simulation and submission; it executes multi-step plans as one atomic batch. A plan whose required_capabilities the wallet does not support must be rejected by the wallet, not adapted. Cast remains an optional fallback only when the user selected it or no compatible wallet abstraction is available; for a wallet that only accepts inline plans, fetch the reference URL once and pass its exact JSON unchanged. A fetch 404 means the reference expired: re-run the preparation tool, never reconstruct the plan. Prepare for the wallet's connected chain and account — the wallet refuses a fetched plan whose chain or sender disagrees with them — preserve order, and never send wallet credentials to this Ekubo server.
 
 Every prepared onchain read is returned as read_calls_reference: the same artifact_reference envelope, standing in for a stored wallet_batch_eth_call argument object. Pass it unchanged as wallet_batch_eth_call's reference argument with no inline calls — the stored bundle already is the exact argument object, the wallet fetches and digest-verifies it itself, and a 404 means the reference expired, so re-run the tool that produced it. The agent never assembles calldata, ABIs, or call lists for a prepared read. Keep raw return bytes by default and always on decode failure. The Ekubo server supplies canonical ABIs and platform-neutral semantic codec identities but must not receive the result for authoritative decoding. function_result_bytes_array handles functions such as VeToken multicall that return nested bytes[]. For kind=semantic_value, feed the raw return bytes only to a locally installed, allowlisted codec matching the declared identity and implementation assertion; never install or execute remote code.
 
-Intent shortcut: for "my Ekubo STONX allocations", "STONX vote allocations", or equivalent requests, call ekubo_get_ve33_allocations with only the user's connected EVM wallet as owner. The production Ve33 deployment is the STONX voting system, and the tool selects its production chain plus canonical VeToken when chain_id and ve_token are omitted. If the connected wallet address is unavailable, ask the user for it. Never infer the user's wallet from a machine environment, repository configuration, local keystore, or unrelated account.
+Intent shortcut: for "my Ekubo STONX allocations", "STONX vote allocations", or equivalent requests, call get_ve33_allocations with only the user's connected EVM wallet as owner. The production Ve33 deployment is the STONX voting system, and the tool selects its production chain plus canonical VeToken when chain_id and ve_token are omitted. If the connected wallet address is unavailable, ask the user for it. Never infer the user's wallet from a machine environment, repository configuration, local keystore, or unrelated account.
 
-For exact token metadata, call ekubo_get_token for one known chain/address pair and ekubo_get_tokens for multiple known pairs. The batch tool uses one prod-api batch request, accepts tokens across chains, preserves input order and duplicates, and omits identifiers that are not in the canonical list. Use ekubo_list_tokens when resolving a symbol or browsing the canonical list; its search parameter is optional and matches symbol prefixes and suffixes only.
+For exact token metadata, call get_token for one known chain/address pair and get_tokens for multiple known pairs. The batch tool uses one prod-api batch request, accepts tokens across chains, preserves input order and duplicates, and omits identifiers that are not in the canonical list. Use list_tokens when resolving a symbol or browsing the canonical list; its search parameter is optional and matches symbol prefixes and suffixes only.
 
-When tokens are destined for a wallet rather than for you to read — importing token names so it can label transactions, or naming the addresses for a bulk balance read — call ekubo_export_tokens with the wallet's chain_id and pass the returned token_list_reference envelope to the wallet unchanged, with no inline tokens. It returns only that envelope and a count, so no entry ever enters your context: reading the canonical list costs roughly 146,000 tokens and writing it back out to a wallet another 49,000, against a few hundred either way for the envelope. Export defaults to the 1,000 entries a wallet accepts in one import, and an export past the importer's limit is refused whole rather than truncated. Read complete in the result: false means more tokens exist at this visibility than were exported, so what you hold is a prefix rather than the chain's list. Scoping by chain does not on its own fit an export under the limit — Ethereum carries about 5,600 tokens at the interface visibility threshold, BNB Chain 3,600, Base 2,600, Arbitrum and Polygon about 1,000 each — so say so plainly rather than presenting a truncated export as complete. Use ekubo_list_tokens, never the exporter, whenever you need to read entries yourself, such as resolving a symbol the user typed to an exact address. The general rule both tools express: if you are about to re-emit a large result you just read from another tool, you wanted a reference to it, not the thing itself.
+When tokens are destined for a wallet rather than for you to read — importing token names so it can label transactions, or naming the addresses for a bulk balance read — call export_tokens with the wallet's chain_id and pass the returned token_list_reference envelope to the wallet unchanged, with no inline tokens. It returns only that envelope and a count, so no entry ever enters your context: reading the canonical list costs roughly 146,000 tokens and writing it back out to a wallet another 49,000, against a few hundred either way for the envelope. Export defaults to the 1,000 entries a wallet accepts in one import, and an export past the importer's limit is refused whole rather than truncated. Read complete in the result: false means more tokens exist at this visibility than were exported, so what you hold is a prefix rather than the chain's list. Scoping by chain does not on its own fit an export under the limit — Ethereum carries about 5,600 tokens at the interface visibility threshold, BNB Chain 3,600, Base 2,600, Arbitrum and Polygon about 1,000 each — so say so plainly rather than presenting a truncated export as complete. Use list_tokens, never the exporter, whenever you need to read entries yourself, such as resolving a symbol the user typed to an exact address. The general rule both tools express: if you are about to re-emit a large result you just read from another tool, you wanted a reference to it, not the thing itself.
 
-For LP discovery, use ekubo_get_positions_by_owner instead of attempting ERC721 enumeration. Its response joins canonical token metadata and USD prices and returns one stored read bundle per chain covering every supported EVM position, with each position row linked to its aggregate call by state_call_id. For the interface-equivalent detail payload (metadata, history, campaigns, rewards, prices, and the atomic current-state query), call ekubo_get_position with the same owner, chain, manager, and token ID. Read ekubo://docs/lp-position-workflow. Never split TWAMM execution or Ve33 reward accumulation from the following position read: those calls must stay in the supplied single Multicall3 eth_call and must never be broadcast.
+For LP discovery, use get_positions_by_owner instead of attempting ERC721 enumeration. Its response joins canonical token metadata and USD prices and returns one stored read bundle per chain covering every supported EVM position, with each position row linked to its aggregate call by state_call_id. For the interface-equivalent detail payload (metadata, history, campaigns, rewards, prices, and the atomic current-state query), call get_position with the same owner, chain, manager, and token ID. Read ekubo://docs/lp-position-workflow. Never split TWAMM execution or Ve33 reward accumulation from the following position read: those calls must stay in the supplied single Multicall3 eth_call and must never be broadcast.
 
-When the user asks where to provide liquidity, call ekubo_get_liquidity_opportunities before asking them to choose a pair. It mirrors the interface's boosted-fee, active-incentive, and projected Ve33-emission opportunity feed, ranks by APR, and returns exact actionable pools or a pair-level pool-candidate handoff. APR is an annualized snapshot, not guaranteed yield; show its components, denominator, data freshness, range and impermanent-loss risks. If ranking_complete=false, execute local_read_requirement through the user's wallet, decode it locally, and call the tool again with ve33_emission_state before presenting the ordering as final. Never ask this server to decode the raw onchain result; supply only the locally decoded decimal fields needed for projection.
+When the user asks where to provide liquidity, call get_liquidity_opportunities before asking them to choose a pair. It mirrors the interface's boosted-fee, active-incentive, and projected Ve33-emission opportunity feed, ranks by APR, and returns exact actionable pools or a pair-level pool-candidate handoff. APR is an annualized snapshot, not guaranteed yield; show its components, denominator, data freshness, range and impermanent-loss risks. If ranking_complete=false, execute local_read_requirement through the user's wallet, decode it locally, and call the tool again with ve33_emission_state before presenting the ordering as final. Never ask this server to decode the raw onchain result; supply only the locally decoded decimal fields needed for projection.
 
-For creating an LP position, call ekubo_get_position_pool_candidates with the pair. Do not browse prod-api, manually derive pool IDs, or inspect manager ABIs. Show the candidate's Core generation, exact pool key, extension, manager, TVL, depth, volume, and fees. If the user selects a new configuration not yet indexed, normally pass its exact pool_key with pool_initialized=false and initial_tick to ekubo_prepare_lp_position_deposit; the tool derives the pool ID and prepends maybeInitializePool as its own step before the deployed mintAndDeposit call, which the wallet executes as one atomic batch. Use ekubo_prepare_pool_initialization only when the user explicitly needs initialization as a separate transaction. If the wallet lacks one side, prepare and execute that funding swap separately, wait for its successful receipt, measure the actual new token balance, reserve native gas, and only then prepare the deposit from the measured available amounts; never treat a quote's expected output as a settled balance. The deposit tool computes a nonzero minimum liquidity, approvals, initialization, native refund, allowance cleanup, decoded calls, and a complete plan delivered as execution_plan_reference.
+For creating an LP position, call get_position_pool_candidates with the pair. Do not browse prod-api, manually derive pool IDs, or inspect manager ABIs. Show the candidate's Core generation, exact pool key, extension, manager, TVL, depth, volume, and fees. If the user selects a new configuration not yet indexed, normally pass its exact pool_key with pool_initialized=false and initial_tick to prepare_lp_position_deposit; the tool derives the pool ID and prepends maybeInitializePool as its own step before the deployed mintAndDeposit call, which the wallet executes as one atomic batch. Use prepare_pool_initialization only when the user explicitly needs initialization as a separate transaction. If the wallet lacks one side, prepare and execute that funding swap separately, wait for its successful receipt, measure the actual new token balance, reserve native gas, and only then prepare the deposit from the measured available amounts; never treat a quote's expected output as a settled balance. The deposit tool computes a nonzero minimum liquidity, approvals, initialization, native refund, allowance cleanup, decoded calls, and a complete plan delivered as execution_plan_reference.
 
-For “collect my LP fees” or “claim my LP rewards”, call ekubo_prepare_lp_position_earnings_claim with the connected owner wallet, manager, and token ID from ekubo_get_positions_by_owner. It automatically uses v2 zero-liquidity fee withdrawal, v3 collectFees, or Ve33 claimRewards and never removes liquidity, burns, or transfers the NFT. Execute its current_state_query by passing its read_calls_reference unchanged to wallet_batch_eth_call. Require every inner call to succeed, compare the decoded owner with expected_owner, retain raw return data, and pass the decoded fees or rewards plus execution_plan_reference to the wallet for simulation and authorization. Never infer or manually encode the manager function.
+For “collect my LP fees” or “claim my LP rewards”, call prepare_lp_position_earnings_claim with the connected owner wallet, manager, and token ID from get_positions_by_owner. It automatically uses v2 zero-liquidity fee withdrawal, v3 collectFees, or Ve33 claimRewards and never removes liquidity, burns, or transfers the NFT. Execute its current_state_query by passing its read_calls_reference unchanged to wallet_batch_eth_call. Require every inner call to succeed, compare the decoded owner with expected_owner, retain raw return data, and pass the decoded fees or rewards plus execution_plan_reference to the wallet for simulation and authorization. Never infer or manually encode the manager function.
 
-For partial or full LP withdrawals, execute each position's current_state_query through its read_calls_reference, then select an exact positive liquidity amount no greater than that position's decoded liquidity. Require every inner call to succeed, compare decoded owner with expected_owner, and retain raw return data. Then call ekubo_prepare_lp_position_withdraw with a withdrawals array of up to 100 positions. It automatically chooses each correct v2/v3 withdraw overload or Ve33 withdrawAndClaimRewards, collects fees or rewards exactly as the interface does, and returns the entire transaction list. Include every principal/earnings estimate and recipient in the wallet handoff, and give the unchanged execution_plan_reference envelope to the wallet MCP. The wallet may batch unrelated position calls into one transaction but must never construct calldata, choose an overload, or add a claim transaction.
+For partial or full LP withdrawals, execute each position's current_state_query through its read_calls_reference, then select an exact positive liquidity amount no greater than that position's decoded liquidity. Require every inner call to succeed, compare decoded owner with expected_owner, and retain raw return data. Then call prepare_lp_position_withdraw with a withdrawals array of up to 100 positions. It automatically chooses each correct v2/v3 withdraw overload or Ve33 withdrawAndClaimRewards, collects fees or rewards exactly as the interface does, and returns the entire transaction list. Include every principal/earnings estimate and recipient in the wallet handoff, and give the unchanged execution_plan_reference envelope to the wallet MCP. The wallet may batch unrelated position calls into one transaction but must never construct calldata, choose an overload, or add a claim transaction.
 
 Pass LP execution plans to the wallet MCP for simulation, wallet-owned authorization, and execution; never use Cast to reconstruct LP calldata. Do not insert a separate agent confirmation step. If wallet policy rejects a plan, report the wallet's exact finding verbatim and do not attempt to change wallet policy; proposing a policy change is the wallet's own tool to offer, not this server's.
 
-For every other EVM action exposed by the interface, use its first-class prepare tool: wrap/unwrap, LP position transfer, phased pool price correction through ekubo_prepare_fix_pool_price, standalone pool initialization through ekubo_prepare_pool_initialization, TWAMM/DCA creation/collection/stop/virtual-order execution, auction creation/completion/creator proceeds, manual boosts, oracle capacity, approval revocation, old gEKUBO unwrap, incentive rewards, Recovery Fund claims, revenue buybacks, and direct VeToken increase/merge/withdraw. Phased tools return exact eth_call or EIP-712 requests and tell the caller which decoded values to send back. The Ekubo wallet MCP performs the reads but intentionally does not expose arbitrary EIP-712 signing; a Recovery Fund signature request must go to a separately selected connected wallet with eth_signTypedData_v4 support. Wallets must not invent calldata, append approvals, build multicalls, or choose transaction ordering.
+For every other EVM action exposed by the interface, use its first-class prepare tool: wrap/unwrap, LP position transfer, phased pool price correction through prepare_fix_pool_price, standalone pool initialization through prepare_pool_initialization, TWAMM/DCA creation/collection/stop/virtual-order execution, auction creation/completion/creator proceeds, manual boosts, oracle capacity, approval revocation, old gEKUBO unwrap, incentive rewards, Recovery Fund claims, revenue buybacks, and direct VeToken increase/merge/withdraw. Phased tools return exact eth_call or EIP-712 requests and tell the caller which decoded values to send back. The Ekubo wallet MCP performs the reads but intentionally does not expose arbitrary EIP-712 signing; a Recovery Fund signature request must go to a separately selected connected wallet with eth_signTypedData_v4 support. Wallets must not invent calldata, append approvals, build multicalls, or choose transaction ordering.
 
-Use ekubo_get_pool for one exact chain/core/pool ID and ekubo_get_pool_liquidity for tick-level depth. Use ekubo_list_pool_keys to enumerate a Core deployment's initialized pools with keyset pagination (after_pool_id, ascending pool_id order) and token/pair/extension filters; every returned pool_id is re-derived locally from its PoolKey before it is reported. ekubo_get_pool returns the latest indexed pool_state snapshot plus current_state_query, whose read_calls_reference the wallet executes for fresh on-chain sqrtRatio, tick, and liquidity. Use ekubo_derive_pool_id and ekubo_decode_pool_config for PoolKey construction and inspection. A pool fee is an exact uint64 Q64 integer: accept and return it only as a decimal or hexadecimal string, never a JSON number.
+Use get_pool for one exact chain/core/pool ID and get_pool_liquidity for tick-level depth. Use list_pool_keys to enumerate a Core deployment's initialized pools with keyset pagination (after_pool_id, ascending pool_id order) and token/pair/extension filters; every returned pool_id is re-derived locally from its PoolKey before it is reported. get_pool returns the latest indexed pool_state snapshot plus current_state_query, whose read_calls_reference the wallet executes for fresh on-chain sqrtRatio, tick, and liquidity. Use derive_pool_id and decode_pool_config for PoolKey construction and inspection. A pool fee is an exact uint64 Q64 integer: accept and return it only as a decimal or hexadecimal string, never a JSON number.
 
-For VeToken vote reorganization, first call ekubo_get_ve33_allocations and show the owner, state_id, total applied vote weight, every pool allocation, and contributing ve_ids. Pass that exact state_id to ekubo_prepare_ve33_reallocation. Never construct raw vote, clearVote, extendStake, mergeStakes, withdrawStake, or burn calldata from the ABI resource when a first-class safe workflow exists.
+For VeToken vote reorganization, first call get_ve33_allocations and show the owner, state_id, total applied vote weight, every pool allocation, and contributing ve_ids. Pass that exact state_id to prepare_ve33_reallocation. Never construct raw vote, clearVote, extendStake, mergeStakes, withdrawStake, or burn calldata from the ABI resource when a first-class safe workflow exists.
 
-For "update my STONX allocations to the suggested allocations", call ekubo_get_stonx_allocation_recommendation, require execution_ready=true, at most 25 targets, and an exact 10,000-bps target total, then call ekubo_get_ve33_allocations for the connected wallet. Validate its onchain request and pass its exact state_id, recommendation targets, and strategy=compact_max_lock to ekubo_prepare_ve33_reallocation. Pass the surviving NFT, every source NFT burned by a compound merge, the maximum four-year extension, exactly one final voting NFT per target, every decoded call, and the complete plan to the wallet.
+For "update my STONX allocations to the suggested allocations", call get_stonx_allocation_recommendation, require execution_ready=true, at most 25 targets, and an exact 10,000-bps target total, then call get_ve33_allocations for the connected wallet. Validate its onchain request and pass its exact state_id, recommendation targets, and strategy=compact_max_lock to prepare_ve33_reallocation. Pass the surviving NFT, every source NFT burned by a compound merge, the maximum four-year extension, exactly one final voting NFT per target, every decoded call, and the complete plan to the wallet.
 
-For "reinvest my fees", call ekubo_prepare_ve33_reinvest with phase=claim and omit claims so it discovers and claims every active allocation. Take the supplied pre-claim balance snapshots, then use phase=swap with only the exact claimed deltas so it prepares one exact-input swap per non-stake token. After receipts confirm, refresh allocations and use phase=stake_all with its exact state_id and the measured STONX output. Never swap a wallet's pre-existing balance.
+For "reinvest my fees", call prepare_ve33_reinvest with phase=claim and omit claims so it discovers and claims every active allocation. Take the supplied pre-claim balance snapshots, then use phase=swap with only the exact claimed deltas so it prepares one exact-input swap per non-stake token. After receipts confirm, refresh allocations and use phase=stake_all with its exact state_id and the measured STONX output. Never swap a wallet's pre-existing balance.
 
-For a new stake, use ekubo_prepare_ve33_stake; max duration is the default when no duration is supplied. For an existing stake, pass current_pool_key when it is voted so ekubo_prepare_ve33_extend uses a compound fee claim before extension; omit it only for an unvoted VeToken. max_duration=true must be an explicit choice.
+For a new stake, use prepare_ve33_stake; max duration is the default when no duration is supplied. For an existing stake, pass current_pool_key when it is voted so prepare_ve33_extend uses a compound fee claim before extension; omit it only for an unvoted VeToken. max_duration=true must be an explicit choice.
 
 Every active source vote must be claimed unconditionally before that vote is cleared or moved, even when claimable fees are currently zero. Preserve the returned compact claim-and-extend, claim-and-merge, split, and vote order across the plan's steps, which the wallet executes as one atomic batch. Execute onchain_validation's read_calls_reference through wallet_batch_eth_call immediately before signing, simulate the exact transaction from sender, and discard the plan after any state change or failed expectation.`;
 
 const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 
-1. Search the token list when resolving a name or symbol. For exact identifiers, use ekubo_get_token for one chain/address pair or ekubo_get_tokens for up to 1,000 pairs in one batch. Show the chosen chains and addresses to the user.
+1. Search the token list when resolving a name or symbol. For exact identifiers, use get_token for one chain/address pair or get_tokens for up to 1,000 pairs in one batch. Show the chosen chains and addresses to the user.
 2. Convert the user amount to base units without floating-point arithmetic.
 3. Set destination_chain_id explicitly for a bridge. Raw addresses and eip155:<chain>:<address> token IDs are accepted.
 4. Request an exact-input or exact-output quote. Once the user has decided to swap, pass sender and slippage_bps so every option arrives with the calldata that executes it; omit both only for an indicative "what would I get" comparison. Honor the user's explicit slippage preference. If none was given, estimate gas cost and swap notional in the same currency and use slippage_bps approximately equal to 10,000 * gas-cost value / swap-notional value, so the maximum tolerated slippage loss is near one gas fee. Do not default to 50 bps (0.5%), especially on Ethereum mainnet; prefer re-quoting and preparing a new transaction after failure to widening the bound. For same-chain requests, inspect every entry in quotes and choose a source; the tool does not accept or select one. The normalized amounts expose amount_out for exact input and amount_in for exact output. Cross-chain requests return Across. unavailable_sources reports individual provider failures without invalidating successful quote options, and a single option that could not be made executable reports its own execution_unavailable while the rest stand.
@@ -3122,9 +3348,9 @@ const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 
 const LP_POSITION_WORKFLOW = `# Ekubo LP position data and onchain state
 
-Ekubo position NFTs are not ERC721-enumerable. Start with \`ekubo_get_positions_by_owner\`; do not scan \`tokenOfOwnerByIndex\`. The owner response includes the interface's indexed portfolio-row inputs (PoolKey, bounds, position liquidity, pool state, incentive rewards), current canonical token metadata and USD prices, and one exact pending state query per supported EVM position.
+Ekubo position NFTs are not ERC721-enumerable. Start with \`get_positions_by_owner\`; do not scan \`tokenOfOwnerByIndex\`. The owner response includes the interface's indexed portfolio-row inputs (PoolKey, bounds, position liquidity, pool state, incentive rewards), current canonical token metadata and USD prices, and one exact pending state query per supported EVM position.
 
-For a detail view, call \`ekubo_get_position\` with the owner, chain, positions manager, and token ID from that list. It returns:
+For a detail view, call \`get_position\` with the owner, chain, positions manager, and token ID from that list. It returns:
 
 - the exact indexed position snapshot;
 - NFT metadata, including its salt and mint transaction;
@@ -3147,31 +3373,31 @@ TWAMM positions prepend \`lockAndExecuteVirtualOrders\`. Ve33 positions prepend 
 
 For each raw amount, divide by \`10^token.decimals\`, multiply by the matching \`token.usd_price\`, and sum token0 and token1. Current principal USD uses \`principal0\` and \`principal1\`; current fee USD uses \`fees0\` and \`fees1\`. Missing prices make USD values unavailable.
 
-To reproduce all-time APR, find the latest \`update\` event in \`position_history\` and replay \`current_state_query.aggregate_call\` (its to/data are kept inline by \`ekubo_get_position\` for exactly this purpose) at event block + 1. For 1-day or 7-day APR, resolve the block closest to pending timestamp minus the interval, then replay at that block. Reuse the identical aggregate \`to\` and \`data\`; replace only the executed JSON-RPC block parameter with a hexadecimal block quantity. Decode locally and retain each historical raw result. Add any \`collect_fees\` amounts (or \`claim_rewards\` for Ve33) since the start snapshot, value them using the current token prices as the interface does, divide earnings by current principal USD, and annualize by elapsed seconds. Do not report APR when liquidity changed between snapshots or required price/history data is unavailable.
+To reproduce all-time APR, find the latest \`update\` event in \`position_history\` and replay \`current_state_query.aggregate_call\` (its to/data are kept inline by \`get_position\` for exactly this purpose) at event block + 1. For 1-day or 7-day APR, resolve the block closest to pending timestamp minus the interval, then replay at that block. Reuse the identical aggregate \`to\` and \`data\`; replace only the executed JSON-RPC block parameter with a hexadecimal block quantity. Decode locally and retain each historical raw result. Add any \`collect_fees\` amounts (or \`claim_rewards\` for Ve33) since the start snapshot, value them using the current token prices as the interface does, divide earnings by current principal USD, and annualize by elapsed seconds. Do not report APR when liquidity changed between snapshots or required price/history data is unavailable.
 
 The indexed \`pool_state\` is appropriate for portfolio range math and discovery. The pending contract simulation is authoritative for immediately withdrawable principal, uncollected fees or accumulated Ve33 rewards, and current ownership.
 
 ## Discover and prepare a deposit
 
-Call \`ekubo_get_position_pool_candidates\` with the chain and token pair. It replaces direct data-API browsing and ABI inspection by returning every indexed candidate above the requested TVL floor, including verified PoolKey/config, Core generation, extension type, exact statistics, and the correct Positions manager. The default zero TVL floor is intentional for position creation because it keeps initialized pools with negligible liquidity visible.
+Call \`get_position_pool_candidates\` with the chain and token pair. It replaces direct data-API browsing and ABI inspection by returning every indexed candidate above the requested TVL floor, including verified PoolKey/config, Core generation, extension type, exact statistics, and the correct Positions manager. The default zero TVL floor is intentional for position creation because it keeps initialized pools with negligible liquidity visible.
 
-Once the user selects a v3 pool configuration, range, maximum token amounts, and slippage, call \`ekubo_prepare_lp_position_deposit\`. For an indexed pool, provide pool_id. For a new pool, provide the exact pool_key, pool_initialized=false, and initial_tick; the tool derives the ID and emits \`maybeInitializePool\` as its own step before the deployed \`mintAndDeposit\` call, which the wallet executes as one atomic batch. It calculates expected liquidity with shared SDK math, derives a nonzero minimum liquidity, selects Positions or Ve33Positions, and returns exact approvals, initialization/deposit/refund calldata, optional allowance cleanup, owner validation, decoded intent, and \`execution_plan_reference\`.
+Once the user selects a v3 pool configuration, range, maximum token amounts, and slippage, call \`prepare_lp_position_deposit\`. For an indexed pool, provide pool_id. For a new pool, provide the exact pool_key, pool_initialized=false, and initial_tick; the tool derives the ID and emits \`maybeInitializePool\` as its own step before the deployed \`mintAndDeposit\` call, which the wallet executes as one atomic batch. It calculates expected liquidity with shared SDK math, derives a nonzero minimum liquidity, selects Positions or Ve33Positions, and returns exact approvals, initialization/deposit/refund calldata, optional allowance cleanup, owner validation, decoded intent, and \`execution_plan_reference\`.
 
-When initialization must be its own transaction, call \`ekubo_prepare_pool_initialization\` with the exact PoolKey and initial tick. It selects Positions or Ve33Positions from the pool extension and returns one complete \`maybeInitializePool\` execution plan. The function is idempotent for an already initialized pool, but the first successful initializer fixes the pool's initial price, so simulate against pending state and verify the tick immediately before submission. Pool initialization does not correct an existing pool's price; use the phased \`ekubo_prepare_fix_pool_price\` workflow for that.
+When initialization must be its own transaction, call \`prepare_pool_initialization\` with the exact PoolKey and initial tick. It selects Positions or Ve33Positions from the pool extension and returns one complete \`maybeInitializePool\` execution plan. The function is idempotent for an already initialized pool, but the first successful initializer fixes the pool's initial price, so simulate against pending state and verify the tick immediately before submission. Pool initialization does not correct an existing pool's price; use the phased \`prepare_fix_pool_price\` workflow for that.
 
-If the wallet needs a preliminary swap to acquire one side, use \`ekubo_get_quotes_with_plans\` and take one option's plan as a separate step. Pass it to the wallet MCP so the wallet simulates it, presents the simulated result, collects authorization or signature, submits it, and returns a successful receipt. Then read the actual resulting balance or balance delta, preserve enough native token for gas, and call the LP preparer with the measured maxima. Do not combine the deposit with an unsettled swap or size it from quoted output alone.
+If the wallet needs a preliminary swap to acquire one side, use \`get_quotes_with_plans\` and take one option's plan as a separate step. Pass it to the wallet MCP so the wallet simulates it, presents the simulated result, collects authorization or signature, submits it, and returns a successful receipt. Then read the actual resulting balance or balance delta, preserve enough native token for gas, and call the LP preparer with the measured maxima. Do not combine the deposit with an unsettled swap or size it from quoted output alone.
 
 Do not encode \`mintAndDeposit\`, \`deposit\`, or \`refundNativeToken\` with Cast. Give the returned execution plan unchanged to the user's wallet MCP for exact-plan simulation, wallet-owned authorization, and submission. Do not insert a separate agent confirmation step. The wallet remains authoritative for what may be signed, the connected account, and the chain. This server states no policy requirements of its own and cannot loosen wallet policy.
 
 ## Collect fees or claim rewards
 
-Call \`ekubo_prepare_lp_position_earnings_claim\` with the connected owner wallet, chain, positions manager, and token ID returned by \`ekubo_get_positions_by_owner\`. Standard v3 Positions use \`collectFees\`; legacy v2 Positions use the explicit \`withdraw\` overload with liquidity zero and \`withFees=true\`; Ve33Positions use \`claimRewards\`. The recipient defaults to the sender and may be supplied explicitly. None of these paths withdraws principal, burns the NFT, or transfers it.
+Call \`prepare_lp_position_earnings_claim\` with the connected owner wallet, chain, positions manager, and token ID returned by \`get_positions_by_owner\`. Standard v3 Positions use \`collectFees\`; legacy v2 Positions use the explicit \`withdraw\` overload with liquidity zero and \`withFees=true\`; Ve33Positions use \`claimRewards\`. The recipient defaults to the sender and may be supplied explicitly. None of these paths withdraws principal, burns the NFT, or transfers it.
 
 Execute the returned \`onchain_validation.current_state_query\` by passing its \`read_calls_reference\` unchanged to \`wallet_batch_eth_call\`; for Ve33 the same stored bundle also reads \`stakeToken\`. Require every inner call to succeed, compare decoded owner with \`expected_owner\`, retain raw bytes, and pass \`fees0/fees1\` for standard positions or \`rewardAmount\` for Ve33 to the wallet with the unchanged \`execution_plan_reference\`. The wallet performs exact simulation, presents the result, collects authorization or signature, and submits. Do not reconstruct or decode calldata with Cast, and do not infer a manager function from an ABI resource.
 
 ## Withdraw liquidity
 
-Execute each position's current-state query and choose an exact positive uint128 liquidity amount, then call \`ekubo_prepare_lp_position_withdraw\` once with either one position or a withdrawals array for up to 100 positions. The preparer resolves every PoolKey and bounds from the owner index and mirrors the interface: standard v2/v3 withdrawals collect fees, while Ve33 uses \`withdrawAndClaimRewards\`. The wallet may atomically batch unrelated position calls. Compare every requested liquidity with its decoded pending liquidity, not only the informational indexed snapshot.
+Execute each position's current-state query and choose an exact positive uint128 liquidity amount, then call \`prepare_lp_position_withdraw\` once with either one position or a withdrawals array for up to 100 positions. The preparer resolves every PoolKey and bounds from the owner index and mirrors the interface: standard v2/v3 withdrawals collect fees, while Ve33 uses \`withdrawAndClaimRewards\`. The wallet may atomically batch unrelated position calls. Compare every requested liquidity with its decoded pending liquidity, not only the informational indexed snapshot.
 
 The returned execution plan contains the complete transaction list. The wallet must not select a function overload, reconstruct calldata, append a separate fee/reward claim, or burn the NFT. Use the locally decoded result to verify the owner equals \`expected_owner\`, sufficient liquidity, principal, and earnings; include the recipient and exact manager call, then pass the complete context and plan to the wallet for simulation and authorization. Discard and rebuild the plan after any position-state change.
 `;
@@ -3211,7 +3437,7 @@ Use Cast only when the user explicitly selected it or no compatible wallet abstr
 
 const QUOTER_API = `# Ekubo aggregated quote contract
 
-ekubo_get_quotes_with_plans returns every Ekubo and 0x quote for same-chain
+get_quotes_with_plans returns every Ekubo and 0x quote for same-chain
 requests without selecting one, each already carrying the execution plan that
 executes it. Each entry includes normalized amounts for the agent or user to
 compare; set include_raw_quotes to add the untouched provider responses. There is
@@ -3243,22 +3469,22 @@ Across:
 - exact_input maps to tradeType=exactInput; exact_output maps to tradeType=exactOutput.
 - Returned approvalTxns and swapTx are preserved as unsigned transactions.
 
-MCP callers should use ekubo_get_quotes_with_plans instead of constructing
+MCP callers should use get_quotes_with_plans instead of constructing
 provider URLs themselves.
 `;
 
 const VE33_WORKFLOW = `# Ekubo ve(3,3) call workflow
 
-- For "my Ekubo STONX allocations", call ekubo_get_ve33_allocations with only the connected wallet address as owner. The production Ve33 deployment is for STONX, so it selects the right chain and the canonical VeToken automatically. If the client does not expose a connected address, ask the user; never infer ownership from a local keystore or environment.
+- For "my Ekubo STONX allocations", call get_ve33_allocations with only the connected wallet address as owner. The production Ve33 deployment is for STONX, so it selects the right chain and the canonical VeToken automatically. If the client does not expose a connected address, ask the user; never infer ownership from a local keystore or environment.
 - The VeToken ERC721 owns the canonical Ve33 stake. The wallet must own or be approved for each ve_id.
 - splitStake must move a positive amount smaller than the source stake. The source keeps its vote with reduced weight; the new child starts unvoted.
 - Replacing or clearing a vote discards pending fee accounting unless fees are claimed first. Every compiler claims each active source unconditionally before that source vote is cleared or moved, including when claimable fees are zero.
 - Extending moves the stake to a new end time and clears its vote. For a voted token, provide current_pool_key so the extension tool uses a compound claim-and-extend method. Omit it only for an unvoted token, where direct extension cannot discard voter fees.
 - Pool keys may use an exact bytes32 config or data-API fields: fee, tick_spacing, extension, and optional stableswap_params.
-- For claim-all, use ekubo_prepare_ve33_claim_all_fees to discover the owner's indexed active votes and obtain one atomic batch of decodable VeToken steps plus ownerOf/voteState validation calldata. Revalidate those calls through the user's provider before signing.
-- For any vote reorganization, first use ekubo_get_ve33_allocations and show the complete allocation plus state_id. Pass that exact state_id and target weight_bps values totaling 10,000 to ekubo_prepare_ve33_reallocation.
+- For claim-all, use prepare_ve33_claim_all_fees to discover the owner's indexed active votes and obtain one atomic batch of decodable VeToken steps plus ownerOf/voteState validation calldata. Revalidate those calls through the user's provider before signing.
+- For any vote reorganization, first use get_ve33_allocations and show the complete allocation plus state_id. Pass that exact state_id and target weight_bps values totaling 10,000 to prepare_ve33_reallocation.
 - preserve_existing_locks allocates every distinct expiry cohort proportionally across every target so pool weights decay together; it may require more voting NFTs than target pools and does not guarantee a 25-NFT portfolio.
-- For a suggested STONX update, first call ekubo_get_stonx_allocation_recommendation. Use its at-most-25 executable targets only when execution_ready is true and target_total_weight_bps is exactly 10,000, then pass strategy=compact_max_lock to the normal state-validated reallocation workflow.
+- For a suggested STONX update, first call get_stonx_allocation_recommendation. Use its at-most-25 executable targets only when execution_ready is true and target_total_weight_bps is exactly 10,000, then pass strategy=compact_max_lock to the normal state-validated reallocation workflow.
 - compact_max_lock selects one surviving active NFT, claims its fees and extends it to the maximum four-year duration, then fee-safely claims and merges every other active NFT into it, splits once per additional target, and applies exactly one NFT vote per target. Never detach or reorder those calls.
 - Compound merges burn their source NFT IDs after moving the stake. Pass every burned ID, the survivor, the lock extension, final NFT count, decoded calls, and complete plan to the wallet. Unvoted NFTs remain outside the reallocation scope; withdrawals and direct burn calldata remain forbidden.
 - Raw VeToken vote, clearVote, extendStake*, and full-source mergeStakes calls can discard pending voter fees. Prefer the fee-preserving tools or compound claim methods. Never call burn on a stake-bearing NFT; it can orphan the underlying stake. Withdraw only an expired stake, claim its active-pool fees first, and verify the recipient.

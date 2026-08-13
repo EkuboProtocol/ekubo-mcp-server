@@ -341,7 +341,7 @@ export function preparePoolInitialization(input: {
     value: "0",
   };
   const identity = {
-    action: "initialize_pool",
+    action: "ekubo_initialize_pool",
     chain_id: input.chainId,
     sender,
     core_address: coreAddress,
@@ -1217,7 +1217,7 @@ async function prepareSingleLpPositionWithdraw(
   if (liquidity === 0n) {
     throw new ServiceError(
       "invalid_liquidity",
-      "Withdrawal liquidity must be positive; use ekubo_prepare_lp_position_earnings_claim for a fees- or rewards-only action",
+      "Withdrawal liquidity must be positive; use prepare_lp_position_earnings_claim for a fees- or rewards-only action",
     );
   }
   const owned = await getOwnedIndexedPosition(

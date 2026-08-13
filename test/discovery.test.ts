@@ -118,6 +118,10 @@ describe("Worker discovery", () => {
       authentication: string;
       lp_position_workflow_resource: string;
       readiness_url?: string;
+      external_market_data: {
+        server_role: string;
+        aave: { graphql: string };
+      };
       safety: {
         requires_wallet_validation: boolean;
       };
@@ -151,6 +155,12 @@ describe("Worker discovery", () => {
     expect(metadata.authentication).toBe("none");
     expect(metadata.lp_position_workflow_resource).toBe(
       "ekubo://docs/lp-position-workflow",
+    );
+    expect(metadata.external_market_data.server_role).toContain(
+      "agents call these public APIs directly",
+    );
+    expect(metadata.external_market_data.aave.graphql).toBe(
+      "https://api.v3.aave.com/graphql",
     );
     expect(metadata.readiness_url).toBeUndefined();
     expect(metadata.safety.requires_wallet_validation).toBe(true);
@@ -230,63 +240,73 @@ describe("Worker discovery", () => {
     expect(catalog.catalog_revision).toBe(MCP_TOOL_CATALOG_REVISION);
     expect(catalog.tool_count).toBe(publicToolCatalog.length);
     expect(catalog.tools.map((tool) => tool.name)).toEqual([
-      "ekubo_list_tokens",
-      "ekubo_export_tokens",
-      "ekubo_get_token",
-      "ekubo_get_tokens",
-      "ekubo_get_quotes_with_plans",
-      "ekubo_prepare_ve33_vote",
-      "ekubo_prepare_ve33_extend",
-      "ekubo_prepare_ve33_stake",
-      "ekubo_prepare_ve33_split",
-      "ekubo_prepare_ve33_claim_fees",
-      "ekubo_prepare_ve33_reinvest",
-      "ekubo_prepare_ve33_claim_all_fees",
-      "ekubo_get_ve33_allocations",
-      "ekubo_get_stonx_allocation_recommendation",
-      "ekubo_prepare_ve33_reallocation",
-      "ekubo_get_positions_by_owner",
-      "ekubo_get_pool",
-      "ekubo_get_pool_liquidity",
-      "ekubo_list_pool_keys",
-      "ekubo_derive_pool_id",
-      "ekubo_decode_pool_config",
-      "ekubo_get_position",
-      "ekubo_get_position_pool_candidates",
-      "ekubo_prepare_lp_position_deposit",
-      "ekubo_prepare_lp_position_earnings_claim",
-      "ekubo_prepare_lp_position_withdraw",
-      "ekubo_prepare_wrap_unwrap",
-      "ekubo_prepare_lp_position_transfer",
-      "ekubo_prepare_fix_pool_price",
-      "ekubo_prepare_twamm_order",
-      "ekubo_prepare_twamm_order_collection",
-      "ekubo_prepare_twamm_order_stop",
-      "ekubo_prepare_twamm_virtual_orders",
-      "ekubo_prepare_auction_create",
-      "ekubo_prepare_auction_complete",
-      "ekubo_prepare_auction_creator_proceeds",
-      "ekubo_prepare_manual_pool_boost",
-      "ekubo_prepare_oracle_capacity_expansion",
-      "ekubo_prepare_approval_revocations",
-      "ekubo_prepare_old_gekubo_unwrap",
-      "ekubo_get_rewards_claims_by_owner",
-      "ekubo_prepare_rewards_claim",
-      "ekubo_prepare_recovery_fund_claim",
-      "ekubo_prepare_revenue_buybacks",
-      "ekubo_prepare_ve33_increase_stake",
-      "ekubo_prepare_ve33_merge",
-      "ekubo_prepare_ve33_withdraw",
-      "ekubo_get_liquidity_opportunities",
-      "ekubo_prepare_pool_initialization",
+      "list_tokens",
+      "export_tokens",
+      "get_token",
+      "get_tokens",
+      "get_quotes_with_plans",
+      "prepare_ve33_vote",
+      "prepare_ve33_extend",
+      "prepare_ve33_stake",
+      "prepare_ve33_split",
+      "prepare_ve33_claim_fees",
+      "prepare_ve33_reinvest",
+      "prepare_ve33_claim_all_fees",
+      "get_ve33_allocations",
+      "get_stonx_allocation_recommendation",
+      "prepare_ve33_reallocation",
+      "get_positions_by_owner",
+      "get_pool",
+      "get_pool_liquidity",
+      "list_pool_keys",
+      "derive_pool_id",
+      "decode_pool_config",
+      "get_position",
+      "get_position_pool_candidates",
+      "prepare_lp_position_deposit",
+      "prepare_lp_position_earnings_claim",
+      "prepare_lp_position_withdraw",
+      "prepare_wrap_unwrap",
+      "prepare_lp_position_transfer",
+      "prepare_fix_pool_price",
+      "prepare_twamm_order",
+      "prepare_twamm_order_collection",
+      "prepare_twamm_order_stop",
+      "prepare_twamm_virtual_orders",
+      "prepare_auction_create",
+      "prepare_auction_complete",
+      "prepare_auction_creator_proceeds",
+      "prepare_manual_pool_boost",
+      "prepare_oracle_capacity_expansion",
+      "prepare_approval_revocations",
+      "prepare_old_gekubo_unwrap",
+      "get_rewards_claims_by_owner",
+      "prepare_rewards_claim",
+      "prepare_recovery_fund_claim",
+      "prepare_revenue_buybacks",
+      "prepare_ve33_increase_stake",
+      "prepare_ve33_merge",
+      "prepare_ve33_withdraw",
+      "get_liquidity_opportunities",
+      "prepare_pool_initialization",
+      "get_aave_v3_markets",
+      "prepare_aave_v3_supply",
+      "prepare_aave_v3_withdraw",
+      "prepare_aave_v3_borrow",
+      "prepare_aave_v3_repay",
+      "prepare_aave_v3_collateral",
+      "prepare_aave_v3_emode",
     ]);
+    expect(
+      catalog.tools.every((tool) => !tool.name.startsWith("ekubo_")),
+    ).toBe(true);
     expect(JSON.stringify(catalog)).not.toMatch(/dune|8187907|api\.dune/i);
     // The catalog revision lives once at the catalog level, not repeated in
     // per-tool _meta.
     expect(catalog.catalog_revision).toBe(MCP_TOOL_CATALOG_REVISION);
     expect(catalog.tools.every((tool) => !("_meta" in tool))).toBe(true);
     const swapTool = catalog.tools.find(
-      (tool) => tool.name === "ekubo_get_quotes_with_plans",
+      (tool) => tool.name === "get_quotes_with_plans",
     );
     expect(swapTool?.description).toContain(
       "maximum value impact is approximately one estimated gas fee",
@@ -302,47 +322,49 @@ describe("Worker discovery", () => {
     // read-only or idempotent; true reads are.
     const annotationFor = (name: string) =>
       catalog.tools.find((tool) => tool.name === name)?.annotations;
-    expect(annotationFor("ekubo_get_pool")).toMatchObject({
+    expect(annotationFor("get_pool")).toMatchObject({
       readOnlyHint: true,
       idempotentHint: true,
     });
-    expect(annotationFor("ekubo_prepare_wrap_unwrap")).toMatchObject({
+    expect(annotationFor("prepare_wrap_unwrap")).toMatchObject({
       readOnlyHint: false,
       idempotentHint: false,
     });
-    expect(annotationFor("ekubo_get_quotes_with_plans")).toMatchObject({
+    expect(annotationFor("get_quotes_with_plans")).toMatchObject({
       readOnlyHint: false,
       idempotentHint: false,
     });
     // A tool that reaches an indexer, a provider, or the artifact bucket is
-    // open-world; the two that compute an answer from their arguments alone
-    // are not, and saying otherwise is the kind of overclaim that makes the
-    // hint worth nothing.
-    for (const name of ["ekubo_derive_pool_id", "ekubo_decode_pool_config"]) {
+    // open-world; tools using only arguments or checked-in constants are not.
+    for (const name of [
+      "derive_pool_id",
+      "decode_pool_config",
+      "get_aave_v3_markets",
+    ]) {
       expect(annotationFor(name)).toMatchObject({
         readOnlyHint: true,
         openWorldHint: false,
       });
     }
     for (const name of [
-      "ekubo_get_pool",
-      "ekubo_list_tokens",
-      "ekubo_export_tokens",
-      "ekubo_prepare_wrap_unwrap",
-      "ekubo_get_quotes_with_plans",
+      "get_pool",
+      "list_tokens",
+      "export_tokens",
+      "prepare_wrap_unwrap",
+      "get_quotes_with_plans",
     ]) {
       expect(annotationFor(name)).toMatchObject({ openWorldHint: true });
     }
     // outputSchema only on the handoff tools.
     const outputSchemaFor = (name: string) =>
       catalog.tools.find((tool) => tool.name === name)?.outputSchema;
-    expect(outputSchemaFor("ekubo_prepare_wrap_unwrap")).toBeDefined();
-    expect(outputSchemaFor("ekubo_get_quotes_with_plans")).toBeDefined();
-    expect(outputSchemaFor("ekubo_get_pool")).toBeDefined();
-    expect(outputSchemaFor("ekubo_list_tokens")).toBeUndefined();
-    expect(outputSchemaFor("ekubo_derive_pool_id")).toBeUndefined();
+    expect(outputSchemaFor("prepare_wrap_unwrap")).toBeDefined();
+    expect(outputSchemaFor("get_quotes_with_plans")).toBeDefined();
+    expect(outputSchemaFor("get_pool")).toBeDefined();
+    expect(outputSchemaFor("list_tokens")).toBeUndefined();
+    expect(outputSchemaFor("derive_pool_id")).toBeUndefined();
     const batchTokens = catalog.tools.find(
-      (tool) => tool.name === "ekubo_get_tokens",
+      (tool) => tool.name === "get_tokens",
     );
     expect(batchTokens?.description).toContain("one batch request");
     expect(batchTokens?.description).toContain("omitted");
@@ -393,7 +415,7 @@ describe("Worker discovery", () => {
       }).success,
     ).toBe(false);
     const stonxAllocations = catalog.tools.find(
-      (tool) => tool.name === "ekubo_get_ve33_allocations",
+      (tool) => tool.name === "get_ve33_allocations",
     );
     expect(stonxAllocations?.description).toContain(
       "show all my Ekubo STONX allocations",
@@ -417,16 +439,16 @@ describe("Worker discovery", () => {
       "0x9d7008E169D040B6c0140eb92E7cA82B12643497",
     );
     const swap = catalog.tools.find(
-      (tool) => tool.name === "ekubo_get_quotes_with_plans",
+      (tool) => tool.name === "get_quotes_with_plans",
     );
     const listTokens = catalog.tools.find(
-      (tool) => tool.name === "ekubo_list_tokens",
+      (tool) => tool.name === "list_tokens",
     );
     // Swapping is one tool. Nothing takes a source, because there is no
     // second step left for a caller to have already chosen one for.
     expect(
       catalog.tools.map((tool) => tool.name).filter((name) =>
-        ["ekubo_get_quote", "ekubo_prepare_swap"].includes(name),
+        ["get_quote", "prepare_swap"].includes(name),
       ),
     ).toBeEmpty();
     expect(
@@ -539,6 +561,16 @@ describe("Worker discovery", () => {
     expect(document.openapi).toBe("3.1.0");
     expect(document.paths["/mcp"].post).toBeDefined();
     expect(document.paths["/health"]).toBeUndefined();
+
+    const llms = await worker.fetch(
+      new Request("https://mcp.ekubo.org/llms.txt"),
+      env,
+      context,
+    );
+    const llmsBody = await llms.text();
+    expect(llmsBody).toContain("Direct Aave market discovery");
+    expect(llmsBody).toContain("https://api.v3.aave.com/graphql");
+    expect(llmsBody).toContain("does not proxy, index, cache, authenticate to");
   });
 
   it("serves protocol-native MCP initialization and tool discovery", async () => {
@@ -578,7 +610,7 @@ describe("Worker discovery", () => {
     expect(initializeResult.result.capabilities.tools).toBeDefined();
     expect(initializeResult.result.serverInfo.version).toBe(MCP_SERVER_VERSION);
     expect(initializeResult.result.instructions).toContain(
-      "ekubo_get_ve33_allocations",
+      "get_ve33_allocations",
     );
     expect(initializeResult.result.instructions).toContain(
       "use this Ekubo MCP before any browser or website tool",
@@ -600,7 +632,7 @@ describe("Worker discovery", () => {
     expect(initializeResult.result.instructions).toContain(
       'For "all", "max", or "entire balance" swaps',
     );
-    expect(initializeResult.result.instructions).toContain("ekubo_get_tokens");
+    expect(initializeResult.result.instructions).toContain("get_tokens");
     expect(initializeResult.result.instructions).toContain(
       "Never infer the user's wallet",
     );
@@ -630,6 +662,12 @@ describe("Worker discovery", () => {
     );
     expect(initializeResult.result.instructions).toContain(
       "Cast remains an optional fallback",
+    );
+    expect(initializeResult.result.instructions).toContain(
+      "Aave market discovery happens directly between the agent",
+    );
+    expect(initializeResult.result.instructions).toContain(
+      "https://api.v3.aave.com/graphql",
     );
     expect(initializeResult.result.instructions).not.toContain(
       "receiving explicit user confirmation",
@@ -681,7 +719,7 @@ describe("Worker discovery", () => {
           id: 21,
           method: "tools/call",
           params: {
-            name: "ekubo_prepare_wrap_unwrap",
+            name: "prepare_wrap_unwrap",
             arguments: {
               chain_id: 1,
               sender: "0x1111111111111111111111111111111111111111",
@@ -702,6 +740,40 @@ describe("Worker discovery", () => {
       action: "ekubo_wrap_native_token",
       execution_plan_ready: true,
       agent_confirmation_required: false,
+    });
+
+    const aaveMarkets = await worker.fetch(
+      new Request("https://mcp.ekubo.org/mcp", {
+        method: "POST",
+        headers: { ...headers, "mcp-protocol-version": "2025-11-25" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 22,
+          method: "tools/call",
+          params: {
+            name: "get_aave_v3_markets",
+            arguments: { chain_id: 8453 },
+          },
+        }),
+      }),
+      env,
+      context,
+    );
+    const aaveMarketsResult = (await mcpJson(aaveMarkets)) as {
+      result: {
+        structuredContent: {
+          network_access: string;
+          agent_market_data_discovery: { graphql_endpoint: string };
+          markets: { chain_id: string }[];
+        };
+      };
+    };
+    expect(aaveMarketsResult.result.structuredContent).toMatchObject({
+      network_access: "none",
+      agent_market_data_discovery: {
+        graphql_endpoint: "https://api.v3.aave.com/graphql",
+      },
+      markets: [{ chain_id: "8453" }],
     });
 
     const resources = await worker.fetch(
@@ -887,7 +959,7 @@ describe("Worker discovery", () => {
           id: 5,
           method: "tools/call",
           params: {
-            name: "ekubo_prepare_ve33_split",
+            name: "prepare_ve33_split",
             arguments: {
               chain_id: "4663",
               ve_token: "0x9d7008E169D040B6c0140eb92E7cA82B12643497",
@@ -979,7 +1051,7 @@ describe("Worker discovery", () => {
           id: 6,
           method: "tools/call",
           params: {
-            name: "ekubo_get_quotes_with_plans",
+            name: "get_quotes_with_plans",
             arguments: {
               chain_id: "1",
               token_in:

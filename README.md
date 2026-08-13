@@ -13,6 +13,10 @@ state and liquidity data. It prepares interface-equivalent TokenDataFetcher
 reads across each chain's canonical token list for wallet balances and selected
 contract allowances. It also publishes the same ranked boosted-fee, incentive,
 and ve(3,3)-emission liquidity opportunities shown by the interface.
+It additionally exposes fixed, locally maintained Aave V3 deployments and
+reserves plus signer-neutral supply, withdraw, borrow, repay, collateral, and
+eMode plans. Agents discover live Aave data from its public API directly; this
+server is not in that data path.
 
 The MCP server owns agent-facing transaction construction. `prod-api` remains
 a data API and the quoter remains a route-data service.
@@ -34,64 +38,64 @@ schemas after a Git-triggered deployment.
 
 ## Tools
 
-- `ekubo_list_tokens` — list the canonical token list, ordered by descending
+- `list_tokens` — list the canonical token list, ordered by descending
   `visibility_priority`, with optional symbol `search`, `chain_id`,
   `min_visibility_priority`, `page_size`, and `after_token` filters
-- `ekubo_export_tokens` — hand a wallet the canonical list without reading it:
+- `export_tokens` — hand a wallet the canonical list without reading it:
   returns only a `token_list_reference` envelope and a count, never entries.
   Scoped by `chain_id`, capped by `max_tokens` (default 1,000, the wallet's
   per-import limit), fixed at the interface's visibility threshold, and stored
   with only the five fields a wallet acts on
-- `ekubo_get_token` — fetch token metadata by chain and address
-- `ekubo_get_tokens` — fetch metadata for 1–1,000 exact token identifiers,
+- `get_token` — fetch token metadata by chain and address
+- `get_tokens` — fetch metadata for 1–1,000 exact token identifiers,
   across chains, through one `prod-api` batch request
-- `ekubo_get_quotes_with_plans` — compare Ekubo and 0x for same-chain
+- `get_quotes_with_plans` — compare Ekubo and 0x for same-chain
   exact-input or exact-output swaps, or use Across when
   `destination_chain_id` differs, and return each option's firm unsigned
   approval and execution calldata alongside its quote; an Ekubo or 0x failure
   marks the comparison incomplete and tells the user to retry
-- `ekubo_prepare_ve33_vote` — compile one active NFT's vote changes and
+- `prepare_ve33_vote` — compile one active NFT's vote changes and
   deterministic splits into one multicall that always claims its current pool
   first; prefer the portfolio workflow below for complete state validation
-- `ekubo_prepare_ve33_extend` — extend an unvoted token directly, or provide
+- `prepare_ve33_extend` — extend an unvoted token directly, or provide
   its active pool key to claim pending voter fees atomically before extension
-- `ekubo_prepare_ve33_stake` — create a new VeToken with an exact token
+- `prepare_ve33_stake` — create a new VeToken with an exact token
   approval; max duration is the default when no duration is supplied
-- `ekubo_prepare_ve33_split` — construct a split and predict the child token ID
-- `ekubo_prepare_ve33_claim_fees` — claim one or many VeToken voter-fee balances
-- `ekubo_prepare_ve33_reinvest` — automatically discover and claim all active
+- `prepare_ve33_split` — construct a split and predict the child token ID
+- `prepare_ve33_claim_fees` — claim one or many VeToken voter-fee balances
+- `prepare_ve33_reinvest` — automatically discover and claim all active
   fees, construct one exact-input swap per claimed non-stake token, and
   increase one VeToken or every existing active allocation
-- `ekubo_prepare_ve33_claim_all_fees` — discover every active vote owned by a
+- `prepare_ve33_claim_all_fees` — discover every active vote owned by a
   sender and prepare one native VeToken claim multicall, including `ownerOf`
   and `voteState` validation calldata
-- `ekubo_get_ve33_allocations` — handle “show all my Ekubo STONX allocations”
+- `get_ve33_allocations` — handle “show all my Ekubo STONX allocations”
   with only the connected wallet address because the production Ve33
   deployment is the STONX voting system; defaults to Robinhood Chain `4663`
   and its canonical VeToken, then returns the complete portfolio and
   `onchain_validation` request, explicitly marked `not_executed` until its
   `eth_call` is run. An explicit chain and VeToken pair remains available for
   another deployment such as testnet.
-- `ekubo_get_stonx_allocation_recommendation` — return the current
+- `get_stonx_allocation_recommendation` — return the current
   provider-neutral recommendation plus an exact 10,000-bps executable target
   list capped at 25 initialized canonical Ve33 pools. Snapshots older than one
   day trigger a refresh that is awaited for up to 20 seconds; stale, failed, or
   timed-out refreshes fail closed instead of returning an executable plan
-- `ekubo_prepare_ve33_reallocation` — resolve target `pool_key_id` values and
+- `prepare_ve33_reallocation` — resolve target `pool_key_id` values and
   compile up to 25 basis-point targets into one fee-preserving atomic VeToken
   multicall. `preserve_existing_locks` apportions each expiry cohort across
   every target; `compact_max_lock` consolidates and extends stake before
   creating exactly one voting NFT per target.
-- `ekubo_get_positions_by_owner` — enumerate indexed position NFTs with their
+- `get_positions_by_owner` — enumerate indexed position NFTs with their
   pool keys, bounds, liquidity, current pool state, rewards, pagination,
   canonical token USD metadata, and exact pending position-state `eth_call`
-- `ekubo_get_position` — hydrate one owner position with NFT metadata, history,
+- `get_position` — hydrate one owner position with NFT metadata, history,
   campaigns, earned rewards, token USD prices, and an atomic Multicall3 query
   for current principal, fees or Ve33 rewards, and ownership
-- `ekubo_get_position_pool_candidates` — list existing pools for a pair with
+- `get_position_pool_candidates` — list existing pools for a pair with
   verified exact PoolKeys, v2/v3 Core generation, extension classification,
   token prices, pool statistics, and the correct position manager
-- `ekubo_get_liquidity_opportunities` — rank the interface's current
+- `get_liquidity_opportunities` — rank the interface's current
   boosted-fee, active-incentive, and projected STONX-emission opportunities;
   returns canonical tokens, exact actionable pools or a pair-level candidate
   lookup, APR components and denominators, freshness, and risk context. The
@@ -99,36 +103,53 @@ schemas after a Git-triggered deployment.
   back for the final interface-equivalent ranking. Starknet incentives remain
   visible but are marked discovery-only because the current pool-candidate and
   deposit preparation tools are EVM-specific.
-- `ekubo_prepare_lp_position_deposit` — prepare a new v3 position mint or add
+- `prepare_lp_position_deposit` — prepare a new v3 position mint or add
   liquidity, including exact PoolKey derivation and `maybeInitializePool` for
   a new pool atomically before the deployed `mintAndDeposit` call in one
   multicall, shared-SDK liquidity math, a nonzero slippage floor, exact
   approvals/refunds/cleanup, decoded intent, wallet-policy requirements, and a
   signer-neutral execution plan; no Cast encoding is required
-- `ekubo_prepare_pool_initialization` — prepare a standalone, idempotent
+- `prepare_pool_initialization` — prepare a standalone, idempotent
   `maybeInitializePool` transaction for an exact v3 PoolKey and initial tick
   when initialization should not be bundled with the first position mint
-- `ekubo_prepare_lp_position_earnings_claim` — resolve an owned position and
+- `prepare_lp_position_earnings_claim` — resolve an owned position and
   prepare collection of standard LP fees or Ve33 LP rewards without removing
   liquidity or touching the NFT, including pending ownership/earnings reads,
   decoded calldata, wallet-policy requirements, and a wallet execution plan
-- `ekubo_prepare_lp_position_withdraw` — prepare a partial or full position
+- `prepare_lp_position_withdraw` — prepare a partial or full position
   withdrawal from an exact liquidity amount, or pass up to 100 withdrawals for
   one atomic wallet-batch-capable plan; each withdrawal automatically collects
   ordinary fees or Ve33 rewards and includes its own pending validation
-- `ekubo_get_pool` — resolve an exact chain/core/pool ID to a verified PoolKey,
+- `get_pool` — resolve an exact chain/core/pool ID to a verified PoolKey,
   decoded config, the latest indexed state snapshot, and a `current_state_query`
   read bundle whose `read_calls_reference` the wallet executes for fresh
   on-chain sqrtRatio, tick, and liquidity
-- `ekubo_get_pool_liquidity` — return tick-level net liquidity deltas for one
+- `get_pool_liquidity` — return tick-level net liquidity deltas for one
   exact pool
-- `ekubo_list_pool_keys` — enumerate a Core deployment's initialized pools
+- `list_pool_keys` — enumerate a Core deployment's initialized pools
   with keyset pagination (`after_pool_id`, ascending pool_id) and
   token/pair/extension filters; every pool_id is re-derived locally from its
   PoolKey before it is reported
-- `ekubo_derive_pool_id` — pack a PoolKey and derive its exact Keccak pool ID
-- `ekubo_decode_pool_config` — decode the extension, exact uint64 Q64 fee,
+- `derive_pool_id` — pack a PoolKey and derive its exact Keccak pool ID
+- `decode_pool_config` — decode the extension, exact uint64 Q64 fee,
   v3 discriminator, and concentrated or stableswap parameters
+
+### Aave V3
+
+- `get_aave_v3_markets` — return a local, versioned catalog of fixed
+  Aave V3 Pools and major reserves on Ethereum, Base, Arbitrum, Optimism,
+  Polygon, and Avalanche
+- `prepare_aave_v3_supply`, `prepare_aave_v3_withdraw`,
+  `prepare_aave_v3_borrow`, and `prepare_aave_v3_repay` — prepare
+  complete signer-neutral Pool calls, including temporary exact ERC-20
+  approvals and allowance cleanup where needed
+- `prepare_aave_v3_collateral` and `prepare_aave_v3_emode` —
+  prepare collateral-toggle and eMode-category calls against a fixed Pool
+
+The agent—not this MCP—queries Aave's public GraphQL endpoint at
+`https://api.v3.aave.com/graphql` for live market/user data. API results select
+explicit fixed identifiers for the preparation tools; wallet simulation
+remains authoritative.
 
 The remaining EVM interface transaction paths also have first-class tools:
 
@@ -141,7 +162,7 @@ The remaining EVM interface transaction paths also have first-class tools:
 - incentive rewards, Recovery Fund claims, and revenue buyback maintenance;
 - VeToken increase-stake, fee-safe merge, and expired withdrawal.
 
-Each `ekubo_prepare_*` result supplies the exact ordered transaction list. The
+Each `prepare_*` result supplies the exact ordered transaction list. The
 wallet validates, signs, and submits it; it does not encode calls, select
 overloads, build multicalls, append approvals, or determine ordering.
 
@@ -176,7 +197,7 @@ unavailable. The Yul router address and public quote ABI come from
 Refresh the contract snapshot after contract deployments or ABI changes with
 `bun run contracts:generate` from this repository.
 
-`ekubo_get_quotes_with_plans` has no provider-selection input and does not
+`get_quotes_with_plans` has no provider-selection input and does not
 select a quote. Same-chain requests return every Ekubo and 0x option in
 `quotes` with its source URL and normalized amounts, so the agent or user can
 choose. Supply `sender` and `slippage_bps` together and each option also
@@ -209,7 +230,7 @@ collecting authorization or signature, signing, and submission.
 
 Prepared execution plan bodies, read-call bundles — exact
 `wallet_batch_eth_call` argument objects, validated against the wallet
-boundary before storage — and token lists exported by `ekubo_export_tokens` are
+boundary before storage — and token lists exported by `export_tokens` are
 stored in R2 — strongly consistent, so a fresh reference never 404s from replication lag — and served at
 `/artifact/<id>` so wallets fetch them by reference. All three travel as
 `artifact_reference` envelopes (under `execution_plan_reference`,
@@ -231,8 +252,8 @@ but in re-emitting it. The canonical list is 483 KB: about 146,000 tokens of
 context to read, and roughly 49,000 output tokens — minutes of generation — to
 write back out as a wallet's `propose_tokens` arguments.
 
-`ekubo_export_tokens` is the tool for that trip, and it is a separate tool
-rather than a flag on `ekubo_list_tokens` because it does a different job.
+`export_tokens` is the tool for that trip, and it is a separate tool
+rather than a flag on `list_tokens` because it does a different job.
 Listing answers a question the model reasons about — which address is the USDC
 the user meant — so it returns entries and offers search, paging, and full
 metadata to serve that. Exporting answers no question: it hands a wallet a
@@ -275,11 +296,11 @@ export, version, and integrity for `@ekubo/sdk`. Wallets must run only a locally
 installed, allowlisted implementation and must never fetch or execute code from
 a decode plan.
 
-For a new LP position, start with `ekubo_get_position_pool_candidates`; do not
+For a new LP position, start with `get_position_pool_candidates`; do not
 browse `prod-api` or infer a manager from an ABI resource. Its default
 `min_tvl_usd=0` keeps initialized pools with negligible liquidity visible.
 After the user selects an existing v3 pool, range, token maxima, and slippage,
-call `ekubo_prepare_lp_position_deposit`. Pass its exact
+call `prepare_lp_position_deposit`. Pass its exact
 `execution_plan_reference` (URL plus digest) to the wallet MCP for policy
 checking and exact-plan simulation. The wallet—not this
 server—controls target, spender, selector, native-value, signing, and submission
@@ -302,7 +323,7 @@ Finish every swap before minting, and re-read the pool tick with
 and the current price, not the amounts deposited, so a swap made after the mint
 moves the tick and re-skews the position it was meant to balance.
 
-For an existing position, call `ekubo_prepare_lp_position_earnings_claim` with
+For an existing position, call `prepare_lp_position_earnings_claim` with
 the connected owner, chain, manager, and token ID from the owner-position list.
 It automatically selects standard fee collection or Ve33 reward claiming. Run
 its pending current-state query with the supplied local decode plan, verify the
@@ -312,7 +333,7 @@ remove liquidity, burn the NFT, or transfer it.
 
 For partial or full withdrawals, execute and decode every position's pending
 current-state query and choose an exact positive liquidity amount no greater
-than its decoded liquidity. Call `ekubo_prepare_lp_position_withdraw` with the
+than its decoded liquidity. Call `prepare_lp_position_withdraw` with the
 legacy single-position fields or a `withdrawals` array of up to 100 positions.
 It resolves every PoolKey, bounds, manager overload, recipient, and fee/reward
 behavior. A multi-position request returns one atomic wallet plan; the wallet
@@ -374,7 +395,7 @@ requires a separately selected connected wallet with `eth_signTypedData_v4`;
 the resulting execution plan remains compatible with the Ekubo wallet MCP.
 
 For STONX allocation requests, clients should call
-`ekubo_get_ve33_allocations` with only the connected EVM wallet address as
+`get_ve33_allocations` with only the connected EVM wallet address as
 `owner`. The public server is unauthenticated and cannot infer what “my” means.
 If the client does not expose a connected address, ask the user for it; do not
 substitute a local keystore, repository account, or machine environment value.
@@ -387,10 +408,10 @@ claimable amounts are zero. The extension tool exposes only compound
 claim-and-extend methods because extension clears its vote.
 
 Safe vote reorganization is a two-tool workflow. First call
-`ekubo_get_ve33_allocations`, present its complete allocation and `state_id`,
+`get_ve33_allocations`, present its complete allocation and `state_id`,
 and execute `onchain_validation.eth_call` through the user's provider.
 Then pass that exact state ID and target `weight_bps` values to
-`ekubo_prepare_ve33_reallocation`. The target shares must total 10,000. The
+`prepare_ve33_reallocation`. The target shares must total 10,000. The
 server resolves each `pool_key_id` from the canonical Ve33 pool directory,
 and supports two explicit strategies. `preserve_existing_locks` apportions
 every lock-end cohort independently so every target has the same expiry mix;
@@ -403,13 +424,13 @@ Unvoted NFTs are left untouched and direct burn or withdrawal calls remain
 forbidden.
 
 “Update my STONX allocations to the suggested allocations” is a three-tool
-workflow. First call `ekubo_get_stonx_allocation_recommendation` and require
+workflow. First call `get_stonx_allocation_recommendation` and require
 `execution_ready=true`, at most 25 targets, and
 `target_total_weight_bps=10000`. Then fetch and
 validate the wallet's complete current allocation as above. Finally pass its
 exact `state_id`, the recommendation's `targets`, and
 `strategy=compact_max_lock` to
-`ekubo_prepare_ve33_reallocation`. Recommendation rows that do not yet have an
+`prepare_ve33_reallocation`. Recommendation rows that do not yet have an
 initialized canonical pool are reported separately; their weight is
 redistributed along with weight below the 25-target priority cutoff without
 exceeding any selected row's allocation cap. The recommendation tool
@@ -503,8 +524,8 @@ any two of them at once. `src/rate-limit.ts` holds the cost table.
 
 The unit scale is anchored at 1 = one ordinary `prod-api` read. A bulk or
 fan-out read costs 3–4, a preparation that writes an artifact costs 3, a quote
-comparison costs 10, and a STONX recommendation costs 20; `ekubo_derive_pool_id`
-and `ekubo_decode_pool_config` touch nothing and cost nothing. A tool with no
+comparison costs 10, and a STONX recommendation costs 20; `derive_pool_id`
+and `decode_pool_config` touch nothing and cost nothing. A tool with no
 entry in the table is charged 3 if it is a preparation and 2 otherwise, so a
 tool added later without a deliberate price is over-charged rather than free.
 At the defaults a caller gets roughly ten complete swap flows or a hundred
@@ -534,7 +555,7 @@ increments land. A burst test that passes proves nothing; test sequentially.
 Verifying `RATE_LIMITER_TOOLS` does not require spending anything upstream.
 Cost is charged from the tool name before dispatch, so calling an expensive
 tool with arguments that fail schema validation draws its full price and never
-reaches a provider: 16 calls to `ekubo_prepare_ve33_reinvest` (8 units each)
+reaches a provider: 16 calls to `prepare_ve33_reinvest` (8 units each)
 crossed the 120-unit budget and returned the `tool_units` rejection with no
 upstream request made. Do not burst-test `RATE_LIMITER_METERED` the same way —
 those calls spend real 0x and Dune credit.

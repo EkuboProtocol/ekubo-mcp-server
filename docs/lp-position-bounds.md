@@ -1,6 +1,6 @@
 # LP Position Bounds and Tick Calculations
 
-When creating concentrated liquidity positions using `ekubo_prepare_lp_position_deposit`, correct tick selection requires understanding how Ekubo ticks encode prices that account for token decimal differences.
+When creating concentrated liquidity positions using `prepare_lp_position_deposit`, correct tick selection requires understanding how Ekubo ticks encode prices that account for token decimal differences.
 
 ## Tick Definition
 
@@ -167,7 +167,7 @@ const tick = Math.round(Math.log(priceRatio) / 1e-6);
 
 ## Tool Requirements
 
-When calling `ekubo_prepare_lp_position_deposit`:
+When calling `prepare_lp_position_deposit`:
 
 1. **Specify aligned bounds only**
    - `tick_lower` and `tick_upper` must be exact multiples of `pool.tick_spacing`
@@ -178,7 +178,7 @@ When calling `ekubo_prepare_lp_position_deposit`:
    - Example: -20,095,180 for ETH/USDC at 1874
 
 3. **For existing pools**: provide `pool_id` or use discovery first
-   - Call `ekubo_get_position_pool_candidates` to find existing pools
+   - Call `get_position_pool_candidates` to find existing pools
    - Verify the pool's `tick_spacing` before calculating bounds
    - Read the current tick with `current_state_query` rather than trusting the indexed snapshot, and read it *after* any swap you intend to make
 

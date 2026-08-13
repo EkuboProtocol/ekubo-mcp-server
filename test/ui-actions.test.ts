@@ -530,7 +530,7 @@ describe("EVM interface action preparation", () => {
           ],
         },
         resume: {
-          tool: "ekubo_prepare_fix_pool_price",
+          tool: "prepare_fix_pool_price",
           arguments: {
             pending_current_sqrt_ratio:
               "<wallet_batch_eth_call.results[0].decoded.sqrtRatio.abi_value>",

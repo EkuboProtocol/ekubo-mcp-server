@@ -38,55 +38,55 @@ assert(openapi.openapi === "3.1.0", "OpenAPI endpoint is invalid");
 
 const catalog = await getJson("/tools");
 const expectedTools = [
-  "ekubo_list_tokens",
-  "ekubo_export_tokens",
-  "ekubo_get_token",
-  "ekubo_get_tokens",
-  "ekubo_get_quotes_with_plans",
-  "ekubo_prepare_ve33_vote",
-  "ekubo_prepare_ve33_extend",
-  "ekubo_prepare_ve33_stake",
-  "ekubo_prepare_ve33_split",
-  "ekubo_prepare_ve33_claim_fees",
-  "ekubo_prepare_ve33_reinvest",
-  "ekubo_prepare_ve33_claim_all_fees",
-  "ekubo_get_ve33_allocations",
-  "ekubo_get_stonx_allocation_recommendation",
-  "ekubo_prepare_ve33_reallocation",
-  "ekubo_get_positions_by_owner",
-  "ekubo_get_pool",
-  "ekubo_get_pool_liquidity",
-  "ekubo_list_pool_keys",
-  "ekubo_derive_pool_id",
-  "ekubo_decode_pool_config",
-  "ekubo_get_position",
-  "ekubo_get_position_pool_candidates",
-  "ekubo_prepare_lp_position_deposit",
-  "ekubo_prepare_lp_position_earnings_claim",
-  "ekubo_prepare_lp_position_withdraw",
-  "ekubo_prepare_wrap_unwrap",
-  "ekubo_prepare_lp_position_transfer",
-  "ekubo_prepare_fix_pool_price",
-  "ekubo_prepare_twamm_order",
-  "ekubo_prepare_twamm_order_collection",
-  "ekubo_prepare_twamm_order_stop",
-  "ekubo_prepare_twamm_virtual_orders",
-  "ekubo_prepare_auction_create",
-  "ekubo_prepare_auction_complete",
-  "ekubo_prepare_auction_creator_proceeds",
-  "ekubo_prepare_manual_pool_boost",
-  "ekubo_prepare_oracle_capacity_expansion",
-  "ekubo_prepare_approval_revocations",
-  "ekubo_prepare_old_gekubo_unwrap",
-  "ekubo_get_rewards_claims_by_owner",
-  "ekubo_prepare_rewards_claim",
-  "ekubo_prepare_recovery_fund_claim",
-  "ekubo_prepare_revenue_buybacks",
-  "ekubo_prepare_ve33_increase_stake",
-  "ekubo_prepare_ve33_merge",
-  "ekubo_prepare_ve33_withdraw",
-  "ekubo_get_liquidity_opportunities",
-  "ekubo_prepare_pool_initialization",
+  "list_tokens",
+  "export_tokens",
+  "get_token",
+  "get_tokens",
+  "get_quotes_with_plans",
+  "prepare_ve33_vote",
+  "prepare_ve33_extend",
+  "prepare_ve33_stake",
+  "prepare_ve33_split",
+  "prepare_ve33_claim_fees",
+  "prepare_ve33_reinvest",
+  "prepare_ve33_claim_all_fees",
+  "get_ve33_allocations",
+  "get_stonx_allocation_recommendation",
+  "prepare_ve33_reallocation",
+  "get_positions_by_owner",
+  "get_pool",
+  "get_pool_liquidity",
+  "list_pool_keys",
+  "derive_pool_id",
+  "decode_pool_config",
+  "get_position",
+  "get_position_pool_candidates",
+  "prepare_lp_position_deposit",
+  "prepare_lp_position_earnings_claim",
+  "prepare_lp_position_withdraw",
+  "prepare_wrap_unwrap",
+  "prepare_lp_position_transfer",
+  "prepare_fix_pool_price",
+  "prepare_twamm_order",
+  "prepare_twamm_order_collection",
+  "prepare_twamm_order_stop",
+  "prepare_twamm_virtual_orders",
+  "prepare_auction_create",
+  "prepare_auction_complete",
+  "prepare_auction_creator_proceeds",
+  "prepare_manual_pool_boost",
+  "prepare_oracle_capacity_expansion",
+  "prepare_approval_revocations",
+  "prepare_old_gekubo_unwrap",
+  "get_rewards_claims_by_owner",
+  "prepare_rewards_claim",
+  "prepare_recovery_fund_claim",
+  "prepare_revenue_buybacks",
+  "prepare_ve33_increase_stake",
+  "prepare_ve33_merge",
+  "prepare_ve33_withdraw",
+  "get_liquidity_opportunities",
+  "prepare_pool_initialization",
 ];
 assert(
   catalog.server_version === expectedServerVersion,
@@ -124,7 +124,7 @@ assert(
   "MCP server version is stale",
 );
 assert(
-  initialized.result?.instructions?.includes("ekubo_get_ve33_allocations"),
+  initialized.result?.instructions?.includes("get_ve33_allocations"),
   "MCP VeToken safety instructions are missing",
 );
 assert(
@@ -201,7 +201,7 @@ assert(
 );
 
 const recommendationCall = await mcpRequest(6, "tools/call", {
-  name: "ekubo_get_stonx_allocation_recommendation",
+  name: "get_stonx_allocation_recommendation",
   arguments: {},
 });
 const recommendation = recommendationCall.result?.structuredContent;
@@ -233,17 +233,17 @@ assert(
 );
 
 const listTokensCall = await mcpRequest(7, "tools/call", {
-  name: "ekubo_list_tokens",
+  name: "list_tokens",
   arguments: { chain_id: "4663", search: "NVDA" },
 });
 const listedTokens = listTokensCall.result?.structuredContent?.tokens;
 assert(
   Array.isArray(listedTokens) && listedTokens.length > 0,
-  "ekubo_list_tokens returned no tokens for a known symbol",
+  "list_tokens returned no tokens for a known symbol",
 );
 assert(
   listedTokens.every((token) => token.chain_id === "4663"),
-  "ekubo_list_tokens ignored chain_id",
+  "list_tokens ignored chain_id",
 );
 assert(
   listedTokens.every(
@@ -251,16 +251,16 @@ assert(
       index === 0 ||
       token.visibility_priority <= listedTokens[index - 1].visibility_priority,
   ),
-  "ekubo_list_tokens is not ordered by descending visibility priority",
+  "list_tokens is not ordered by descending visibility priority",
 );
 
 const unfilteredTokensCall = await mcpRequest(8, "tools/call", {
-  name: "ekubo_list_tokens",
+  name: "list_tokens",
   arguments: {},
 });
 assert(
   (unfilteredTokensCall.result?.structuredContent?.tokens ?? []).length > 0,
-  "ekubo_list_tokens requires arguments it should default",
+  "list_tokens requires arguments it should default",
 );
 
 console.log(`Ekubo MCP deployment smoke checks passed at ${origin}/mcp`);

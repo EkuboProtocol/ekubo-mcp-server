@@ -133,7 +133,7 @@ export default {
           {
             name: "Ekubo Protocol MCP",
             description:
-              "Primary non-browser, public, unauthenticated, non-custodial tools for onchain swaps on supported EVM networks, plus protocol, LP, token-balance, allowance, bridge, STONX allocation, and unsigned transaction preparation workflows",
+              "Primary non-browser, public, unauthenticated, non-custodial tools for onchain swaps on supported EVM networks, plus protocol, LP, token-balance, allowance, bridge, STONX allocation, and signer-neutral Ekubo and Aave V3 transaction preparation workflows",
             version: MCP_SERVER_VERSION,
             tool_catalog_revision: MCP_TOOL_CATALOG_REVISION,
             tool_count: publicToolCatalog.length,
@@ -147,6 +147,17 @@ export default {
               data_api: "https://prod-api.ekubo.org/openapi.json",
               zero_x: "https://docs.0x.org",
               across: "https://docs.across.to/api-reference",
+            },
+            external_market_data: {
+              server_role:
+                "none: agents call these public APIs directly; this MCP does not proxy, cache, authenticate to, or replay them",
+              aave: {
+                graphql: "https://api.v3.aave.com/graphql",
+                graphql_docs:
+                  "https://aave.com/docs/aave-v3/getting-started/graphql",
+                market_data_docs:
+                  "https://aave.com/docs/aave-v3/markets/data",
+              },
             },
             quoter_contract_resource: "ekubo://docs/quoter-api",
             ve33_workflow_resource: "ekubo://docs/ve33-workflow",
@@ -180,7 +191,7 @@ export default {
                 "Platform-neutral codec IDs with explicit implementation assertions; wallets execute only locally installed allowlisted codecs and never fetch code from a plan.",
             },
             operational_semantics: {
-              mcp_tool_result_storage: `wallet_payload_bodies_only: prepared execution plan bodies, read-call bundles (exact wallet_batch_eth_call argument objects), and token lists exported by ekubo_export_tokens are retained at ${url.origin}/artifact/<id> for ${ARTIFACT_TTL_SECONDS} seconds so wallets fetch them by reference instead of receiving them through the agent; no other tool results are stored or replayed`,
+              mcp_tool_result_storage: `wallet_payload_bodies_only: prepared execution plan bodies, read-call bundles (exact wallet_batch_eth_call argument objects), and token lists exported by export_tokens are retained at ${url.origin}/artifact/<id> for ${ARTIFACT_TTL_SECONDS} seconds so wallets fetch them by reference instead of receiving them through the agent; no other tool results are stored or replayed`,
               artifact_delivery: {
                 mode: "reference",
                 envelope_kind: "artifact_reference",
@@ -534,20 +545,25 @@ LP position workflow resource: ekubo://docs/lp-position-workflow
 EVM contract directory: ekubo://contracts/evm
 
 Operational semantics:
-- Execution plan bodies, read-call bundles (exact wallet_batch_eth_call argument objects), and token lists exported by ekubo_export_tokens are stored at ${origin}/artifact/<id> and returned as artifact_reference envelopes under execution_plan_reference, read_calls_reference, and token_list_reference. Pass the whole envelope unchanged as the wallet tool's reference argument; the wallet fetches the body itself and verifies integrity. A 404 means the reference expired: re-run the tool that produced it. No other tool results are stored or replayed.
+- Execution plan bodies, read-call bundles (exact wallet_batch_eth_call argument objects), and token lists exported by export_tokens are stored at ${origin}/artifact/<id> and returned as artifact_reference envelopes under execution_plan_reference, read_calls_reference, and token_list_reference. Pass the whole envelope unchanged as the wallet tool's reference argument; the wallet fetches the body itself and verifies integrity. A 404 means the reference expired: re-run the tool that produced it. No other tool results are stored or replayed.
 - Onchain read plans carry canonical ABIs for local wallet decoding. Raw return bytes are included by default and preserved on failure. semantic_value passes a custom non-ABI raw result through a locally installed allowlisted codec; remote plans never supply executable code.
 - No fixed request quota is guaranteed. Limits are per caller (one IPv4 address or one IPv6 /64) and are enforced over four budgets: requests per few seconds, requests per minute, weighted tool cost per minute, and calls per minute to tools that buy quotes or recommendations from a third party. A bulk, fan-out, or provider-backed tool costs several times an ordinary read; a purely local one costs nothing. Rejection is HTTP 429 with Retry-After in seconds, and a single identified JSON-RPC call also gets error code -32029 with data.scope. Honor Retry-After instead of retrying on a fixed interval, batch identifiers into one call instead of paging the catalog, and reuse a quote already held instead of re-fetching it. Request bodies are limited to ${MAX_MCP_BODY_BYTES} bytes, ${MAX_BATCH_LENGTH} JSON-RPC messages, and ${MAX_UNITS_PER_REQUEST} tool units; no single tool call reaches that ceiling, so it only ever asks a batch to be split.
 - Owner positions use upstream no-cache semantics. Position tools join canonical token metadata and USD prices and provide exact atomic pending eth_call plans for current position state. Pair-pool discovery defaults to a zero TVL floor and returns verified PoolKeys plus the correct position manager. Liquidity opportunities match the interface's boosted-fee, active-incentive, and Ve33-emission feed; pair/boost data is cached upstream for up to 600 seconds, campaigns for 300 seconds, and Ve33 pools for 30 seconds. Every EVM interface transaction path has a first-class prepare tool returning complete wallet execution plans; wallet tooling never constructs or appends calls. Indexed pool state is cached upstream for up to 180 seconds; tick liquidity and pool keys for up to 1,800 seconds. STONX recommendations are at most 86,400 seconds old.
 
+Direct Aave market discovery:
+- This MCP does not proxy, index, cache, authenticate to, or replay Aave's APIs. The agent reads them directly, uses them to choose an action, then supplies explicit identifiers to a local preparation tool.
+- Aave: query https://api.v3.aave.com/graphql directly for live rates, liquidity, caps, pause/freeze state, eMode categories, and user positions. Schema and market-data guidance: https://aave.com/docs/aave-v3/getting-started/graphql and https://aave.com/docs/aave-v3/markets/data. Cross-check the selected chain, Pool, and underlying reserve against get_aave_v3_markets before calling a prepare_aave_v3_* tool.
+- Public API responses are discovery inputs, not execution guarantees. Simulate the prepared plan against current wallet and chain state immediately before authorization.
+
 STONX allocation shortcut:
-- For "my Ekubo STONX allocations" or equivalent, call ekubo_get_ve33_allocations with the user's connected EVM wallet address as owner and omit chain_id and ve_token.
+- For "my Ekubo STONX allocations" or equivalent, call get_ve33_allocations with the user's connected EVM wallet address as owner and omit chain_id and ve_token.
 - The production Ve33 deployment is the STONX voting system; omitting those fields selects its production chain and the canonical VeToken automatically.
 - If no connected wallet address is available, ask the user. Never infer it from a machine environment, repository, or local keystore.
 
 Safe swap and bridge sequence:
-1. Use ekubo_list_tokens with search when resolving a symbol. Use ekubo_get_token for one known chain/address pair, or ekubo_get_tokens for 1–1,000 known pairs in one batch request. Batch results preserve input order and duplicates while omitting unknown identifiers. Show the selected chains and addresses.
+1. Use list_tokens with search when resolving a symbol. Use get_token for one known chain/address pair, or get_tokens for 1–1,000 known pairs in one batch request. Batch results preserve input order and duplicates while omitting unknown identifiers. Show the selected chains and addresses.
 2. Convert the amount to base units using token decimals.
-3. Use ekubo_get_quotes_with_plans with exact input/output intent and destination_chain_id.
+3. Use get_quotes_with_plans with exact input/output intent and destination_chain_id.
 4. Choose slippage before generating calldata. Honor an explicit user preference. Otherwise set slippage_bps approximately to 10,000 times estimated gas-cost value divided by swap-notional value, with both valued in the same currency, so the maximum tolerated slippage loss is near one gas fee. Do not use a generic 50 bps (0.5%) default, especially on Ethereum mainnet. Prefer re-quoting and preparing a new transaction after a slippage failure to widening the bound; never retry reverted calldata unchanged.
 5. Only treat a plan as executable when execution_plan_ready is true.
 6. Include the source, exact plan ID, chains, bounds, approvals, recipient, execution transaction, and any allowance reset in the wallet handoff.
@@ -556,13 +572,13 @@ Safe swap and bridge sequence:
 
 Wallet handoff: every executable preparation includes execution_plan_reference: an artifact_reference envelope standing in for the plan body. Read ekubo://docs/execution-plan and bind sender before preparation: prepare for the wallet's connected chain and account, since the wallet refuses a fetched plan whose chain or sender disagrees with them. Pass the whole envelope unchanged as the wallet's reference argument for simulate and send; the wallet fetches the body itself, verifies integrity, and validates the plan. Never restate or reconstruct the plan body. If the wallet only accepts inline plans, fetch the URL once and pass its exact JSON unchanged. Use Cast only when the user selected it or no compatible wallet abstraction is available.
 
-Liquidity discovery: call ekubo_get_liquidity_opportunities when the user asks where to provide liquidity. It matches the interface's boosted-fee, active-incentive, and projected Ve33-emission opportunity feed and returns exact pools where the opportunity is pool-specific. For a pair-level incentive, follow its ekubo_get_position_pool_candidates handoff before preparing a deposit. If ranking_complete=false, execute and decode local_read_requirement through the user's wallet and repeat the call with the locally decoded ve33_emission_state; do not treat the provisional ordering as final.
+Liquidity discovery: call get_liquidity_opportunities when the user asks where to provide liquidity. It matches the interface's boosted-fee, active-incentive, and projected Ve33-emission opportunity feed and returns exact pools where the opportunity is pool-specific. For a pair-level incentive, follow its get_position_pool_candidates handoff before preparing a deposit. If ranking_complete=false, execute and decode local_read_requirement through the user's wallet and repeat the call with the locally decoded ve33_emission_state; do not treat the provisional ordering as final.
 
-ve(3,3): call ekubo_get_ve33_allocations before reorganizing votes, show the complete allocation and state_id, validate its read-only multicall, then pass that state_id and at most 25 target weight_bps values to ekubo_prepare_ve33_reallocation. Preserve the exact returned atomic order. Use the other dedicated tools for explicit extension, fee claims, and phased reinvestment. Read ekubo://docs/ve33-workflow before constructing a plan.
-Suggested STONX update: call ekubo_get_stonx_allocation_recommendation, require execution_ready, at most 25 targets, and exactly 10,000 target basis points, then use strategy=compact_max_lock. Pass the survivor, burned source NFT IDs, max-lock extension, final one-NFT-per-pool count, decoded calls, and complete plan to the wallet. The recommendation tool constructs no transaction.
-Fee reinvestment: call ekubo_prepare_ve33_reinvest phase=claim without explicit claims, snapshot exact fee-token balances, use phase=swap for claimed deltas only, refresh allocations, then use phase=stake_all to increase every existing active allocation.
-New stake: use ekubo_prepare_ve33_stake. Max duration is the default when no duration is supplied. Existing voted-stake extension remains explicit and must use the compound fee-claim extension path; unvoted extension is supported directly.
-Forbidden: never construct transferOwnership, ownership handover, VeToken ERC721 approval/transfer, or burn calldata. LP position transfer is supported only through ekubo_prepare_lp_position_transfer.
+ve(3,3): call get_ve33_allocations before reorganizing votes, show the complete allocation and state_id, validate its read-only multicall, then pass that state_id and at most 25 target weight_bps values to prepare_ve33_reallocation. Preserve the exact returned atomic order. Use the other dedicated tools for explicit extension, fee claims, and phased reinvestment. Read ekubo://docs/ve33-workflow before constructing a plan.
+Suggested STONX update: call get_stonx_allocation_recommendation, require execution_ready, at most 25 targets, and exactly 10,000 target basis points, then use strategy=compact_max_lock. Pass the survivor, burned source NFT IDs, max-lock extension, final one-NFT-per-pool count, decoded calls, and complete plan to the wallet. The recommendation tool constructs no transaction.
+Fee reinvestment: call prepare_ve33_reinvest phase=claim without explicit claims, snapshot exact fee-token balances, use phase=swap for claimed deltas only, refresh allocations, then use phase=stake_all to increase every existing active allocation.
+New stake: use prepare_ve33_stake. Max duration is the default when no duration is supplied. Existing voted-stake extension remains explicit and must use the compound fee-claim extension path; unvoted extension is supported directly.
+Forbidden: never construct transferOwnership, ownership handover, VeToken ERC721 approval/transfer, or burn calldata. LP position transfer is supported only through prepare_lp_position_transfer.
 Contract resources are provenance and read-only ABI context. Wallets and clients must not use them to invent transaction calldata or transaction lists.
 `;
 }

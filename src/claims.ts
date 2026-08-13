@@ -174,12 +174,12 @@ export async function getRewardsClaimsByOwner(
       call_id_pattern:
         "ekubo-reward-claim-<claim_index>-is-claimed and ekubo-reward-claim-<claim_index>-is-available, both decoding as bool",
       instruction:
-        "Pass each validation_reads entry's read_calls_reference unchanged as wallet_batch_eth_call's reference argument on its stated chain. A claim is executable only when is_claimed=false and is_available=true; then pass its prepare_input unchanged to ekubo_prepare_rewards_claim grouped by chain_id.",
+        "Pass each validation_reads entry's read_calls_reference unchanged as wallet_batch_eth_call's reference argument on its stated chain. A claim is executable only when is_claimed=false and is_available=true; then pass its prepare_input unchanged to prepare_rewards_claim grouped by chain_id.",
     },
     source_url: url.toString(),
     ignored_non_evm_claim_count: body.claims.length - evmClaims.length,
     next_step:
-      "Run the stored validation reads through the wallet, group available unclaimed records by chain, then call ekubo_prepare_rewards_claim with each record's prepare_input. Do not reconstruct the read or claim calldata.",
+      "Run the stored validation reads through the wallet, group available unclaimed records by chain, then call prepare_rewards_claim with each record's prepare_input. Do not reconstruct the read or claim calldata.",
     cache: { mcp_result_storage: "wallet_read_bundles_only" },
   };
 }

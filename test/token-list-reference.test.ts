@@ -105,12 +105,12 @@ async function callTool(name: string, args: Record<string, unknown>) {
   }).result.structuredContent;
 }
 
-describe("ekubo_export_tokens", () => {
+describe("export_tokens", () => {
   /// Listing and exporting are different jobs: the reader keeps returning
   /// entries the model reasons about, and never an envelope.
-  it("leaves ekubo_list_tokens returning entries", async () => {
+  it("leaves list_tokens returning entries", async () => {
     const content = await withStubbedUpstream(() =>
-      callTool("ekubo_list_tokens", {}),
+      callTool("list_tokens", {}),
     );
     expect(Array.isArray(content.tokens)).toBe(true);
     expect(content.token_list_reference).toBeUndefined();
@@ -120,7 +120,7 @@ describe("ekubo_export_tokens", () => {
   /// nothing else — no entry may reach the model on this path.
   it("returns only a reference and a count", async () => {
     const content = await withStubbedUpstream(() =>
-      callTool("ekubo_export_tokens", {}),
+      callTool("export_tokens", {}),
     );
     expect(Object.keys(content).sort()).toEqual([
       "complete",
@@ -134,13 +134,13 @@ describe("ekubo_export_tokens", () => {
   /// smallest case that distinguishes a full page from a finished list.
   it("reports a truncated export rather than passing a prefix off as the list", async () => {
     const truncated = await withStubbedUpstream(() =>
-      callTool("ekubo_export_tokens", { max_tokens: 1 }),
+      callTool("export_tokens", { max_tokens: 1 }),
     );
     expect(truncated.count).toBe(1);
     expect(truncated.complete).toBe(false);
 
     const whole = await withStubbedUpstream(() =>
-      callTool("ekubo_export_tokens", { max_tokens: 50 }),
+      callTool("export_tokens", { max_tokens: 50 }),
     );
     expect(whole.count).toBe(2);
     expect(whole.complete).toBe(true);
@@ -148,7 +148,7 @@ describe("ekubo_export_tokens", () => {
 
   it("stores a verifiable list the wallet can fetch itself", async () => {
     const content = await withStubbedUpstream(() =>
-      callTool("ekubo_export_tokens", {}),
+      callTool("export_tokens", {}),
     );
 
     const reference = content.token_list_reference as {

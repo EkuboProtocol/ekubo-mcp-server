@@ -148,13 +148,13 @@ export function contractAddressResource(chainId: string, address: string) {
       ? {
           vetoken_safety: {
             preferred_tools: [
-              "ekubo_get_ve33_allocations",
-              "ekubo_prepare_ve33_reallocation",
-              "ekubo_prepare_ve33_vote",
-              "ekubo_prepare_ve33_extend",
-              "ekubo_prepare_ve33_stake",
-              "ekubo_prepare_ve33_claim_all_fees",
-              "ekubo_prepare_ve33_reinvest",
+              "get_ve33_allocations",
+              "prepare_ve33_reallocation",
+              "prepare_ve33_vote",
+              "prepare_ve33_extend",
+              "prepare_ve33_stake",
+              "prepare_ve33_claim_all_fees",
+              "prepare_ve33_reinvest",
             ],
             forbidden_ownership_and_nft_actions: [
               "transferOwnership",

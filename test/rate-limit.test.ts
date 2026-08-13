@@ -125,31 +125,31 @@ describe("rate limit actor", () => {
 
 describe("tool cost", () => {
   it("charges nothing for tools that only compute locally", () => {
-    expect(toolCost("ekubo_derive_pool_id")).toBe(0);
-    expect(toolCost("ekubo_decode_pool_config")).toBe(0);
+    expect(toolCost("derive_pool_id")).toBe(0);
+    expect(toolCost("decode_pool_config")).toBe(0);
   });
 
   it("charges a metered provider call far above an ordinary read", () => {
-    expect(toolCost("ekubo_get_quotes_with_plans")).toBeGreaterThan(
-      toolCost("ekubo_get_token") * 5,
+    expect(toolCost("get_quotes_with_plans")).toBeGreaterThan(
+      toolCost("get_token") * 5,
     );
     expect(
-      toolCost("ekubo_get_stonx_allocation_recommendation"),
-    ).toBeGreaterThan(toolCost("ekubo_get_quotes_with_plans"));
+      toolCost("get_stonx_allocation_recommendation"),
+    ).toBeGreaterThan(toolCost("get_quotes_with_plans"));
   });
 
   it("charges a bulk read above a single read", () => {
-    expect(toolCost("ekubo_get_tokens")).toBeGreaterThan(
-      toolCost("ekubo_get_token"),
+    expect(toolCost("get_tokens")).toBeGreaterThan(
+      toolCost("get_token"),
     );
-    expect(toolCost("ekubo_export_tokens")).toBeGreaterThan(
-      toolCost("ekubo_list_tokens"),
+    expect(toolCost("export_tokens")).toBeGreaterThan(
+      toolCost("list_tokens"),
     );
   });
 
   it("never prices an unlisted tool at zero", () => {
-    expect(toolCost("ekubo_prepare_something_added_later")).toBeGreaterThan(0);
-    expect(toolCost("ekubo_get_something_added_later")).toBeGreaterThan(0);
+    expect(toolCost("prepare_something_added_later")).toBeGreaterThan(0);
+    expect(toolCost("get_something_added_later")).toBeGreaterThan(0);
     expect(toolCost("")).toBeGreaterThan(0);
   });
 
@@ -179,12 +179,12 @@ describe("pricing an MCP body", () => {
 
   it("counts a metered tool against both budgets", () => {
     const priced = chargeForMcpBody(
-      JSON.stringify(toolCall("ekubo_get_quotes_with_plans")),
+      JSON.stringify(toolCall("get_quotes_with_plans")),
     );
     expect(priced).toEqual({
       ok: true,
       charge: {
-        units: toolCost("ekubo_get_quotes_with_plans"),
+        units: toolCost("get_quotes_with_plans"),
         meteredCalls: 1,
       },
       id: 1,
@@ -194,15 +194,15 @@ describe("pricing an MCP body", () => {
   it("sums a batch rather than pricing it as one call", () => {
     const priced = chargeForMcpBody(
       JSON.stringify([
-        toolCall("ekubo_get_token", 1),
-        toolCall("ekubo_get_token", 2),
-        toolCall("ekubo_get_quotes_with_plans", 3),
+        toolCall("get_token", 1),
+        toolCall("get_token", 2),
+        toolCall("get_quotes_with_plans", 3),
       ]),
     );
     expect(priced).toEqual({
       ok: true,
       charge: {
-        units: toolCost("ekubo_get_token") * 2 + toolCost("ekubo_get_quotes_with_plans"),
+        units: toolCost("get_token") * 2 + toolCost("get_quotes_with_plans"),
         meteredCalls: 1,
       },
       // No single id owns the answer to a batch.
@@ -212,7 +212,7 @@ describe("pricing an MCP body", () => {
 
   it("refuses a batch longer than the cap", () => {
     const batch = Array.from({ length: MAX_BATCH_LENGTH + 1 }, (_, index) =>
-      toolCall("ekubo_get_token", index),
+      toolCall("get_token", index),
     );
     expect(chargeForMcpBody(JSON.stringify(batch))).toEqual({
       ok: false,
@@ -221,7 +221,7 @@ describe("pricing an MCP body", () => {
   });
 
   it("refuses a short batch that is expensive rather than under-charging it", () => {
-    const expensive = "ekubo_get_stonx_allocation_recommendation";
+    const expensive = "get_stonx_allocation_recommendation";
     const perCall = toolCost(expensive);
     const count = Math.floor(MAX_UNITS_PER_REQUEST / perCall) + 1;
     expect(count).toBeLessThanOrEqual(MAX_BATCH_LENGTH);
@@ -354,17 +354,17 @@ describe("Worker admission control", () => {
     const tools = fakeLimiter(1_000);
     const env = { ...baseEnv, RATE_LIMITER_TOOLS: tools.binding } satisfies Env;
 
-    await worker.fetch(post(toolCall("ekubo_get_token")), env, context);
+    await worker.fetch(post(toolCall("get_token")), env, context);
     const afterCheapCall = tools.drawsFor("tools:203.0.113.7");
-    expect(afterCheapCall).toBe(toolCost("ekubo_get_token"));
+    expect(afterCheapCall).toBe(toolCost("get_token"));
 
     await worker.fetch(
-      post(toolCall("ekubo_get_quotes_with_plans")),
+      post(toolCall("get_quotes_with_plans")),
       env,
       context,
     );
     expect(tools.drawsFor("tools:203.0.113.7")).toBe(
-      afterCheapCall + toolCost("ekubo_get_quotes_with_plans"),
+      afterCheapCall + toolCost("get_quotes_with_plans"),
     );
   });
 
@@ -391,7 +391,7 @@ describe("Worker admission control", () => {
     const env = { ...baseEnv, RATE_LIMITER_TOOLS: tools.binding } satisfies Env;
 
     const response = await worker.fetch(
-      post(toolCall("ekubo_get_tokens", "call-7")),
+      post(toolCall("get_tokens", "call-7")),
       env,
       context,
     );
@@ -424,7 +424,7 @@ describe("Worker admission control", () => {
       RATE_LIMITER_METERED: metered.binding,
     } satisfies Env;
     const quote = () =>
-      worker.fetch(post(toolCall("ekubo_get_quotes_with_plans")), env, context);
+      worker.fetch(post(toolCall("get_quotes_with_plans")), env, context);
 
     const first = await quote();
     expect(first.status).not.toBe(429);
@@ -438,7 +438,7 @@ describe("Worker admission control", () => {
 
     // Unlimited cheap calls must not restore the paid-provider headroom.
     for (let index = 0; index < 5; index += 1) {
-      await worker.fetch(post(toolCall("ekubo_derive_pool_id")), env, context);
+      await worker.fetch(post(toolCall("derive_pool_id")), env, context);
     }
     expect((await quote()).status).toBe(429);
   });
@@ -462,7 +462,7 @@ describe("Worker admission control", () => {
     expect(discovery.status).toBe(200);
 
     const call = await worker.fetch(
-      post(toolCall("ekubo_get_quotes_with_plans")),
+      post(toolCall("get_quotes_with_plans")),
       env,
       context,
     );
@@ -477,7 +477,7 @@ describe("Worker admission control", () => {
         jsonrpc: "2.0",
         id: 1,
         method: "tools/call",
-        params: { name: "ekubo_get_tokens", arguments: { padding } },
+        params: { name: "get_tokens", arguments: { padding } },
       }),
       env,
       context,
@@ -491,7 +491,7 @@ describe("Worker admission control", () => {
     const response = await worker.fetch(
       post(
         Array.from({ length: MAX_BATCH_LENGTH + 1 }, (_, index) =>
-          toolCall("ekubo_get_token", index),
+          toolCall("get_token", index),
         ),
       ),
       baseEnv,
@@ -505,7 +505,7 @@ describe("Worker admission control", () => {
   it("refuses an over-ceiling batch instead of serving it under-charged", async () => {
     const tools = fakeLimiter(1_000);
     const env = { ...baseEnv, RATE_LIMITER_TOOLS: tools.binding } satisfies Env;
-    const expensive = "ekubo_get_stonx_allocation_recommendation";
+    const expensive = "get_stonx_allocation_recommendation";
     const count =
       Math.floor(MAX_UNITS_PER_REQUEST / toolCost(expensive)) + 1;
 

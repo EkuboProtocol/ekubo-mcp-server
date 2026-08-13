@@ -284,8 +284,8 @@ describe("liquidity opportunities", () => {
       apr_percent: 36.5,
       pool: { pool_id: boostedPoolId },
       next_step: {
-        inspect: { tool: "ekubo_get_pool" },
-        prepare_deposit: { tool: "ekubo_prepare_lp_position_deposit" },
+        inspect: { tool: "get_pool" },
+        prepare_deposit: { tool: "prepare_lp_position_deposit" },
       },
     });
     const ve33 = result.opportunities.find(
@@ -300,7 +300,7 @@ describe("liquidity opportunities", () => {
     );
     expect(incentive).toMatchObject({
       active_campaigns: [{ slug: "active", apr: 0.1825 }],
-      next_step: { tool: "ekubo_get_position_pool_candidates" },
+      next_step: { tool: "get_position_pool_candidates" },
     });
   });
 
@@ -321,7 +321,7 @@ describe("liquidity opportunities", () => {
   // schema that accepted only the requiring branch looked correct in tests
   // while rejecting every completed ranking at the wire.
   it("validates both branches against the declared output schema", async () => {
-    const schema = toolOutputSchema("ekubo_get_liquidity_opportunities");
+    const schema = toolOutputSchema("get_liquidity_opportunities");
     if (schema === undefined) {
       throw new Error("expected a declared output schema for the tool");
     }
