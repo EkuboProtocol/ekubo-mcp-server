@@ -97,6 +97,7 @@ import {
   storeArtifact,
 } from "./artifact-store.js";
 import { MCP_SERVER_VERSION, MCP_TOOL_CATALOG_REVISION } from "./version.js";
+import { PROTOCOL_SKILLS } from "./protocol-skills.js";
 import {
   getAaveV3Markets,
   prepareAaveV3Borrow,
@@ -106,6 +107,26 @@ import {
   prepareAaveV3Supply,
   prepareAaveV3Withdraw,
 } from "./aave.js";
+import {
+  getMorphoVaults,
+  prepareMorphoVaultDeposit,
+  prepareMorphoVaultRedeem,
+  prepareMorphoVaultWithdraw,
+} from "./morpho.js";
+import {
+  getSkySavingsDeployment,
+  prepareSkySavingsDeposit,
+  prepareSkySavingsRedeem,
+  prepareSkySavingsWithdraw,
+} from "./sky.js";
+import {
+  getLidoDeployment,
+  prepareLidoStake,
+  prepareLidoUnwrap,
+  prepareLidoWithdrawalClaim,
+  prepareLidoWithdrawalRequest,
+  prepareLidoWrap,
+} from "./lido.js";
 
 export const ROBINHOOD_STONX_CHAIN_ID = "4663";
 export const ROBINHOOD_STONX_VE_TOKEN = getAddress(
@@ -1226,6 +1247,87 @@ export const prepareAaveV3EModeSchema = z.object({
     ),
 });
 
+export const getMorphoVaultsSchema = z.object({
+  chain_id: chainId
+    .optional()
+    .describe("Optional exact chain filter for the fixed Morpho Vault V2 catalog"),
+});
+
+const morphoVaultActionSchema = z.object({
+  chain_id: chainId.describe("Chain returned by get_morpho_vaults"),
+  sender: address.describe("Wallet that will execute the Morpho action"),
+  vault: address.describe("Exact Morpho Vault V2 address returned by get_morpho_vaults"),
+});
+
+export const prepareMorphoVaultDepositSchema = morphoVaultActionSchema.extend({
+  amount: amount.describe("Positive underlying-asset amount in base units"),
+  max_share_price_ray: amount.describe(
+    "Maximum acceptable vault share price in RAY (1e27), derived by the agent from fresh Morpho/onchain vault state plus the user's slippage tolerance",
+  ),
+  recipient: address.optional().describe("Vault-share recipient; defaults to sender"),
+});
+
+export const prepareMorphoVaultWithdrawSchema = morphoVaultActionSchema.extend({
+  amount: amount.describe("Exact underlying-asset amount to withdraw in base units"),
+  recipient: address.optional().describe("Underlying-asset recipient; defaults to sender"),
+  owner: address.optional().describe("Vault-share owner; defaults to sender"),
+});
+
+export const prepareMorphoVaultRedeemSchema = morphoVaultActionSchema.extend({
+  shares: amount.describe("Exact vault-share amount to redeem in base units"),
+  recipient: address.optional().describe("Underlying-asset recipient; defaults to sender"),
+  owner: address.optional().describe("Vault-share owner; defaults to sender"),
+});
+
+const skySavingsActionSchema = z.object({
+  chain_id: chainId.describe("Must be Ethereum chain 1"),
+  sender: address.describe("Wallet that will execute the Sky savings action"),
+});
+
+export const getSkySavingsDeploymentSchema = z.object({});
+export const prepareSkySavingsDepositSchema = skySavingsActionSchema.extend({
+  amount: amount.describe("Exact USDS deposit amount in base units"),
+  receiver: address.optional().describe("sUSDS recipient; defaults to sender"),
+});
+export const prepareSkySavingsWithdrawSchema = skySavingsActionSchema.extend({
+  amount: amount.describe("Exact USDS amount to withdraw in base units"),
+  receiver: address.optional().describe("USDS recipient; defaults to sender"),
+  owner: address.optional().describe("sUSDS owner; defaults to sender"),
+});
+export const prepareSkySavingsRedeemSchema = skySavingsActionSchema.extend({
+  shares: amount.describe("Exact sUSDS share amount to redeem in base units"),
+  receiver: address.optional().describe("USDS recipient; defaults to sender"),
+  owner: address.optional().describe("sUSDS owner; defaults to sender"),
+});
+
+const lidoActionSchema = z.object({
+  chain_id: chainId.describe("Must be Ethereum chain 1"),
+  sender: address.describe("Wallet that will execute the Lido action"),
+});
+
+export const getLidoDeploymentSchema = z.object({});
+export const prepareLidoStakeSchema = lidoActionSchema.extend({
+  amount: amount.describe("Exact native ETH stake amount in wei"),
+  referral: address.optional().describe("Optional Lido referral address; defaults to zero address"),
+});
+export const prepareLidoWrapSchema = lidoActionSchema.extend({
+  amount: amount.describe("Exact stETH amount to wrap in base units"),
+});
+export const prepareLidoUnwrapSchema = lidoActionSchema.extend({
+  amount: amount.describe("Exact wstETH amount to unwrap in base units"),
+});
+export const prepareLidoWithdrawalRequestSchema = lidoActionSchema.extend({
+  amounts: z
+    .array(amount)
+    .min(1)
+    .max(64)
+    .describe("One to 64 stETH request amounts, each from 100 wei through 1000 stETH"),
+  owner: address.optional().describe("Recipient/owner of the unstETH request NFTs; defaults to sender"),
+});
+export const prepareLidoWithdrawalClaimSchema = lidoActionSchema.extend({
+  request_id: amount.describe("Finalized, unclaimed unstETH NFT request ID owned by sender"),
+});
+
 // Reads keep readOnlyHint even though storing a read bundle writes the
 // artifact bucket: the storage is incidental caching of the tool's own
 // result, not an observable state change a client must treat as a side
@@ -1251,6 +1353,9 @@ const LOCAL_TOOLS = new Set([
   "derive_pool_id",
   "decode_pool_config",
   "get_aave_v3_markets",
+  "get_morpho_vaults",
+  "get_sky_savings_deployment",
+  "get_lido_deployment",
 ]);
 
 // Preparation tools store plan bodies server-side, and the quotes tool buys
@@ -1757,6 +1862,104 @@ export const publicToolCatalog = [
     description:
       "Prepare setUserEMode with a caller-supplied current uint8 category ID; zero disables eMode. Discover live category configuration through Aave's public GraphQL API directly, because this server makes no data or RPC request.",
     inputSchema: z.toJSONSchema(prepareAaveV3EModeSchema),
+  },
+  {
+    name: "get_morpho_vaults",
+    title: "List fixed Morpho Vault V2 deployments",
+    description:
+      "Locally return a bounded, pinned catalog of listed Morpho Vault V2 deployments plus official direct-discovery guidance. This tool makes no API, RPC, indexer, or other network request. The agent must query Morpho's public GraphQL API and current onchain state directly, then intersect the result with the fixed chain, vault, and asset addresses before preparation.",
+    inputSchema: z.toJSONSchema(getMorphoVaultsSchema),
+  },
+  {
+    name: "prepare_morpho_vault_deposit",
+    title: "Prepare a guarded Morpho vault deposit",
+    description:
+      "Prepare an exact-approval Morpho Vault V2 deposit through the official SDK's Bundler3/GeneralAdapter1 route. The caller supplies a fresh RAY-scaled max share price, which is enforced onchain against ERC-4626 share-price inflation; the server performs no data fetch.",
+    inputSchema: z.toJSONSchema(prepareMorphoVaultDepositSchema),
+  },
+  {
+    name: "prepare_morpho_vault_withdraw",
+    title: "Prepare a Morpho vault withdrawal",
+    description:
+      "Prepare a direct Morpho Vault V2 withdrawal for an exact underlying-asset amount from a fixed vault. Current shares, liquidity, permissions, and vault state are established by direct agent discovery and exact wallet simulation.",
+    inputSchema: z.toJSONSchema(prepareMorphoVaultWithdrawSchema),
+  },
+  {
+    name: "prepare_morpho_vault_redeem",
+    title: "Prepare a Morpho vault redemption",
+    description:
+      "Prepare a direct Morpho Vault V2 redemption for an exact share amount. Prefer redeem for full exits so the user's complete fresh share balance can be bound without asset/share rounding dust.",
+    inputSchema: z.toJSONSchema(prepareMorphoVaultRedeemSchema),
+  },
+  {
+    name: "get_sky_savings_deployment",
+    title: "Get the fixed Sky savings deployment",
+    description:
+      "Locally return the canonical Ethereum USDS and sUSDS addresses and direct wallet-read guidance. This server does not proxy Sky, an RPC, an indexer, or any third-party API.",
+    inputSchema: z.toJSONSchema(getSkySavingsDeploymentSchema),
+  },
+  {
+    name: "prepare_sky_savings_deposit",
+    title: "Prepare a Sky savings deposit",
+    description:
+      "Prepare an exact USDS approval, ERC-4626 sUSDS deposit, and allowance cleanup as one atomic wallet plan. The direct vault interface has no minimum-shares or deadline field, so a fresh preview and exact wallet simulation are mandatory.",
+    inputSchema: z.toJSONSchema(prepareSkySavingsDepositSchema),
+  },
+  {
+    name: "prepare_sky_savings_withdraw",
+    title: "Prepare a Sky savings withdrawal",
+    description:
+      "Prepare a direct sUSDS ERC-4626 withdrawal for an exact USDS amount. The server does not query current exchange rate, capacity, balance, allowance, or preview state.",
+    inputSchema: z.toJSONSchema(prepareSkySavingsWithdrawSchema),
+  },
+  {
+    name: "prepare_sky_savings_redeem",
+    title: "Prepare a Sky savings redemption",
+    description:
+      "Prepare a direct sUSDS ERC-4626 redemption for an exact share amount. Use a fresh wallet/RPC balance and preview, then require exact wallet simulation before authorization.",
+    inputSchema: z.toJSONSchema(prepareSkySavingsRedeemSchema),
+  },
+  {
+    name: "get_lido_deployment",
+    title: "Get the fixed Lido mainnet deployment",
+    description:
+      "Locally return canonical Ethereum stETH, wstETH, and WithdrawalQueueERC721 addresses plus direct wallet-read guidance. This server makes no Lido API, RPC, or indexer request.",
+    inputSchema: z.toJSONSchema(getLidoDeploymentSchema),
+  },
+  {
+    name: "prepare_lido_stake",
+    title: "Prepare Lido ETH staking",
+    description:
+      "Prepare the canonical Lido submit call with exact native ETH value and an explicit or zero referral. The agent must read current staking pause and limit state directly; the wallet then simulates the exact transaction.",
+    inputSchema: z.toJSONSchema(prepareLidoStakeSchema),
+  },
+  {
+    name: "prepare_lido_wrap",
+    title: "Prepare stETH wrapping",
+    description:
+      "Prepare an exact stETH approval, wstETH wrap call, and allowance cleanup in one atomic wallet plan.",
+    inputSchema: z.toJSONSchema(prepareLidoWrapSchema),
+  },
+  {
+    name: "prepare_lido_unwrap",
+    title: "Prepare wstETH unwrapping",
+    description:
+      "Prepare a direct wstETH unwrap call for an exact share amount, returning rebasing stETH to the sender.",
+    inputSchema: z.toJSONSchema(prepareLidoUnwrapSchema),
+  },
+  {
+    name: "prepare_lido_withdrawal_request",
+    title: "Prepare a Lido withdrawal request",
+    description:
+      "Prepare one or more bounded stETH withdrawal requests with an exact queue approval and cleanup. This irreversible asynchronous action mints unstETH NFTs, stops rewards while queued, and can settle below 1:1 after extraordinary losses; wallet simulation and clear user review are required.",
+    inputSchema: z.toJSONSchema(prepareLidoWithdrawalRequestSchema),
+  },
+  {
+    name: "prepare_lido_withdrawal_claim",
+    title: "Prepare a Lido withdrawal claim",
+    description:
+      "Prepare claimWithdrawal for one finalized, unclaimed unstETH request ID owned by the sender. The agent must verify ownership and finalization directly through the user's wallet/RPC before preparation.",
+    inputSchema: z.toJSONSchema(prepareLidoWithdrawalClaimSchema),
   },
 ] as const;
 
@@ -2948,6 +3151,137 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
       }),
   );
 
+  registerCatalogTool("get_morpho_vaults", getMorphoVaultsSchema, (input) =>
+    getMorphoVaults({
+      chainId: input.chain_id === undefined ? undefined : canonicalChainId(input.chain_id),
+    }),
+  );
+  registerCatalogTool(
+    "prepare_morpho_vault_deposit",
+    prepareMorphoVaultDepositSchema,
+    (input) =>
+      prepareMorphoVaultDeposit({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        vault: input.vault,
+        amount: input.amount,
+        maxSharePriceRay: input.max_share_price_ray,
+        recipient: input.recipient,
+      }),
+  );
+  registerCatalogTool(
+    "prepare_morpho_vault_withdraw",
+    prepareMorphoVaultWithdrawSchema,
+    (input) =>
+      prepareMorphoVaultWithdraw({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        vault: input.vault,
+        amount: input.amount,
+        recipient: input.recipient,
+        owner: input.owner,
+      }),
+  );
+  registerCatalogTool(
+    "prepare_morpho_vault_redeem",
+    prepareMorphoVaultRedeemSchema,
+    (input) =>
+      prepareMorphoVaultRedeem({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        vault: input.vault,
+        shares: input.shares,
+        recipient: input.recipient,
+        owner: input.owner,
+      }),
+  );
+
+  registerCatalogTool("get_sky_savings_deployment", getSkySavingsDeploymentSchema, () =>
+    getSkySavingsDeployment(),
+  );
+  registerCatalogTool(
+    "prepare_sky_savings_deposit",
+    prepareSkySavingsDepositSchema,
+    (input) =>
+      prepareSkySavingsDeposit({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        amount: input.amount,
+        receiver: input.receiver,
+      }),
+  );
+  registerCatalogTool(
+    "prepare_sky_savings_withdraw",
+    prepareSkySavingsWithdrawSchema,
+    (input) =>
+      prepareSkySavingsWithdraw({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        amount: input.amount,
+        receiver: input.receiver,
+        owner: input.owner,
+      }),
+  );
+  registerCatalogTool(
+    "prepare_sky_savings_redeem",
+    prepareSkySavingsRedeemSchema,
+    (input) =>
+      prepareSkySavingsRedeem({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        shares: input.shares,
+        receiver: input.receiver,
+        owner: input.owner,
+      }),
+  );
+
+  registerCatalogTool("get_lido_deployment", getLidoDeploymentSchema, () =>
+    getLidoDeployment(),
+  );
+  registerCatalogTool("prepare_lido_stake", prepareLidoStakeSchema, (input) =>
+    prepareLidoStake({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      amount: input.amount,
+      referral: input.referral,
+    }),
+  );
+  registerCatalogTool("prepare_lido_wrap", prepareLidoWrapSchema, (input) =>
+    prepareLidoWrap({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      amount: input.amount,
+    }),
+  );
+  registerCatalogTool("prepare_lido_unwrap", prepareLidoUnwrapSchema, (input) =>
+    prepareLidoUnwrap({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      amount: input.amount,
+    }),
+  );
+  registerCatalogTool(
+    "prepare_lido_withdrawal_request",
+    prepareLidoWithdrawalRequestSchema,
+    (input) =>
+      prepareLidoWithdrawalRequest({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        amounts: input.amounts,
+        owner: input.owner,
+      }),
+  );
+  registerCatalogTool(
+    "prepare_lido_withdrawal_claim",
+    prepareLidoWithdrawalClaimSchema,
+    (input) =>
+      prepareLidoWithdrawalClaim({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        requestId: input.request_id,
+      }),
+  );
+
   server.registerResource(
     "ekubo-agent-workflow",
     "ekubo://docs/agent-workflow",
@@ -2967,6 +3301,37 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
       ],
     }),
   );
+
+  for (const skill of PROTOCOL_SKILLS) {
+    server.registerResource(
+      `protocol-skill-${skill.name}`,
+      `ekubo://skills/${skill.name}`,
+      {
+        title: skill.title,
+        description: skill.description,
+        mimeType: "text/markdown",
+      },
+      async (uri) => ({
+        contents: [
+          { uri: uri.href, mimeType: "text/markdown", text: skill.skill },
+        ],
+      }),
+    );
+    server.registerResource(
+      `protocol-skill-${skill.name}-discovery`,
+      `ekubo://skills/${skill.name}/references/discovery.md`,
+      {
+        title: `${skill.title} direct discovery reference`,
+        description: `Official endpoints and wallet reads used by ${skill.name}`,
+        mimeType: "text/markdown",
+      },
+      async (uri) => ({
+        contents: [
+          { uri: uri.href, mimeType: "text/markdown", text: skill.reference },
+        ],
+      }),
+    );
+  }
 
   server.registerResource(
     "ekubo-lp-position-workflow",
@@ -3294,6 +3659,8 @@ A quote is only worth what it can still execute for, so treat the interval betwe
 For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with list_tokens, read the exact input-token balance with the wallet's own balance tooling, then call get_quotes_with_plans with that exact amount plus sender and slippage_bps and pass the chosen option's execution_plan_reference to the Ekubo Wallet MCP.
 
 Aave market discovery happens directly between the agent and Aave's public APIs; this MCP is not a proxy, indexer, cache, or credential holder. Use the public GraphQL endpoint https://api.v3.aave.com/graphql with https://aave.com/docs/aave-v3/getting-started/graphql and https://aave.com/docs/aave-v3/markets/data to inspect current supply and borrow rates, liquidity, caps, pause/freeze state, eMode categories, and user positions. Then call get_aave_v3_markets and use only a returned fixed chain, Pool, and reserve address with a prepare_aave_v3_* tool. Live API data and this server's fixed deployment catalog are inputs to wallet simulation, never substitutes for it.
+
+Morpho, Sky, and Lido discovery follows the same no-proxy boundary. Read ekubo://skills/use-morpho, ekubo://skills/use-sky, or ekubo://skills/use-lido before acting. The skills tell you which official public endpoint or wallet/RPC reads to perform directly, how to intersect live results with get_morpho_vaults, get_sky_savings_deployment, or get_lido_deployment, and which safety gates apply. Never send API responses, RPC credentials, or authoritative onchain read results through this server. Morpho deposits require a freshly derived RAY-scaled max_share_price_ray and use the official guarded Bundler3 route. Sky's direct ERC-4626 calls have no deadline or minimum output, so keep previews fresh and rely on exact simulation. Lido protocol withdrawals are irreversible asynchronous unstETH NFT requests, not immediate swaps; verify bounds, ownership, finalization, and consequences before preparation.
 
 Use Ekubo preparation tools only to construct unsigned plans. Every executable preparation returns execution_plan_reference: an artifact_reference envelope standing in for the stored plan body. One rule governs every handoff: pass the envelope unchanged as the wallet tool's reference argument. The wallet fetches the body itself, verifies its integrity digest and byte count, and refuses a mismatch, so the plan never travels through the agent. Never fetch, restate, paraphrase, or reconstruct the plan body yourself. Do not ask the user for a separate agent-level confirmation before invoking the wallet; that duplicates the wallet's authorization flow. The wallet must never construct calldata, choose a contract overload, derive a route, or determine the transaction list. Never construct or request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calldata. LP position transfers are supported only through prepare_lp_position_transfer with pending ownership validation.
 

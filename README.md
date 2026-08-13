@@ -13,10 +13,10 @@ state and liquidity data. It prepares interface-equivalent TokenDataFetcher
 reads across each chain's canonical token list for wallet balances and selected
 contract allowances. It also publishes the same ranked boosted-fee, incentive,
 and ve(3,3)-emission liquidity opportunities shown by the interface.
-It additionally exposes fixed, locally maintained Aave V3 deployments and
-reserves plus signer-neutral supply, withdraw, borrow, repay, collateral, and
-eMode plans. Agents discover live Aave data from its public API directly; this
-server is not in that data path.
+It additionally exposes fixed, locally maintained Aave V3, Morpho Vault V2,
+Sky Savings, and Lido deployments with signer-neutral action plans. Agents
+discover live protocol data from official public APIs or the user's wallet/RPC
+directly; this server is not in that data path.
 
 The MCP server owns agent-facing transaction construction. `prod-api` remains
 a data API and the quoter remains a route-data service.
@@ -28,6 +28,9 @@ a data API and the quoter remains a route-data service.
 - `GET /tools` — deterministic tool catalog for non-MCP discovery
 - `GET /openapi.json` — OpenAPI 3.1 discovery contract
 - `GET /llms.txt` — concise agent workflow
+- `GET /skills/{use-morpho,use-sky,use-lido}/SKILL.md` — reusable direct-data
+  agent instructions, with each skill's discovery reference beneath
+  `references/discovery.md`
 
 MCP-native discovery remains authoritative: clients use `tools/list` and
 `resources/list`/`resources/templates/list`. The HTTP discovery endpoints are
@@ -151,6 +154,46 @@ The agent—not this MCP—queries Aave's public GraphQL endpoint at
 explicit fixed identifiers for the preparation tools; wallet simulation
 remains authoritative.
 
+### Morpho Vault V2
+
+- `get_morpho_vaults` returns a local, pinned catalog and direct-discovery
+  guidance.
+- `prepare_morpho_vault_deposit` uses the official Morpho SDK's guarded
+  Bundler3/GeneralAdapter1 route with a caller-supplied fresh
+  `max_share_price_ray`, exact asset approval, and atomic cleanup.
+- `prepare_morpho_vault_withdraw` and `prepare_morpho_vault_redeem` construct
+  direct fixed-vault exits.
+
+Read `ekubo://skills/use-morpho`. The agent queries
+`https://api.morpho.org/graphql` itself, then uses fresh wallet/RPC state and
+the official SDK to derive the share-price bound. The server never proxies the
+API or RPC.
+
+### Sky Savings
+
+- `get_sky_savings_deployment` returns fixed Ethereum USDS/sUSDS addresses.
+- `prepare_sky_savings_deposit`, `prepare_sky_savings_withdraw`, and
+  `prepare_sky_savings_redeem` construct canonical ERC-4626 calls.
+
+Read `ekubo://skills/use-sky`. Current previews, conversions, limits, balances,
+and allowances come directly from the user's wallet/RPC. The direct ERC-4626
+methods have no deadline or minimum-output argument, so fresh preview and exact
+wallet simulation are required.
+
+### Lido
+
+- `get_lido_deployment` returns fixed Ethereum stETH, wstETH, and withdrawal
+  queue addresses.
+- `prepare_lido_stake`, `prepare_lido_wrap`, and `prepare_lido_unwrap` build
+  liquid-staking and token-conversion plans.
+- `prepare_lido_withdrawal_request` creates bounded asynchronous unstETH NFT
+  requests; `prepare_lido_withdrawal_claim` claims one finalized request.
+
+Read `ekubo://skills/use-lido`. Pause/limit, conversion, balance, ownership,
+queue, and finalization state is read directly through the user's wallet/RPC.
+Withdrawal requests are irreversible, stop rewards while queued, and may
+settle below 1:1 after extraordinary protocol losses.
+
 The remaining EVM interface transaction paths also have first-class tools:
 
 - wrap/unwrap and LP NFT transfer;
@@ -168,6 +211,9 @@ overloads, build multicalls, append approvals, or determine ordering.
 
 ## Resources
 
+- `ekubo://skills/use-morpho`, `ekubo://skills/use-sky`, and
+  `ekubo://skills/use-lido` — reusable no-proxy protocol workflows, with a
+  `references/discovery.md` child resource for official endpoints and reads
 - `ekubo://docs/lp-position-workflow` — interface-equivalent indexed/API/USD/
   RPC joins, atomic TWAMM/Ve33 read semantics, decoding, and APR inputs
 - `ekubo://contracts/evm` — supported chain IDs and contract-resource links

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Use Lido"
+  short_description: "Discover Lido state and prepare safe staking actions"
+  default_prompt: "Use $use-lido to read current Lido state directly, verify user intent, and safely prepare staking, wrapping, or withdrawal actions."

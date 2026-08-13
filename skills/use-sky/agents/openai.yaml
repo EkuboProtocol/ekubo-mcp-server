@@ -1,0 +1,4 @@
+interface:
+  display_name: "Use Sky"
+  short_description: "Discover Sky savings state and prepare sUSDS transactions"
+  default_prompt: "Use $use-sky to read current Sky sUSDS state directly, verify user intent, and safely prepare the requested savings action."

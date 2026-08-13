@@ -1,0 +1,4 @@
+interface:
+  display_name: "Use Morpho"
+  short_description: "Discover Morpho vaults and prepare guarded vault transactions"
+  default_prompt: "Use $use-morpho to discover current Morpho vault data directly, cross-check the fixed catalog, and safely prepare the user’s requested action."

@@ -1,6 +1,6 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-const expectedServerVersion = "0.28.0";
-const expectedCatalogRevision = "2026-08-07.local-tool-annotations";
+const expectedServerVersion = "0.30.0";
+const expectedCatalogRevision = "2026-08-13.morpho-sky-lido-actions";
 const smokeNonce = `${Date.now()}-${Math.random()}`;
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
 
@@ -87,6 +87,27 @@ const expectedTools = [
   "prepare_ve33_withdraw",
   "get_liquidity_opportunities",
   "prepare_pool_initialization",
+  "get_aave_v3_markets",
+  "prepare_aave_v3_supply",
+  "prepare_aave_v3_withdraw",
+  "prepare_aave_v3_borrow",
+  "prepare_aave_v3_repay",
+  "prepare_aave_v3_collateral",
+  "prepare_aave_v3_emode",
+  "get_morpho_vaults",
+  "prepare_morpho_vault_deposit",
+  "prepare_morpho_vault_withdraw",
+  "prepare_morpho_vault_redeem",
+  "get_sky_savings_deployment",
+  "prepare_sky_savings_deposit",
+  "prepare_sky_savings_withdraw",
+  "prepare_sky_savings_redeem",
+  "get_lido_deployment",
+  "prepare_lido_stake",
+  "prepare_lido_wrap",
+  "prepare_lido_unwrap",
+  "prepare_lido_withdrawal_request",
+  "prepare_lido_withdrawal_claim",
 ];
 assert(
   catalog.server_version === expectedServerVersion,
@@ -172,6 +193,14 @@ assert(
   ),
   "contract directory resource is missing",
 );
+for (const skill of ["use-morpho", "use-sky", "use-lido"]) {
+  assert(
+    resources.result?.resources?.some(
+      (resource) => resource.uri === `ekubo://skills/${skill}`,
+    ),
+    `${skill} resource is missing`,
+  );
+}
 
 const templates = await mcpRequest(4, "resources/templates/list", {});
 const expectedTemplates = [

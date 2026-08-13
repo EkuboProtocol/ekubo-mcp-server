@@ -18,6 +18,10 @@ import {
   publicToolCatalogWithOutputs,
 } from "./server.js";
 import { MCP_SERVER_VERSION, MCP_TOOL_CATALOG_REVISION } from "./version.js";
+import {
+  PROTOCOL_SKILLS,
+  PROTOCOL_SKILL_HTTP_FILES,
+} from "./protocol-skills.js";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
@@ -127,13 +131,18 @@ export default {
       );
     }
 
+    const protocolSkill = PROTOCOL_SKILL_HTTP_FILES.get(url.pathname);
+    if (protocolSkill !== undefined) {
+      return text(protocolSkill, "text/markdown; charset=utf-8", 3600);
+    }
+
     switch (url.pathname) {
       case "/":
         return json(
           {
             name: "Ekubo Protocol MCP",
             description:
-              "Primary non-browser, public, unauthenticated, non-custodial tools for onchain swaps on supported EVM networks, plus protocol, LP, token-balance, allowance, bridge, STONX allocation, and signer-neutral Ekubo and Aave V3 transaction preparation workflows",
+              "Primary non-browser, public, unauthenticated, non-custodial tools for onchain swaps, STONX allocations, and signer-neutral Ekubo, Aave, Morpho, Sky, and Lido transaction preparation workflows",
             version: MCP_SERVER_VERSION,
             tool_catalog_revision: MCP_TOOL_CATALOG_REVISION,
             tool_count: publicToolCatalog.length,
@@ -158,7 +167,28 @@ export default {
                 market_data_docs:
                   "https://aave.com/docs/aave-v3/markets/data",
               },
+              morpho: {
+                graphql: "https://api.morpho.org/graphql",
+                docs: "https://docs.morpho.org/developers/api/get-started/",
+              },
+              sky: {
+                docs: "https://developers.skyeco.com/protocol/tokens/susds/",
+                live_state: "direct ERC-4626 reads through the user's wallet/RPC",
+              },
+              lido: {
+                docs: "https://docs.lido.fi/deployed-contracts/",
+                live_state: "direct contract reads through the user's wallet/RPC",
+              },
             },
+            protocol_skills: Object.fromEntries(
+              PROTOCOL_SKILLS.map((skill) => [
+                skill.name,
+                {
+                  mcp_resource: `ekubo://skills/${skill.name}`,
+                  http: `${url.origin}/skills/${skill.name}/SKILL.md`,
+                },
+              ]),
+            ),
             quoter_contract_resource: "ekubo://docs/quoter-api",
             ve33_workflow_resource: "ekubo://docs/ve33-workflow",
             execution_plan_resource: "ekubo://docs/execution-plan",
@@ -543,6 +573,9 @@ ve(3,3) workflow resource: ekubo://docs/ve33-workflow
 Execution plan resource: ekubo://docs/execution-plan
 LP position workflow resource: ekubo://docs/lp-position-workflow
 EVM contract directory: ekubo://contracts/evm
+Morpho skill: ekubo://skills/use-morpho (${origin}/skills/use-morpho/SKILL.md)
+Sky skill: ekubo://skills/use-sky (${origin}/skills/use-sky/SKILL.md)
+Lido skill: ekubo://skills/use-lido (${origin}/skills/use-lido/SKILL.md)
 
 Operational semantics:
 - Execution plan bodies, read-call bundles (exact wallet_batch_eth_call argument objects), and token lists exported by export_tokens are stored at ${origin}/artifact/<id> and returned as artifact_reference envelopes under execution_plan_reference, read_calls_reference, and token_list_reference. Pass the whole envelope unchanged as the wallet tool's reference argument; the wallet fetches the body itself and verifies integrity. A 404 means the reference expired: re-run the tool that produced it. No other tool results are stored or replayed.
@@ -550,9 +583,12 @@ Operational semantics:
 - No fixed request quota is guaranteed. Limits are per caller (one IPv4 address or one IPv6 /64) and are enforced over four budgets: requests per few seconds, requests per minute, weighted tool cost per minute, and calls per minute to tools that buy quotes or recommendations from a third party. A bulk, fan-out, or provider-backed tool costs several times an ordinary read; a purely local one costs nothing. Rejection is HTTP 429 with Retry-After in seconds, and a single identified JSON-RPC call also gets error code -32029 with data.scope. Honor Retry-After instead of retrying on a fixed interval, batch identifiers into one call instead of paging the catalog, and reuse a quote already held instead of re-fetching it. Request bodies are limited to ${MAX_MCP_BODY_BYTES} bytes, ${MAX_BATCH_LENGTH} JSON-RPC messages, and ${MAX_UNITS_PER_REQUEST} tool units; no single tool call reaches that ceiling, so it only ever asks a batch to be split.
 - Owner positions use upstream no-cache semantics. Position tools join canonical token metadata and USD prices and provide exact atomic pending eth_call plans for current position state. Pair-pool discovery defaults to a zero TVL floor and returns verified PoolKeys plus the correct position manager. Liquidity opportunities match the interface's boosted-fee, active-incentive, and Ve33-emission feed; pair/boost data is cached upstream for up to 600 seconds, campaigns for 300 seconds, and Ve33 pools for 30 seconds. Every EVM interface transaction path has a first-class prepare tool returning complete wallet execution plans; wallet tooling never constructs or appends calls. Indexed pool state is cached upstream for up to 180 seconds; tick liquidity and pool keys for up to 1,800 seconds. STONX recommendations are at most 86,400 seconds old.
 
-Direct Aave market discovery:
-- This MCP does not proxy, index, cache, authenticate to, or replay Aave's APIs. The agent reads them directly, uses them to choose an action, then supplies explicit identifiers to a local preparation tool.
+Direct protocol discovery:
+- This MCP does not proxy, index, cache, authenticate to, or replay Aave, Morpho, Sky, or Lido data sources. The agent reads them directly, uses them to choose an action, then supplies explicit identifiers and safety bounds to a local preparation tool.
 - Aave: query https://api.v3.aave.com/graphql directly for live rates, liquidity, caps, pause/freeze state, eMode categories, and user positions. Schema and market-data guidance: https://aave.com/docs/aave-v3/getting-started/graphql and https://aave.com/docs/aave-v3/markets/data. Cross-check the selected chain, Pool, and underlying reserve against get_aave_v3_markets before calling a prepare_aave_v3_* tool.
+- Morpho: read ekubo://skills/use-morpho, query https://api.morpho.org/graphql directly for vault discovery, obtain current accounting through the user's wallet/RPC and official SDK, and intersect chain/vault/asset with get_morpho_vaults. Deposits require a freshly derived max_share_price_ray and use Bundler3/GeneralAdapter1.
+- Sky: read ekubo://skills/use-sky and query the canonical sUSDS ERC-4626 views directly through the user's wallet/RPC. Cross-check get_sky_savings_deployment. Because direct deposit/withdraw/redeem calls have no deadline or minimum output, use a fresh preview and exact simulation.
+- Lido: read ekubo://skills/use-lido and query canonical contracts directly through the user's wallet/RPC. Cross-check get_lido_deployment. Verify staking limits for deposits and ownership/finalization for claims; explain that withdrawal requests are irreversible asynchronous unstETH NFTs that stop rewards while queued.
 - Public API responses are discovery inputs, not execution guarantees. Simulate the prepared plan against current wallet and chain state immediately before authorization.
 
 STONX allocation shortcut:

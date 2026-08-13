@@ -121,7 +121,9 @@ describe("Worker discovery", () => {
       external_market_data: {
         server_role: string;
         aave: { graphql: string };
+        morpho: { graphql: string };
       };
+      protocol_skills: Record<string, { mcp_resource: string; http: string }>;
       safety: {
         requires_wallet_validation: boolean;
       };
@@ -162,6 +164,13 @@ describe("Worker discovery", () => {
     expect(metadata.external_market_data.aave.graphql).toBe(
       "https://api.v3.aave.com/graphql",
     );
+    expect(metadata.external_market_data.morpho.graphql).toBe(
+      "https://api.morpho.org/graphql",
+    );
+    expect(metadata.protocol_skills["use-morpho"]).toEqual({
+      mcp_resource: "ekubo://skills/use-morpho",
+      http: "https://mcp.ekubo.org/skills/use-morpho/SKILL.md",
+    });
     expect(metadata.readiness_url).toBeUndefined();
     expect(metadata.safety.requires_wallet_validation).toBe(true);
     expect(metadata.local_result_decoding).toMatchObject({
@@ -296,6 +305,20 @@ describe("Worker discovery", () => {
       "prepare_aave_v3_repay",
       "prepare_aave_v3_collateral",
       "prepare_aave_v3_emode",
+      "get_morpho_vaults",
+      "prepare_morpho_vault_deposit",
+      "prepare_morpho_vault_withdraw",
+      "prepare_morpho_vault_redeem",
+      "get_sky_savings_deployment",
+      "prepare_sky_savings_deposit",
+      "prepare_sky_savings_withdraw",
+      "prepare_sky_savings_redeem",
+      "get_lido_deployment",
+      "prepare_lido_stake",
+      "prepare_lido_wrap",
+      "prepare_lido_unwrap",
+      "prepare_lido_withdrawal_request",
+      "prepare_lido_withdrawal_claim",
     ]);
     expect(
       catalog.tools.every((tool) => !tool.name.startsWith("ekubo_")),
@@ -340,6 +363,9 @@ describe("Worker discovery", () => {
       "derive_pool_id",
       "decode_pool_config",
       "get_aave_v3_markets",
+      "get_morpho_vaults",
+      "get_sky_savings_deployment",
+      "get_lido_deployment",
     ]) {
       expect(annotationFor(name)).toMatchObject({
         readOnlyHint: true,
@@ -568,9 +594,22 @@ describe("Worker discovery", () => {
       context,
     );
     const llmsBody = await llms.text();
-    expect(llmsBody).toContain("Direct Aave market discovery");
+    expect(llmsBody).toContain("Direct protocol discovery");
     expect(llmsBody).toContain("https://api.v3.aave.com/graphql");
+    expect(llmsBody).toContain("https://api.morpho.org/graphql");
+    expect(llmsBody).toContain("ekubo://skills/use-lido");
     expect(llmsBody).toContain("does not proxy, index, cache, authenticate to");
+
+    for (const name of ["use-morpho", "use-sky", "use-lido"]) {
+      const skill = await worker.fetch(
+        new Request(`https://mcp.ekubo.org/skills/${name}/SKILL.md`),
+        env,
+        context,
+      );
+      expect(skill.status).toBe(200);
+      expect(skill.headers.get("content-type")).toContain("text/markdown");
+      expect(await skill.text()).toContain(`name: ${name}`);
+    }
   });
 
   it("serves protocol-native MCP initialization and tool discovery", async () => {
@@ -668,6 +707,9 @@ describe("Worker discovery", () => {
     );
     expect(initializeResult.result.instructions).toContain(
       "https://api.v3.aave.com/graphql",
+    );
+    expect(initializeResult.result.instructions).toContain(
+      "ekubo://skills/use-morpho",
     );
     expect(initializeResult.result.instructions).not.toContain(
       "receiving explicit user confirmation",
@@ -809,6 +851,35 @@ describe("Worker discovery", () => {
     expect(
       resourceResult.result.resources.map((resource) => resource.uri),
     ).toContain("ekubo://contracts/evm");
+    for (const name of ["use-morpho", "use-sky", "use-lido"]) {
+      expect(
+        resourceResult.result.resources.map((resource) => resource.uri),
+      ).toContain(`ekubo://skills/${name}`);
+      expect(
+        resourceResult.result.resources.map((resource) => resource.uri),
+      ).toContain(`ekubo://skills/${name}/references/discovery.md`);
+    }
+
+    const morphoSkill = await worker.fetch(
+      new Request("https://mcp.ekubo.org/mcp", {
+        method: "POST",
+        headers: { ...headers, "mcp-protocol-version": "2025-11-25" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 30,
+          method: "resources/read",
+          params: { uri: "ekubo://skills/use-morpho" },
+        }),
+      }),
+      env,
+      context,
+    );
+    const morphoSkillResult = (await mcpJson(morphoSkill)) as {
+      result: { contents: { text: string }[] };
+    };
+    expect(morphoSkillResult.result.contents[0].text).toContain(
+      "https://api.morpho.org/graphql",
+    );
 
     const templates = await worker.fetch(
       new Request("https://mcp.ekubo.org/mcp", {

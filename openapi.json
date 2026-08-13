@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Ekubo Protocol MCP Gateway",
-    "version": "0.29.0",
-    "description": "Discovery contract for the public, unauthenticated, non-custodial Ekubo MCP server. It exposes interface-equivalent token balance and allowance reads, the ranked liquidity-opportunity feed, every EVM transaction action exposed by the interface, and a fixed local Aave V3 catalog with signer-neutral transaction preparation. Agents query Aave's public market-data API directly; this server does not proxy or index it. MCP clients discover typed tool schemas through tools/list; GET /tools provides the same revisioned catalog to ordinary HTTP clients.",
+    "version": "0.30.0",
+    "description": "Discovery contract for the public, unauthenticated, non-custodial Ekubo MCP server. It exposes interface-equivalent Ekubo tools plus fixed local Aave, Morpho, Sky, and Lido catalogs with signer-neutral transaction preparation. Agents query official public APIs and the user's wallet/RPC directly; this server does not proxy or index protocol market data. Reusable protocol skills describe those direct workflows. MCP clients discover typed tool schemas through tools/list; GET /tools provides the same revisioned catalog to ordinary HTTP clients.",
     "contact": {
       "url": "https://ekubo.org",
       "email": "eng@ekubo.org"
@@ -115,6 +115,45 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        }
+      }
+    },
+    "/skills/use-morpho/SKILL.md": {
+      "get": {
+        "operationId": "getMorphoSkill",
+        "summary": "Fetch the direct-discovery Morpho agent skill",
+        "responses": {
+          "200": {
+            "description": "Markdown skill instructions",
+            "content": { "text/markdown": { "schema": { "type": "string" } } }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/skills/use-sky/SKILL.md": {
+      "get": {
+        "operationId": "getSkySkill",
+        "summary": "Fetch the direct-discovery Sky agent skill",
+        "responses": {
+          "200": {
+            "description": "Markdown skill instructions",
+            "content": { "text/markdown": { "schema": { "type": "string" } } }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/skills/use-lido/SKILL.md": {
+      "get": {
+        "operationId": "getLidoSkill",
+        "summary": "Fetch the direct-discovery Lido agent skill",
+        "responses": {
+          "200": {
+            "description": "Markdown skill instructions",
+            "content": { "text/markdown": { "schema": { "type": "string" } } }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
