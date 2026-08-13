@@ -660,29 +660,23 @@ Connect MCP Inspector to `http://localhost:8787/mcp`.
 
 ## Deployment
 
-Authenticate Wrangler, install the locked dependencies, and deploy:
+Production deployment is automatic through the Cloudflare Pages Git
+integration. Merging or pushing a commit to `main` starts the Cloudflare build
+and publishes the resulting deployment; there is no manual release command.
+
+Do not run `wrangler deploy`, `bun run deploy`, or a separate CI deployment
+after pushing. Those bypass the automatic release path and can produce a live
+version that does not correspond to the Cloudflare Pages deployment for
+`main`. The repository's GitHub Actions workflow only installs, type-checks,
+tests, and validates the bundle; Cloudflare Pages owns the deployment itself.
+
+After the Cloudflare deployment completes, smoke-test the canonical production
+origin:
 
 ```sh
-bun install --frozen-lockfile
-bunx wrangler login
-bun run deploy
-```
-
-`wrangler.jsonc` intentionally enables `workers.dev` without declaring a
-custom domain. The first deployment therefore produces a testable
-`https://mcp.<account-subdomain>.workers.dev` URL. Add
-`mcp.ekubo.org` as a Worker custom domain after that deployment; no code or
-configuration change is required.
-
-For CI or non-interactive deployment, provide `CLOUDFLARE_API_TOKEN` and
-`CLOUDFLARE_ACCOUNT_ID` instead of running `wrangler login`.
-
-Smoke-test the deployed origin before adding the custom domain:
-
-```sh
-curl https://mcp.<account-subdomain>.workers.dev/
-curl https://mcp.<account-subdomain>.workers.dev/tools
-MCP_ORIGIN=https://mcp.<account-subdomain>.workers.dev bun run smoke
+curl https://mcp.ekubo.org/
+curl https://mcp.ekubo.org/tools
+MCP_ORIGIN=https://mcp.ekubo.org bun run smoke
 npx @modelcontextprotocol/inspector@latest
 ```
 
@@ -690,7 +684,7 @@ npx @modelcontextprotocol/inspector@latest
 initialization, protocol-native tools, and the contract resource templates.
 
 Connect MCP Inspector to
-`https://mcp.<account-subdomain>.workers.dev/mcp`, initialize the server,
+`https://mcp.ekubo.org/mcp`, initialize the server,
 list tools, list tokens, request same-chain and cross-chain quotes, and
 prepare unsigned execution plans. Validate every plan through the user's
 connected wallet or provider before signing.
