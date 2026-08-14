@@ -32,6 +32,7 @@ interface Erc721TransferInput {
   recipient: string;
   tokenId: string;
   safe?: boolean;
+  data?: Hex;
 }
 
 interface Erc1155TransferInput {
@@ -68,7 +69,7 @@ export function prepareTransfers(input: {
     );
   }
 
-  const sender = getAddress(input.sender);
+  const sender = nonzeroAddress(input.sender, "sender");
   const counts: Record<TransferInput["kind"], number> = {
     native: 0,
     erc20: 0,
@@ -127,6 +128,16 @@ export function prepareTransfers(input: {
           );
           const tokenId = uint256(transfer.tokenId, item, "token_id");
           const safe = transfer.safe ?? true;
+          if (!safe && transfer.data !== undefined) {
+            throw new ServiceError(
+              "invalid_transfer_data",
+              "ERC-721 callback data requires safeTransferFrom; omit data when safe is false",
+            );
+          }
+          const args =
+            transfer.data === undefined
+              ? ([sender, recipient, tokenId] as const)
+              : ([sender, recipient, tokenId, transfer.data] as const);
           return {
             kind: "execution",
             transaction: preparedTransaction(
@@ -135,7 +146,7 @@ export function prepareTransfers(input: {
               encodeFunctionData({
                 abi: erc721Abi,
                 functionName: safe ? "safeTransferFrom" : "transferFrom",
-                args: [sender, recipient, tokenId],
+                args,
               }),
               0n,
             ),

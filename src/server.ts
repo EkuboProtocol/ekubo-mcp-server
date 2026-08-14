@@ -3,7 +3,13 @@ import {
   ResourceNotFoundError,
   ResourceTemplate,
 } from "@modelcontextprotocol/server";
-import { type Address, getAddress, type Hex, numberToHex } from "viem";
+import {
+  type Address,
+  getAddress,
+  type Hex,
+  isAddress,
+  numberToHex,
+} from "viem";
 import { z } from "zod";
 import {
   CONTRACT_ADDRESS_TEMPLATE,
@@ -140,6 +146,14 @@ export const ROBINHOOD_STONX_VE33 = getAddress(
   "0xD18685a514E59b06d59824e16Db07e73345d9953",
 );
 
+function isPositiveBigInt(value: string | number): boolean {
+  try {
+    return BigInt(value) > 0n;
+  } catch {
+    return false;
+  }
+}
+
 const chainId = z
   .union([
     z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
@@ -150,7 +164,7 @@ const chainId = z
         "chain_id must be a positive decimal or hexadecimal integer",
       ),
   ])
-  .refine((value) => BigInt(value) > 0n, "chain_id must be positive")
+  .refine(isPositiveBigInt, "chain_id must be positive")
   .describe(
     "EVM chain ID as a JSON integer, decimal string, or hexadecimal string; responses use a canonical decimal string",
   );
@@ -650,27 +664,57 @@ export const prepareWrapUnwrapSchema = z.object({
   amount,
 });
 
+const transferChainId = chainId.refine(
+  fitsTransferUint256,
+  "chain_id must fit uint256",
+).describe(
+  "EVM chain ID as a positive JSON integer, decimal string, or hexadecimal string; must fit uint256",
+);
+const transferSender = address.refine(
+  isNonzeroTransferAddress,
+  "sender must be a valid-checksum nonzero address",
+).describe("Nonzero wallet that owns and will send every asset");
 const transferRecipient = address.refine(
-  (value) => !/^0x0{40}$/i.test(value),
-  "recipient must be a nonzero address",
+  isNonzeroTransferAddress,
+  "recipient must be a valid-checksum nonzero address",
 ).describe("Nonzero account or contract that will receive this transfer");
 const transferToken = address.refine(
-  (value) => !/^0x0{40}$/i.test(value),
-  "token must be a nonzero contract address",
+  isNonzeroTransferAddress,
+  "token must be a valid-checksum nonzero contract address",
 ).describe("Nonzero ERC token contract address");
 const transferTokenId = uintString.describe(
   "ERC token ID as an unsigned decimal integer; zero is valid",
-);
+).refine(fitsTransferUint256, "token_id must fit uint256");
+const positiveTransferAmount = z.string().regex(
+  /^[1-9][0-9]*$/,
+  "amount must be a positive canonical decimal integer",
+).refine(fitsTransferUint256, "amount must fit uint256");
+
+function fitsTransferUint256(value: string | number): boolean {
+  try {
+    return BigInt(value) < 1n << 256n;
+  } catch {
+    return false;
+  }
+}
+
+function isNonzeroTransferAddress(value: string): boolean {
+  return isAddress(value) && !/^0x0{40}$/i.test(value);
+}
 const nativeTransferSchema = z.object({
   kind: z.literal("native"),
   recipient: transferRecipient,
-  amount: amount.describe("Positive native-token amount in wei"),
+  amount: positiveTransferAmount.describe(
+    "Positive native-token amount in wei",
+  ),
 }).strict();
 const erc20TransferSchema = z.object({
   kind: z.literal("erc20"),
   token: transferToken,
   recipient: transferRecipient,
-  amount: amount.describe("Positive ERC-20 amount in base units"),
+  amount: positiveTransferAmount.describe(
+    "Positive ERC-20 amount in base units",
+  ),
 }).strict();
 const erc721TransferSchema = z.object({
   kind: z.literal("erc721"),
@@ -680,13 +724,30 @@ const erc721TransferSchema = z.object({
   safe: z.boolean().optional().describe(
     "Omit or set true to use safeTransferFrom (the default); set false to use transferFrom",
   ),
-}).strict();
+  data: z.string().regex(
+    /^0x(?:[0-9a-fA-F]{2})*$/,
+    "data must be 0x-prefixed whole bytes",
+  ).optional().describe(
+    "Optional receiver callback data for the four-argument safeTransferFrom overload; requires safe to be omitted or true",
+  ),
+})
+  .strict()
+  .refine(
+    (transfer) => transfer.safe !== false || transfer.data === undefined,
+    {
+      path: ["data"],
+      message:
+        "ERC-721 data requires safeTransferFrom; omit data when safe is false",
+    },
+  );
 const erc1155TransferSchema = z.object({
   kind: z.literal("erc1155"),
   token: transferToken,
   recipient: transferRecipient,
   token_id: transferTokenId,
-  amount: amount.describe("Positive ERC-1155 token amount in base units"),
+  amount: positiveTransferAmount.describe(
+    "Positive ERC-1155 token amount in base units",
+  ),
   safe: z.literal(true).optional().describe(
     "Omit or set true; ERC-1155 defines safeTransferFrom but no unsafe transferFrom method",
   ),
@@ -699,10 +760,8 @@ const erc1155TransferSchema = z.object({
 }).strict();
 
 export const prepareTransfersSchema = z.object({
-  chain_id: chainId.describe("Chain on which every transfer will execute"),
-  sender: address.describe(
-    "Wallet that owns the assets and will execute every transfer",
-  ),
+  chain_id: transferChainId,
+  sender: transferSender,
   transfers: z.array(
     z.discriminatedUnion("kind", [
       nativeTransferSchema,
@@ -1736,7 +1795,7 @@ export const publicToolCatalog = [
     name: "prepare_transfers",
     title: "Prepare a batch of token transfers",
     description:
-      "Prepare one atomic-capable execution plan containing 1 to 4,096 ordered transfers on one EVM chain. Native, ERC-20, ERC-721, and ERC-1155 entries may be mixed freely. Every amount must be a positive decimal base-unit integer. ERC-721 safe defaults to true and may be set false to use transferFrom; ERC-1155 uses its standard safeTransferFrom with optional callback data. Returns only a compact summary plus the execution_plan_reference, so even a large batch does not re-enter agent context.",
+      "Prepare one atomic-capable execution plan containing 1 to 4,096 ordered transfers on one EVM chain. Native, ERC-20, ERC-721, and ERC-1155 entries may be mixed freely. Every amount must be a positive decimal base-unit integer. ERC-721 safe defaults to true and may be set false to use transferFrom; safe ERC-721 and ERC-1155 entries accept optional receiver callback data. ERC-1155 defines no unsafe transfer method. Returns only a compact summary plus the execution_plan_reference, so even a large batch does not re-enter agent context.",
     inputSchema: z.toJSONSchema(prepareTransfersSchema),
   },
   {
@@ -2873,6 +2932,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
               recipient: transfer.recipient,
               tokenId: transfer.token_id,
               safe: transfer.safe,
+              data: transfer.data as Hex | undefined,
             };
           case "erc1155":
             return {

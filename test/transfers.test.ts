@@ -155,6 +155,22 @@ describe("prepare transfers", () => {
         ],
       }).success,
     ).toBe(false);
+    expect(() =>
+      prepareTransfers({
+        chainId: "1",
+        sender: SENDER,
+        transfers: [
+          {
+            kind: "erc721",
+            token: ERC721,
+            recipient: RECIPIENT,
+            tokenId: "1",
+            safe: false,
+            data: "0x12",
+          },
+        ],
+      }),
+    ).toThrow("callback data requires safeTransferFrom");
   });
 
   it("requires 1 to 4,096 transfers and prohibits zero amounts", () => {
