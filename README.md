@@ -196,6 +196,8 @@ settle below 1:1 after extraordinary protocol losses.
 
 The remaining EVM interface transaction paths also have first-class tools:
 
+- `prepare_transfers` — prepare 1–4,096 ordered native, ERC-20, ERC-721,
+  and ERC-1155 transfers on one chain; kinds may be mixed in one atomic batch;
 - wrap/unwrap and LP NFT transfer;
 - standalone pool initialization and phased pool price correction, including
   exact reads, quote, approval, and execution route;

@@ -127,6 +127,10 @@ import {
   prepareLidoWithdrawalRequest,
   prepareLidoWrap,
 } from "./lido.js";
+import {
+  MAX_TRANSFERS_PER_PLAN,
+  prepareTransfers,
+} from "./transfers.js";
 
 export const ROBINHOOD_STONX_CHAIN_ID = "4663";
 export const ROBINHOOD_STONX_VE_TOKEN = getAddress(
@@ -645,6 +649,71 @@ export const prepareWrapUnwrapSchema = z.object({
   direction: z.enum(["wrap", "unwrap"]),
   amount,
 });
+
+const transferRecipient = address.refine(
+  (value) => !/^0x0{40}$/i.test(value),
+  "recipient must be a nonzero address",
+).describe("Nonzero account or contract that will receive this transfer");
+const transferToken = address.refine(
+  (value) => !/^0x0{40}$/i.test(value),
+  "token must be a nonzero contract address",
+).describe("Nonzero ERC token contract address");
+const transferTokenId = uintString.describe(
+  "ERC token ID as an unsigned decimal integer; zero is valid",
+);
+const nativeTransferSchema = z.object({
+  kind: z.literal("native"),
+  recipient: transferRecipient,
+  amount: amount.describe("Positive native-token amount in wei"),
+}).strict();
+const erc20TransferSchema = z.object({
+  kind: z.literal("erc20"),
+  token: transferToken,
+  recipient: transferRecipient,
+  amount: amount.describe("Positive ERC-20 amount in base units"),
+}).strict();
+const erc721TransferSchema = z.object({
+  kind: z.literal("erc721"),
+  token: transferToken,
+  recipient: transferRecipient,
+  token_id: transferTokenId,
+  safe: z.boolean().optional().describe(
+    "Omit or set true to use safeTransferFrom (the default); set false to use transferFrom",
+  ),
+}).strict();
+const erc1155TransferSchema = z.object({
+  kind: z.literal("erc1155"),
+  token: transferToken,
+  recipient: transferRecipient,
+  token_id: transferTokenId,
+  amount: amount.describe("Positive ERC-1155 token amount in base units"),
+  safe: z.literal(true).optional().describe(
+    "Omit or set true; ERC-1155 defines safeTransferFrom but no unsafe transferFrom method",
+  ),
+  data: z.string().regex(
+    /^0x(?:[0-9a-fA-F]{2})*$/,
+    "data must be 0x-prefixed whole bytes",
+  ).optional().describe(
+    "Optional receiver callback data; omitted data defaults to empty bytes (0x)",
+  ),
+}).strict();
+
+export const prepareTransfersSchema = z.object({
+  chain_id: chainId.describe("Chain on which every transfer will execute"),
+  sender: address.describe(
+    "Wallet that owns the assets and will execute every transfer",
+  ),
+  transfers: z.array(
+    z.discriminatedUnion("kind", [
+      nativeTransferSchema,
+      erc20TransferSchema,
+      erc721TransferSchema,
+      erc1155TransferSchema,
+    ]),
+  ).min(1).max(MAX_TRANSFERS_PER_PLAN).describe(
+    `One to ${MAX_TRANSFERS_PER_PLAN} ordered, optionally mixed native, ERC-20, ERC-721, or ERC-1155 transfers`,
+  ),
+}).strict();
 
 export const prepareLpPositionTransferSchema = z.object({
   chain_id: chainId,
@@ -1662,6 +1731,13 @@ export const publicToolCatalog = [
     description:
       "Prepare the Ethereum interface's direct WETH deposit or withdrawal with exact calldata and native value.",
     inputSchema: z.toJSONSchema(prepareWrapUnwrapSchema),
+  },
+  {
+    name: "prepare_transfers",
+    title: "Prepare a batch of token transfers",
+    description:
+      "Prepare one atomic-capable execution plan containing 1 to 4,096 ordered transfers on one EVM chain. Native, ERC-20, ERC-721, and ERC-1155 entries may be mixed freely. Every amount must be a positive decimal base-unit integer. ERC-721 safe defaults to true and may be set false to use transferFrom; ERC-1155 uses its standard safeTransferFrom with optional callback data. Returns only a compact summary plus the execution_plan_reference, so even a large batch does not re-enter agent context.",
+    inputSchema: z.toJSONSchema(prepareTransfersSchema),
   },
   {
     name: "prepare_lp_position_transfer",
@@ -2780,6 +2856,39 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
+  registerCatalogTool("prepare_transfers", prepareTransfersSchema, (input) =>
+    prepareTransfers({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      transfers: input.transfers.map((transfer) => {
+        switch (transfer.kind) {
+          case "native":
+            return transfer;
+          case "erc20":
+            return transfer;
+          case "erc721":
+            return {
+              kind: transfer.kind,
+              token: transfer.token,
+              recipient: transfer.recipient,
+              tokenId: transfer.token_id,
+              safe: transfer.safe,
+            };
+          case "erc1155":
+            return {
+              kind: transfer.kind,
+              token: transfer.token,
+              recipient: transfer.recipient,
+              tokenId: transfer.token_id,
+              amount: transfer.amount,
+              safe: transfer.safe,
+              data: transfer.data as Hex,
+            };
+        }
+      }),
+    }),
+  );
+
   registerCatalogTool("prepare_lp_position_transfer", prepareLpPositionTransferSchema, (input) =>
     prepareLpPositionTransfer(env, {
       chainId: canonicalChainId(input.chain_id),
@@ -3660,6 +3769,8 @@ Routing priority: For requests to swap, trade, exchange, or convert tokens on an
 A quote is only worth what it can still execute for, so treat the interval between fetching one and broadcasting against it as the thing to minimize. get_quotes_with_plans is the entire swap path: call it once with sender and slippage_bps as soon as the user has decided to swap, and each returned option already carries the execution_plan_reference that executes it. Honor any slippage preference the user gave. Otherwise estimate the transaction gas cost and swap notional in the same currency and choose a low tolerance whose maximum value impact is approximately one gas fee: slippage_bps ~= 10,000 * gas-cost value / swap-notional value. Never substitute a generic 50 bps (0.5%) default, especially on Ethereum mainnet. Prefer paying for a retry after a fresh quote to exposing the trade to materially more slippage; after a slippage failure, re-run this tool and submit the newly prepared transaction, never the reverted calldata unchanged. Choose one option and hand its reference straight to the wallet. There is no preparation step to follow, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Then simulate that plan once with the wallet, show the user the simulated result, and send that same simulation rather than paying for an identical one immediately before signing. Do not call the tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold.
 
 For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with list_tokens, read the exact input-token balance with the wallet's own balance tooling, then call get_quotes_with_plans with that exact amount plus sender and slippage_bps and pass the chosen option's execution_plan_reference to the Ekubo Wallet MCP.
+
+For direct asset sends, use prepare_transfers instead of constructing calldata. Supply one chain and sender plus 1 to 4,096 ordered entries; native, ERC-20, ERC-721, and ERC-1155 transfers may be mixed. Amounts are positive decimal base-unit strings. ERC-721 safe transfer is the default and safe=false explicitly selects transferFrom; ERC-1155 has only safeTransferFrom. Pass the resulting execution_plan_reference unchanged to the wallet.
 
 Aave market discovery happens directly between the agent and Aave's public APIs; this MCP is not a proxy, indexer, cache, or credential holder. Use the public GraphQL endpoint https://api.v3.aave.com/graphql with https://aave.com/docs/aave-v3/getting-started/graphql and https://aave.com/docs/aave-v3/markets/data to inspect current supply and borrow rates, liquidity, caps, pause/freeze state, eMode categories, and user positions. Then call get_aave_v3_markets and use only a returned fixed chain, Pool, and reserve address with a prepare_aave_v3_* tool. Live API data and this server's fixed deployment catalog are inputs to wallet simulation, never substitutes for it.
 

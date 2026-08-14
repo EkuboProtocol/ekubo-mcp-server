@@ -276,6 +276,7 @@ describe("Worker discovery", () => {
       "prepare_lp_position_earnings_claim",
       "prepare_lp_position_withdraw",
       "prepare_wrap_unwrap",
+      "prepare_transfers",
       "prepare_lp_position_transfer",
       "prepare_fix_pool_price",
       "prepare_twamm_order",

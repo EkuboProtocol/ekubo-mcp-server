@@ -63,10 +63,12 @@ export const SUSTAINED_WINDOW_SECONDS = 60;
 export const MAX_UNITS_PER_REQUEST = 40;
 
 /**
- * The largest MCP request body we will parse. Real tool inputs top out around
- * a thousand token identifiers; anything past this is not a call we serve.
+ * The largest MCP request body we will parse. A maximally populated
+ * prepare_transfers call needs about 1.3 MiB even before optional ERC-1155
+ * callback data, so this accommodates all 4,096 ordinary transfer entries
+ * while retaining a hard parsing bound.
  */
-export const MAX_MCP_BODY_BYTES = 256 * 1024;
+export const MAX_MCP_BODY_BYTES = 2 * 1024 * 1024;
 
 /**
  * JSON-RPC batching was removed in protocol revision 2025-06-18, but older
