@@ -11,7 +11,18 @@ const decimalQuantity = z.string().regex(/^(0|[1-9][0-9]*)$/).refine(
 const positiveChainId = z.string().regex(/^[1-9][0-9]*$/);
 const address = z.string().refine(isAddress, "invalid EVM address").transform((value) => getAddress(value));
 const hexData = z.string().regex(/^0x(?:[0-9a-fA-F]{2})*$/);
-const abiEntry = z.record(z.string(), z.unknown());
+const abiEntry = z.record(z.string(), z.unknown()).superRefine((entry, ctx) => {
+  // Alloy's JSON ABI boundary requires this field even when it is false.
+  // Viem permits it to be omitted, so reject that incompatible representation
+  // before a read bundle can be stored and handed to the wallet.
+  if (entry.type === "event" && typeof entry.anonymous !== "boolean") {
+    ctx.addIssue({
+      code: "custom",
+      message: "wallet-compatible event ABI entries require boolean anonymous",
+      path: ["anonymous"],
+    });
+  }
+});
 
 const codecImplementationSchema = z.object({
   ecosystem: z.literal("npm"),

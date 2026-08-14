@@ -563,6 +563,21 @@ describe("ve(3,3) call generation", () => {
       "ekubo-token-balance-0x2222222222222222222222222222222222222222",
       "ekubo-token-balance-0x3333333333333333333333333333333333333333",
     ]);
+    for (const call of
+      claimed.pre_claim_balance_snapshots.read_calls?.calls ?? []) {
+      expect(call.decode).toMatchObject({
+        kind: "function_result",
+        function_name: "balanceOf",
+        abi: [
+          {
+            type: "function",
+            name: "balanceOf",
+            stateMutability: "view",
+          },
+        ],
+      });
+      expect((call.decode as { abi: readonly unknown[] }).abi).toHaveLength(1);
+    }
     expect(claimed.next_phase).toContain(
       "Never pass a wallet's pre-existing balance",
     );

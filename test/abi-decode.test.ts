@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseAbi } from "viem";
+import { erc20Abi, parseAbi } from "viem";
 import {
   EKUBO_SQRT_RATIO_FLOAT_CODEC,
   functionReadCall,
@@ -78,6 +78,12 @@ describe("local ABI decode plans", () => {
     expect(() =>
       readCallsBundle({ chainId: "4663", calls: [call] }),
     ).not.toThrow();
+  });
+
+  it("rejects Viem event ABIs that Alloy cannot parse", () => {
+    expect(() => functionResultDecodePlan(erc20Abi, "balanceOf")).toThrow(
+      "wallet-compatible event ABI entries require boolean anonymous",
+    );
   });
 
   it("pins npm explicitly while keeping semantic codec identity portable", () => {

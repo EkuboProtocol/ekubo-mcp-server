@@ -62,6 +62,14 @@ const VE_TOKEN_ABI = parseAbi([
   "function stakeMaxDuration(uint128 amount, bytes32 salt) payable returns (uint256 veId)",
 ]);
 
+// Viem's full `erc20Abi` omits `anonymous: false` from its event entries.
+// Alloy requires that field when the wallet parses a JSON ABI, even when the
+// requested decode is a function result. Ship only the function this read
+// needs so unrelated event metadata cannot invalidate `balanceOf` decoding.
+const ERC20_BALANCE_OF_ABI = parseAbi([
+  "function balanceOf(address account) view returns (uint256 result)",
+]);
+
 const UINT64_MAX = (1n << 64n) - 1n;
 const UINT128_MAX = (1n << 128n) - 1n;
 const UINT192_MASK = (1n << 192n) - 1n;
@@ -2850,11 +2858,11 @@ function balanceSnapshots(
                 id: `ekubo-token-balance-${token}`,
                 to: token,
                 data: encodeFunctionData({
-                  abi: erc20Abi,
+                  abi: ERC20_BALANCE_OF_ABI,
                   functionName: "balanceOf",
                   args: [owner],
                 }),
-                abi: erc20Abi,
+                abi: ERC20_BALANCE_OF_ABI,
                 functionName: "balanceOf",
               }),
             ),
