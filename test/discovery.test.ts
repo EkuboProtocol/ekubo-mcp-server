@@ -341,8 +341,9 @@ describe("Worker discovery", () => {
           .slippage_bps as { description?: string }
       ).description,
     ).toContain("Honor an explicit user preference");
-    // Annotations are per tool: preparation tools and the quotes tool are not
-    // read-only or idempotent; true reads are.
+    // Every tool is informational and read-only: preparation tools return
+    // transaction plans but never submit them. Fresh plans and quotes remain
+    // non-idempotent because their returned references or values can change.
     const annotationFor = (name: string) =>
       catalog.tools.find((tool) => tool.name === name)?.annotations;
     expect(annotationFor("get_pool")).toMatchObject({
@@ -350,13 +351,16 @@ describe("Worker discovery", () => {
       idempotentHint: true,
     });
     expect(annotationFor("prepare_wrap_unwrap")).toMatchObject({
-      readOnlyHint: false,
+      readOnlyHint: true,
       idempotentHint: false,
     });
     expect(annotationFor("get_quotes_with_plans")).toMatchObject({
-      readOnlyHint: false,
+      readOnlyHint: true,
       idempotentHint: false,
     });
+    expect(
+      catalog.tools.every((tool) => tool.annotations?.readOnlyHint === true),
+    ).toBe(true);
     // A tool that reaches an indexer, a provider, or the artifact bucket is
     // open-world; tools using only arguments or checked-in constants are not.
     for (const name of [

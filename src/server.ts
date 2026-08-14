@@ -1358,11 +1358,14 @@ const LOCAL_TOOLS = new Set([
   "get_lido_deployment",
 ]);
 
-// Preparation tools store plan bodies server-side, and the quotes tool buys
-// firm quotes from providers: neither is read-only, and repeating a call
-// produces a different (fresh-quote, fresh-reference) result.
+// Preparation tools only return transaction plans; they never submit them or
+// otherwise mutate user-visible state. Storing plan bodies is incidental
+// caching of the returned information, just like read bundles above. The
+// quotes tool likewise only returns fresh provider information. These tools
+// are therefore read-only, though they are not idempotent because repeating a
+// call can produce fresh quotes or references.
 const preparerAnnotations = {
-  readOnlyHint: false,
+  readOnlyHint: true,
   destructiveHint: false,
   idempotentHint: false,
   openWorldHint: true,

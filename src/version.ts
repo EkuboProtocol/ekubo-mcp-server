@@ -5,4 +5,4 @@ export const MCP_SERVER_VERSION = "0.30.0";
 // and smoke tests can detect a cached catalog independently of the
 // application version.
 export const MCP_TOOL_CATALOG_REVISION =
-  "2026-08-13.morpho-sky-lido-actions";
+  "2026-08-13.read-only-tools";
