@@ -90,9 +90,9 @@ export default {
     }
 
     // Stored artifact bodies (execution plans and read-call bundles), fetched
-    // by wallets from the reference URL a tool returned. Served byte-for-byte
-    // as stored so the wallet's keccak256 of the response matches the
-    // reference's integrity.value exactly.
+    // by wallets from the reference URL a tool returned. Integrity and the
+    // reference byte count describe the canonical JSON. HTTP compression is
+    // only a wire representation; wallets decompress before verifying it.
     const artifactMatch = /^\/artifact\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(
       url.pathname,
     );
@@ -119,16 +119,7 @@ export default {
           404,
         );
       }
-      return withSecurityHeaders(
-        new Response(request.method === "HEAD" ? null : body, {
-          headers: {
-            "content-type": "application/json",
-            "content-length": String(new TextEncoder().encode(body).length),
-            "cache-control": "no-store",
-            "access-control-allow-origin": "*",
-          },
-        }),
-      );
+      return artifactResponse(request, body);
     }
 
     const protocolSkill = PROTOCOL_SKILL_HTTP_FILES.get(url.pathname);
@@ -546,11 +537,67 @@ function text(body: string, contentType: string, maxAge: number) {
 }
 
 function withSecurityHeaders(response: Response) {
-  const secured = new Response(response.body, response);
+  return applySecurityHeaders(new Response(response.body, response));
+}
+
+function applySecurityHeaders<T extends Response>(secured: T): T {
   secured.headers.set("x-content-type-options", "nosniff");
   secured.headers.set("referrer-policy", "no-referrer");
   secured.headers.set("x-frame-options", "DENY");
   return secured;
+}
+
+function artifactResponse(request: Request, body: string) {
+  const canonical = new TextEncoder().encode(body);
+  const headers = new Headers({
+    "content-type": "application/json",
+    "cache-control": "no-store",
+    "access-control-allow-origin": "*",
+    vary: "accept-encoding",
+  });
+  const gzip = acceptsGzip(request);
+  if (gzip) headers.set("content-encoding", "gzip");
+  if (!gzip) headers.set("content-length", String(canonical.byteLength));
+
+  const responseBody =
+    request.method === "HEAD"
+      ? null
+      : gzip
+        ? new Blob([canonical])
+            .stream()
+            .pipeThrough(new CompressionStream("gzip"))
+        : canonical;
+  return applySecurityHeaders(
+    new Response(responseBody, {
+      headers,
+      // The gzip branch already compressed its stream. Cloudflare otherwise
+      // interprets Content-Encoding as an instruction to encode it again.
+      encodeBody: gzip ? "manual" : "automatic",
+    }),
+  );
+}
+
+function acceptsGzip(request: Request) {
+  const edgeEncoding = (
+    request as Request & { cf?: { clientAcceptEncoding?: string } }
+  ).cf?.clientAcceptEncoding;
+  const advertised =
+    request.headers.get("accept-encoding") ?? edgeEncoding ?? "";
+  let wildcardQuality: number | null = null;
+  for (const item of advertised.split(",")) {
+    const [rawEncoding, ...parameters] = item.trim().split(";");
+    const encoding = rawEncoding?.trim().toLowerCase();
+    const qualityParameter = parameters
+      .map((parameter) => parameter.trim().toLowerCase())
+      .find((parameter) => parameter.startsWith("q="));
+    const quality = qualityParameter === undefined
+      ? 1
+      : Number(qualityParameter.slice(2));
+    const accepted = Number.isFinite(quality) && quality > 0;
+    if (encoding === "gzip") return accepted;
+    if (encoding === "*") wildcardQuality = accepted ? quality : 0;
+  }
+  return wildcardQuality !== null && wildcardQuality > 0;
 }
 
 function cacheHeaders(maxAge: number) {

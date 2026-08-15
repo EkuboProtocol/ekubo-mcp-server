@@ -64,7 +64,7 @@ const abiParameterSchema: z.ZodType<Record<string, unknown>> = z.lazy(() => z.ob
   name: z.string().max(128).optional(),
   type: z.string().min(1).max(128),
   internalType: z.string().max(256).optional(),
-  components: z.array(abiParameterSchema).max(2_048).optional(),
+  components: z.array(abiParameterSchema).max(4_096).optional(),
 }).strict());
 
 const sharedDecodeFields = { required: z.boolean().default(false) };
@@ -84,7 +84,7 @@ export const walletAbiDecodePlanSchema: z.ZodType<Record<string, unknown>> = z.l
   }).strict(),
   z.object({
     kind: z.literal("abi_parameters"),
-    parameters: z.array(abiParameterSchema).max(2_048),
+    parameters: z.array(abiParameterSchema).max(4_096),
     semantic_codecs: z.array(semanticCodecSchema).max(32).optional(),
     ...sharedDecodeFields,
   }).strict(),
@@ -102,23 +102,23 @@ export const walletAbiDecodePlanSchema: z.ZodType<Record<string, unknown>> = z.l
     kind: z.literal("multicall3"),
     abi: z.array(abiEntry).min(1).max(128),
     function_name: z.string().min(1).max(256),
-    expected_result_count: z.number().int().min(0).max(128).optional(),
+    expected_result_count: z.number().int().min(0).max(4_096).optional(),
     results: z.array(z.object({
-      index: z.number().int().min(0).max(127),
+      index: z.number().int().min(0).max(4_095),
       required_success: z.boolean().default(false),
       decode: walletAbiDecodePlanSchema.optional(),
-    }).strict()).max(128).default([]),
+    }).strict()).max(4_096).default([]),
     ...sharedDecodeFields,
   }).strict(),
   z.object({
     kind: z.literal("function_result_bytes_array"),
     abi: z.array(abiEntry).min(1).max(128),
     function_name: z.string().min(1).max(256),
-    expected_result_count: z.number().int().min(0).max(128).optional(),
+    expected_result_count: z.number().int().min(0).max(4_096).optional(),
     results: z.array(z.object({
-      index: z.number().int().min(0).max(127),
+      index: z.number().int().min(0).max(4_095),
       decode: walletAbiDecodePlanSchema.optional(),
-    }).strict()).max(128).default([]),
+    }).strict()).max(4_096).default([]),
     ...sharedDecodeFields,
   }).strict(),
 ]));
@@ -211,7 +211,7 @@ export const walletBatchEthCallInputSchema = z.object({
     data: hexData,
     decode: walletAbiDecodePlanSchema.optional(),
     include_raw: z.boolean().default(true),
-  }).strict()).min(1).max(128),
+  }).strict()).min(1).max(4_096),
 }).strict();
 
 export function assertWalletAbiDecodePlan(value: unknown): void {

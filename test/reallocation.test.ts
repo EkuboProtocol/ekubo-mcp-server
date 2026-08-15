@@ -263,6 +263,89 @@ describe("safe VeToken allocation workflows", () => {
     ).toBe(true);
   });
 
+  it("validates every NFT in one 189-result bundle for a 47-NFT portfolio", async () => {
+    const tokens = Array.from({ length: 47 }, (_, index) =>
+      tokenFixture({
+        veId: BigInt(index + 1),
+        amount: "1000",
+        weight: "1000",
+      }),
+    );
+    const fetcher = fixtureFetcher(tokens);
+    const current = await getVe33Allocations(
+      env,
+      { chainId, veToken, owner },
+      fetcher,
+      now,
+    );
+    const validation = current.onchain_validation;
+    expect(validation.calls).toHaveLength(4 * tokens.length + 1);
+    expect(validation.read_calls.calls).toHaveLength(1);
+    const outer = validation.read_calls.calls[0];
+    const decode = outer.decode as {
+      abi: { name?: string }[];
+      expected_result_count: number;
+      results: {
+        index: number;
+        decode: { abi: { name?: string }[]; function_name: string };
+      }[];
+    };
+    expect(decode.expected_result_count).toBe(189);
+    expect(decode.results).toHaveLength(189);
+    expect(decode.abi).toHaveLength(1);
+    expect(decode.abi[0]?.name).toBe("multicall");
+    for (const [index, result] of decode.results.entries()) {
+      expect(result.index).toBe(index);
+      expect(result.decode.function_name).toBe(
+        validation.calls[index]?.function_name,
+      );
+      expect(result.decode.abi).toHaveLength(1);
+      expect(result.decode.abi[0]?.name).toBe(result.decode.function_name);
+    }
+    expect(
+      new TextEncoder().encode(JSON.stringify(validation.read_calls)).length,
+    ).toBeLessThan(16 * 1024 * 1024);
+
+    const plan = await prepareVe33Reallocation(
+      env,
+      {
+        chainId,
+        veToken,
+        sender: owner,
+        currentStateId: current.state_id,
+        targets: [{ poolKeyId: "1", swapFee: "10", weightBps: 10_000 }],
+        saltNonce,
+      },
+      fetcher,
+      now,
+    );
+    expect(plan.onchain_validation.calls).toHaveLength(189);
+    expect(
+      plan.onchain_validation.read_calls.calls[0]?.decode,
+    ).toMatchObject({ expected_result_count: 189 });
+  });
+
+  it("keeps a 24-NFT portfolio in the existing single-bundle shape", async () => {
+    const tokens = Array.from({ length: 24 }, (_, index) =>
+      tokenFixture({
+        veId: BigInt(index + 1),
+        amount: "1000",
+        weight: "1000",
+      }),
+    );
+    const current = await getVe33Allocations(
+      env,
+      { chainId, veToken, owner },
+      fixtureFetcher(tokens),
+      now,
+    );
+    expect(current.onchain_validation.calls).toHaveLength(97);
+    expect(current.onchain_validation.read_calls.calls).toHaveLength(1);
+    expect(
+      current.onchain_validation.read_calls.calls[0]?.decode,
+    ).toMatchObject({ expected_result_count: 97 });
+  });
+
   it("claims every active NFT first, including zero-fee states, then splits and votes atomically", async () => {
     const tokens = [
       tokenFixture({ veId: 1n, amount: "600", weight: "590", swapFee: "0" }),

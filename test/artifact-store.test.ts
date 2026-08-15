@@ -242,7 +242,7 @@ describe("artifact store", () => {
     const { env, store } = testEnv();
     const oversized = {
       chain_id: "1",
-      calls: Array.from({ length: 129 }, (_, index) => ({
+      calls: Array.from({ length: 4097 }, (_, index) => ({
         id: `call-${index}`,
         to: "0xF68F25CA6C817733b7B15a42191AE72A34d56a2B",
         data: "0x1234",

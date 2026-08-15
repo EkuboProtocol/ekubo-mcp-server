@@ -62,6 +62,37 @@ const VE_TOKEN_ABI = parseAbi([
   "function stakeMaxDuration(uint128 amount, bytes32 salt) payable returns (uint256 veId)",
 ]);
 
+type VeTokenPortfolioReadFunction =
+  | "balanceOf"
+  | "ownerOf"
+  | "stakes"
+  | "voteState"
+  | "votingPower";
+
+// Decode plans cross the artifact boundary and repeat once per child result.
+// Keep each one to the exact function it decodes instead of shipping the full
+// transactional VeToken ABI thousands of times.
+const VE_TOKEN_MULTICALL_ABI = parseAbi([
+  "function multicall(bytes[] data) payable returns (bytes[] results)",
+]);
+const VE_TOKEN_PORTFOLIO_READ_ABIS = {
+  balanceOf: parseAbi([
+    "function balanceOf(address owner) view returns (uint256 result)",
+  ]),
+  ownerOf: parseAbi([
+    "function ownerOf(uint256 id) view returns (address result)",
+  ]),
+  stakes: parseAbi([
+    "function stakes(uint256 id) view returns (uint128 amount,uint64 endTime)",
+  ]),
+  voteState: parseAbi([
+    "function voteState(uint256 veId) view returns (bytes32 poolId,uint128 weight,uint64 votedSwapFee,uint128 claimable0,uint128 claimable1)",
+  ]),
+  votingPower: parseAbi([
+    "function votingPower(uint256 veId) view returns (uint256 result)",
+  ]),
+} as const;
+
 // Viem's full `erc20Abi` omits `anonymous: false` from its event entries.
 // Alloy requires that field when the wallet parses a JSON ABI, even when the
 // requested decode is a function result. Ship only the function this read
@@ -2640,7 +2671,7 @@ function retainedChunkIndex(
 function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
   const calls: {
     type: string;
-    function_name: "balanceOf" | "ownerOf" | "stakes" | "voteState" | "votingPower";
+    function_name: VeTokenPortfolioReadFunction;
     ve_id?: string;
     data: Hex;
     expectation:
@@ -2652,7 +2683,7 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
       type: "balance_of",
       function_name: "balanceOf",
       data: encodeFunctionData({
-        abi: VE_TOKEN_ABI,
+        abi: VE_TOKEN_PORTFOLIO_READ_ABIS.balanceOf,
         functionName: "balanceOf",
         args: [portfolio.owner],
       }),
@@ -2670,7 +2701,7 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
         function_name: "ownerOf",
         ve_id: token.veId.toString(),
         data: encodeFunctionData({
-          abi: VE_TOKEN_ABI,
+          abi: VE_TOKEN_PORTFOLIO_READ_ABIS.ownerOf,
           functionName: "ownerOf",
           args: [token.veId],
         }),
@@ -2685,7 +2716,7 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
         function_name: "stakes",
         ve_id: token.veId.toString(),
         data: encodeFunctionData({
-          abi: VE_TOKEN_ABI,
+          abi: VE_TOKEN_PORTFOLIO_READ_ABIS.stakes,
           functionName: "stakes",
           args: [token.veId],
         }),
@@ -2702,7 +2733,7 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
         function_name: "voteState",
         ve_id: token.veId.toString(),
         data: encodeFunctionData({
-          abi: VE_TOKEN_ABI,
+          abi: VE_TOKEN_PORTFOLIO_READ_ABIS.voteState,
           functionName: "voteState",
           args: [token.veId],
         }),
@@ -2720,7 +2751,7 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
         function_name: "votingPower",
         ve_id: token.veId.toString(),
         data: encodeFunctionData({
-          abi: VE_TOKEN_ABI,
+          abi: VE_TOKEN_PORTFOLIO_READ_ABIS.votingPower,
           functionName: "votingPower",
           args: [token.veId],
         }),
@@ -2732,16 +2763,19 @@ function portfolioOnchainValidation(portfolio: Ve33Portfolio) {
     );
   }
   const data = encodeFunctionData({
-    abi: VE_TOKEN_ABI,
+    abi: VE_TOKEN_MULTICALL_ABI,
     functionName: "multicall",
     args: [calls.map(({ data }) => data)],
   });
   const localDecodePlan = functionResultBytesArrayDecodePlan(
-    VE_TOKEN_ABI,
+    VE_TOKEN_MULTICALL_ABI,
     "multicall",
     calls.map((call, index) => ({
       index,
-      decode: functionResultDecodePlan(VE_TOKEN_ABI, call.function_name),
+      decode: functionResultDecodePlan(
+        VE_TOKEN_PORTFOLIO_READ_ABIS[call.function_name],
+        call.function_name,
+      ),
     })),
     { expectedResultCount: calls.length },
   );

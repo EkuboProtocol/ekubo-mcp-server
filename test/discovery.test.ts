@@ -1185,10 +1185,32 @@ describe("Worker discovery", () => {
     expect(fetched.headers.get("content-type")).toBe("application/json");
     expect(fetched.headers.get("cache-control")).toBe("no-store");
     expect(fetched.headers.get("access-control-allow-origin")).toBe("*");
+    expect(fetched.headers.get("vary")).toBe("accept-encoding");
     const body = await fetched.text();
     expect(keccak256(stringToHex(body))).toBe(reference.integrity.value);
     expect(new TextEncoder().encode(body).length).toBe(reference.bytes);
     expect(JSON.parse(body)).toEqual(bundle);
+
+    const compressed = await worker.fetch(
+      new Request(reference.url, {
+        headers: { "accept-encoding": "br, gzip" },
+      }),
+      env,
+      context,
+    );
+    expect(compressed.status).toBe(200);
+    expect(compressed.headers.get("content-encoding")).toBe("gzip");
+    expect(compressed.headers.get("content-length")).toBeNull();
+    const decompressedBody = await new Response(
+      compressed.body?.pipeThrough(new DecompressionStream("gzip")),
+    ).text();
+    expect(decompressedBody).toBe(body);
+    expect(keccak256(stringToHex(decompressedBody))).toBe(
+      reference.integrity.value,
+    );
+    expect(new TextEncoder().encode(decompressedBody).length).toBe(
+      reference.bytes,
+    );
 
     const head = await worker.fetch(
       new Request(reference.url, { method: "HEAD" }),
