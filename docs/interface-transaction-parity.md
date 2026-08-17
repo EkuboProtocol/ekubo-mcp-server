@@ -48,6 +48,46 @@ business action. Every preparer that spends an ERC-20 includes its exact
 approval transaction in the returned execution plan. The dedicated revocation
 page is covered separately above.
 
+## Jurisdiction restrictions
+
+Audited against `ekubo/interface` `src/util/common/tokenRestrictions.ts` and its
+`useTokenCountryRestriction` call sites on 2026-08-17. The interface disables the
+action button; this server refuses to produce the plan. `src/token-restrictions.ts`
+carries the same restriction data and the same evaluation order.
+
+| Interface source                                       | Gated tokens          | MCP coverage                                                  |
+| ------------------------------------------------------ | --------------------- | ------------------------------------------------------------- |
+| `SwapMainActionButton.tsx`                             | input and output      | `get_quotes_with_plans`                                        |
+| `DcaMainActionButton.tsx`                              | input and output      | `prepare_twamm_order`                                          |
+| `EvmCreatePosition.tsx`, `EvmManagePosition.tsx`       | base and quote        | `prepare_lp_position_deposit`                                  |
+| `EvmCreateAuction.tsx`                                 | sell and buy          | `prepare_auction_create`                                       |
+| `EvmOracleCapacity.tsx`                                | the selected token    | `prepare_oracle_capacity_expansion`                            |
+| no interface equivalent                                | the pool pair         | `prepare_fix_pool_price`                                       |
+| no interface equivalent                                | claimed fee tokens    | `prepare_ve33_reinvest` (`phase="swap"`)                       |
+
+`useTokenCountryRestriction` is called in `EvmManagePosition.tsx` from
+`AddLiquidityModal` only. Withdrawal, fee and proceeds collection, position
+transfer, and approval revocation are ungated there and are ungated here: a
+restriction prevents acquiring or disposing of an asset, never exiting a
+position already held.
+
+Three further tools were examined and are deliberately left ungated.
+`prepare_pool_initialization` sets a starting price and moves no tokens.
+`prepare_wrap_unwrap` is Ethereum mainnet only, where no restriction is
+configured, and wraps the native token, which is exempt from a chain-wide rule
+in any case. `prepare_manual_pool_boost` does spend both pool tokens, but it
+funds an incentive rather than trading the asset, and its interface counterpart
+`EvmManualBoost.tsx` is likewise not a `useTokenCountryRestriction` call site.
+
+The last two rows have no interface counterpart and are gated anyway, because
+both emit a swap execution plan for a caller-chosen pair and would otherwise be
+a direct route around `get_quotes_with_plans`. `EvmFixPrice.tsx` and the
+interface's reinvest flow carry the same gap.
+
+The Starknet call sites (`StarknetCreatePosition.tsx`,
+`StarknetManagePosition.tsx`) are outside this server's chain model, as
+elsewhere in this document.
+
 Plans matching interface submissions made with `forceAtomic` list
 `atomic_batch` in `required_capabilities`. This currently includes swaps with
 an approval or allowance cleanup and the approval-plus-route old gEKUBO

@@ -14,6 +14,10 @@ import {
 import { type Env, getTokens, ServiceError } from "./core.js";
 import { decodePoolConfig, getPool } from "./pools.js";
 import {
+  assertAssetsTradable,
+  type RequestCountry,
+} from "./token-restrictions.js";
+import {
   erc20ApprovalTransaction,
   preparedTransaction,
   preparedUiAction,
@@ -69,6 +73,11 @@ export interface PrepareFixPoolPriceInput {
     blockNumber?: string;
     blockHash?: Hex;
   };
+  /**
+   * Jurisdiction of the caller. Required rather than optional so a new call
+   * site cannot drop the restriction check by omitting it.
+   */
+  country: RequestCountry;
 }
 
 export async function prepareFixPoolPrice(
@@ -90,6 +99,15 @@ export async function prepareFixPoolPrice(
     fetcher,
   );
   const poolKey = pool.pool_key;
+  // This action swaps the pool to a target price, so it trades the pair just as
+  // a swap does and is gated the same way.
+  assertAssetsTradable(
+    [
+      { chainId: input.chainId, token: poolKey.token0 },
+      { chainId: input.chainId, token: poolKey.token1 },
+    ],
+    input.country,
+  );
   const baseToken = getAddress(input.baseToken);
   if (baseToken !== poolKey.token0 && baseToken !== poolKey.token1) {
     throw new ServiceError(

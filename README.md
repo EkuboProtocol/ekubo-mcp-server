@@ -554,6 +554,54 @@ variables if the deployment needs a stricter host list or cross-origin browser
 MCP clients. The request's own hostname is always accepted as a browser origin;
 non-browser MCP clients normally omit `Origin`.
 
+## Jurisdiction restrictions
+
+Some assets may not be traded from some countries. The Ekubo interface disables
+its action buttons for them; this server has no UI to disable, so it refuses to
+produce an execution plan at all. The restriction data and its semantics mirror
+`interface/src/util/common/tokenRestrictions.ts` — currently the tokenized
+equities on Robinhood chain (`4663`), which are restricted in `US`, `GB`, `CA`,
+`SG`, `AE`, `CH`, `IR`, `KP`, `SY`, `CU`, and `UA`. `src/token-restrictions.ts`
+holds both.
+
+The country comes from `request.cf.country`, which Cloudflare derives from the
+connecting IP and a client cannot supply, matching the Ekubo API's `/country`
+route that the interface reads. It must be taken from the *original* request:
+`admitMcpRequest` replays a POST through `new Request(url, init)` to re-serve
+the body it already priced, and the replayed request carries the headers over
+but drops `cf`.
+
+A refusal is an ordinary tool error with code `restricted_jurisdiction`, listing
+the offending assets in `details`. It is raised before any upstream quote is
+fetched, so a restricted request never spends 0x or Across credit.
+
+What is gated is the acquisition or disposal of a restricted asset:
+`get_quotes_with_plans`, `prepare_twamm_order`, `prepare_lp_position_deposit`,
+`prepare_auction_create`, `prepare_oracle_capacity_expansion`,
+`prepare_fix_pool_price`, and the swap phase of `prepare_ve33_reinvest`. Exits
+are deliberately never gated — withdrawing liquidity, collecting fees or
+proceeds, transferring a position, and revoking approvals stay available to
+everyone, as they do in the interface. Discovery is also untouched: restricted
+assets remain listed and priced by `list_tokens`, `get_token`, and the
+opportunity tools, exactly as the interface still displays them.
+
+Two behaviours are worth stating explicitly, because both are deliberate:
+
+- **An unresolved country fails closed, but only for assets that are actually
+  restricted.** A chain-wide restriction entry that names no countries restricts
+  nobody and must not drag every token on that chain into the check. An empty
+  `Set` is truthy, so this was previously inverted in the interface; both
+  implementations now treat an empty entry as no restriction.
+- **A request arriving over Tor (`cf.country === "T1"`) is treated as an
+  unresolved country** rather than as an ISO code that can never match, so a
+  restricted asset fails closed. The interface applies the same rule in
+  `resolvedCountryCode`.
+
+The gate applies when a plan is issued. An already-issued
+`execution_plan_reference` stays fetchable from `/artifact/<id>` for
+`ARTIFACT_TTL_SECONDS` regardless of where it is fetched from, because that
+route serves wallets and carries no tool identity.
+
 ## Abuse protection
 
 The endpoint is public and unauthenticated, so there is no account to bill or

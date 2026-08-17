@@ -17,6 +17,7 @@ import {
   publicToolCatalog,
   publicToolCatalogWithOutputs,
 } from "./server.js";
+import { requestCountry } from "./token-restrictions.js";
 import { MCP_SERVER_VERSION, MCP_TOOL_CATALOG_REVISION } from "./version.js";
 import {
   PROTOCOL_SKILLS,
@@ -43,22 +44,28 @@ export default {
       const mcpRequest = admitted.request;
 
       const requestOrigin = mcpRequest.headers.get("origin");
-      const handler = createMcpHandler(() => createEkuboServer(env, url.origin), {
-        route: "/mcp",
-        allowedHostnames:
-          env.ALLOWED_HOSTNAMES === undefined
-            ? undefined
-            : commaSeparatedHostnames(env.ALLOWED_HOSTNAMES),
-        corsOptions: {
-          origin: requestOrigin ?? url.origin,
-          methods: "GET, POST, OPTIONS",
-          headers:
-            "content-type, accept, mcp-protocol-version, mcp-session-id, last-event-id",
-          exposeHeaders: "mcp-session-id, mcp-protocol-version",
-          maxAge: 86400,
+      // Read from the original request: `admitMcpRequest` rebuilds a POST to
+      // replay its body, and the rebuilt Request has no `cf`.
+      const country = requestCountry(request);
+      const handler = createMcpHandler(
+        () => createEkuboServer(env, url.origin, country),
+        {
+          route: "/mcp",
+          allowedHostnames:
+            env.ALLOWED_HOSTNAMES === undefined
+              ? undefined
+              : commaSeparatedHostnames(env.ALLOWED_HOSTNAMES),
+          corsOptions: {
+            origin: requestOrigin ?? url.origin,
+            methods: "GET, POST, OPTIONS",
+            headers:
+              "content-type, accept, mcp-protocol-version, mcp-session-id, last-event-id",
+            exposeHeaders: "mcp-session-id, mcp-protocol-version",
+            maxAge: 86400,
+          },
+          allowedOriginHostnames: allowedOriginHostnames(env, url.hostname),
         },
-        allowedOriginHostnames: allowedOriginHostnames(env, url.hostname),
-      });
+      );
       const response = withSecurityHeaders(await handler(mcpRequest, env, ctx));
       response.headers.set("cache-control", "no-store");
       return response;

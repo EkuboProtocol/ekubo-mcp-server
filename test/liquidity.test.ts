@@ -120,6 +120,9 @@ describe("LP position preparation", () => {
         maxAmount0: "100000000000000",
         maxAmount1: "185278",
         slippageBps: 50,
+        // Neither side is a restricted asset, so an unresolved country must not
+        // stand in the way of this deposit.
+        country: null,
       },
       (async (input: RequestInfo | URL) => {
         const url = input.toString();
@@ -205,6 +208,8 @@ describe("LP position preparation", () => {
         maxAmount0: "58775049870",
         maxAmount1: "24688761276276600317",
         slippageBps: 100,
+        // AAPL is restricted in some jurisdictions but not in this one.
+        country: "FR",
       },
       (async (input: RequestInfo | URL) => {
         const url = input.toString();
@@ -270,6 +275,7 @@ describe("LP position preparation", () => {
         maxAmount0: "1",
         maxAmount1: "1",
         slippageBps: 50,
+        country: null,
       }),
     ).rejects.toThrow("add_liquidity must provide token_id");
   });
@@ -297,6 +303,7 @@ describe("LP position preparation", () => {
         maxAmount0: "100000000000000",
         maxAmount1: "185278",
         slippageBps: 50,
+        country: null,
       },
       (async (input: RequestInfo | URL) => {
         if (input.toString().includes("/tokens/batch?")) {

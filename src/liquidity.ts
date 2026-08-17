@@ -24,6 +24,10 @@ import {
 } from "./abi-decode.js";
 import { type Env, getTokens, ServiceError } from "./core.js";
 import {
+  assertAssetsTradable,
+  type RequestCountry,
+} from "./token-restrictions.js";
+import {
   executionPlan,
   executionPlanFromSteps,
   type PreparedTransaction,
@@ -420,6 +424,11 @@ export async function prepareLpPositionDeposit(
     maxAmount1: string;
     slippageBps: number;
     initialTick?: number;
+    /**
+     * Jurisdiction of the caller. Required rather than optional so a new call
+     * site cannot drop the restriction check by omitting it.
+     */
+    country: RequestCountry;
   },
   fetcher: Fetcher = fetch,
 ) {
@@ -519,6 +528,15 @@ export async function prepareLpPositionDeposit(
       "The indexed pool key does not match the supplied exact pool_key",
     );
   }
+  // Checked against the resolved pair rather than the input, because a caller
+  // may identify the pool by pool_id alone and never name its tokens.
+  assertAssetsTradable(
+    [
+      { chainId: input.chainId, token: pool.pool_key.token0 },
+      { chainId: input.chainId, token: pool.pool_key.token1 },
+    ],
+    input.country,
+  );
   const isInitialized = input.poolInitialized ?? pool.pool_state !== null;
   if (!isInitialized && input.mode !== "mint_new") {
     throw new ServiceError(

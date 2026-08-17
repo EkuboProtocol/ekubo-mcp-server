@@ -37,6 +37,10 @@ import {
   transactionIdentity,
   executionPlanFromSteps,
 } from "./execution-plan.js";
+import {
+  assertAssetsTradable,
+  type RequestCountry,
+} from "./token-restrictions.js";
 
 const VE_TOKEN_ABI = parseAbi([
   "function multicall(bytes[] data) payable returns (bytes[] results)",
@@ -311,6 +315,12 @@ export type PrepareVe33ReinvestIntent =
       feeBalances: { token: Address; amount: string }[];
       slippageBps: number;
       source: QuoteSource;
+      /**
+       * Jurisdiction of the caller. This phase sells claimed fee tokens, which
+       * on the production Ve33 deployment are the restricted STONX equities, so
+       * it is gated like any other swap.
+       */
+      country: RequestCountry;
     }
   | {
       phase: "stake";
@@ -2026,6 +2036,16 @@ export async function prepareVe33Reinvest(
     const swapBalances = [...balancesByToken]
       .filter(([token, amount]) => token !== stakeToken && amount > 0n)
       .map(([token, amount]) => ({ token, amount: amount.toString() }));
+    assertAssetsTradable(
+      [
+        ...swapBalances.map(({ token }) => ({
+          chainId: intent.chainId,
+          token,
+        })),
+        { chainId: intent.chainId, token: stakeToken },
+      ],
+      intent.country,
+    );
     const swapPlans = await Promise.all(
       swapBalances.map(({ token, amount }) =>
         prepareSwap(

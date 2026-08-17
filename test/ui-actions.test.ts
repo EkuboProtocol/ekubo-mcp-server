@@ -484,6 +484,7 @@ describe("EVM interface action preparation", () => {
       poolId: key.pool_id,
       baseToken: native,
       targetPrice: "1000000000000",
+      country: null,
     };
     const read = await prepareFixPoolPrice(env, common, fetcher);
     const quote = await prepareFixPoolPrice(

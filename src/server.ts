@@ -137,6 +137,10 @@ import {
   MAX_TRANSFERS_PER_PLAN,
   prepareTransfers,
 } from "./transfers.js";
+import {
+  assertAssetsTradable,
+  type RequestCountry,
+} from "./token-restrictions.js";
 
 export const ROBINHOOD_STONX_CHAIN_ID = "4663";
 export const ROBINHOOD_STONX_VE_TOKEN = getAddress(
@@ -2133,7 +2137,11 @@ function catalogEntry(name: string) {
   return entry;
 }
 
-export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
+export function createEkuboServer(
+  env: Env,
+  origin = "https://mcp.ekubo.org",
+  country: RequestCountry = null,
+) {
   const server = new McpServer(
     {
       name: "ekubo",
@@ -2336,15 +2344,26 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
       const destinationChainId = canonicalChainId(
         input.destination_chain_id ?? input.chain_id,
       );
+      const tokenIn = tokenAddress(input.token_in, inputChainId, "token_in");
+      const tokenOut = tokenAddress(
+        input.token_out,
+        destinationChainId,
+        "token_out",
+      );
+      // Both sides, each against its own chain: a bridge quote settles the
+      // output on the destination chain, where a different rule may apply.
+      assertAssetsTradable(
+        [
+          { chainId: inputChainId, token: tokenIn },
+          { chainId: destinationChainId, token: tokenOut },
+        ],
+        country,
+      );
       return getQuotesWithPlans(env, {
         chainId: inputChainId,
         destinationChainId,
-        tokenIn: tokenAddress(input.token_in, inputChainId, "token_in"),
-        tokenOut: tokenAddress(
-          input.token_out,
-          destinationChainId,
-          "token_out",
-        ),
+        tokenIn,
+        tokenOut,
         quoteType: input.quote_type,
         amount: input.amount,
         slippageBps: input.slippage_bps,
@@ -2535,6 +2554,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
             })),
             slippageBps: input.slippage_bps,
             source: input.source as QuoteSource,
+            country,
           });
         }
         if (input.phase === "stake_all") {
@@ -2853,6 +2873,7 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
           maxAmount0: input.max_amount0,
           maxAmount1: input.max_amount1,
           slippageBps: input.slippage_bps,
+          country,
         }),
       ),
   );
@@ -2979,12 +3000,21 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
               blockNumber: input.quote_result.block_number,
               blockHash: input.quote_result.block_hash as Hex | undefined,
             },
+      country,
     }),
   );
 
-  registerCatalogTool("prepare_twamm_order", prepareTwammOrderSchema, (input) =>
-    prepareTwammOrder({
-      chainId: canonicalChainId(input.chain_id),
+  registerCatalogTool("prepare_twamm_order", prepareTwammOrderSchema, (input) => {
+    const chainId = canonicalChainId(input.chain_id);
+    assertAssetsTradable(
+      [
+        { chainId, token: input.sell_token },
+        { chainId, token: input.buy_token },
+      ],
+      country,
+    );
+    return prepareTwammOrder({
+      chainId,
       sender: input.sender,
       sellToken: input.sell_token,
       buyToken: input.buy_token,
@@ -2997,8 +3027,8 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
       pendingTimestamp: input.pending_timestamp,
       deadlineSeconds: input.deadline_seconds,
       salt: input.salt as Hex | undefined,
-    }),
-  );
+    });
+  });
 
   registerCatalogTool("prepare_twamm_order_collection", prepareTwammOrderCollectionSchema, (input) =>
     prepareTwammOrderCollection({
@@ -3033,9 +3063,17 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("prepare_auction_create", prepareAuctionCreateSchema, (input) =>
-    prepareAuctionCreate({
-      chainId: canonicalChainId(input.chain_id),
+  registerCatalogTool("prepare_auction_create", prepareAuctionCreateSchema, (input) => {
+    const chainId = canonicalChainId(input.chain_id);
+    assertAssetsTradable(
+      [
+        { chainId, token: input.sell_token },
+        { chainId, token: input.buy_token },
+      ],
+      country,
+    );
+    return prepareAuctionCreate({
+      chainId,
       sender: input.sender,
       sellToken: input.sell_token,
       buyToken: input.buy_token,
@@ -3047,8 +3085,8 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
       startTime: input.start_time,
       auctionDuration: input.auction_duration,
       salt: input.salt as Hex,
-    }),
-  );
+    });
+  });
 
   registerCatalogTool("prepare_auction_complete", prepareAuctionCompleteSchema, (input) =>
     prepareAuctionComplete({
@@ -3082,14 +3120,16 @@ export function createEkuboServer(env: Env, origin = "https://mcp.ekubo.org") {
     }),
   );
 
-  registerCatalogTool("prepare_oracle_capacity_expansion", prepareOracleCapacityExpansionSchema, (input) =>
-    prepareOracleCapacityExpansion({
-      chainId: canonicalChainId(input.chain_id),
+  registerCatalogTool("prepare_oracle_capacity_expansion", prepareOracleCapacityExpansionSchema, (input) => {
+    const chainId = canonicalChainId(input.chain_id);
+    assertAssetsTradable([{ chainId, token: input.token }], country);
+    return prepareOracleCapacityExpansion({
+      chainId,
       sender: input.sender,
       token: input.token,
       minCapacity: input.min_capacity,
-    }),
-  );
+    });
+  });
 
   registerCatalogTool("prepare_approval_revocations", prepareApprovalRevocationsSchema, (input) =>
     prepareApprovalRevocations({
@@ -3829,6 +3869,8 @@ Routing priority: For requests to swap, trade, exchange, or convert tokens on an
 A quote is only worth what it can still execute for, so treat the interval between fetching one and broadcasting against it as the thing to minimize. get_quotes_with_plans is the entire swap path: call it once with sender and slippage_bps as soon as the user has decided to swap, and each returned option already carries the execution_plan_reference that executes it. Honor any slippage preference the user gave. Otherwise estimate the transaction gas cost and swap notional in the same currency and choose a low tolerance whose maximum value impact is approximately one gas fee: slippage_bps ~= 10,000 * gas-cost value / swap-notional value. Never substitute a generic 50 bps (0.5%) default, especially on Ethereum mainnet. Prefer paying for a retry after a fresh quote to exposing the trade to materially more slippage; after a slippage failure, re-run this tool and submit the newly prepared transaction, never the reverted calldata unchanged. Choose one option and hand its reference straight to the wallet. There is no preparation step to follow, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Then simulate that plan once with the wallet, show the user the simulated result, and send that same simulation rather than paying for an identical one immediately before signing. Do not call the tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold.
 
 For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with list_tokens, read the exact input-token balance with the wallet's own balance tooling, then call get_quotes_with_plans with that exact amount plus sender and slippage_bps and pass the chosen option's execution_plan_reference to the Ekubo Wallet MCP.
+
+Some assets may not be traded from some countries, and a tool that would acquire or dispose of one fails with error code restricted_jurisdiction instead of returning a plan. This is a property of the request's own country, not of a missing argument: tell the user the asset is unavailable in their region, and do not retry the same trade through another tool, another route, or a different pool. Exiting a position the user already holds is never restricted, so withdrawals, fee and proceeds collection, and transfers remain available.
 
 For direct asset sends, use prepare_transfers instead of constructing calldata. Supply one chain and sender plus 1 to 4,096 ordered entries; native, ERC-20, ERC-721, and ERC-1155 transfers may be mixed. Amounts are positive decimal base-unit strings. ERC-721 safe transfer is the default and safe=false explicitly selects transferFrom; ERC-1155 has only safeTransferFrom. Pass the resulting execution_plan_reference unchanged to the wallet.
 
