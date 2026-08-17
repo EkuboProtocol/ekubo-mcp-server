@@ -32,6 +32,13 @@ a data API and the quoter remains a route-data service.
   agent instructions, with each skill's discovery reference beneath
   `references/discovery.md`
 
+`/` and `/llms.txt` link the two public documentation pages:
+[the server](https://docs.ekubo.org/products/mcp-server/) and
+[protocol coverage and the wallet producer contract](https://docs.ekubo.org/wallet/protocols/).
+The latter is where a third party building its own wallet-compatible MCP server
+is sent, so keep it in sync when the protocol list or the handoff contract
+mirrored in `src/wallet-compatibility.ts` changes.
+
 MCP-native discovery remains authoritative: clients use `tools/list` and
 `resources/list`/`resources/templates/list`. The HTTP discovery endpoints are
 additive and help crawlers, OpenAPI clients, and humans find the same

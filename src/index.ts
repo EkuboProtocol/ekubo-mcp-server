@@ -143,6 +143,15 @@ export default {
             tools_url: `${url.origin}/tools`,
             openapi_url: `${url.origin}/openapi.json`,
             llms_txt_url: `${url.origin}/llms.txt`,
+            documentation: {
+              mcp_server: "https://docs.ekubo.org/products/mcp-server/",
+              // Public write-up of what this server prepares and of the
+              // producer contract a third-party MCP server satisfies to hand
+              // plans to the Ekubo wallet. The machine-readable boundary stays
+              // operational_semantics below and ekubo://docs/execution-plan.
+              protocol_coverage_and_producers:
+                "https://docs.ekubo.org/wallet/protocols/",
+            },
             upstream_openapi: {
               data_api: "https://prod-api.ekubo.org/openapi.json",
               zero_x: "https://docs.0x.org",
@@ -620,6 +629,8 @@ ve(3,3) workflow resource: ekubo://docs/ve33-workflow
 Execution plan resource: ekubo://docs/execution-plan
 LP position workflow resource: ekubo://docs/lp-position-workflow
 EVM contract directory: ekubo://contracts/evm
+Documentation: https://docs.ekubo.org/products/mcp-server/
+Protocol coverage and the wallet producer contract: https://docs.ekubo.org/wallet/protocols/
 Morpho skill: ekubo://skills/use-morpho (${origin}/skills/use-morpho/SKILL.md)
 Sky skill: ekubo://skills/use-sky (${origin}/skills/use-sky/SKILL.md)
 Lido skill: ekubo://skills/use-lido (${origin}/skills/use-lido/SKILL.md)
