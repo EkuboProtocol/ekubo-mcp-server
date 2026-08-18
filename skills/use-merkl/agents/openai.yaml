@@ -1,0 +1,4 @@
+interface:
+  display_name: "Use Merkl"
+  short_description: "Discover and claim Merkl incentive rewards safely"
+  default_prompt: "Use $use-merkl to read the user's current Merkl rewards directly, show the claimable delta, and safely prepare and verify the claim."

@@ -109,6 +109,7 @@ const TOOL_COST: Record<string, number> = {
   get_morpho_vaults: 0,
   get_sky_savings_deployment: 0,
   get_lido_deployment: 0,
+  get_merkl_deployment: 0,
 
   // One upstream read.
   get_token: 1,

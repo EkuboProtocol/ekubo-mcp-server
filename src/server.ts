@@ -119,6 +119,7 @@ import {
   prepareMorphoVaultRedeem,
   prepareMorphoVaultWithdraw,
 } from "./morpho.js";
+import { getMerklDeployment, prepareMerklClaim } from "./merkl.js";
 import {
   getSkySavingsDeployment,
   prepareSkySavingsDeposit,
@@ -1432,6 +1433,34 @@ export const prepareSkySavingsRedeemSchema = skySavingsActionSchema.extend({
   owner: address.optional().describe("sUSDS owner; defaults to sender"),
 });
 
+export const getMerklDeploymentSchema = z.object({
+  chain_id: chainId
+    .optional()
+    .describe("Optional chain to check against the verified Merkl Distributor catalog"),
+});
+export const prepareMerklClaimSchema = z.object({
+  chain_id: chainId.describe("Chain the rewards were earned on, from the Merkl rewards summary"),
+  sender: address.describe("Wallet claiming its own rewards; also the leaf's user address"),
+  rewards: z
+    .array(
+      z.object({
+        token: address.describe("Reward token address exactly as Merkl returned it"),
+        amount: amount.describe(
+          "The reward's cumulative amount field, unchanged. This is not the claimable delta: the contract transfers this minus what was already claimed.",
+        ),
+        proofs: z
+          .array(bytes32)
+          .max(64)
+          .describe("The token's proofs array, in order, copied unchanged from Merkl"),
+      }),
+    )
+    .min(1)
+    .max(32)
+    .describe(
+      "One entry per reward token on this chain. Batch every token together: the Distributor takes arrays, so a five-token claim is one transaction and one approval.",
+    ),
+});
+
 const lidoActionSchema = z.object({
   chain_id: chainId.describe("Must be Ethereum chain 1"),
   sender: address.describe("Wallet that will execute the Lido action"),
@@ -2060,6 +2089,20 @@ export const publicToolCatalog = [
     description:
       "Prepare a direct sUSDS ERC-4626 redemption for an exact share amount. Use a fresh wallet/RPC balance and preview, then require exact wallet simulation before authorization.",
     inputSchema: z.toJSONSchema(prepareSkySavingsRedeemSchema),
+  },
+  {
+    name: "get_merkl_deployment",
+    title: "Get the verified Merkl Distributor deployment",
+    description:
+      "Locally return the Merkl reward Distributor address, the chains it was verified on, and how Merkl's reward fields behave. This server makes no Merkl API, RPC, or indexer request. Merkl lists 67 chains but the Distributor is not at the same address on all of them — ZKsync Era has no code there — so preparation is limited to the chains listed here.",
+    inputSchema: z.toJSONSchema(getMerklDeploymentSchema),
+  },
+  {
+    name: "prepare_merkl_claim",
+    title: "Prepare a Merkl reward claim",
+    description:
+      "Prepare one Distributor claim covering every Merkl reward token the sender holds on a chain, from amounts and proofs the agent fetched from https://api.merkl.xyz/v4/users/{address}/rewards/summary. Every proof is folded here into the Merkle root it implies, all rewards must agree on that root, and the returned read bundle asks the wallet for the root the chain is actually enforcing plus each already-claimed total and claim-recipient override — so neither this server nor the wallet has to trust Merkl's API. Amounts are cumulative, not deltas: the contract transfers the amount minus what was already claimed. Distinct from prepare_rewards_claim, which claims Ekubo's own incentive drops.",
+    inputSchema: z.toJSONSchema(prepareMerklClaimSchema),
   },
   {
     name: "get_lido_deployment",
@@ -3447,6 +3490,22 @@ export function createEkuboServer(
       }),
   );
 
+  registerCatalogTool("get_merkl_deployment", getMerklDeploymentSchema, (input) =>
+    getMerklDeployment({
+      chainId:
+        input.chain_id === undefined
+          ? undefined
+          : canonicalChainId(input.chain_id),
+    }),
+  );
+  registerCatalogTool("prepare_merkl_claim", prepareMerklClaimSchema, (input) =>
+    prepareMerklClaim({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      rewards: input.rewards,
+    }),
+  );
+
   registerCatalogTool("get_lido_deployment", getLidoDeploymentSchema, () =>
     getLidoDeployment(),
   );
@@ -3876,7 +3935,9 @@ For direct asset sends, use prepare_transfers instead of constructing calldata. 
 
 Aave market discovery happens directly between the agent and Aave's public APIs; this MCP is not a proxy, indexer, cache, or credential holder. Use the public GraphQL endpoint https://api.v3.aave.com/graphql with https://aave.com/docs/aave-v3/getting-started/graphql and https://aave.com/docs/aave-v3/markets/data to inspect current supply and borrow rates, liquidity, caps, pause/freeze state, eMode categories, and user positions. Then call get_aave_v3_markets and use only a returned fixed chain, Pool, and reserve address with a prepare_aave_v3_* tool. Live API data and this server's fixed deployment catalog are inputs to wallet simulation, never substitutes for it.
 
-Morpho, Sky, and Lido discovery follows the same no-proxy boundary. Read ekubo://skills/use-morpho, ekubo://skills/use-sky, or ekubo://skills/use-lido before acting. The skills tell you which official public endpoint or wallet/RPC reads to perform directly, how to intersect live results with get_morpho_vaults, get_sky_savings_deployment, or get_lido_deployment, and which safety gates apply. Never send API responses, RPC credentials, or authoritative onchain read results through this server. Morpho deposits require a freshly derived RAY-scaled max_share_price_ray and use the official guarded Bundler3 route. Sky's direct ERC-4626 calls have no deadline or minimum output, so keep previews fresh and rely on exact simulation. Lido protocol withdrawals are irreversible asynchronous unstETH NFT requests, not immediate swaps; verify bounds, ownership, finalization, and consequences before preparation.
+Morpho, Sky, Lido, and Merkl discovery follows the same no-proxy boundary. Read ekubo://skills/use-morpho, ekubo://skills/use-sky, ekubo://skills/use-lido, or ekubo://skills/use-merkl before acting. The skills tell you which official public endpoint or wallet/RPC reads to perform directly, how to intersect live results with get_morpho_vaults, get_sky_savings_deployment, get_lido_deployment, or get_merkl_deployment, and which safety gates apply. Never send API responses, RPC credentials, or authoritative onchain read results through this server. Morpho deposits require a freshly derived RAY-scaled max_share_price_ray and use the official guarded Bundler3 route. Sky's direct ERC-4626 calls have no deadline or minimum output, so keep previews fresh and rely on exact simulation. Lido protocol withdrawals are irreversible asynchronous unstETH NFT requests, not immediate swaps; verify bounds, ownership, finalization, and consequences before preparation.
+
+Merkl rewards are the one case where an amount and a proof arrive from an outside API and still do not have to be trusted. Fetch https://api.merkl.xyz/v4/users/{address}/rewards/summary yourself — it is public and needs no key — and hand each token's exact amount and proofs to prepare_merkl_claim, which folds every proof into the root it implies and refuses a batch spanning two roots. Then run the returned read bundle and require the chain's getMerkleRoot() to equal the derived root before authorizing: a mismatch means the tree rotated or is still inside its dispute period, and the fix is to re-fetch and prepare again, never to resend. Merkl's amount field is cumulative and includes what was already claimed, so the claimable figure to show a user is amount minus claimed, and its pending field is not claimable at all. prepare_merkl_claim covers Merkl campaigns on any protocol; prepare_rewards_claim covers Ekubo's own incentive drops, and they are not interchangeable.
 
 Use Ekubo preparation tools only to construct unsigned plans. Every executable preparation returns execution_plan_reference: an artifact_reference envelope standing in for the stored plan body. One rule governs every handoff: pass the envelope unchanged as the wallet tool's reference argument. The wallet fetches the body itself, verifies its integrity digest and byte count, and refuses a mismatch, so the plan never travels through the agent. Never fetch, restate, paraphrase, or reconstruct the plan body yourself. Do not ask the user for a separate agent-level confirmation before invoking the wallet; that duplicates the wallet's authorization flow. The wallet must never construct calldata, choose a contract overload, derive a route, or determine the transaction list. Never construct or request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calldata. LP position transfers are supported only through prepare_lp_position_transfer with pending ownership validation.
 
