@@ -14,7 +14,8 @@ reads across each chain's canonical token list for wallet balances and selected
 contract allowances. It also publishes the same ranked boosted-fee, incentive,
 and ve(3,3)-emission liquidity opportunities shown by the interface.
 It additionally exposes fixed, locally maintained Aave V3, Morpho Vault V2,
-Sky Savings, and Lido deployments with signer-neutral action plans. Agents
+Sky Savings, Lido, and Merkl deployments with signer-neutral action plans, and
+prepares proof-verified Merkl reward claims for campaigns on any protocol. Agents
 discover live protocol data from official public APIs or the user's wallet/RPC
 directly; this server is not in that data path.
 
@@ -28,7 +29,7 @@ a data API and the quoter remains a route-data service.
 - `GET /tools` — deterministic tool catalog for non-MCP discovery
 - `GET /openapi.json` — OpenAPI 3.1 discovery contract
 - `GET /llms.txt` — concise agent workflow
-- `GET /skills/{use-morpho,use-sky,use-lido}/SKILL.md` — reusable direct-data
+- `GET /skills/{use-morpho,use-sky,use-lido,use-merkl}/SKILL.md` — reusable direct-data
   agent instructions, with each skill's discovery reference beneath
   `references/discovery.md`
 
@@ -201,6 +202,30 @@ queue, and finalization state is read directly through the user's wallet/RPC.
 Withdrawal requests are irreversible, stop rewards while queued, and may
 settle below 1:1 after extraordinary protocol losses.
 
+### Merkl
+
+- `get_merkl_deployment` returns the reward Distributor address and the chains
+  it was verified on.
+- `prepare_merkl_claim` builds one `claim()` covering every reward token the
+  sender holds on a chain.
+
+Read `ekubo://skills/use-merkl`. Amounts and Merkle proofs come from
+`https://api.merkl.xyz/v4/users/{address}/rewards/summary`, which the agent
+queries directly — it is public and needs no key.
+
+This is the one preparation whose inputs arrive from an outside API and still
+need not be trusted. Every proof is folded here into the root it implies, a
+batch spanning two roots is refused, and the returned read bundle asks the
+wallet for the root the chain is enforcing. A mismatch means the tree rotated
+or is inside its dispute period, so the plan simply fails simulation instead of
+being signed. The Distributor is pinned per chain rather than assumed: ZKsync
+Era has no code at the address the other chains share.
+
+Merkl's `amount` is cumulative and the contract transfers it minus what was
+already claimed, so the claimable figure is `amount - claimed`; its `pending`
+field is not claimable at all. `prepare_merkl_claim` covers Merkl campaigns on
+any protocol, while `prepare_rewards_claim` covers Ekubo's own incentive drops.
+
 The remaining EVM interface transaction paths also have first-class tools:
 
 - `prepare_transfers` — prepare 1–4,096 ordered native, ERC-20, ERC-721,
@@ -220,8 +245,9 @@ overloads, build multicalls, append approvals, or determine ordering.
 
 ## Resources
 
-- `ekubo://skills/use-morpho`, `ekubo://skills/use-sky`, and
-  `ekubo://skills/use-lido` — reusable no-proxy protocol workflows, with a
+- `ekubo://skills/use-morpho`, `ekubo://skills/use-sky`,
+  `ekubo://skills/use-lido`, and `ekubo://skills/use-merkl` — reusable
+  no-proxy protocol workflows, with a
   `references/discovery.md` child resource for official endpoints and reads
 - `ekubo://docs/lp-position-workflow` — interface-equivalent indexed/API/USD/
   RPC joins, atomic TWAMM/Ve33 read semantics, decoding, and APR inputs

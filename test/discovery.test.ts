@@ -314,6 +314,8 @@ describe("Worker discovery", () => {
       "prepare_sky_savings_deposit",
       "prepare_sky_savings_withdraw",
       "prepare_sky_savings_redeem",
+      "get_merkl_deployment",
+      "prepare_merkl_claim",
       "get_lido_deployment",
       "prepare_lido_stake",
       "prepare_lido_wrap",

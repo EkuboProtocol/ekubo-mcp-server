@@ -1,5 +1,7 @@
 import lidoSkill from "../skills/use-lido/SKILL.md";
 import lidoDiscovery from "../skills/use-lido/references/discovery.md";
+import merklSkill from "../skills/use-merkl/SKILL.md";
+import merklDiscovery from "../skills/use-merkl/references/discovery.md";
 import morphoSkill from "../skills/use-morpho/SKILL.md";
 import morphoDiscovery from "../skills/use-morpho/references/discovery.md";
 import skySkill from "../skills/use-sky/SKILL.md";
@@ -26,6 +28,13 @@ export const PROTOCOL_SKILLS = [
     description: "Direct Lido discovery and safe staking or withdrawal preparation",
     skill: lidoSkill,
     reference: lidoDiscovery,
+  },
+  {
+    name: "use-merkl",
+    title: "Use Merkl",
+    description: "Direct Merkl reward discovery and proof-verified claim preparation",
+    skill: merklSkill,
+    reference: merklDiscovery,
   },
 ] as const;
 
