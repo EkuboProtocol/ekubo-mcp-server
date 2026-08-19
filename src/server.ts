@@ -351,7 +351,7 @@ export const getValueTransferStatusSchema = z.object({
     .regex(/^0x[0-9a-fA-F]{64}$/, "must be a 32-byte transaction hash")
     .optional()
     .describe(
-      "Origin-chain transaction hash of the submitted transfer. Optional, but pass it whenever it is known: it lets LayerZero resolve the transfer before its own indexer has caught up.",
+      "Origin-chain transaction hash of the submitted transfer. Pass it whenever it is known, which after execution is always: it lets LayerZero resolve the transfer before its own indexer has caught up, and some route types (Stargate taxi among them) refuse to report status without it. Omitting it is only useful before the origin transaction has been sent.",
     ),
 });
 
@@ -1692,7 +1692,7 @@ export const publicToolCatalog = [
     name: "get_value_transfer_status",
     title: "Track a LayerZero cross-chain transfer",
     description:
-      "Report where an executed LayerZero transfer has got to, from origin submission through delivery on the destination chain. A bridge is the one execution plan whose successful origin receipt does not mean the user has their funds, so this is how a cross-chain transfer is confirmed finished rather than merely sent. Call it with the provider_quote_id of the LayerZero option that was executed and, whenever it is known, the origin transaction_hash. Poll every few seconds while settled is false; stop as soon as it is true. Status UNKNOWN immediately after submission usually means the transfer has not been indexed yet rather than that it was lost. Applies only to LayerZero options; Across transfers are not tracked here.",
+      "Report where an executed LayerZero transfer has got to, from origin submission through delivery on the destination chain. A bridge is the one execution plan whose successful origin receipt does not mean the user has their funds, so this is how a cross-chain transfer is confirmed finished rather than merely sent. Call it with the provider_quote_id of the LayerZero option that was executed and the origin transaction_hash, which some route types require rather than merely prefer. Poll every few seconds while settled is false; stop as soon as it is true. Status UNKNOWN immediately after submission usually means the transfer has not been indexed yet rather than that it was lost. Applies only to LayerZero options; Across transfers are not tracked here.",
     inputSchema: z.toJSONSchema(getValueTransferStatusSchema),
   },
   {

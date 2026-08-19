@@ -1862,9 +1862,18 @@ async function fetchJson<T>(
   try {
     body = JSON.parse(raw);
   } catch {
+    // What came back instead is the only thing that explains why. A bare
+    // "non-JSON" leaves an operator with nothing to act on, and the usual
+    // cause — an edge or WAF page in front of the API — names itself in the
+    // first line of its own body.
     throw new ServiceError(
       "invalid_upstream_response",
       `Upstream returned non-JSON content from ${url}`,
+      {
+        status: response.status,
+        content_type: response.headers.get("content-type"),
+        body_snippet: raw.slice(0, 300),
+      },
     );
   }
   if (!response.ok) {
