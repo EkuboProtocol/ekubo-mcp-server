@@ -19,6 +19,7 @@ import {
   transactionIdentity,
   executionPlan,
 } from "./execution-plan.js";
+import { MCP_SERVER_VERSION } from "./version.js";
 
 /**
  * Rate limiter bindings are declared in `wrangler.jsonc`, so generated types
@@ -285,6 +286,20 @@ const LAYERZERO_PREVIEW_WALLET = "0x0000000000000000000000000000000000000001";
 const LAYERZERO_CHAINS_TTL_MS = 10 * 60 * 1000;
 /** Stops a malformed pagination cursor from looping the catalog walk forever. */
 const LAYERZERO_CHAINS_MAX_PAGES = 20;
+/**
+ * Workers send no User-Agent unless one is set, and LayerZero's edge answers a
+ * request without one with a 403 HTML page rather than JSON. Naming the client
+ * is what keeps the API reachable from a Worker at all, so this is load-bearing
+ * rather than courtesy.
+ */
+const LAYERZERO_USER_AGENT = `ekubo-mcp/${MCP_SERVER_VERSION}`;
+
+function layerZeroHeaders(apiKey?: string): Record<string, string> {
+  return {
+    "user-agent": LAYERZERO_USER_AGENT,
+    ...(apiKey === undefined ? {} : { "x-api-key": apiKey }),
+  };
+}
 export class ServiceError extends Error {
   constructor(
     readonly code: string,
@@ -1249,6 +1264,7 @@ async function fetchLayerZeroChainKeys(
     const body = await fetchJson<LayerZeroChainsResponse>(
       url.toString(),
       fetcher,
+      { headers: layerZeroHeaders() },
     );
     for (const chain of body.chains ?? []) {
       // Only EVM chains carry an EIP-155 id that an intent can name, and only
@@ -1483,7 +1499,7 @@ async function quoteLayerZero(
     {
       method: "POST",
       headers: {
-        "x-api-key": env.LAYER_ZERO_API_KEY,
+        ...layerZeroHeaders(env.LAYER_ZERO_API_KEY),
         "content-type": "application/json",
       },
       body: JSON.stringify(request),
@@ -1571,7 +1587,7 @@ export async function getValueTransferStatus(
   const body = await fetchJson<LayerZeroStatusResponse>(
     url.toString(),
     fetcher,
-    { headers: { "x-api-key": env.LAYER_ZERO_API_KEY } },
+    { headers: layerZeroHeaders(env.LAYER_ZERO_API_KEY) },
   );
   const status = typeof body.status === "string" ? body.status : "UNKNOWN";
   const settled = status === "SUCCEEDED" || status === "FAILED";

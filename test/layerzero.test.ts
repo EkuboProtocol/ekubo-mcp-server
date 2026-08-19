@@ -126,13 +126,19 @@ function layerZeroFetcher(
   host: string,
   options: { quotes?: unknown; chains?: unknown } = {},
 ) {
-  const requests: { url: string; body: unknown; apiKey: string | null }[] = [];
+  const requests: {
+    url: string;
+    body: unknown;
+    apiKey: string | null;
+    userAgent: string | null;
+  }[] = [];
   const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString();
     requests.push({
       url,
       body: init?.body === undefined ? null : JSON.parse(String(init.body)),
       apiKey: new Headers(init?.headers).get("x-api-key"),
+      userAgent: new Headers(init?.headers).get("user-agent"),
     });
     if (url.startsWith(`https://${host}/v1/chains`)) {
       return Response.json(options.chains ?? chainsResponse);
@@ -215,6 +221,32 @@ describe("LayerZero value transfers", () => {
       data: "0xbbbb",
       value: "7",
     });
+  });
+
+  it("names itself on every request, including the unauthenticated one", async () => {
+    const host = "lz-user-agent.test";
+    const { fetcher, requests } = layerZeroFetcher(host);
+    await prepareSwap(
+      envFor(host),
+      { ...bridgeIntent, source: "layerzero", slippageBps: 25, sender },
+      fetcher,
+    );
+
+    const layerZeroRequests = requests.filter((request) =>
+      request.url.includes(host),
+    );
+    // Both the chain catalog and the quote: a Worker sends no User-Agent
+    // unless one is set, and LayerZero answers a request without one with a
+    // 403 HTML page rather than JSON.
+    expect(layerZeroRequests.length).toBeGreaterThan(1);
+    for (const request of layerZeroRequests) {
+      expect(request.userAgent).toMatch(/^ekubo-mcp\//);
+    }
+    // The catalog read carries no credential, only the agent.
+    const chains = layerZeroRequests.find((request) =>
+      request.url.includes("/chains"),
+    );
+    expect(chains?.apiKey).toBeNull();
   });
 
   it("re-issues the approval to the decoded delegate for an exact amount", async () => {
@@ -453,12 +485,14 @@ describe("LayerZero transfer status", () => {
   it("reports a delivered transfer as settled", async () => {
     let requestUrl = "";
     let apiKey = "";
+    let userAgent = "";
     const result = await getValueTransferStatus(
       envFor("lz-status.test"),
       { quoteId: "quote-oft", transactionHash: `0x${"1".repeat(64)}` },
       (async (input: RequestInfo | URL, init?: RequestInit) => {
         requestUrl = input.toString();
         apiKey = new Headers(init?.headers).get("x-api-key") ?? "";
+        userAgent = new Headers(init?.headers).get("user-agent") ?? "";
         return Response.json({
           status: "SUCCEEDED",
           explorerUrl: "https://layerzeroscan.com/tx/0x1",
@@ -488,6 +522,7 @@ describe("LayerZero transfer status", () => {
     expect(url.pathname).toBe("/v1/status/quote-oft");
     expect(url.searchParams.get("txHash")).toBe(`0x${"1".repeat(64)}`);
     expect(apiKey).toBe("layerzero-test-key");
+    expect(userAgent).toMatch(/^ekubo-mcp\//);
     expect(result).toMatchObject({
       status: "SUCCEEDED",
       settled: true,
