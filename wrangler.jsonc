@@ -12,6 +12,11 @@
     }
   ],
   "workers_dev": true,
+  // Per-version preview URLs are off deliberately: this Worker is a public
+  // unauthenticated endpoint fronted by an edge rule, and a preview URL is the
+  // same server without it. Declared here rather than left to the dashboard,
+  // because a deploy resets an undeclared setting to wrangler's default of on.
+  "preview_urls": false,
   "keep_vars": true,
   "secrets": {
     "required": [
