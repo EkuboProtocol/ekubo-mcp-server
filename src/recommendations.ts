@@ -75,13 +75,22 @@ interface RecommendationRuntime {
 interface ResolvedPool {
   poolKeyId: string;
   poolId: Hex;
-  tickSpacing: number;
+  /**
+   * Null for a stableswap pool, which has amplification and a center tick
+   * where a concentrated-liquidity pool has tick spacing. Only pools that have
+   * one are ever selected, so the emitted value is always a number.
+   */
+  tickSpacing: number | null;
 }
 
 interface ResolvedRecommendation {
   row: RecommendationRow;
   pool: ResolvedPool | null;
-  unavailableReason: "pool_not_initialized" | "ambiguous_pool_configuration" | null;
+  unavailableReason:
+    | "pool_not_initialized"
+    | "ambiguous_pool_configuration"
+    | "unsupported_pool_configuration"
+    | null;
 }
 
 interface ExecutableWeight {
@@ -580,23 +589,36 @@ function resolveRecommendation(
       "Ve33 pool directory contains a duplicate matching pool",
     );
   }
-  if (matching.length === 1) {
-    return { row, pool: matching[0], unavailableReason: null };
-  }
-  if (matching.length > 1) {
-    const preferred = matching.filter(
-      ({ tickSpacing }) => tickSpacing === PREFERRED_VE33_TICK_SPACING,
-    );
-    if (preferred.length === 1) {
-      return { row, pool: preferred[0], unavailableReason: null };
-    }
+  // A recommendation names a pair and a swap fee tier, which is a statement
+  // about a concentrated-liquidity market; a stableswap pool priced by
+  // amplification is not the thing being recommended, and voting a fee-tier
+  // target onto one would misread the model. Such a pool is excluded here
+  // rather than at the parsing boundary, so that finding one beside a usable
+  // pool disqualifies neither the pair nor every other recommendation in the
+  // response.
+  const concentrated = matching.filter(
+    ({ tickSpacing }) => tickSpacing !== null,
+  );
+  if (concentrated.length === 0) {
     return {
       row,
       pool: null,
-      unavailableReason: "ambiguous_pool_configuration",
+      unavailableReason:
+        matching.length === 0
+          ? "pool_not_initialized"
+          : "unsupported_pool_configuration",
     };
   }
-  return { row, pool: null, unavailableReason: "pool_not_initialized" };
+  if (concentrated.length === 1) {
+    return { row, pool: concentrated[0], unavailableReason: null };
+  }
+  const preferred = concentrated.filter(
+    ({ tickSpacing }) => tickSpacing === PREFERRED_VE33_TICK_SPACING,
+  );
+  if (preferred.length === 1) {
+    return { row, pool: preferred[0], unavailableReason: null };
+  }
+  return { row, pool: null, unavailableReason: "ambiguous_pool_configuration" };
 }
 
 function parseResolvedPool(
@@ -622,7 +644,7 @@ function parseResolvedPool(
   return {
     poolKeyId,
     poolId: numberToHex(BigInt(poolIdValue), { size: 32 }),
-    tickSpacing: integer(pool.tick_spacing, "tick_spacing"),
+    tickSpacing: nullableInteger(pool.tick_spacing, "tick_spacing"),
   };
 }
 
@@ -737,6 +759,10 @@ function unsignedIntegerText(value: unknown, field: string): string {
     throw invalidRecommendation(`${field} must be an unsigned integer`);
   }
   return normalized;
+}
+
+function nullableInteger(value: unknown, field: string): number | null {
+  return value === null ? null : integer(value, field);
 }
 
 function integer(value: unknown, field: string): number {

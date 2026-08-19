@@ -95,6 +95,51 @@ describe("STONX allocation recommendations", () => {
     expect(JSON.stringify(result)).not.toMatch(/dune|8187907|api\.dune/i);
   });
 
+  it("ignores a stableswap pool sitting beside the pool it recommends", async () => {
+    // Two stableswap pools appeared in the live Ve33 directory beside the
+    // concentrated pools for the same pairs, and a required tick spacing made
+    // one unparseable row fail every recommendation in the response.
+    const result = await getStonxAllocationRecommendation(
+      env,
+      { chainId, veToken, ve33 },
+      recommendationFetcher(200, recommendationRows, [
+        ...pools,
+        stableswapPoolRow("9001", token1),
+        stableswapPoolRow("9002", token2),
+      ]),
+    );
+
+    // Unchanged: the same pools are selected, by the same ids and weights, as
+    // when no stableswap pool was in the directory at all.
+    expect(result.execution_ready).toBe(true);
+    expect(result.targets).toEqual([
+      { pool_key_id: "10", swap_fee: "123", weight_bps: 6_667 },
+      { pool_key_id: "21", swap_fee: "123", weight_bps: 3_333 },
+    ]);
+    expect(result.recommendations[1].initialized_pool).toMatchObject({
+      pool_key_id: "21",
+      tick_spacing: 1_024,
+    });
+  });
+
+  it("reports a pair served only by a stableswap pool as unsupported", async () => {
+    const result = await getStonxAllocationRecommendation(
+      env,
+      { chainId, veToken, ve33 },
+      recommendationFetcher(200, recommendationRows, [
+        stableswapPoolRow("9001", token1),
+      ]),
+    );
+
+    // Distinct from pool_not_initialized: the pool exists, but a swap-fee-tier
+    // recommendation is not a statement about a stableswap market, so it is
+    // named rather than silently treated as missing.
+    expect(result.recommendations[0]).toMatchObject({
+      execution_status: "unsupported_pool_configuration",
+      executable_weight_bps: null,
+    });
+  });
+
   it("fails closed with a provider-neutral error when recommendations are unavailable", async () => {
     const missing = await getStonxAllocationRecommendation(
       { ...env, DUNE_API_KEY: "" },
@@ -399,6 +444,21 @@ function poolRow(poolKeyId: string, asset1: `0x${string}`, tickSpacing: number) 
     token1: asset1,
     extension: ve33,
     tick_spacing: tickSpacing,
+    pool_state: {},
+  };
+}
+
+function stableswapPoolRow(poolKeyId: string, asset1: `0x${string}`) {
+  return {
+    chain_id: chainId,
+    pool_key_id: poolKeyId,
+    pool_id: numberToHex(BigInt(poolKeyId), { size: 32 }),
+    token0,
+    token1: asset1,
+    extension: ve33,
+    // A stableswap pool is priced by amplification around a center tick, so it
+    // reports no tick spacing at all. This is the exact shape prod-api returns.
+    tick_spacing: null,
     pool_state: {},
   };
 }
