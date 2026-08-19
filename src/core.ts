@@ -1,5 +1,6 @@
 import {
   type Address,
+  decodeFunctionData,
   encodeFunctionData,
   erc20Abi,
   getAddress,
@@ -37,11 +38,12 @@ export type Env = Omit<Cloudflare.Env, OptionalBindings> &
   Partial<Pick<Cloudflare.Env, OptionalBindings>> & {
     ZERO_X_API_URL?: string;
     ACROSS_API_URL?: string;
+    LAYER_ZERO_API_URL?: string;
     ALLOWED_HOSTNAMES?: string;
     ALLOWED_ORIGINS?: string;
   };
 
-export type QuoteSource = "ekubo" | "0x" | "across";
+export type QuoteSource = "ekubo" | "0x" | "across" | "layerzero";
 
 type QuoteCollectionSource = QuoteSource | "all";
 
@@ -115,6 +117,15 @@ interface QuoteCandidate {
   source: QuoteSource;
   sourceUrl: string;
   raw: unknown;
+  /**
+   * The provider's own identifier for this quote, for providers that issue one
+   * that outlives the quote. LayerZero's quote id becomes the transfer id once
+   * the transfer is broadcast, so it is what `get_value_transfer_status` is
+   * polled with. It has to reach the caller through the normalized fields
+   * because raw provider responses are off by default, and a transfer whose id
+   * was never returned cannot be tracked at all.
+   */
+  providerQuoteId: string | null;
   amountIn: bigint;
   amountOut: bigint;
   minimumAmountOut: bigint | null;
@@ -196,10 +207,84 @@ interface AcrossTransaction {
   gas?: string;
 }
 
+/**
+ * One entry of the LayerZero chain catalog. The Value Transfer API addresses
+ * chains by a string key ("base", "arbitrum"), not by EIP-155 id, so every
+ * request has to be translated through this list first.
+ */
+interface LayerZeroChain {
+  chainKey: string;
+  chainType?: string;
+  chainId?: number;
+}
+
+interface LayerZeroChainsResponse {
+  chains?: LayerZeroChain[];
+  pagination?: { nextToken?: string };
+}
+
+interface LayerZeroEncodedTransaction {
+  to: Address;
+  data: Hex;
+  value?: string;
+  chainId?: number;
+  from?: Address;
+  gasLimit?: string;
+}
+
+interface LayerZeroUserStep {
+  type?: string;
+  description?: string;
+  chainKey?: string;
+  chainType?: string;
+  transaction?: { encoded?: LayerZeroEncodedTransaction };
+}
+
+interface LayerZeroQuote {
+  id?: string;
+  srcAmount?: string;
+  dstAmount?: string;
+  dstAmountMin?: string;
+  feeUsd?: string;
+  duration?: { estimated?: string | number | null };
+  userSteps?: LayerZeroUserStep[];
+  expiresAt?: string;
+  [key: string]: unknown;
+}
+
+interface LayerZeroQuotesResponse {
+  error?: { status?: number; message?: string; issues?: unknown } | null;
+  quotes?: LayerZeroQuote[];
+  [key: string]: unknown;
+}
+
+interface LayerZeroStatusResponse {
+  status?: string;
+  explorerUrl?: string;
+  executionHistory?: {
+    event?: string;
+    transaction?: { chainKey?: string; hash?: string; timestamp?: number };
+  }[];
+  [key: string]: unknown;
+}
+
 const ZERO_X_NATIVE_TOKEN = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 const ZERO_X_DEFAULT_URL = "https://api.0x.org";
 const ACROSS_DEFAULT_URL = "https://app.across.to/api";
 const ACROSS_PREVIEW_DEPOSITOR = "0x0000000000000000000000000000000000000001";
+const LAYERZERO_DEFAULT_URL = "https://transfer.layerzero-api.com/v1";
+// LayerZero uses the same sentinel as 0x for a chain's native currency.
+const LAYERZERO_NATIVE_TOKEN = ZERO_X_NATIVE_TOKEN;
+const LAYERZERO_PREVIEW_WALLET = "0x0000000000000000000000000000000000000001";
+/**
+ * How long one fetch of the chain catalog is reused. The mapping from EIP-155
+ * id to chain key changes only when LayerZero onboards a chain, so re-reading
+ * it per quote would spend a round trip of the quote's own lifetime on data
+ * that is effectively static.
+ */
+const LAYERZERO_CHAINS_TTL_MS = 10 * 60 * 1000;
+/** Stops a malformed pagination cursor from looping the catalog walk forever. */
+const LAYERZERO_CHAINS_MAX_PAGES = 20;
 export class ServiceError extends Error {
   constructor(
     readonly code: string,
@@ -728,6 +813,7 @@ function preparedQuote(
   prepared: PreparedCandidate,
 ) {
   return {
+    provider_quote_id: selected.providerQuoteId,
     amount_in: selected.amountIn.toString(),
     amount_out: selected.amountOut.toString(),
     minimum_amount_out: prepared.minimumAmountOut?.toString() ?? null,
@@ -789,21 +875,26 @@ async function collectQuotes(
   const source = intent.source;
   const isCrossChain = destinationChainId !== intent.chainId;
 
-  if (isCrossChain && source !== "all" && source !== "across") {
+  if (isCrossChain && source !== "all" && !isCrossChainSource(source)) {
     throw new ServiceError(
       "invalid_quote_source",
-      `cross-chain requests require source=across, received ${source}`,
+      `cross-chain requests require source=across or source=layerzero, received ${source}`,
     );
   }
-  if (!isCrossChain && source === "across") {
+  if (!isCrossChain && isCrossChainSource(source)) {
     throw new ServiceError(
       "invalid_quote_source",
-      "source=across requires different origin and destination chain IDs",
+      `source=${source} requires different origin and destination chain IDs`,
     );
   }
 
   const requestedSources: QuoteSource[] = isCrossChain
-    ? ["across"]
+    ? source === "all"
+      ? // LayerZero joins the cross-chain comparison only where it is
+        // configured. A deployment without the key keeps serving Across routes
+        // rather than reporting a provider failure on every bridge request.
+        ["across", ...(env.LAYER_ZERO_API_KEY ? (["layerzero"] as const) : [])]
+      : [source]
     : source === "all"
       ? ["ekubo", ...(env.ZERO_X_API_KEY ? (["0x"] as const) : [])]
       : [source];
@@ -817,6 +908,8 @@ async function collectQuotes(
           return quoteZeroX(env, intent, fetcher);
         case "across":
           return quoteAcross(env, intent, fetcher);
+        case "layerzero":
+          return quoteLayerZero(env, intent, fetcher);
       }
     }),
   );
@@ -925,6 +1018,7 @@ async function quoteEkubo(
     source: "ekubo",
     sourceUrl: url,
     raw: quote,
+    providerQuoteId: null,
     amountIn: exactOutput ? -calculated : requested,
     amountOut: exactOutput ? requested : calculated,
     minimumAmountOut: null,
@@ -1001,6 +1095,7 @@ async function quoteZeroX(
     source: "0x",
     sourceUrl: url.toString(),
     raw: quote,
+    providerQuoteId: null,
     amountIn: BigInt(amountInRaw),
     amountOut: BigInt(quote.buyAmount),
     minimumAmountOut:
@@ -1075,6 +1170,7 @@ async function quoteAcross(
     source: "across",
     sourceUrl: url.toString(),
     raw: quote,
+    providerQuoteId: null,
     amountIn: BigInt(quote.inputAmount),
     amountOut: BigInt(quote.expectedOutputAmount),
     minimumAmountOut: BigInt(quote.minOutputAmount),
@@ -1095,6 +1191,412 @@ async function quoteAcross(
     approvalTransactions: [],
     quoteExpiryTimestamp: quote.quoteExpiryTimestamp ?? null,
     expectedFillTime: quote.expectedFillTime ?? null,
+  };
+}
+
+/** Providers that only ever quote a transfer between two different chains. */
+function isCrossChainSource(source: QuoteCollectionSource): boolean {
+  return source === "across" || source === "layerzero";
+}
+
+/**
+ * The LayerZero chain catalog, indexed by EIP-155 chain id.
+ *
+ * Cached per base URL for {@link LAYERZERO_CHAINS_TTL_MS} because it is the
+ * one round trip in a LayerZero quote that buys nothing time-sensitive, and a
+ * quote's worth decays from the moment it is fetched. A rejected lookup is
+ * evicted rather than cached, so one failed catalog read does not disable the
+ * provider for the rest of the isolate's life.
+ */
+const layerZeroChainCatalog = new Map<
+  string,
+  { fetchedAt: number; keys: Promise<Map<string, string>> }
+>();
+
+function layerZeroChainKeys(
+  baseUrl: string,
+  fetcher: Fetcher,
+): Promise<Map<string, string>> {
+  const cached = layerZeroChainCatalog.get(baseUrl);
+  if (cached && Date.now() - cached.fetchedAt < LAYERZERO_CHAINS_TTL_MS) {
+    return cached.keys;
+  }
+  const keys = fetchLayerZeroChainKeys(baseUrl, fetcher).catch(
+    (error: unknown) => {
+      if (layerZeroChainCatalog.get(baseUrl)?.keys === keys) {
+        layerZeroChainCatalog.delete(baseUrl);
+      }
+      throw error;
+    },
+  );
+  layerZeroChainCatalog.set(baseUrl, { fetchedAt: Date.now(), keys });
+  return keys;
+}
+
+async function fetchLayerZeroChainKeys(
+  baseUrl: string,
+  fetcher: Fetcher,
+): Promise<Map<string, string>> {
+  const keys = new Map<string, string>();
+  let nextToken: string | undefined;
+  for (let page = 0; page < LAYERZERO_CHAINS_MAX_PAGES; page += 1) {
+    const url = new URL("chains", normalizedBase(baseUrl));
+    if (nextToken !== undefined) {
+      url.searchParams.set("pagination[nextToken]", nextToken);
+    }
+    // Chain discovery is unauthenticated, so it stays usable for diagnosing a
+    // deployment whose key is missing or exhausted.
+    const body = await fetchJson<LayerZeroChainsResponse>(
+      url.toString(),
+      fetcher,
+    );
+    for (const chain of body.chains ?? []) {
+      // Only EVM chains carry an EIP-155 id that an intent can name, and only
+      // those can be executed through an execution plan.
+      if (chain.chainType !== "EVM") continue;
+      if (typeof chain.chainId !== "number" || !Number.isFinite(chain.chainId))
+        continue;
+      if (typeof chain.chainKey !== "string" || chain.chainKey === "") continue;
+      keys.set(BigInt(chain.chainId).toString(), chain.chainKey);
+    }
+    nextToken = body.pagination?.nextToken;
+    if (nextToken === undefined || nextToken === "") break;
+  }
+  if (keys.size === 0) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      "LayerZero returned no EVM chains",
+    );
+  }
+  return keys;
+}
+
+async function layerZeroChainKey(
+  baseUrl: string,
+  fetcher: Fetcher,
+  chainId: string,
+  side: "origin" | "destination",
+): Promise<string> {
+  const keys = await layerZeroChainKeys(baseUrl, fetcher);
+  const key = keys.get(BigInt(chainId).toString());
+  if (key === undefined) {
+    throw new ServiceError(
+      "unsupported_chain",
+      `LayerZero does not list an EVM chain with id ${chainId} as this transfer's ${side}`,
+    );
+  }
+  return key;
+}
+
+function layerZeroToken(token: Address): string {
+  return BigInt(token) === 0n ? LAYERZERO_NATIVE_TOKEN : getAddress(token);
+}
+
+/** The origin-chain calls one LayerZero quote resolves to, or null. */
+interface LayerZeroSteps {
+  transaction: UnsignedTransaction;
+  approvalSpender: Address | null;
+}
+
+/**
+ * The spender an ERC-20 approval names, or null when the calldata is not an
+ * approval at all.
+ *
+ * The spender is read out of the step LayerZero built rather than assumed: the
+ * documented hazard on this API is approving the LZMulticall wrapper instead
+ * of the TransferDelegate, and decoding the step the API itself produced is
+ * what makes that mistake unrepresentable here.
+ */
+function erc20ApprovalSpender(data: Hex): Address | null {
+  try {
+    const decoded = decodeFunctionData({ abi: erc20Abi, data });
+    if (decoded.functionName !== "approve") return null;
+    return getAddress(decoded.args[0] as Address);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One quote's user steps rendered as an execution plan's worth of calls, or
+ * null when this route cannot be expressed as one.
+ *
+ * An execution plan is a fixed set of transactions a wallet signs in order, so
+ * a route is only usable here if every step is a transaction on the origin
+ * chain. Intent routes (AORI) interleave an EIP-712 signature with a
+ * round trip to /submit-signature that the plan has no way to perform, and a
+ * route that requires it is dropped rather than half-executed.
+ */
+function layerZeroSteps(
+  quote: LayerZeroQuote,
+  chainId: string,
+): LayerZeroSteps | null {
+  const steps = quote.userSteps ?? [];
+  if (steps.length === 0) return null;
+  const encoded: LayerZeroEncodedTransaction[] = [];
+  for (const step of steps) {
+    if (step.type !== "TRANSACTION") return null;
+    if (step.chainType !== undefined && step.chainType !== "EVM") return null;
+    const transaction = step.transaction?.encoded;
+    if (!transaction?.to || !transaction.data) return null;
+    encoded.push(transaction);
+  }
+  const transfer = encoded[encoded.length - 1];
+  // Everything before the transfer must be an approval this server can re-issue
+  // for an exact amount. Anything else is a call it cannot reason about, and
+  // passing it through unread is not something a bridge plan should do.
+  let approvalSpender: Address | null = null;
+  for (const step of encoded.slice(0, -1)) {
+    const spender = erc20ApprovalSpender(step.data);
+    if (spender === null) return null;
+    approvalSpender = spender;
+  }
+  return {
+    transaction: {
+      chainId,
+      to: getAddress(transfer.to),
+      data: transfer.data,
+      value: BigInt(transfer.value ?? 0),
+      ...(transfer.gasLimit === undefined
+        ? {}
+        : { gas: BigInt(transfer.gasLimit) }),
+    },
+    approvalSpender,
+  };
+}
+
+/**
+ * One quote out of the several LayerZero returns for a transfer.
+ *
+ * Routes that can be executed win outright over routes that cannot, because an
+ * option that cannot be handed to a wallet is worth less than a slightly
+ * cheaper one that can; within each group the largest destination amount wins.
+ * All of these quotes are EXACT_SRC_AMOUNT, so they spend the same input and
+ * differ only in what arrives.
+ */
+function selectLayerZeroQuote(
+  quotes: LayerZeroQuote[],
+  chainId: string,
+): { quote: LayerZeroQuote; steps: LayerZeroSteps | null } {
+  const priced = quotes
+    .filter(
+      (quote) =>
+        typeof quote.srcAmount === "string" &&
+        typeof quote.dstAmount === "string",
+    )
+    .map((quote) => ({ quote, steps: layerZeroSteps(quote, chainId) }));
+  if (priced.length === 0) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      "LayerZero returned no quote carrying both a source and a destination amount",
+      quotes,
+    );
+  }
+  const executable = priced.filter((entry) => entry.steps !== null);
+  const pool = executable.length > 0 ? executable : priced;
+  return pool.reduce((best, entry) =>
+    BigInt(entry.quote.dstAmount as string) >
+    BigInt(best.quote.dstAmount as string)
+      ? entry
+      : best,
+  );
+}
+
+/** LayerZero states an ISO expiry; the candidate carries epoch seconds. */
+function layerZeroExpiry(expiresAt: string | undefined): number | null {
+  if (expiresAt === undefined) return null;
+  const parsed = Date.parse(expiresAt);
+  return Number.isNaN(parsed) ? null : Math.floor(parsed / 1000);
+}
+
+/** LayerZero states an estimated duration in milliseconds; Across in seconds. */
+function layerZeroFillTimeSeconds(
+  estimated: string | number | null | undefined,
+): number | null {
+  if (estimated === undefined || estimated === null) return null;
+  const milliseconds = Number(estimated);
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return null;
+  return Math.round(milliseconds / 1000);
+}
+
+async function quoteLayerZero(
+  env: Env,
+  intent: QuoteSelectionIntent,
+  fetcher: Fetcher,
+): Promise<QuoteCandidate> {
+  if (!env.LAYER_ZERO_API_KEY) {
+    throw new ServiceError(
+      "provider_not_configured",
+      "LayerZero is not configured for this deployment",
+    );
+  }
+  // The Value Transfer API prices a source amount only: there is no
+  // EXACT_DST_AMOUNT. Saying so is more use to the caller than a silent
+  // absence, since Across can still serve the same exact-output request.
+  if (intent.quoteType === "exact_output") {
+    throw new ServiceError(
+      "unsupported_quote_type",
+      "LayerZero quotes an exact source amount only; request exact_input for a LayerZero route, or use Across for exact output",
+    );
+  }
+  const baseUrl = env.LAYER_ZERO_API_URL ?? LAYERZERO_DEFAULT_URL;
+  const destinationChainId = intent.destinationChainId ?? intent.chainId;
+  const [srcChainKey, dstChainKey] = await Promise.all([
+    layerZeroChainKey(baseUrl, fetcher, intent.chainId, "origin"),
+    layerZeroChainKey(baseUrl, fetcher, destinationChainId, "destination"),
+  ]);
+  // Both wallet addresses are required, so an indicative request borrows the
+  // same placeholder depositor the Across path uses.
+  const srcWalletAddress = intent.sender
+    ? getAddress(intent.sender)
+    : LAYERZERO_PREVIEW_WALLET;
+  const dstWalletAddress = intent.recipient
+    ? getAddress(intent.recipient)
+    : srcWalletAddress;
+  const url = new URL("quotes", normalizedBase(baseUrl));
+  const request = {
+    srcChainKey,
+    dstChainKey,
+    srcTokenAddress: layerZeroToken(intent.tokenIn),
+    dstTokenAddress: layerZeroToken(intent.tokenOut),
+    srcWalletAddress,
+    dstWalletAddress,
+    amount: intent.amount,
+    options: {
+      amountType: "EXACT_SRC_AMOUNT",
+      // feeTolerance is a percentage, and it is the bound this route enforces
+      // on value lost, so the caller's basis points map straight onto it
+      // instead of the API's 1% default silently standing in for them.
+      ...(intent.slippageBps === undefined
+        ? {}
+        : {
+            feeTolerance: {
+              type: "PERCENT",
+              amount: intent.slippageBps / 100,
+            },
+          }),
+    },
+  };
+  const response = await fetchJson<LayerZeroQuotesResponse>(
+    url.toString(),
+    fetcher,
+    {
+      method: "POST",
+      headers: {
+        "x-api-key": env.LAYER_ZERO_API_KEY,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(request),
+    },
+  );
+  // A rejected transfer arrives as a populated error on an otherwise ordinary
+  // 200, so the body has to be checked even when the status did not complain.
+  if (response.error) {
+    throw new ServiceError(
+      "upstream_error",
+      typeof response.error.message === "string"
+        ? response.error.message
+        : "LayerZero rejected this transfer request",
+      response.error,
+    );
+  }
+  const quotes = response.quotes ?? [];
+  if (quotes.length === 0) {
+    throw new ServiceError(
+      "quote_unavailable",
+      "LayerZero returned no route for this transfer",
+      response,
+    );
+  }
+  const selected = selectLayerZeroQuote(quotes, intent.chainId);
+  const quote = selected.quote;
+  const steps = selected.steps;
+  return {
+    source: "layerzero",
+    sourceUrl: url.toString(),
+    raw: quote,
+    providerQuoteId: typeof quote.id === "string" ? quote.id : null,
+    amountIn: BigInt(quote.srcAmount as string),
+    amountOut: BigInt(quote.dstAmount as string),
+    minimumAmountOut:
+      quote.dstAmountMin === undefined ? null : BigInt(quote.dstAmountMin),
+    // EXACT_SRC_AMOUNT spends exactly what was asked for, so there is no
+    // separate upper bound on the input to enforce.
+    maximumAmountIn: null,
+    estimatedGas:
+      steps?.transaction.gas === undefined
+        ? null
+        : Number(steps.transaction.gas),
+    priceImpact: null,
+    transaction: steps?.transaction ?? null,
+    approvalRequired: steps?.approvalSpender != null,
+    approvalSpender: steps?.approvalSpender ?? null,
+    approvalActual: null,
+    // Dropped so buildApprovalTransactions issues an exact-amount approval to
+    // the decoded spender, as the Across path does.
+    approvalTransactions: [],
+    quoteExpiryTimestamp: layerZeroExpiry(quote.expiresAt),
+    expectedFillTime: layerZeroFillTimeSeconds(quote.duration?.estimated),
+  };
+}
+
+/**
+ * Where one LayerZero transfer has got to.
+ *
+ * A bridge is the one execution plan whose origin receipt does not mean the
+ * user has their funds, so the plan alone cannot answer whether the transfer
+ * finished. The quote id returned with the executed option is the transfer id
+ * here; supplying the origin transaction hash lets LayerZero resolve the
+ * transfer before its own indexer has caught up.
+ */
+export async function getValueTransferStatus(
+  env: Env,
+  input: { quoteId: string; transactionHash?: string },
+  fetcher: Fetcher = fetch,
+) {
+  if (!env.LAYER_ZERO_API_KEY) {
+    throw new ServiceError(
+      "provider_not_configured",
+      "LayerZero is not configured for this deployment",
+    );
+  }
+  const baseUrl = env.LAYER_ZERO_API_URL ?? LAYERZERO_DEFAULT_URL;
+  const url = new URL(
+    `status/${encodeURIComponent(input.quoteId)}`,
+    normalizedBase(baseUrl),
+  );
+  if (input.transactionHash !== undefined) {
+    url.searchParams.set("txHash", input.transactionHash);
+  }
+  const body = await fetchJson<LayerZeroStatusResponse>(
+    url.toString(),
+    fetcher,
+    { headers: { "x-api-key": env.LAYER_ZERO_API_KEY } },
+  );
+  const status = typeof body.status === "string" ? body.status : "UNKNOWN";
+  const settled = status === "SUCCEEDED" || status === "FAILED";
+  return {
+    source: "layerzero",
+    source_url: url.toString(),
+    quote_id: input.quoteId,
+    origin_transaction_hash: input.transactionHash ?? null,
+    status,
+    settled,
+    explorer_url: typeof body.explorerUrl === "string" ? body.explorerUrl : null,
+    execution_history: (body.executionHistory ?? []).map((entry) => ({
+      event: entry.event ?? null,
+      chain_key: entry.transaction?.chainKey ?? null,
+      transaction_hash: entry.transaction?.hash ?? null,
+      timestamp: entry.transaction?.timestamp ?? null,
+    })),
+    polling: {
+      settled,
+      instruction: settled
+        ? status === "SUCCEEDED"
+          ? "The transfer was delivered on the destination chain. Stop polling and report the destination transaction from execution_history."
+          : "The transfer failed. Stop polling, report it, and do not resubmit the origin calldata; request a fresh quote before trying again."
+        : "The transfer is still in flight. Poll this tool again after a few seconds, passing the same quote_id and the origin transaction_hash. UNKNOWN immediately after submission usually means the transfer has not been indexed yet, not that it is lost.",
+    },
   };
 }
 
@@ -1181,6 +1683,7 @@ function executableQuote(
 function serializeCandidate(candidate: QuoteCandidate) {
   return {
     source: candidate.source,
+    provider_quote_id: candidate.providerQuoteId,
     amount_in: candidate.amountIn.toString(),
     amount_out: candidate.amountOut.toString(),
     minimum_amount_out: candidate.minimumAmountOut?.toString() ?? null,

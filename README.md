@@ -2,8 +2,8 @@
 
 The official agent interface for Ekubo Protocol transactions. This repository
 deploys a stateless, public MCP server on Cloudflare Workers. It discovers
-tokens, compares Ekubo and 0x liquidity for same-chain EVM swaps, prepares
-Across any-to-any bridges, and constructs unsigned VeToken calls for ve(3,3)
+tokens, compares Ekubo and 0x liquidity for same-chain EVM swaps, prepares and
+tracks Across and LayerZero any-to-any bridges, and constructs unsigned VeToken calls for ve(3,3)
 vote and fee workflows. It also publishes provider-neutral STONX allocation
 recommendations resolved to initialized Robinhood Ve33 pools, enumerates
 indexed LP positions by owner, reproduces the interface's indexed/API/USD/RPC
@@ -61,10 +61,14 @@ schemas after a Git-triggered deployment.
 - `get_tokens` — fetch metadata for 1–1,000 exact token identifiers,
   across chains, through one `prod-api` batch request
 - `get_quotes_with_plans` — compare Ekubo and 0x for same-chain
-  exact-input or exact-output swaps, or use Across when
+  exact-input or exact-output swaps, or compare Across and LayerZero when
   `destination_chain_id` differs, and return each option's firm unsigned
   approval and execution calldata alongside its quote; an Ekubo or 0x failure
   marks the comparison incomplete and tells the user to retry
+- `get_value_transfer_status` — track an executed LayerZero cross-chain
+  transfer from origin submission to destination delivery, by the
+  `provider_quote_id` its quote carried; a bridge is the one plan whose
+  successful origin receipt does not mean the user has their funds
 - `prepare_ve33_vote` — compile one active NFT's vote changes and
   deterministic splits into one multicall that always claims its current pool
   first; prefer the portfolio workflow below for complete state validation
@@ -296,7 +300,13 @@ If a configured provider fails, the response reports it in
 `unavailable_sources` without invalidating successful quote options, and an
 option that could not be made executable reports its own
 `execution_unavailable` while the rest stand.
-Cross-chain requests route through Across. Token
+Cross-chain requests are quoted by Across and by LayerZero's Value Transfer
+API, each included where its credentials are configured, and are compared the
+same way as same-chain options. LayerZero prices an exact source amount only,
+so an exact-output bridge request reports `unsupported_quote_type` for it and
+is served by Across. After executing a LayerZero option, poll
+`get_value_transfer_status` with that quote's `provider_quote_id` until
+`settled` is true. Token
 arguments accept raw EVM addresses or
 `eip155:<chain_id>:<address>` identifiers. The output token's EIP-155 chain
 must match `destination_chain_id`.
@@ -556,11 +566,12 @@ an explicit duration or `max_duration=true` is applied.
 
 Never make an upstream URL a tool argument. Keeping upstreams
 operator-controlled prevents the MCP server from becoming an arbitrary proxy.
-The deployment also uses four Worker secrets:
+The deployment also uses five Worker secrets:
 
 - `ZERO_X_API_KEY`
 - `ACROSS_API_KEY`
 - `ACROSS_INTEGRATOR_ID`
+- `LAYER_ZERO_API_KEY`
 - `DUNE_API_KEY` (internal allocation-recommendation data access; never
   returned or identified by the public MCP surface)
 
@@ -571,8 +582,24 @@ missing. Bind them to the production `mcp` Worker under **Settings > Variables
 
 0x requests use Swap API v2's AllowanceHolder endpoints. Across requests use
 `GET /swap/approval` with bearer authentication and the configured integrator
-ID. These credentials remain server-side and are never returned by a tool. The
-Worker never receives wallet credentials.
+ID. LayerZero requests use the Value Transfer API at
+`https://transfer.layerzero-api.com/v1` with `x-api-key` authentication:
+`POST /quotes` for a transfer and `GET /status/{quoteId}` for its progress,
+plus the unauthenticated `GET /chains` that maps EIP-155 chain IDs onto the
+chain keys that API addresses. That catalog is cached for ten minutes per
+isolate, because re-reading effectively static data would spend part of a
+quote's own lifetime on it. These credentials remain server-side and are never
+returned by a tool. The Worker never receives wallet credentials.
+
+LayerZero returns several routes per transfer (OFT, Stargate taxi and bus,
+CCTP, Aori). The executable route with the largest destination amount is taken.
+A route whose `userSteps` include an EIP-712 signature step is skipped: it needs
+a `/submit-signature` round trip in the middle of execution, which an execution
+plan — a fixed ordered set of transactions a wallet signs — cannot perform. The
+approval spender is decoded out of the step LayerZero itself built and re-issued
+for the exact transfer amount, which is what keeps the allowance on the
+TransferDelegate rather than the LZMulticall wrapper the API documents as the
+wrong spender.
 
 Cloudflare routing protects the default `workers.dev` hostname and any custom
 domain. Set optional comma-separated `ALLOWED_HOSTNAMES` and `ALLOWED_ORIGINS`
@@ -599,7 +626,8 @@ but drops `cf`.
 
 A refusal is an ordinary tool error with code `restricted_jurisdiction`, listing
 the offending assets in `details`. It is raised before any upstream quote is
-fetched, so a restricted request never spends 0x or Across credit.
+fetched, so a restricted request never spends 0x, Across, or LayerZero
+credit.
 
 What is gated is the acquisition or disposal of a restricted asset:
 `get_quotes_with_plans`, `prepare_twamm_order`, `prepare_lp_position_deposit`,
@@ -649,7 +677,7 @@ any two of them at once. `src/rate-limit.ts` holds the cost table.
 | `RATE_LIMITER_BURST` | 10s | 30 requests | A flood, visible within ten seconds rather than after a minute of it |
 | `RATE_LIMITER` | 60s | 120 requests | Sustained request volume across every route |
 | `RATE_LIMITER_TOOLS` | 60s | 120 units | Weighted tool cost: scraping and upstream load |
-| `RATE_LIMITER_METERED` | 60s | 20 calls | Calls that spend 0x, Across, or Dune credit |
+| `RATE_LIMITER_METERED` | 60s | 20 calls | Calls that spend 0x, Across, LayerZero, or Dune credit |
 
 The unit scale is anchored at 1 = one ordinary `prod-api` read. A bulk or
 fan-out read costs 3–4, a preparation that writes an artifact costs 3, a quote

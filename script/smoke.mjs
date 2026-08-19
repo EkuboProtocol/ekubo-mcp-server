@@ -43,6 +43,7 @@ const expectedTools = [
   "get_token",
   "get_tokens",
   "get_quotes_with_plans",
+  "get_value_transfer_status",
   "prepare_ve33_vote",
   "prepare_ve33_extend",
   "prepare_ve33_stake",

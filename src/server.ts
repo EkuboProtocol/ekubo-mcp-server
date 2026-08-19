@@ -27,6 +27,7 @@ import {
   getQuotesWithPlans,
   getToken,
   getTokens,
+  getValueTransferStatus,
   listTokens,
   prepareSwap,
   type QuoteSource,
@@ -203,7 +204,7 @@ const bytes32 = z
   .regex(/^0x[0-9a-fA-F]{64}$/, "must be exactly 32 bytes")
   .describe("0x-prefixed bytes32");
 const quoteType = z.enum(["exact_input", "exact_output"]);
-const quoteSource = z.enum(["ekubo", "0x", "across"]);
+const quoteSource = z.enum(["ekubo", "0x", "across", "layerzero"]);
 const amount = z
   .string()
   .regex(/^[0-9]*[1-9][0-9]*$/, "amount must be a positive base-unit integer")
@@ -335,6 +336,23 @@ const quoteRequestSchema = z.object({
   token_out: tokenIdentifier,
   quote_type: quoteType,
   amount,
+});
+
+export const getValueTransferStatusSchema = z.object({
+  quote_id: z
+    .string()
+    .min(1)
+    .max(256)
+    .describe(
+      "The provider_quote_id of the LayerZero option that was executed, taken from that quote's normalized or execution.quote fields. LayerZero reuses the quote id as the transfer id.",
+    ),
+  transaction_hash: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{64}$/, "must be a 32-byte transaction hash")
+    .optional()
+    .describe(
+      "Origin-chain transaction hash of the submitted transfer. Optional, but pass it whenever it is known: it lets LayerZero resolve the transfer before its own indexer has caught up.",
+    ),
 });
 
 export const getQuotesWithPlansSchema = quoteRequestSchema.extend({
@@ -1667,8 +1685,15 @@ export const publicToolCatalog = [
     name: "get_quotes_with_plans",
     title: "Get swap or bridge quotes with execution plans",
     description:
-      "The whole non-browser swap path for onchain swap, trade, exchange, or convert requests on supported EVM chains: one call returns every available Ekubo and 0x quote for a same-chain swap, each already carrying the execution_plan_reference that executes it, without accepting or selecting a source. Choose an option and pass its execution.execution_plan_reference envelope unchanged as the wallet's reference argument; the wallet fetches and verifies the plan body itself; there is no second preparation step, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Do not call this tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the request. Omit sender and slippage_bps for an indicative comparison that fetches no calldata; supply both for plans. Unless the user specifies otherwise, choose a low slippage_bps whose maximum value impact is approximately one estimated gas fee (10,000 * gas-cost value / swap-notional value), not a generic 50 bps/0.5%; prefer re-quoting and retrying with a newly prepared transaction after slippage failure to exposing the trade to a wider bound. Never retry reverted calldata unchanged. Uses Across for cross-chain swaps. Provider failures are reported separately in unavailable_sources, and an option that could not be made executable reports its own execution_unavailable while the rest stand. Set include_raw_quotes only to diagnose a provider; the normalized amounts already carry every field a choice turns on. Supports EIP-155 token identifiers.",
+      "The whole non-browser swap path for onchain swap, trade, exchange, or convert requests on supported EVM chains: one call returns every available Ekubo and 0x quote for a same-chain swap, each already carrying the execution_plan_reference that executes it, without accepting or selecting a source. Choose an option and pass its execution.execution_plan_reference envelope unchanged as the wallet's reference argument; the wallet fetches and verifies the plan body itself; there is no second preparation step, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Do not call this tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the request. Omit sender and slippage_bps for an indicative comparison that fetches no calldata; supply both for plans. Unless the user specifies otherwise, choose a low slippage_bps whose maximum value impact is approximately one estimated gas fee (10,000 * gas-cost value / swap-notional value), not a generic 50 bps/0.5%; prefer re-quoting and retrying with a newly prepared transaction after slippage failure to exposing the trade to a wider bound. Never retry reverted calldata unchanged. Cross-chain requests are quoted by both Across and LayerZero's Value Transfer API where each is configured, and are compared the same way as same-chain options; a LayerZero option's provider_quote_id is what get_value_transfer_status is then polled with to confirm delivery. Provider failures are reported separately in unavailable_sources, and an option that could not be made executable reports its own execution_unavailable while the rest stand. Set include_raw_quotes only to diagnose a provider; the normalized amounts already carry every field a choice turns on. Supports EIP-155 token identifiers.",
     inputSchema: z.toJSONSchema(getQuotesWithPlansSchema),
+  },
+  {
+    name: "get_value_transfer_status",
+    title: "Track a LayerZero cross-chain transfer",
+    description:
+      "Report where an executed LayerZero transfer has got to, from origin submission through delivery on the destination chain. A bridge is the one execution plan whose successful origin receipt does not mean the user has their funds, so this is how a cross-chain transfer is confirmed finished rather than merely sent. Call it with the provider_quote_id of the LayerZero option that was executed and, whenever it is known, the origin transaction_hash. Poll every few seconds while settled is false; stop as soon as it is true. Status UNKNOWN immediately after submission usually means the transfer has not been indexed yet rather than that it was lost. Applies only to LayerZero options; Across transfers are not tracked here.",
+    inputSchema: z.toJSONSchema(getValueTransferStatusSchema),
   },
   {
     name: "prepare_ve33_vote",
@@ -2415,6 +2440,16 @@ export function createEkuboServer(
         includeRawQuotes: input.include_raw_quotes,
       });
     },
+  );
+
+  registerCatalogTool(
+    "get_value_transfer_status",
+    getValueTransferStatusSchema,
+    (input) =>
+      getValueTransferStatus(env, {
+        quoteId: input.quote_id,
+        transactionHash: input.transaction_hash,
+      }),
   );
 
   server.registerTool(
@@ -3982,7 +4017,7 @@ const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 1. Search the token list when resolving a name or symbol. For exact identifiers, use get_token for one chain/address pair or get_tokens for up to 1,000 pairs in one batch. Show the chosen chains and addresses to the user.
 2. Convert the user amount to base units without floating-point arithmetic.
 3. Set destination_chain_id explicitly for a bridge. Raw addresses and eip155:<chain>:<address> token IDs are accepted.
-4. Request an exact-input or exact-output quote. Once the user has decided to swap, pass sender and slippage_bps so every option arrives with the calldata that executes it; omit both only for an indicative "what would I get" comparison. Honor the user's explicit slippage preference. If none was given, estimate gas cost and swap notional in the same currency and use slippage_bps approximately equal to 10,000 * gas-cost value / swap-notional value, so the maximum tolerated slippage loss is near one gas fee. Do not default to 50 bps (0.5%), especially on Ethereum mainnet; prefer re-quoting and preparing a new transaction after failure to widening the bound. For same-chain requests, inspect every entry in quotes and choose a source; the tool does not accept or select one. The normalized amounts expose amount_out for exact input and amount_in for exact output. Cross-chain requests return Across. unavailable_sources reports individual provider failures without invalidating successful quote options, and a single option that could not be made executable reports its own execution_unavailable while the rest stand.
+4. Request an exact-input or exact-output quote. Once the user has decided to swap, pass sender and slippage_bps so every option arrives with the calldata that executes it; omit both only for an indicative "what would I get" comparison. Honor the user's explicit slippage preference. If none was given, estimate gas cost and swap notional in the same currency and use slippage_bps approximately equal to 10,000 * gas-cost value / swap-notional value, so the maximum tolerated slippage loss is near one gas fee. Do not default to 50 bps (0.5%), especially on Ethereum mainnet; prefer re-quoting and preparing a new transaction after failure to widening the bound. For same-chain requests, inspect every entry in quotes and choose a source; the tool does not accept or select one. The normalized amounts expose amount_out for exact input and amount_in for exact output. Cross-chain requests return Across and LayerZero options where each is configured; compare them as you would any other options. After executing a LayerZero option, poll get_value_transfer_status with that quote's provider_quote_id and the origin transaction hash until settled is true, because a successful origin receipt does not mean the transfer was delivered. unavailable_sources reports individual provider failures without invalidating successful quote options, and a single option that could not be made executable reports its own execution_unavailable while the rest stand.
 5. Take the chosen option's execution.execution_plan_reference as it is. Do not call the tool again to obtain a plan you were already given: it fetches fresh quotes, which spends a round trip and an agent turn inside the window where the plan in hand is still good, and leaves the user having approved a quote that is not the one executed. Call it again only after an expiry, a revert, or a change to the amount, tokens, sender, recipient, or slippage.
 6. Include the provider, exact plan ID, token amounts, chains, slippage bound, recipient, approvals, execution transaction, and any allowance reset in the wallet handoff.
 7. Pass the execution_plan_reference envelope unchanged as the wallet's reference argument and let its own simulation establish balances, allowances, policy, and the exact transaction outcome. The wallet fetches and verifies the plan body itself; never restate it. Do not read allowances or validate the transaction separately first, and do not ask for separate agent-level confirmation; both only spend the quote's remaining life.
@@ -4088,8 +4123,9 @@ compare; set include_raw_quotes to add the untouched provider responses. There i
 no second preparation call, so no quote is fetched twice and the compared quote is
 the executed one. If either requested
 provider fails, the result marks the set incomplete and instructs the user to retry.
-Cross-chain requests use Across Swap API /swap/approval. Provider API keys are
-server-side and are never accepted as tool arguments.
+Cross-chain requests use the Across Swap API and LayerZero's Value Transfer
+API, each included where it is configured. Provider API keys are server-side
+and are never accepted as tool arguments.
 
 Ekubo base URL: https://prod-api-quoter.ekubo.org
 
@@ -4112,6 +4148,28 @@ Across:
 - Requires different origin and destination chain IDs.
 - exact_input maps to tradeType=exactInput; exact_output maps to tradeType=exactOutput.
 - Returned approvalTxns and swapTx are preserved as unsigned transactions.
+
+LayerZero (Value Transfer API, https://transfer.layerzero-api.com/v1):
+- Requires different origin and destination chain IDs.
+- Quotes an exact source amount only: POST /quotes accepts amountType
+  EXACT_SRC_AMOUNT, so exact_output requests report unsupported_quote_type and
+  are served by Across instead.
+- Chains are addressed by string key, so GET /chains is read and cached to map
+  EIP-155 chain IDs onto them. A chain LayerZero does not list as EVM reports
+  unsupported_chain.
+- slippage_bps maps onto options.feeTolerance as a percentage; dstAmountMin
+  becomes minimum_amount_out and duration.estimated becomes
+  expected_fill_time_seconds.
+- LayerZero returns several routes (OFT, Stargate taxi/bus, CCTP, Aori). The
+  executable route with the largest destination amount is taken. Routes whose
+  userSteps include an EIP-712 signature step, which needs a mid-execution
+  /submit-signature round trip, cannot be expressed as an execution plan and
+  are skipped.
+- The approval spender is decoded out of the step LayerZero built and re-issued
+  for an exact amount, which is what keeps the transfer's approval on the
+  TransferDelegate rather than the LZMulticall wrapper.
+- Each quote's id is returned as provider_quote_id and is the transfer id that
+  get_value_transfer_status polls.
 
 MCP callers should use get_quotes_with_plans instead of constructing
 provider URLs themselves.

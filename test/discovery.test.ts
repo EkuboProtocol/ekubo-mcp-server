@@ -42,6 +42,7 @@ const env = {
   ZERO_X_API_KEY: "zero-x-test-key",
   ACROSS_API_KEY: "across-test-key",
   ACROSS_INTEGRATOR_ID: "test-integrator",
+  LAYER_ZERO_API_KEY: "unused",
   DUNE_API_KEY: "recommendation-test-key",
   ALLOWED_ORIGINS: "https://mcp.ekubo.org",
 };
@@ -254,6 +255,7 @@ describe("Worker discovery", () => {
       "get_token",
       "get_tokens",
       "get_quotes_with_plans",
+      "get_value_transfer_status",
       "prepare_ve33_vote",
       "prepare_ve33_extend",
       "prepare_ve33_stake",
@@ -385,6 +387,7 @@ describe("Worker discovery", () => {
       "export_tokens",
       "prepare_wrap_unwrap",
       "get_quotes_with_plans",
+      "get_value_transfer_status",
     ]) {
       expect(annotationFor(name)).toMatchObject({ openWorldHint: true });
     }
