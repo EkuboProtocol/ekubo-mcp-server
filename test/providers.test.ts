@@ -33,6 +33,7 @@ const env: Env = {
   ACROSS_INTEGRATOR_ID: "0xbeef",
   ACROSS_API_URL: "https://across.test",
   LAYER_ZERO_API_KEY: "unused",
+  LI_FI_API_KEY: "unused",
   DUNE_API_KEY: "unused",
 };
 

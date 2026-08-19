@@ -19,9 +19,8 @@
  *   `derive_pool_id` are the same one request and nothing alike in what
  *   they cost us. This is the budget that bounds scraping and upstream load.
  * - `RATE_LIMITER_METERED` (60s) is a separate, much smaller ceiling on the
- *   tools that spend metered third-party credit — 0x, Across, LayerZero, and
- *   Dune. It is
- *   deliberately not the same budget as the unit one: a caller must not be
+ *   tools that spend metered third-party credit — 0x, Across, LayerZero,
+ *   LI.FI, and Dune. It is deliberately not the same budget as the unit one: a caller must not be
  *   able to reach the invoice by first proving they are under the aggregate
  *   limit, and cheap local calls must not consume the headroom that guards
  *   paid providers.
@@ -84,11 +83,11 @@ export const MAX_BATCH_LENGTH = 20;
  * in addition to their unit cost.
  */
 const METERED_TOOLS = new Set([
-  // 0x Swap API for the comparison leg, and Across and LayerZero for any
-  // cross-chain leg.
+  // 0x Swap API for the comparison leg, and Across, LayerZero, and LI.FI for
+  // any cross-chain leg.
   "get_quotes_with_plans",
-  // One authenticated LayerZero read per call, and it is polled in a loop
-  // while a transfer is in flight.
+  // One authenticated LayerZero or LI.FI read per call, and it is polled in a
+  // loop while a transfer is in flight.
   "get_value_transfer_status",
   // Dune, plus a refresh this Worker awaits for up to twenty seconds.
   "get_stonx_allocation_recommendation",

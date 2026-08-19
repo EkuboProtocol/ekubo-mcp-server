@@ -24,6 +24,7 @@
       "ACROSS_API_KEY",
       "ACROSS_INTEGRATOR_ID",
       "LAYER_ZERO_API_KEY",
+      "LI_FI_API_KEY",
       "DUNE_API_KEY"
     ]
   },

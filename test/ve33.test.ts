@@ -357,6 +357,7 @@ describe("ve(3,3) call generation", () => {
         ACROSS_API_KEY: "unused",
         ACROSS_INTEGRATOR_ID: "unused",
         LAYER_ZERO_API_KEY: "unused",
+        LI_FI_API_KEY: "unused",
         DUNE_API_KEY: "unused",
       },
       { chainId: "4663", veToken, sender },
@@ -453,6 +454,7 @@ describe("ve(3,3) call generation", () => {
         ACROSS_API_KEY: "unused",
         ACROSS_INTEGRATOR_ID: "unused",
         LAYER_ZERO_API_KEY: "unused",
+        LI_FI_API_KEY: "unused",
         DUNE_API_KEY: "unused",
       },
       {
@@ -532,6 +534,7 @@ describe("ve(3,3) call generation", () => {
       ACROSS_API_KEY: "unused",
       ACROSS_INTEGRATOR_ID: "unused",
       LAYER_ZERO_API_KEY: "unused",
+      LI_FI_API_KEY: "unused",
       DUNE_API_KEY: "unused",
     };
 

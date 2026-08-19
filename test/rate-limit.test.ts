@@ -22,6 +22,7 @@ const baseEnv = {
   ACROSS_API_KEY: "across-test-key",
   ACROSS_INTEGRATOR_ID: "test-integrator",
   LAYER_ZERO_API_KEY: "unused",
+  LI_FI_API_KEY: "unused",
   DUNE_API_KEY: "recommendation-test-key",
 } satisfies Env;
 

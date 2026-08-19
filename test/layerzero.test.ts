@@ -37,6 +37,10 @@ function envFor(host: string): Env {
     ACROSS_INTEGRATOR_ID: "0xbeef",
     ACROSS_API_URL: "https://across.test",
     LAYER_ZERO_API_KEY: "layerzero-test-key",
+    // These cases weigh LayerZero against Across specifically, so LI.FI is
+    // left unconfigured rather than mocked: an unconfigured provider is not
+    // attempted, which keeps the comparison here to the two under test.
+    LI_FI_API_KEY: "",
     LAYER_ZERO_API_URL: `https://${host}/v1`,
     DUNE_API_KEY: "unused",
   };

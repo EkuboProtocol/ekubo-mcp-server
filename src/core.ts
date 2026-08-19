@@ -40,11 +40,18 @@ export type Env = Omit<Cloudflare.Env, OptionalBindings> &
     ZERO_X_API_URL?: string;
     ACROSS_API_URL?: string;
     LAYER_ZERO_API_URL?: string;
+    LI_FI_API_URL?: string;
+    /**
+     * The tracking name LI.FI attributes this server's volume to. Optional and
+     * omitted when unset: an integrator string that does not match the one the
+     * API key is registered to is worth less than no claim at all.
+     */
+    LI_FI_INTEGRATOR?: string;
     ALLOWED_HOSTNAMES?: string;
     ALLOWED_ORIGINS?: string;
   };
 
-export type QuoteSource = "ekubo" | "0x" | "across" | "layerzero";
+export type QuoteSource = "ekubo" | "0x" | "across" | "layerzero" | "lifi";
 
 type QuoteCollectionSource = QuoteSource | "all";
 
@@ -269,6 +276,53 @@ interface LayerZeroStatusResponse {
   [key: string]: unknown;
 }
 
+/**
+ * One LI.FI step: the whole of what a quote request returns, and the unit a
+ * status lookup is later keyed by. Only the fields a comparison or an
+ * execution plan turns on are named here; the rest of the step rides along
+ * untouched in the candidate's raw quote.
+ */
+interface LiFiQuote {
+  id?: string;
+  tool?: string;
+  estimate?: {
+    fromAmount?: string;
+    toAmount?: string;
+    toAmountMin?: string;
+    approvalAddress?: Address;
+    executionDuration?: number;
+  };
+  transactionRequest?: LiFiTransactionRequest;
+  [key: string]: unknown;
+}
+
+/** LI.FI states an ethers TransactionRequest, whose numbers are hex strings. */
+interface LiFiTransactionRequest {
+  to?: Address;
+  data?: Hex;
+  value?: string;
+  chainId?: number;
+  gasLimit?: string;
+}
+
+interface LiFiStatusResponse {
+  status?: string;
+  substatus?: string;
+  substatusMessage?: string;
+  tool?: string;
+  lifiExplorerLink?: string;
+  bridgeExplorerLink?: string;
+  sending?: LiFiStatusTransaction;
+  receiving?: LiFiStatusTransaction;
+  [key: string]: unknown;
+}
+
+interface LiFiStatusTransaction {
+  txHash?: string;
+  chainId?: number;
+  timestamp?: number;
+}
+
 const ZERO_X_NATIVE_TOKEN = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 const ZERO_X_DEFAULT_URL = "https://api.0x.org";
 const ACROSS_DEFAULT_URL = "https://app.across.to/api";
@@ -286,19 +340,35 @@ const LAYERZERO_PREVIEW_WALLET = "0x0000000000000000000000000000000000000001";
 const LAYERZERO_CHAINS_TTL_MS = 10 * 60 * 1000;
 /** Stops a malformed pagination cursor from looping the catalog walk forever. */
 const LAYERZERO_CHAINS_MAX_PAGES = 20;
+const LIFI_DEFAULT_URL = "https://li.quest/v1";
+/**
+ * LI.FI requires a sending address on every quote, including one asked only
+ * for a price, so an indicative request borrows the same placeholder depositor
+ * the Across and LayerZero paths use. LI.FI names a chain's native currency by
+ * the zero address, which is already how an intent names it, and addresses
+ * chains by EIP-155 id, so unlike LayerZero this provider needs no token or
+ * chain translation at all.
+ */
+const LIFI_PREVIEW_SENDER = "0x0000000000000000000000000000000000000001";
+
 /**
  * Workers send no User-Agent unless one is set, and LayerZero's edge answers a
  * request without one with a 403 HTML page rather than JSON. Naming the client
  * is what keeps the API reachable from a Worker at all, so this is load-bearing
- * rather than courtesy.
+ * rather than courtesy, and every third-party API is given the same name for
+ * the same reason.
  */
-const LAYERZERO_USER_AGENT = `ekubo-mcp/${MCP_SERVER_VERSION}`;
+const MCP_USER_AGENT = `ekubo-mcp/${MCP_SERVER_VERSION}`;
 
 function layerZeroHeaders(apiKey?: string): Record<string, string> {
   return {
-    "user-agent": LAYERZERO_USER_AGENT,
+    "user-agent": MCP_USER_AGENT,
     ...(apiKey === undefined ? {} : { "x-api-key": apiKey }),
   };
+}
+
+function liFiHeaders(apiKey: string): Record<string, string> {
+  return { "user-agent": MCP_USER_AGENT, "x-lifi-api-key": apiKey };
 }
 export class ServiceError extends Error {
   constructor(
@@ -893,7 +963,7 @@ async function collectQuotes(
   if (isCrossChain && source !== "all" && !isCrossChainSource(source)) {
     throw new ServiceError(
       "invalid_quote_source",
-      `cross-chain requests require source=across or source=layerzero, received ${source}`,
+      `cross-chain requests require source=across, source=layerzero, or source=lifi, received ${source}`,
     );
   }
   if (!isCrossChain && isCrossChainSource(source)) {
@@ -905,10 +975,15 @@ async function collectQuotes(
 
   const requestedSources: QuoteSource[] = isCrossChain
     ? source === "all"
-      ? // LayerZero joins the cross-chain comparison only where it is
-        // configured. A deployment without the key keeps serving Across routes
-        // rather than reporting a provider failure on every bridge request.
-        ["across", ...(env.LAYER_ZERO_API_KEY ? (["layerzero"] as const) : [])]
+      ? // LayerZero and LI.FI join the cross-chain comparison only where each
+        // is configured. A deployment missing one of those keys keeps serving
+        // the routes it can rather than reporting a provider failure on every
+        // bridge request.
+        [
+          "across",
+          ...(env.LAYER_ZERO_API_KEY ? (["layerzero"] as const) : []),
+          ...(env.LI_FI_API_KEY ? (["lifi"] as const) : []),
+        ]
       : [source]
     : source === "all"
       ? ["ekubo", ...(env.ZERO_X_API_KEY ? (["0x"] as const) : [])]
@@ -925,6 +1000,8 @@ async function collectQuotes(
           return quoteAcross(env, intent, fetcher);
         case "layerzero":
           return quoteLayerZero(env, intent, fetcher);
+        case "lifi":
+          return quoteLiFi(env, intent, fetcher);
       }
     }),
   );
@@ -1209,9 +1286,9 @@ async function quoteAcross(
   };
 }
 
-/** Providers that only ever quote a transfer between two different chains. */
+/** Providers this server only ever asks for a transfer between two chains. */
 function isCrossChainSource(source: QuoteCollectionSource): boolean {
-  return source === "across" || source === "layerzero";
+  return source === "across" || source === "layerzero" || source === "lifi";
 }
 
 /**
@@ -1557,6 +1634,154 @@ async function quoteLayerZero(
 }
 
 /**
+ * The origin-chain call one LI.FI quote resolves to.
+ *
+ * The chain is checked rather than trusted. Everything downstream states the
+ * origin chain from the intent, so a transactionRequest built for a different
+ * one would otherwise be relabelled and signed against the wrong network
+ * instead of rejected.
+ */
+function liFiTransaction(
+  request: LiFiTransactionRequest | undefined,
+  chainId: string,
+): UnsignedTransaction {
+  if (!request?.to || !request.data) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      "LI.FI quote omitted the transaction that executes it",
+      request,
+    );
+  }
+  if (
+    request.chainId !== undefined &&
+    BigInt(request.chainId) !== BigInt(chainId)
+  ) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      `LI.FI returned a transaction for chain ${request.chainId} on a transfer whose origin is ${chainId}`,
+      request,
+    );
+  }
+  return {
+    chainId,
+    to: getAddress(request.to),
+    data: request.data,
+    // Every number on an ethers TransactionRequest is a hex string, which
+    // BigInt reads directly.
+    value: BigInt(request.value ?? 0),
+    ...(request.gasLimit === undefined
+      ? {}
+      : { gas: BigInt(request.gasLimit) }),
+  };
+}
+
+async function quoteLiFi(
+  env: Env,
+  intent: QuoteSelectionIntent,
+  fetcher: Fetcher,
+): Promise<QuoteCandidate> {
+  if (!env.LI_FI_API_KEY) {
+    throw new ServiceError(
+      "provider_not_configured",
+      "LI.FI is not configured for this deployment",
+    );
+  }
+  const baseUrl = env.LI_FI_API_URL ?? LIFI_DEFAULT_URL;
+  const destinationChainId = intent.destinationChainId ?? intent.chainId;
+  const exactOutput = intent.quoteType === "exact_output";
+  // Exact output is a separate endpoint rather than a parameter: /quote prices
+  // a source amount, and /quote/toAmount solves for the source amount that
+  // lands a stated destination amount. Both answer with the same step shape,
+  // so only the path and the amount parameter differ.
+  const url = new URL(
+    exactOutput ? "quote/toAmount" : "quote",
+    normalizedBase(baseUrl),
+  );
+  url.searchParams.set("fromChain", intent.chainId);
+  url.searchParams.set("toChain", destinationChainId);
+  url.searchParams.set("fromToken", getAddress(intent.tokenIn));
+  url.searchParams.set("toToken", getAddress(intent.tokenOut));
+  url.searchParams.set(exactOutput ? "toAmount" : "fromAmount", intent.amount);
+  url.searchParams.set(
+    "fromAddress",
+    intent.sender ? getAddress(intent.sender) : LIFI_PREVIEW_SENDER,
+  );
+  if (intent.recipient) {
+    url.searchParams.set("toAddress", getAddress(intent.recipient));
+  }
+  // LI.FI states slippage as a decimal fraction, as Across does.
+  if (intent.slippageBps !== undefined) {
+    url.searchParams.set("slippage", (intent.slippageBps / 10_000).toString());
+  }
+  if (env.LI_FI_INTEGRATOR) {
+    url.searchParams.set("integrator", env.LI_FI_INTEGRATOR);
+  }
+  // The placeholder depositor holds no balance, so simulating against it would
+  // refuse a route that is only being priced rather than executed.
+  if (!intent.sender) url.searchParams.set("skipSimulation", "true");
+
+  const quote = await fetchJson<LiFiQuote>(url.toString(), fetcher, {
+    headers: liFiHeaders(env.LI_FI_API_KEY),
+  });
+  const estimate = quote.estimate;
+  if (
+    typeof estimate?.fromAmount !== "string" ||
+    typeof estimate.toAmount !== "string"
+  ) {
+    throw new ServiceError(
+      "invalid_upstream_response",
+      "LI.FI quote omitted the amounts it estimates",
+      quote,
+    );
+  }
+  const transaction = liFiTransaction(quote.transactionRequest, intent.chainId);
+  // A native transfer has nothing to approve, and LI.FI names its own contract
+  // as the approval address regardless, so the token decides this rather than
+  // the presence of the field.
+  const approvalRequired =
+    BigInt(intent.tokenIn) !== 0n && estimate.approvalAddress !== undefined;
+  return {
+    source: "lifi",
+    sourceUrl: url.toString(),
+    raw: quote,
+    // LI.FI resolves a transfer status by step id as well as by origin
+    // transaction hash, so the id is what makes a submitted LI.FI transfer
+    // trackable before its origin hash is known.
+    providerQuoteId: typeof quote.id === "string" ? quote.id : null,
+    amountIn: BigInt(estimate.fromAmount),
+    amountOut: BigInt(estimate.toAmount),
+    minimumAmountOut:
+      typeof estimate.toAmountMin === "string"
+        ? BigInt(estimate.toAmountMin)
+        : null,
+    // /quote/toAmount already solves for a source amount that covers the
+    // requested output under this slippage, so the amount it names is the
+    // bound an approval has to cover. An exact-input transfer spends exactly
+    // what was asked for and has no separate upper bound.
+    maximumAmountIn: exactOutput ? BigInt(estimate.fromAmount) : null,
+    estimatedGas:
+      transaction.gas === undefined ? null : Number(transaction.gas),
+    priceImpact: null,
+    transaction,
+    approvalRequired,
+    approvalSpender: approvalRequired
+      ? getAddress(estimate.approvalAddress as Address)
+      : null,
+    approvalActual: null,
+    // Dropped so buildApprovalTransactions issues an exact-amount approval to
+    // the address LI.FI named, as the Across and LayerZero paths do.
+    approvalTransactions: [],
+    // LI.FI states no quote expiry; the route is re-solved on each request.
+    quoteExpiryTimestamp: null,
+    // Already seconds, unlike LayerZero's milliseconds.
+    expectedFillTime:
+      typeof estimate.executionDuration === "number"
+        ? estimate.executionDuration
+        : null,
+  };
+}
+
+/**
  * Where one LayerZero transfer has got to.
  *
  * A bridge is the one execution plan whose origin receipt does not mean the
@@ -1565,15 +1790,54 @@ async function quoteLayerZero(
  * here; supplying the origin transaction hash lets LayerZero resolve the
  * transfer before its own indexer has caught up.
  */
+export interface ValueTransferStatusInput {
+  /**
+   * Which provider carried this transfer. Defaults to LayerZero, which was
+   * the only tracked provider when this tool was introduced, so a caller that
+   * predates LI.FI keeps working unchanged.
+   */
+  source?: "layerzero" | "lifi";
+  /**
+   * The provider's quote id. It is the transfer id itself on LayerZero and so
+   * required there; on LI.FI it identifies the quote but is not a key the
+   * status endpoint accepts, so it is carried only to correlate the answer
+   * with the option that was executed.
+   */
+  quoteId?: string;
+  /**
+   * Origin-chain transaction hash. Required on LI.FI, which resolves a
+   * transfer by nothing else, and strongly preferred on LayerZero.
+   */
+  transactionHash?: string;
+  originChainId?: string;
+  destinationChainId?: string;
+}
+
 export async function getValueTransferStatus(
   env: Env,
-  input: { quoteId: string; transactionHash?: string },
+  input: ValueTransferStatusInput,
   fetcher: Fetcher = fetch,
+) {
+  return (input.source ?? "layerzero") === "lifi"
+    ? liFiTransferStatus(env, input, fetcher)
+    : layerZeroTransferStatus(env, input, fetcher);
+}
+
+async function layerZeroTransferStatus(
+  env: Env,
+  input: ValueTransferStatusInput,
+  fetcher: Fetcher,
 ) {
   if (!env.LAYER_ZERO_API_KEY) {
     throw new ServiceError(
       "provider_not_configured",
       "LayerZero is not configured for this deployment",
+    );
+  }
+  if (input.quoteId === undefined) {
+    throw new ServiceError(
+      "missing_quote_id",
+      "LayerZero reuses the quote id as the transfer id and resolves a transfer by it; pass the executed option's provider_quote_id as quote_id.",
     );
   }
   const baseUrl = env.LAYER_ZERO_API_URL ?? LAYERZERO_DEFAULT_URL;
@@ -1597,6 +1861,10 @@ export async function getValueTransferStatus(
     quote_id: input.quoteId,
     origin_transaction_hash: input.transactionHash ?? null,
     status,
+    // LayerZero states one status and no refinement of it; the fields exist so
+    // that a caller reads one shape whichever provider carried the transfer.
+    substatus: null,
+    substatus_message: null,
     settled,
     explorer_url: typeof body.explorerUrl === "string" ? body.explorerUrl : null,
     execution_history: (body.executionHistory ?? []).map((entry) => ({
@@ -1614,6 +1882,153 @@ export async function getValueTransferStatus(
         : "The transfer is still in flight. Poll this tool again in fifteen to thirty seconds, passing the same quote_id and the origin transaction_hash. A cross-chain transfer settles in minutes, not seconds, so polling faster than that spends a metered budget the next quote also needs without learning anything sooner. UNKNOWN immediately after submission usually means the transfer has not been indexed yet, not that it is lost.",
     },
   };
+}
+
+/**
+ * Where one LI.FI transfer has got to.
+ *
+ * LI.FI resolves a transfer from its origin transaction hash, and accepts the
+ * step id in the window before that hash exists, so both are usable and the
+ * hash is preferred where it is known. Naming the origin chain is what keeps
+ * the lookup from searching every chain LI.FI indexes.
+ */
+async function liFiTransferStatus(
+  env: Env,
+  input: ValueTransferStatusInput,
+  fetcher: Fetcher,
+) {
+  if (!env.LI_FI_API_KEY) {
+    throw new ServiceError(
+      "provider_not_configured",
+      "LI.FI is not configured for this deployment",
+    );
+  }
+  if (input.transactionHash === undefined) {
+    throw new ServiceError(
+      "missing_transaction_hash",
+      "LI.FI resolves a transfer only by its origin transaction hash; pass transaction_hash. Unlike LayerZero the quote id is not a transfer id here — LI.FI rejects it outright — so there is nothing to look up before the origin transaction has been sent.",
+    );
+  }
+  const baseUrl = env.LI_FI_API_URL ?? LIFI_DEFAULT_URL;
+  const url = new URL("status", normalizedBase(baseUrl));
+  url.searchParams.set("txHash", input.transactionHash);
+  if (input.originChainId !== undefined) {
+    url.searchParams.set("fromChain", input.originChainId);
+  }
+  if (input.destinationChainId !== undefined) {
+    url.searchParams.set("toChain", input.destinationChainId);
+  }
+  const body = await liFiStatusBody(url.toString(), fetcher, env.LI_FI_API_KEY);
+  const status = typeof body.status === "string" ? body.status : "UNKNOWN";
+  const substatus = typeof body.substatus === "string" ? body.substatus : null;
+  // DONE and FAILED are final. So is INVALID, which says this hash is not a
+  // transfer LI.FI can resolve rather than that it has not landed yet, and no
+  // amount of polling changes that. NOT_FOUND is the not-yet-indexed one.
+  const settled =
+    status === "DONE" || status === "FAILED" || status === "INVALID";
+  return {
+    source: "lifi",
+    source_url: url.toString(),
+    quote_id: input.quoteId ?? null,
+    origin_transaction_hash: input.transactionHash,
+    status,
+    substatus,
+    substatus_message:
+      typeof body.substatusMessage === "string" ? body.substatusMessage : null,
+    settled,
+    explorer_url:
+      typeof body.lifiExplorerLink === "string"
+        ? body.lifiExplorerLink
+        : typeof body.bridgeExplorerLink === "string"
+          ? body.bridgeExplorerLink
+          : null,
+    execution_history: liFiStatusHistory(body),
+    polling: {
+      settled,
+      instruction: liFiStatusInstruction(status, substatus),
+    },
+  };
+}
+
+/**
+ * LI.FI's own numeric code for a transfer it cannot find. It answers that with
+ * a 404 rather than a pending status, which in the window between broadcasting
+ * the origin transaction and LI.FI observing it is the ordinary case rather
+ * than a failure.
+ */
+const LIFI_NOT_FOUND_CODE = 1003;
+
+/**
+ * A status body, with the not-yet-indexed 404 translated into a status instead
+ * of thrown. A poll loop has to be able to poll through that window; a thrown
+ * error would end it at exactly the moment the transfer is most likely to be
+ * in flight.
+ */
+async function liFiStatusBody(
+  url: string,
+  fetcher: Fetcher,
+  apiKey: string,
+): Promise<LiFiStatusResponse> {
+  try {
+    return await fetchJson<LiFiStatusResponse>(url, fetcher, {
+      headers: liFiHeaders(apiKey),
+    });
+  } catch (error) {
+    if (
+      error instanceof ServiceError &&
+      isRecord(error.details) &&
+      error.details.code === LIFI_NOT_FOUND_CODE
+    ) {
+      return { status: "NOT_FOUND" };
+    }
+    throw error;
+  }
+}
+
+/** The origin and destination legs LI.FI reports, in the order they happen. */
+function liFiStatusHistory(body: LiFiStatusResponse) {
+  return (
+    [
+      ["SENT", body.sending],
+      ["RECEIVED", body.receiving],
+    ] as const
+  ).flatMap(([event, leg]) =>
+    typeof leg?.txHash !== "string"
+      ? []
+      : [
+          {
+            event,
+            chain_key: leg.chainId === undefined ? null : String(leg.chainId),
+            transaction_hash: leg.txHash,
+            timestamp: leg.timestamp ?? null,
+          },
+        ],
+  );
+}
+
+function liFiStatusInstruction(
+  status: string,
+  substatus: string | null,
+): string {
+  if (status === "DONE") {
+    // A DONE transfer is not automatically a delivered one: LI.FI reports a
+    // refund and a partial fill as completed states of the transfer, and the
+    // difference is the whole of what the user needs to hear.
+    if (substatus === "REFUNDED") {
+      return "The transfer could not be completed and the input was refunded on the origin chain. Stop polling and report the refund; the destination never received these funds.";
+    }
+    if (substatus === "PARTIAL") {
+      return "The transfer was only partially filled: some destination assets arrived and the rest was refunded or is held. Stop polling, report the amounts from execution_history, and check the destination balance before acting on it.";
+    }
+    return "The transfer was delivered on the destination chain. Stop polling and report the destination transaction from execution_history.";
+  }
+  if (status === "FAILED") {
+    return "The transfer failed. Stop polling, report it, and do not resubmit the origin calldata; request a fresh quote before trying again.";
+  }
+  if (status === "INVALID") {
+    return "LI.FI does not recognize this hash or step id as one of its transfers. Stop polling and check that the identifier came from an executed LI.FI option and that origin_chain_id names the chain it was sent on; polling cannot resolve this.";
+  }
+  return "The transfer is still in flight. Poll this tool again in fifteen to thirty seconds, passing the same identifiers. A cross-chain transfer settles in minutes, not seconds, so polling faster spends a metered budget the next quote also needs without learning anything sooner. NOT_FOUND immediately after submission usually means the transfer has not been indexed yet, not that it is lost.";
 }
 
 function quoteDiscoveryRequest(intent: QuoteIntent) {

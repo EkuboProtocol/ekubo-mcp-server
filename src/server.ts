@@ -204,7 +204,7 @@ const bytes32 = z
   .regex(/^0x[0-9a-fA-F]{64}$/, "must be exactly 32 bytes")
   .describe("0x-prefixed bytes32");
 const quoteType = z.enum(["exact_input", "exact_output"]);
-const quoteSource = z.enum(["ekubo", "0x", "across", "layerzero"]);
+const quoteSource = z.enum(["ekubo", "0x", "across", "layerzero", "lifi"]);
 const amount = z
   .string()
   .regex(/^[0-9]*[1-9][0-9]*$/, "amount must be a positive base-unit integer")
@@ -339,20 +339,35 @@ const quoteRequestSchema = z.object({
 });
 
 export const getValueTransferStatusSchema = z.object({
+  source: z
+    .enum(["layerzero", "lifi"])
+    .optional()
+    .describe(
+      "Which provider carried the transfer, taken from the executed quote's source. Defaults to layerzero. The two are tracked differently, so naming the wrong one cannot find the transfer.",
+    ),
   quote_id: z
     .string()
     .min(1)
     .max(256)
+    .optional()
     .describe(
-      "The provider_quote_id of the LayerZero option that was executed, taken from that quote's normalized or execution.quote fields. LayerZero reuses the quote id as the transfer id.",
+      "The provider_quote_id of the option that was executed, taken from that quote's normalized or execution.quote fields. Required for layerzero, which reuses the quote id as the transfer id. For lifi it is optional and used only to label the answer, because LI.FI does not accept a quote id as a lookup key.",
     ),
   transaction_hash: z
     .string()
     .regex(/^0x[0-9a-fA-F]{64}$/, "must be a 32-byte transaction hash")
     .optional()
     .describe(
-      "Origin-chain transaction hash of the submitted transfer. Pass it whenever it is known, which after execution is always: it lets LayerZero resolve the transfer before its own indexer has caught up, and some route types (Stargate taxi among them) refuse to report status without it. Omitting it is only useful before the origin transaction has been sent.",
+      "Origin-chain transaction hash of the submitted transfer. Required for lifi, which resolves a transfer by nothing else. For layerzero it is optional but should always be passed once it is known: it lets LayerZero resolve the transfer before its own indexer has caught up, and some route types (Stargate taxi among them) refuse to report status without it.",
     ),
+  origin_chain_id: chainId
+    .optional()
+    .describe(
+      "Chain the transfer was sent from. Only used by lifi, where it narrows the lookup to one chain instead of every chain LI.FI indexes, and is therefore worth passing every time.",
+    ),
+  destination_chain_id: chainId
+    .optional()
+    .describe("Chain the transfer is being delivered to. Only used by lifi."),
 });
 
 export const getQuotesWithPlansSchema = quoteRequestSchema.extend({
@@ -1685,14 +1700,14 @@ export const publicToolCatalog = [
     name: "get_quotes_with_plans",
     title: "Get swap or bridge quotes with execution plans",
     description:
-      "The whole non-browser swap path for onchain swap, trade, exchange, or convert requests on supported EVM chains: one call returns every available Ekubo and 0x quote for a same-chain swap, each already carrying the execution_plan_reference that executes it, without accepting or selecting a source. Choose an option and pass its execution.execution_plan_reference envelope unchanged as the wallet's reference argument; the wallet fetches and verifies the plan body itself; there is no second preparation step, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Do not call this tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the request. Omit sender and slippage_bps for an indicative comparison that fetches no calldata; supply both for plans. Unless the user specifies otherwise, choose a low slippage_bps whose maximum value impact is approximately one estimated gas fee (10,000 * gas-cost value / swap-notional value), not a generic 50 bps/0.5%; prefer re-quoting and retrying with a newly prepared transaction after slippage failure to exposing the trade to a wider bound. Never retry reverted calldata unchanged. Cross-chain requests are quoted by both Across and LayerZero's Value Transfer API where each is configured, and are compared the same way as same-chain options; a LayerZero option's provider_quote_id is what get_value_transfer_status is then polled with to confirm delivery. Provider failures are reported separately in unavailable_sources, and an option that could not be made executable reports its own execution_unavailable while the rest stand. Set include_raw_quotes only to diagnose a provider; the normalized amounts already carry every field a choice turns on. Supports EIP-155 token identifiers.",
+      "The whole non-browser swap path for onchain swap, trade, exchange, or convert requests on supported EVM chains: one call returns every available Ekubo and 0x quote for a same-chain swap, each already carrying the execution_plan_reference that executes it, without accepting or selecting a source. Choose an option and pass its execution.execution_plan_reference envelope unchanged as the wallet's reference argument; the wallet fetches and verifies the plan body itself; there is no second preparation step, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Do not call this tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the request. Omit sender and slippage_bps for an indicative comparison that fetches no calldata; supply both for plans. Unless the user specifies otherwise, choose a low slippage_bps whose maximum value impact is approximately one estimated gas fee (10,000 * gas-cost value / swap-notional value), not a generic 50 bps/0.5%; prefer re-quoting and retrying with a newly prepared transaction after slippage failure to exposing the trade to a wider bound. Never retry reverted calldata unchanged. Cross-chain requests are quoted by Across, LayerZero's Value Transfer API, and LI.FI where each is configured, and are compared the same way as same-chain options; after executing a LayerZero or LI.FI option, get_value_transfer_status is polled to confirm delivery, with that option's provider_quote_id for LayerZero and with the origin transaction hash for LI.FI. Provider failures are reported separately in unavailable_sources, and an option that could not be made executable reports its own execution_unavailable while the rest stand. Set include_raw_quotes only to diagnose a provider; the normalized amounts already carry every field a choice turns on. Supports EIP-155 token identifiers.",
     inputSchema: z.toJSONSchema(getQuotesWithPlansSchema),
   },
   {
     name: "get_value_transfer_status",
-    title: "Track a LayerZero cross-chain transfer",
+    title: "Track a LayerZero or LI.FI cross-chain transfer",
     description:
-      "Report where an executed LayerZero transfer has got to, from origin submission through delivery on the destination chain. A bridge is the one execution plan whose successful origin receipt does not mean the user has their funds, so this is how a cross-chain transfer is confirmed finished rather than merely sent. Call it with the provider_quote_id of the LayerZero option that was executed and the origin transaction_hash, which some route types require rather than merely prefer. Poll every fifteen to thirty seconds while settled is false, and stop as soon as it is true: transfers settle in minutes rather than seconds, and this call draws on the same metered budget as a quote, so polling faster costs the next quote without learning anything sooner. Status UNKNOWN immediately after submission usually means the transfer has not been indexed yet rather than that it was lost. Applies only to LayerZero options; Across transfers are not tracked here.",
+      "Report where an executed LayerZero or LI.FI transfer has got to, from origin submission through delivery on the destination chain. A bridge is the one execution plan whose successful origin receipt does not mean the user has their funds, so this is how a cross-chain transfer is confirmed finished rather than merely sent. Pass source set to the executed quote's source. For layerzero, call it with that option's provider_quote_id and the origin transaction_hash, which some route types require rather than merely prefer. For lifi, the origin transaction_hash is the only key that resolves a transfer and is required; pass origin_chain_id with it to narrow the lookup. Poll every fifteen to thirty seconds while settled is false, and stop as soon as it is true: transfers settle in minutes rather than seconds, and this call draws on the same metered budget as a quote, so polling faster costs the next quote without learning anything sooner. Status UNKNOWN or NOT_FOUND immediately after submission usually means the transfer has not been indexed yet rather than that it was lost. Read substatus before reporting a settled LI.FI transfer as delivered: REFUNDED and PARTIAL are reported under status DONE. Applies to LayerZero and LI.FI options; Across transfers are not tracked here.",
     inputSchema: z.toJSONSchema(getValueTransferStatusSchema),
   },
   {
@@ -2447,8 +2462,17 @@ export function createEkuboServer(
     getValueTransferStatusSchema,
     (input) =>
       getValueTransferStatus(env, {
+        source: input.source,
         quoteId: input.quote_id,
         transactionHash: input.transaction_hash,
+        originChainId:
+          input.origin_chain_id === undefined
+            ? undefined
+            : canonicalChainId(input.origin_chain_id),
+        destinationChainId:
+          input.destination_chain_id === undefined
+            ? undefined
+            : canonicalChainId(input.destination_chain_id),
       }),
   );
 
@@ -3664,7 +3688,8 @@ export function createEkuboServer(
     "ekubo://docs/quoter-api",
     {
       title: "Ekubo aggregated quote contract",
-      description: "Ekubo, 0x, and Across quote semantics used by MCP tools",
+      description:
+        "Ekubo, 0x, Across, LayerZero, and LI.FI quote semantics used by MCP tools",
       mimeType: "text/markdown",
     },
     async (uri) => ({
@@ -4017,7 +4042,7 @@ const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 1. Search the token list when resolving a name or symbol. For exact identifiers, use get_token for one chain/address pair or get_tokens for up to 1,000 pairs in one batch. Show the chosen chains and addresses to the user.
 2. Convert the user amount to base units without floating-point arithmetic.
 3. Set destination_chain_id explicitly for a bridge. Raw addresses and eip155:<chain>:<address> token IDs are accepted.
-4. Request an exact-input or exact-output quote. Once the user has decided to swap, pass sender and slippage_bps so every option arrives with the calldata that executes it; omit both only for an indicative "what would I get" comparison. Honor the user's explicit slippage preference. If none was given, estimate gas cost and swap notional in the same currency and use slippage_bps approximately equal to 10,000 * gas-cost value / swap-notional value, so the maximum tolerated slippage loss is near one gas fee. Do not default to 50 bps (0.5%), especially on Ethereum mainnet; prefer re-quoting and preparing a new transaction after failure to widening the bound. For same-chain requests, inspect every entry in quotes and choose a source; the tool does not accept or select one. The normalized amounts expose amount_out for exact input and amount_in for exact output. Cross-chain requests return Across and LayerZero options where each is configured; compare them as you would any other options. After executing a LayerZero option, poll get_value_transfer_status with that quote's provider_quote_id and the origin transaction hash until settled is true, because a successful origin receipt does not mean the transfer was delivered. unavailable_sources reports individual provider failures without invalidating successful quote options, and a single option that could not be made executable reports its own execution_unavailable while the rest stand.
+4. Request an exact-input or exact-output quote. Once the user has decided to swap, pass sender and slippage_bps so every option arrives with the calldata that executes it; omit both only for an indicative "what would I get" comparison. Honor the user's explicit slippage preference. If none was given, estimate gas cost and swap notional in the same currency and use slippage_bps approximately equal to 10,000 * gas-cost value / swap-notional value, so the maximum tolerated slippage loss is near one gas fee. Do not default to 50 bps (0.5%), especially on Ethereum mainnet; prefer re-quoting and preparing a new transaction after failure to widening the bound. For same-chain requests, inspect every entry in quotes and choose a source; the tool does not accept or select one. The normalized amounts expose amount_out for exact input and amount_in for exact output. Cross-chain requests return Across, LayerZero, and LI.FI options where each is configured; compare them as you would any other options. After executing a LayerZero or LI.FI option, poll get_value_transfer_status with source set to that option's source until settled is true, because a successful origin receipt does not mean the transfer was delivered: LayerZero is polled with the quote's provider_quote_id and the origin transaction hash, LI.FI with the origin transaction hash and origin_chain_id. unavailable_sources reports individual provider failures without invalidating successful quote options, and a single option that could not be made executable reports its own execution_unavailable while the rest stand.
 5. Take the chosen option's execution.execution_plan_reference as it is. Do not call the tool again to obtain a plan you were already given: it fetches fresh quotes, which spends a round trip and an agent turn inside the window where the plan in hand is still good, and leaves the user having approved a quote that is not the one executed. Call it again only after an expiry, a revert, or a change to the amount, tokens, sender, recipient, or slippage.
 6. Include the provider, exact plan ID, token amounts, chains, slippage bound, recipient, approvals, execution transaction, and any allowance reset in the wallet handoff.
 7. Pass the execution_plan_reference envelope unchanged as the wallet's reference argument and let its own simulation establish balances, allowances, policy, and the exact transaction outcome. The wallet fetches and verifies the plan body itself; never restate it. Do not read allowances or validate the transaction separately first, and do not ask for separate agent-level confirmation; both only spend the quote's remaining life.
@@ -4123,8 +4148,8 @@ compare; set include_raw_quotes to add the untouched provider responses. There i
 no second preparation call, so no quote is fetched twice and the compared quote is
 the executed one. If either requested
 provider fails, the result marks the set incomplete and instructs the user to retry.
-Cross-chain requests use the Across Swap API and LayerZero's Value Transfer
-API, each included where it is configured. Provider API keys are server-side
+Cross-chain requests use the Across Swap API, LayerZero's Value Transfer API,
+and the LI.FI API, each included where it is configured. Provider API keys are server-side
 and are never accepted as tool arguments.
 
 Ekubo base URL: https://prod-api-quoter.ekubo.org
@@ -4170,6 +4195,31 @@ LayerZero (Value Transfer API, https://transfer.layerzero-api.com/v1):
   TransferDelegate rather than the LZMulticall wrapper.
 - Each quote's id is returned as provider_quote_id and is the transfer id that
   get_value_transfer_status polls.
+
+LI.FI (https://li.quest/v1):
+- Requires different origin and destination chain IDs.
+- Chains are addressed by EIP-155 id and a chain's native currency by the zero
+  address, so neither needs translating.
+- exact_input maps to GET /quote with fromAmount; exact_output maps to GET
+  /quote/toAmount with toAmount, which solves for the source amount that lands
+  the requested output. That endpoint over-solves, so amount_out and
+  minimum_amount_out both exceed the requested output and maximum_amount_in
+  carries the source amount the approval must cover.
+- slippage_bps maps onto slippage as a decimal fraction; estimate.toAmountMin
+  becomes minimum_amount_out and estimate.executionDuration, already in
+  seconds, becomes expected_fill_time_seconds.
+- LI.FI selects the route itself and answers with one step. Its
+  transactionRequest is the transfer, and its chainId is checked against the
+  origin rather than trusted.
+- estimate.approvalAddress is re-issued as an exact-amount approval, as on the
+  Across and LayerZero paths.
+- LI.FI states no quote expiry, so quote_expiry_timestamp is null.
+- get_value_transfer_status resolves a LI.FI transfer by origin transaction
+  hash only; the quote id is not a key it accepts. A 404 for a hash LI.FI has
+  not yet observed is reported as status NOT_FOUND rather than raised, so a
+  poll loop survives the window before the origin transaction is indexed.
+- status DONE covers substatus REFUNDED and PARTIAL, so substatus decides
+  whether the funds actually arrived.
 
 MCP callers should use get_quotes_with_plans instead of constructing
 provider URLs themselves.

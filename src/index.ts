@@ -163,6 +163,8 @@ export default {
               data_api: "https://prod-api.ekubo.org/openapi.json",
               zero_x: "https://docs.0x.org",
               across: "https://docs.across.to/api-reference",
+              layerzero: "https://docs.layerzero.network/",
+              lifi: "https://docs.li.fi/api-reference/introduction",
             },
             external_market_data: {
               server_role:
