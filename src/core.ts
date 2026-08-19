@@ -1611,7 +1611,7 @@ export async function getValueTransferStatus(
         ? status === "SUCCEEDED"
           ? "The transfer was delivered on the destination chain. Stop polling and report the destination transaction from execution_history."
           : "The transfer failed. Stop polling, report it, and do not resubmit the origin calldata; request a fresh quote before trying again."
-        : "The transfer is still in flight. Poll this tool again after a few seconds, passing the same quote_id and the origin transaction_hash. UNKNOWN immediately after submission usually means the transfer has not been indexed yet, not that it is lost.",
+        : "The transfer is still in flight. Poll this tool again in fifteen to thirty seconds, passing the same quote_id and the origin transaction_hash. A cross-chain transfer settles in minutes, not seconds, so polling faster than that spends a metered budget the next quote also needs without learning anything sooner. UNKNOWN immediately after submission usually means the transfer has not been indexed yet, not that it is lost.",
     },
   };
 }
