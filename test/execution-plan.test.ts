@@ -11,6 +11,10 @@ const token = "0x1111111111111111111111111111111111111111" as const;
 const router = "0x3333333333333333333333333333333333333333" as const;
 const LDO = "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32" as const;
 const USDT = "0xdAC17F958D2ee523a2206206994597C13D831ec7" as const;
+const CRV = "0xD533a949740bb3306d119CC777fa900bA034cd52" as const;
+// Bridged USDT is a separate contract on every chain and none carry the guard.
+const ARBITRUM_USDT = "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9" as const;
+const OPTIMISM_USDT = "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58" as const;
 
 function approvalCalldata(amount: bigint) {
   return encodeFunctionData({
@@ -251,6 +255,26 @@ describe("allowance resets for tokens that reject an overwrite", () => {
   // ordinary ERC-20s and must not pay for a step they do not need.
   it("leaves the same address on another chain alone", () => {
     expect(planApproving("4663", LDO).ordered_steps).toHaveLength(3);
+  });
+
+  // Found by probing the chain rather than by report: Curve's Vyper ERC20
+  // asserts the same condition mainnet USDT and LDO do.
+  it("zeroes a CRV allowance", () => {
+    expect(
+      planApproving("1", CRV).ordered_steps.map((step) => step.kind),
+    ).toEqual(["approval", "approval", "execution", "allowance_cleanup"]);
+  });
+
+  it("leaves every bridged USDT with a single approval", () => {
+    expect(planApproving("42161", ARBITRUM_USDT).ordered_steps).toHaveLength(3);
+    expect(planApproving("10", OPTIMISM_USDT).ordered_steps).toHaveLength(3);
+  });
+
+  // FUN carries the guard but reverts on approve(0) as well, so prefixing a
+  // reset would only add a step that fails.
+  it("omits the tokens no reset can recover", () => {
+    const fun = "0x419d0d8bDD9aF5e606Ae2232ed285Aff190E711b" as const;
+    expect(planApproving("1", fun).ordered_steps).toHaveLength(3);
   });
 
   it("does not prefix a revocation with another zero approval", () => {
