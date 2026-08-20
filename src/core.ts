@@ -22,18 +22,22 @@ import {
 import { MCP_SERVER_VERSION } from "./version.js";
 
 /**
- * Rate limiter bindings are declared in `wrangler.jsonc`, so generated types
- * make them required, but the code treats every one of them as absent-tolerant
- * on purpose: `wrangler dev` and any deployment that has not provisioned the
- * namespaces must still serve, with abuse protection degraded rather than the
- * endpoint down. Widening them back to optional here keeps that contract in
- * the type system instead of only in the comments.
+ * Bindings declared in `wrangler.jsonc`, which makes the generated types
+ * require them, that the code treats as absent-tolerant on purpose.
+ *
+ * The rate limiters are the original case: `wrangler dev` and any deployment
+ * that has not provisioned the namespaces must still serve, with abuse
+ * protection degraded rather than the endpoint down. `LI_FI_INTEGRATOR` is the
+ * same shape of claim — a deployment that has not named an integration still
+ * quotes LI.FI, it simply attributes nothing. Widening them back to optional
+ * here keeps that contract in the type system instead of only in the comments.
  */
 type OptionalBindings =
   | "RATE_LIMITER"
   | "RATE_LIMITER_BURST"
   | "RATE_LIMITER_TOOLS"
-  | "RATE_LIMITER_METERED";
+  | "RATE_LIMITER_METERED"
+  | "LI_FI_INTEGRATOR";
 
 export type Env = Omit<Cloudflare.Env, OptionalBindings> &
   Partial<Pick<Cloudflare.Env, OptionalBindings>> & {
@@ -41,12 +45,6 @@ export type Env = Omit<Cloudflare.Env, OptionalBindings> &
     ACROSS_API_URL?: string;
     LAYER_ZERO_API_URL?: string;
     LI_FI_API_URL?: string;
-    /**
-     * The tracking name LI.FI attributes this server's volume to. Optional and
-     * omitted when unset: an integrator string that does not match the one the
-     * API key is registered to is worth less than no claim at all.
-     */
-    LI_FI_INTEGRATOR?: string;
     ALLOWED_HOSTNAMES?: string;
     ALLOWED_ORIGINS?: string;
   };

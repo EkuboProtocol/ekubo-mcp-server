@@ -30,7 +30,15 @@
   },
   "vars": {
     "EKUBO_API_URL": "https://prod-api.ekubo.org",
-    "EKUBO_QUOTER_URL": "https://prod-api-quoter.ekubo.org"
+    "EKUBO_QUOTER_URL": "https://prod-api-quoter.ekubo.org",
+    // The integration LI.FI registers this server's volume under. Not a
+    // credential — it travels in the query string of every quote and comes
+    // back in the source_url a caller is shown — so it belongs in version
+    // control beside the URLs rather than in the secret store. Declared here
+    // rather than set in the dashboard because a variable added there lands
+    // on a new version that a deploy does not necessarily promote, so the
+    // running code can silently keep quoting without it.
+    "LI_FI_INTEGRATOR": "ekubo-wallet"
   },
   "r2_buckets": [
     {
