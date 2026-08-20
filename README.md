@@ -14,8 +14,10 @@ reads across each chain's canonical token list for wallet balances and selected
 contract allowances. It also publishes the same ranked boosted-fee, incentive,
 and ve(3,3)-emission liquidity opportunities shown by the interface.
 It additionally exposes fixed, locally maintained Aave V3, Morpho Vault V2,
-Sky Savings, Lido, and Merkl deployments with signer-neutral action plans, and
-prepares proof-verified Merkl reward claims for campaigns on any protocol. Agents
+Sky Savings, Lido, Merkl, and Aerodrome deployments with signer-neutral action
+plans, prepares proof-verified Merkl reward claims for campaigns on any
+protocol, and prepares Aerodrome v2 liquidity, gauge, veAERO lock, vote, and
+reward-claim actions on Base alongside the Sugar lens reads that feed them. Agents
 discover live protocol data from official public APIs or the user's wallet/RPC
 directly; this server is not in that data path.
 
@@ -29,7 +31,7 @@ a data API and the quoter remains a route-data service.
 - `GET /tools` — deterministic tool catalog for non-MCP discovery
 - `GET /openapi.json` — OpenAPI 3.1 discovery contract
 - `GET /llms.txt` — concise agent workflow
-- `GET /skills/{use-morpho,use-sky,use-lido,use-merkl}/SKILL.md` — reusable direct-data
+- `GET /skills/{use-morpho,use-sky,use-lido,use-merkl,use-aerodrome}/SKILL.md` — reusable direct-data
   agent instructions, with each skill's discovery reference beneath
   `references/discovery.md`
 
@@ -231,6 +233,40 @@ already claimed, so the claimable figure is `amount - claimed`; its `pending`
 field is not claimable at all. `prepare_merkl_claim` covers Merkl campaigns on
 any protocol, while `prepare_rewards_claim` covers Ekubo's own incentive drops.
 
+### Aerodrome
+
+- `get_aerodrome_deployment` returns the Base contracts and the protocol
+  behaviour that decides what an action can do.
+- `prepare_aerodrome_sugar_reads` builds the eth_call bundle for one Sugar
+  dataset: pools, an account's positions, veNFTs, epochs, or a veNFT's
+  claimable rewards.
+- `prepare_aerodrome_liquidity_deposit` / `_withdraw` — v2 add and remove
+  through the Router, with per-side approvals and allowance cleanup.
+- `prepare_aerodrome_gauge_deposit` / `_withdraw` / `_claim` — stake, unstake,
+  and collect AERO emissions.
+- `prepare_aerodrome_lock` — create, add to, extend, permanently lock, unlock,
+  or withdraw a veAERO position.
+- `prepare_aerodrome_vote` — cast or reset one veNFT's gauge vote.
+- `prepare_aerodrome_incentive_claim` — a voter's fees, bribes, and rebase.
+
+Read `ekubo://skills/use-aerodrome`. Aerodrome is Base-only and publishes no
+data API: the **Sugar** lens contracts are its data pipeline and answer
+`eth_call`, so discovery is a read against the user's own RPC and the no-proxy
+boundary costs nothing. Each prepared read ships a decode plan matching the
+deployed struct layout.
+
+Every address was derived on chain from the Voter outward rather than copied
+from Velodrome's SDKs, which is not pedantry: `sdk.js` publishes Optimism
+addresses, and its `Position` struct has drifted from the deployed Base lens by
+two fields, so decoding a live response with it silently misreads everything
+after `sqrt_ratio_upper` instead of failing.
+
+The fee and bribe contracts a claim needs are per pool and come only from a
+Sugar rewards read; a claim naming the wrong one succeeds and transfers
+nothing, so a green simulation is not by itself evidence the inputs were right.
+Swaps are deliberately absent — `get_quotes_with_plans` remains the single swap
+path — and Slipstream positions are readable but not yet mintable here.
+
 The remaining EVM interface transaction paths also have first-class tools:
 
 - `prepare_transfers` — prepare 1–4,096 ordered native, ERC-20, ERC-721,
@@ -251,7 +287,8 @@ overloads, build multicalls, append approvals, or determine ordering.
 ## Resources
 
 - `ekubo://skills/use-morpho`, `ekubo://skills/use-sky`,
-  `ekubo://skills/use-lido`, and `ekubo://skills/use-merkl` — reusable
+  `ekubo://skills/use-lido`, `ekubo://skills/use-merkl`, and
+  `ekubo://skills/use-aerodrome` — reusable
   no-proxy protocol workflows, with a
   `references/discovery.md` child resource for official endpoints and reads
 - `ekubo://docs/lp-position-workflow` — interface-equivalent indexed/API/USD/

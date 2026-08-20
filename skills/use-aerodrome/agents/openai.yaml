@@ -1,0 +1,4 @@
+interface:
+  display_name: "Use Aerodrome"
+  short_description: "Read Aerodrome through Sugar and prepare guarded ve(3,3) actions"
+  default_prompt: "Use $use-aerodrome to read the user's Aerodrome pools, positions, and veAERO state directly from the Sugar lens contracts, then safely prepare and verify any liquidity, gauge, lock, vote, or claim action."

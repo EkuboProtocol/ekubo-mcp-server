@@ -120,6 +120,18 @@ import {
   prepareMorphoVaultRedeem,
   prepareMorphoVaultWithdraw,
 } from "./morpho.js";
+import {
+  getAerodromeDeployment,
+  prepareAerodromeGaugeClaim,
+  prepareAerodromeGaugeDeposit,
+  prepareAerodromeGaugeWithdraw,
+  prepareAerodromeIncentiveClaim,
+  prepareAerodromeLiquidityDeposit,
+  prepareAerodromeLiquidityWithdraw,
+  prepareAerodromeLock,
+  prepareAerodromeSugarReads,
+  prepareAerodromeVote,
+} from "./aerodrome.js";
 import { getMerklDeployment, prepareMerklClaim } from "./merkl.js";
 import {
   getSkySavingsDeployment,
@@ -1494,6 +1506,162 @@ export const prepareMerklClaimSchema = z.object({
     ),
 });
 
+const aerodromeActionSchema = z.object({
+  chain_id: chainId.describe("Must be Base chain 8453; Aerodrome exists nowhere else"),
+  sender: address.describe("Wallet that will execute the Aerodrome action"),
+});
+const aerodromeDeadline = amount.describe(
+  "Unix timestamp after which the router rejects this transaction. Pick a real near-term deadline; one already past makes the plan a guaranteed revert.",
+);
+const aerodromeClaimSources = z
+  .array(
+    z.object({
+      contract: address.describe(
+        "The fee or bribe contract address exactly as a Sugar rewards read returned it",
+      ),
+      tokens: z
+        .array(address)
+        .min(1)
+        .max(16)
+        .describe("Reward tokens to claim from this contract"),
+    }),
+  )
+  .max(32);
+
+export const getAerodromeDeploymentSchema = z.object({
+  chain_id: chainId
+    .optional()
+    .describe("Optional chain to check against Aerodrome's Base-only deployment"),
+});
+export const prepareAerodromeSugarReadsSchema = z.object({
+  chain_id: chainId.describe("Must be Base chain 8453"),
+  dataset: z
+    .enum([
+      "pools",
+      "positions",
+      "venfts_by_account",
+      "venft_by_id",
+      "latest_epochs",
+      "pool_epochs",
+      "venft_rewards",
+      "venft_pool_rewards",
+    ])
+    .describe(
+      "Which Sugar dataset to read. pools and positions come from LpSugar, venfts from VeSugar, and epochs and rewards from RewardsSugar.",
+    ),
+  account: address
+    .optional()
+    .describe("Required for positions and venfts_by_account"),
+  pool: address.optional().describe("Required for pool_epochs and venft_pool_rewards"),
+  venft_id: amount
+    .optional()
+    .describe("Required for venft_by_id, venft_rewards, and venft_pool_rewards"),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(500)
+    .optional()
+    .describe("Page size, capped by the lens contract's own maximum (500 pools, 200 positions)"),
+  offset: z.number().int().min(0).optional().describe("Page offset, defaults to 0"),
+});
+export const prepareAerodromeLiquidityDepositSchema = aerodromeActionSchema.extend({
+  token_a: address.describe("First token of the v2 pair"),
+  token_b: address.describe("Second token of the v2 pair"),
+  stable: z
+    .boolean()
+    .describe(
+      "True for a stable pool, false for a volatile one. The pair plus this flag identifies the pool, so a wrong value targets a different pool or none at all.",
+    ),
+  amount_a_desired: amount.describe("Maximum token_a to deposit in base units"),
+  amount_b_desired: amount.describe("Maximum token_b to deposit in base units"),
+  amount_a_min: amount.describe(
+    "Minimum token_a the deposit must consume. The pool takes whatever its reserve ratio demands and refunds the rest, so this is the slippage bound.",
+  ),
+  amount_b_min: amount.describe("Minimum token_b the deposit must consume"),
+  deadline: aerodromeDeadline,
+  recipient: address.optional().describe("LP token recipient; defaults to sender"),
+});
+export const prepareAerodromeLiquidityWithdrawSchema = aerodromeActionSchema.extend({
+  token_a: address.describe("First token of the v2 pair"),
+  token_b: address.describe("Second token of the v2 pair"),
+  stable: z.boolean().describe("True for a stable pool, false for a volatile one"),
+  liquidity: amount.describe("Exact LP token amount to burn in base units"),
+  amount_a_min: amount.describe("Minimum token_a to receive"),
+  amount_b_min: amount.describe("Minimum token_b to receive"),
+  deadline: aerodromeDeadline,
+  recipient: address.optional().describe("Token recipient; defaults to sender"),
+});
+export const prepareAerodromeGaugeDepositSchema = aerodromeActionSchema.extend({
+  gauge: address.describe("The pool's gauge address, from a Sugar pools read"),
+  amount: amount.describe("Exact LP token amount to stake in base units"),
+});
+export const prepareAerodromeGaugeWithdrawSchema = aerodromeActionSchema.extend({
+  gauge: address.describe("The pool's gauge address, from a Sugar pools read"),
+  amount: amount.describe("Exact LP token amount to unstake in base units"),
+});
+export const prepareAerodromeGaugeClaimSchema = aerodromeActionSchema.extend({
+  gauge: address.describe("The pool's gauge address, from a Sugar pools read"),
+  account: address
+    .optional()
+    .describe(
+      "Account whose emissions are claimed; defaults to sender. getReward credits this address, so a non-sender value pays someone else.",
+    ),
+});
+export const prepareAerodromeLockSchema = aerodromeActionSchema.extend({
+  action: z
+    .enum([
+      "create",
+      "increase_amount",
+      "extend",
+      "lock_permanent",
+      "unlock_permanent",
+      "withdraw",
+    ])
+    .describe("Which veAERO lock action to build"),
+  amount: amount.optional().describe("AERO amount in base units; required for create and increase_amount"),
+  lock_duration: amount
+    .optional()
+    .describe(
+      "Lock length in seconds measured from now, required for create and extend. The escrow floors it to a week boundary and caps it at four years.",
+    ),
+  venft_id: amount.optional().describe("veNFT token id; required for every action but create"),
+});
+export const prepareAerodromeVoteSchema = aerodromeActionSchema.extend({
+  venft_id: amount.describe("veNFT token id casting the vote"),
+  pools: z
+    .array(
+      z.object({
+        pool: address.describe("Pool address to vote for"),
+        weight: amount.describe(
+          "Relative share of this NFT's voting power. Only the ratio matters, so [1,1] and [50,50] are the same vote.",
+        ),
+      }),
+    )
+    .max(32)
+    .optional()
+    .describe(
+      "The complete allocation. It replaces any previous vote, so a pool left out is voted zero rather than left alone.",
+    ),
+  reset: z
+    .boolean()
+    .optional()
+    .describe("Clear this NFT's votes instead of casting new ones; required before withdrawing a voted NFT"),
+});
+export const prepareAerodromeIncentiveClaimSchema = aerodromeActionSchema.extend({
+  venft_id: amount.describe("veNFT token id whose rewards are claimed"),
+  fees: aerodromeClaimSources
+    .optional()
+    .describe("Fee contracts and their tokens, taken from a Sugar venft_rewards read"),
+  bribes: aerodromeClaimSources
+    .optional()
+    .describe("Bribe contracts and their tokens, taken from a Sugar venft_rewards read"),
+  claim_rebase: z
+    .boolean()
+    .optional()
+    .describe("Also claim the RewardsDistributor rebase, which compounds into the lock"),
+});
+
 const lidoActionSchema = z.object({
   chain_id: chainId.describe("Must be Ethereum chain 1"),
   sender: address.describe("Wallet that will execute the Lido action"),
@@ -2143,6 +2311,76 @@ export const publicToolCatalog = [
     description:
       "Prepare one Distributor claim covering every Merkl reward token the sender holds on a chain, from amounts and proofs the agent fetched from https://api.merkl.xyz/v4/users/{address}/rewards/summary. Every proof is folded here into the Merkle root it implies, all rewards must agree on that root, and the returned read bundle asks the wallet for the root the chain is actually enforcing plus each already-claimed total and claim-recipient override — so neither this server nor the wallet has to trust Merkl's API. Amounts are cumulative, not deltas: the contract transfers the amount minus what was already claimed. Distinct from prepare_rewards_claim, which claims Ekubo's own incentive drops.",
     inputSchema: z.toJSONSchema(prepareMerklClaimSchema),
+  },
+  {
+    name: "get_aerodrome_deployment",
+    title: "Get the verified Aerodrome Base deployment",
+    description:
+      "Locally return Aerodrome's Base contracts — AERO, the veAERO escrow, Voter, Router, v2 pool factory, RewardsDistributor, both Slipstream generations, and the four Sugar lens contracts — plus the protocol behaviour an agent has to respect. Every address was derived on chain from the Voter outward rather than copied from Velodrome's SDKs, which publish Optimism addresses and a drifted struct layout. This server makes no Aerodrome API or RPC request. Aerodrome is Base-only; Velodrome is the same code elsewhere and is not prepared here.",
+    inputSchema: z.toJSONSchema(getAerodromeDeploymentSchema),
+  },
+  {
+    name: "prepare_aerodrome_sugar_reads",
+    title: "Prepare an Aerodrome Sugar read bundle",
+    description:
+      "Build the exact eth_call bundle for one Sugar dataset — pools, an account's positions, veNFTs by account or id, epoch rewards, or a veNFT's claimable rewards — for the wallet to run against the user's own RPC. Sugar is Aerodrome's data pipeline: there is no API to call, the lens contracts answer eth_call, and this server stays out of the data path. Each call ships with a decode plan matching the deployed contract's struct layout, verified by decoding live responses. The addresses it returns — pool, gauge, fee, and bribe contracts, and veNFT ids — are the required inputs to the other prepare_aerodrome_* tools.",
+    inputSchema: z.toJSONSchema(prepareAerodromeSugarReadsSchema),
+  },
+  {
+    name: "prepare_aerodrome_liquidity_deposit",
+    title: "Prepare an Aerodrome v2 liquidity deposit",
+    description:
+      "Prepare a v2 addLiquidity through Aerodrome's Router, with an exact approval per side and an allowance cleanup after. The pool takes whatever its reserve ratio demands and refunds the rest, so both minimums are required rather than defaulted. The returned read bundle quotes the actual split and resolves the pool address, so a pair that has no pool yet is caught before a deposit sets its opening price. This mints LP tokens only; they earn no AERO until staked with prepare_aerodrome_gauge_deposit.",
+    inputSchema: z.toJSONSchema(prepareAerodromeLiquidityDepositSchema),
+  },
+  {
+    name: "prepare_aerodrome_liquidity_withdraw",
+    title: "Prepare an Aerodrome v2 liquidity withdrawal",
+    description:
+      "Prepare a v2 removeLiquidity that burns LP tokens back into the underlying pair. The read bundle resolves the pool and quotes what comes back, and an LP balance short of the requested liquidity usually means the rest is staked in the gauge and needs unstaking first.",
+    inputSchema: z.toJSONSchema(prepareAerodromeLiquidityWithdrawSchema),
+  },
+  {
+    name: "prepare_aerodrome_gauge_deposit",
+    title: "Prepare an Aerodrome gauge stake",
+    description:
+      "Stake v2 LP tokens into a pool's gauge to earn AERO emissions. Staking redirects that position's trading fees to the pool's voters, so it trades fee income for emissions rather than adding to it. The read bundle returns the gauge's own stakingToken and whether the gauge is still alive — a dead gauge accepts the stake and pays nothing.",
+    inputSchema: z.toJSONSchema(prepareAerodromeGaugeDepositSchema),
+  },
+  {
+    name: "prepare_aerodrome_gauge_withdraw",
+    title: "Prepare an Aerodrome gauge unstake",
+    description:
+      "Unstake v2 LP tokens from a gauge. This returns the LP token, not the underlying pair, and it does not claim AERO: the read bundle reports what is still earned so it is not silently left behind.",
+    inputSchema: z.toJSONSchema(prepareAerodromeGaugeWithdrawSchema),
+  },
+  {
+    name: "prepare_aerodrome_gauge_claim",
+    title: "Prepare an Aerodrome emissions claim",
+    description:
+      "Claim accrued AERO from a gauge. getReward credits its account argument rather than the sender, so a claim can pay a different address than the one paying gas; the plan states which. A claim with nothing earned succeeds and transfers nothing.",
+    inputSchema: z.toJSONSchema(prepareAerodromeGaugeClaimSchema),
+  },
+  {
+    name: "prepare_aerodrome_lock",
+    title: "Prepare a veAERO lock action",
+    description:
+      "Build one veAERO escrow action: create a lock, add AERO to one, extend it, switch permanent locking on or off, or withdraw an expired one. Durations are measured from now and floored to a week boundary, so anything under a week is refused rather than signed. The read bundle returns ownership and the lock's (amount, end, isPermanent) so an impossible action — withdrawing an unexpired or permanent lock, extending past nothing — is caught before signing.",
+    inputSchema: z.toJSONSchema(prepareAerodromeLockSchema),
+  },
+  {
+    name: "prepare_aerodrome_vote",
+    title: "Prepare a veAERO vote or reset",
+    description:
+      "Cast one veNFT's gauge vote, or reset it. Weights are relative shares of voting power, not amounts, and the allocation replaces any previous vote entirely — a pool left out is voted zero. A veNFT may vote once per weekly epoch and reverts on a second attempt, so the read bundle returns lastVoted along with each pool's gauge and liveness. Voting also locks the NFT against withdrawal until it is reset.",
+    inputSchema: z.toJSONSchema(prepareAerodromeVoteSchema),
+  },
+  {
+    name: "prepare_aerodrome_incentive_claim",
+    title: "Prepare a veAERO reward claim",
+    description:
+      "Claim a veNFT's voting rewards — trading fees, bribes, or both — and optionally the RewardsDistributor rebase, as one plan. The fee and bribe contract addresses are required inputs because they are per-pool contracts that only a Sugar rewards read returns; this server cannot derive them, and a wrong address claims nothing rather than failing loudly. Distinct from prepare_aerodrome_gauge_claim, which collects an LP's emissions rather than a voter's rewards.",
+    inputSchema: z.toJSONSchema(prepareAerodromeIncentiveClaimSchema),
   },
   {
     name: "get_lido_deployment",
@@ -3565,6 +3803,132 @@ export function createEkuboServer(
     }),
   );
 
+  registerCatalogTool(
+    "get_aerodrome_deployment",
+    getAerodromeDeploymentSchema,
+    (input) =>
+      getAerodromeDeployment({
+        chainId:
+          input.chain_id === undefined
+            ? undefined
+            : canonicalChainId(input.chain_id),
+      }),
+  );
+  registerCatalogTool(
+    "prepare_aerodrome_sugar_reads",
+    prepareAerodromeSugarReadsSchema,
+    (input) =>
+      prepareAerodromeSugarReads({
+        chainId: canonicalChainId(input.chain_id),
+        dataset: input.dataset,
+        account: input.account,
+        pool: input.pool,
+        venftId: input.venft_id,
+        limit: input.limit,
+        offset: input.offset,
+      }),
+  );
+  registerCatalogTool(
+    "prepare_aerodrome_liquidity_deposit",
+    prepareAerodromeLiquidityDepositSchema,
+    (input) =>
+      prepareAerodromeLiquidityDeposit({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        tokenA: input.token_a,
+        tokenB: input.token_b,
+        stable: input.stable,
+        amountADesired: input.amount_a_desired,
+        amountBDesired: input.amount_b_desired,
+        amountAMin: input.amount_a_min,
+        amountBMin: input.amount_b_min,
+        deadline: input.deadline,
+        recipient: input.recipient,
+      }),
+  );
+  registerCatalogTool(
+    "prepare_aerodrome_liquidity_withdraw",
+    prepareAerodromeLiquidityWithdrawSchema,
+    (input) =>
+      prepareAerodromeLiquidityWithdraw({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        tokenA: input.token_a,
+        tokenB: input.token_b,
+        stable: input.stable,
+        liquidity: input.liquidity,
+        amountAMin: input.amount_a_min,
+        amountBMin: input.amount_b_min,
+        deadline: input.deadline,
+        recipient: input.recipient,
+      }),
+  );
+  registerCatalogTool(
+    "prepare_aerodrome_gauge_deposit",
+    prepareAerodromeGaugeDepositSchema,
+    (input) =>
+      prepareAerodromeGaugeDeposit({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        gauge: input.gauge,
+        amount: input.amount,
+      }),
+  );
+  registerCatalogTool(
+    "prepare_aerodrome_gauge_withdraw",
+    prepareAerodromeGaugeWithdrawSchema,
+    (input) =>
+      prepareAerodromeGaugeWithdraw({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        gauge: input.gauge,
+        amount: input.amount,
+      }),
+  );
+  registerCatalogTool(
+    "prepare_aerodrome_gauge_claim",
+    prepareAerodromeGaugeClaimSchema,
+    (input) =>
+      prepareAerodromeGaugeClaim({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        gauge: input.gauge,
+        account: input.account,
+      }),
+  );
+  registerCatalogTool("prepare_aerodrome_lock", prepareAerodromeLockSchema, (input) =>
+    prepareAerodromeLock({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      action: input.action,
+      amount: input.amount,
+      lockDuration: input.lock_duration,
+      venftId: input.venft_id,
+    }),
+  );
+  registerCatalogTool("prepare_aerodrome_vote", prepareAerodromeVoteSchema, (input) =>
+    prepareAerodromeVote({
+      chainId: canonicalChainId(input.chain_id),
+      sender: input.sender,
+      venftId: input.venft_id,
+      pools: input.pools,
+      reset: input.reset,
+    }),
+  );
+  registerCatalogTool(
+    "prepare_aerodrome_incentive_claim",
+    prepareAerodromeIncentiveClaimSchema,
+    (input) =>
+      prepareAerodromeIncentiveClaim({
+        chainId: canonicalChainId(input.chain_id),
+        sender: input.sender,
+        venftId: input.venft_id,
+        fees: input.fees,
+        bribes: input.bribes,
+        claimRebase: input.claim_rebase,
+      }),
+  );
+
   registerCatalogTool("get_lido_deployment", getLidoDeploymentSchema, () =>
     getLidoDeployment(),
   );
@@ -3995,9 +4359,11 @@ For direct asset sends, use prepare_transfers instead of constructing calldata. 
 
 Aave market discovery happens directly between the agent and Aave's public APIs; this MCP is not a proxy, indexer, cache, or credential holder. Use the public GraphQL endpoint https://api.v3.aave.com/graphql with https://aave.com/docs/aave-v3/getting-started/graphql and https://aave.com/docs/aave-v3/markets/data to inspect current supply and borrow rates, liquidity, caps, pause/freeze state, eMode categories, and user positions. Then call get_aave_v3_markets and use only a returned fixed chain, Pool, and reserve address with a prepare_aave_v3_* tool. Live API data and this server's fixed deployment catalog are inputs to wallet simulation, never substitutes for it.
 
-Morpho, Sky, Lido, and Merkl discovery follows the same no-proxy boundary. Read ekubo://skills/use-morpho, ekubo://skills/use-sky, ekubo://skills/use-lido, or ekubo://skills/use-merkl before acting. The skills tell you which official public endpoint or wallet/RPC reads to perform directly, how to intersect live results with get_morpho_vaults, get_sky_savings_deployment, get_lido_deployment, or get_merkl_deployment, and which safety gates apply. Never send API responses, RPC credentials, or authoritative onchain read results through this server. Morpho deposits require a freshly derived RAY-scaled max_share_price_ray and use the official guarded Bundler3 route. Sky's direct ERC-4626 calls have no deadline or minimum output, so keep previews fresh and rely on exact simulation. Lido protocol withdrawals are irreversible asynchronous unstETH NFT requests, not immediate swaps; verify bounds, ownership, finalization, and consequences before preparation.
+Morpho, Sky, Lido, Merkl, and Aerodrome discovery follows the same no-proxy boundary. Read ekubo://skills/use-morpho, ekubo://skills/use-sky, ekubo://skills/use-lido, ekubo://skills/use-merkl, or ekubo://skills/use-aerodrome before acting. The skills tell you which official public endpoint or wallet/RPC reads to perform directly, how to intersect live results with get_morpho_vaults, get_sky_savings_deployment, get_lido_deployment, or get_merkl_deployment, and which safety gates apply. Never send API responses, RPC credentials, or authoritative onchain read results through this server. Morpho deposits require a freshly derived RAY-scaled max_share_price_ray and use the official guarded Bundler3 route. Sky's direct ERC-4626 calls have no deadline or minimum output, so keep previews fresh and rely on exact simulation. Lido protocol withdrawals are irreversible asynchronous unstETH NFT requests, not immediate swaps; verify bounds, ownership, finalization, and consequences before preparation.
 
 Merkl rewards are the one case where an amount and a proof arrive from an outside API and still do not have to be trusted. Fetch https://api.merkl.xyz/v4/users/{address}/rewards/summary yourself — it is public and needs no key — and hand each token's exact amount and proofs to prepare_merkl_claim, which folds every proof into the root it implies and refuses a batch spanning two roots. Then run the returned read bundle and require the chain's getMerkleRoot() to equal the derived root before authorizing: a mismatch means the tree rotated or is still inside its dispute period, and the fix is to re-fetch and prepare again, never to resend. Merkl's amount field is cumulative and includes what was already claimed, so the claimable figure to show a user is amount minus claimed, and its pending field is not claimable at all. prepare_merkl_claim covers Merkl campaigns on any protocol; prepare_rewards_claim covers Ekubo's own incentive drops, and they are not interchangeable.
+
+Aerodrome inverts the usual discovery problem: it is Base-only and has no data API, and its Sugar lens contracts are the data pipeline, answering eth_call with whole structs. Call prepare_aerodrome_sugar_reads for the dataset you need, run the returned bundle through the user's wallet/RPC, and feed the pool, gauge, fee, and bribe addresses it returns straight into the prepare_aerodrome_* tools — those addresses are per-pool contracts this server cannot derive, and a claim naming the wrong one succeeds while transferring nothing. Velodrome's published SDKs are not a substitute: they carry Optimism addresses and a position struct that has drifted from the deployed Base lens, so cross-check against get_aerodrome_deployment. Three protocol rules decide what is possible: a veNFT votes once per weekly epoch and a second attempt reverts with AlreadyVotedOrDeposited, a vote replaces the entire allocation rather than adding to it, and staking an LP token into a gauge trades that position's trading fees for AERO emissions rather than adding to them. Swaps stay with get_quotes_with_plans; prepare_aerodrome_gauge_claim collects an LP's emissions while prepare_aerodrome_incentive_claim collects a voter's fees and bribes, and they are not interchangeable.
 
 Use Ekubo preparation tools only to construct unsigned plans. Every executable preparation returns execution_plan_reference: an artifact_reference envelope standing in for the stored plan body. One rule governs every handoff: pass the envelope unchanged as the wallet tool's reference argument. The wallet fetches the body itself, verifies its integrity digest and byte count, and refuses a mismatch, so the plan never travels through the agent. Never fetch, restate, paraphrase, or reconstruct the plan body yourself. Do not ask the user for a separate agent-level confirmation before invoking the wallet; that duplicates the wallet's authorization flow. The wallet must never construct calldata, choose a contract overload, derive a route, or determine the transaction list. Never construct or request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calldata. LP position transfers are supported only through prepare_lp_position_transfer with pending ownership validation.
 

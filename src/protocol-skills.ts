@@ -1,3 +1,5 @@
+import aerodromeSkill from "../skills/use-aerodrome/SKILL.md";
+import aerodromeDiscovery from "../skills/use-aerodrome/references/discovery.md";
 import lidoSkill from "../skills/use-lido/SKILL.md";
 import lidoDiscovery from "../skills/use-lido/references/discovery.md";
 import merklSkill from "../skills/use-merkl/SKILL.md";
@@ -35,6 +37,14 @@ export const PROTOCOL_SKILLS = [
     description: "Direct Merkl reward discovery and proof-verified claim preparation",
     skill: merklSkill,
     reference: merklDiscovery,
+  },
+  {
+    name: "use-aerodrome",
+    title: "Use Aerodrome",
+    description:
+      "Direct Aerodrome discovery through the Sugar lens contracts and safe v2, gauge, and ve(3,3) transaction preparation",
+    skill: aerodromeSkill,
+    reference: aerodromeDiscovery,
   },
 ] as const;
 
