@@ -92,3 +92,9 @@ them against the read they came from.
   ERC-721 id.
 - Swaps do not belong here. Use `get_quotes_with_plans`, which compares sources
   and returns a firm executable plan.
+- **Do not propose a relay when a user wants their voting automated.** Depositing
+  a veNFT into a relay hands its votes to that relay's manager and locks the NFT
+  behind `escrowType`, after which none of the lock or vote tools here apply to
+  it. Recurring agent voting through the wallet covers the same need while the
+  user keeps the NFT, so relay deposits are deliberately not prepared. Reading a
+  relay's votes is fine; delegating to one is the thing to steer away from.

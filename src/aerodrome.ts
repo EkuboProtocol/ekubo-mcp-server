@@ -452,7 +452,7 @@ export function getAerodromeDeployment(input: { chainId?: string } = {}) {
       concentrated_liquidity:
         "Slipstream positions are surfaced by the Sugar reads but minting, burning, and CL gauge staking are not prepared yet; those need tick and slippage handling and are the natural next step",
       relays:
-        "Relay autocompounder deposits and withdrawals are not prepared; RelaySugar is readable through the Sugar skill",
+        "Relay deposits and withdrawals are deliberately not prepared, and this is a product decision rather than a missing feature. Depositing a veNFT into a relay hands its voting to that relay's manager, which is the thing recurring agent voting through the wallet already does without giving up control of the NFT. Relay state stays readable, so a relay's votes can still be inspected; only the delegation is out of scope.",
     },
   };
 }
