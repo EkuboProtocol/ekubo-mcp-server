@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { encodeFunctionData, erc20Abi } from "viem";
 import {
   executionPlan,
   executionPlanFromSteps,
@@ -8,6 +9,16 @@ import { walletExecutionPlanSchema } from "../src/wallet-compatibility.js";
 const sender = "0x2222222222222222222222222222222222222222" as const;
 const token = "0x1111111111111111111111111111111111111111" as const;
 const router = "0x3333333333333333333333333333333333333333" as const;
+const LDO = "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32" as const;
+const USDT = "0xdAC17F958D2ee523a2206206994597C13D831ec7" as const;
+
+function approvalCalldata(amount: bigint) {
+  return encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "approve",
+    args: [router, amount],
+  });
+}
 
 describe("portable execution plan", () => {
   it("carries no field derivable from transaction", () => {
@@ -163,5 +174,107 @@ describe("portable execution plan", () => {
     ]);
     expect(result.ordered_steps.map((step) => step.step)).toEqual([1, 2]);
     expect(result).not.toHaveProperty("required_capabilities");
+  });
+});
+
+describe("allowance resets for tokens that reject an overwrite", () => {
+  function planApproving(chainId: string, approved: `0x${string}`) {
+    return executionPlan({
+      chainId,
+      sender,
+      approvals: [
+        {
+          chain_id: chainId,
+          to: approved,
+          data: approvalCalldata(1_000n),
+          value: "0",
+          gas: "60000",
+        },
+      ],
+      transaction: { chain_id: chainId, to: router, data: "0x1234", value: "0" },
+      postExecutionTransactions: [
+        {
+          chain_id: chainId,
+          to: approved,
+          data: approvalCalldata(0n),
+          value: "0",
+        },
+      ],
+      atomicBatchRequired: true,
+    });
+  }
+
+  // The user hitting this has a standing allowance granted somewhere else —
+  // the interface approves the Positions contract for an unlimited amount —
+  // and LDO, an Aragon MiniMe token, reverts rather than overwriting it.
+  it("zeroes an LDO allowance before approving an exact amount", () => {
+    const steps = planApproving("1", LDO).ordered_steps;
+    expect(steps.map((step) => step.kind)).toEqual([
+      "approval",
+      "approval",
+      "execution",
+      "allowance_cleanup",
+    ]);
+    expect(steps[0].transaction.to).toBe(LDO);
+    expect(steps[0].transaction.data).toBe(approvalCalldata(0n));
+    expect(steps[1].transaction.data).toBe(approvalCalldata(1_000n));
+    expect(steps.map((step) => step.step)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("zeroes a mainnet USDT allowance too", () => {
+    const steps = planApproving("1", USDT).ordered_steps;
+    expect(steps.map((step) => step.transaction.data)).toEqual([
+      approvalCalldata(0n),
+      approvalCalldata(1_000n),
+      "0x1234",
+      approvalCalldata(0n),
+    ]);
+  });
+
+  // A gas figure prepared for the approval describes that call, not the reset
+  // that now precedes it.
+  it("does not carry the approval's gas estimate onto the reset", () => {
+    const steps = planApproving("1", LDO).ordered_steps;
+    expect(steps[0].transaction).not.toHaveProperty("gas");
+    expect(steps[1].transaction.gas).toBe("60000");
+  });
+
+  it("leaves ordinary tokens with a single approval", () => {
+    expect(planApproving("1", token).ordered_steps.map((step) => step.kind)).toEqual([
+      "approval",
+      "execution",
+      "allowance_cleanup",
+    ]);
+  });
+
+  // Only the mainnet deployments carry the guard; the bridged ones are
+  // ordinary ERC-20s and must not pay for a step they do not need.
+  it("leaves the same address on another chain alone", () => {
+    expect(planApproving("4663", LDO).ordered_steps).toHaveLength(3);
+  });
+
+  it("does not prefix a revocation with another zero approval", () => {
+    const result = executionPlanFromSteps({
+      chainId: "1",
+      sender,
+      steps: [
+        {
+          kind: "approval",
+          transaction: {
+            chain_id: "1",
+            to: LDO,
+            data: approvalCalldata(0n),
+            value: "0",
+          },
+        },
+      ],
+    });
+    expect(result.ordered_steps).toHaveLength(1);
+  });
+
+  it("stays valid at the wallet boundary with the reset injected", () => {
+    expect(() =>
+      walletExecutionPlanSchema.parse(planApproving("1", LDO)),
+    ).not.toThrow();
   });
 });

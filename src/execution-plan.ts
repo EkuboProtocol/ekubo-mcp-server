@@ -1,4 +1,15 @@
-import { type Address, getAddress, type Hex, numberToHex } from "viem";
+import {
+  type Address,
+  encodeFunctionData,
+  erc20Abi,
+  getAddress,
+  type Hex,
+  numberToHex,
+} from "viem";
+import {
+  nonzeroApprovalSpender,
+  requiresAllowanceReset,
+} from "./allowance-reset.js";
 import { assertWalletExecutionPlan } from "./wallet-compatibility.js";
 
 type RevertDecodePlan = Record<string, unknown>;
@@ -100,15 +111,16 @@ export function executionPlan({
 export function executionPlanFromSteps({
   chainId,
   sender,
-  steps: inputSteps,
+  steps: requestedSteps,
   atomicBatchRequired = false,
   simulationFailurePolicy = defaultSimulationFailurePolicy(),
 }: ExecutionPlanFromStepsInput) {
-  if (inputSteps.length === 0) {
+  if (requestedSteps.length === 0) {
     throw new Error(
       "internal execution plan error: at least one step is required",
     );
   }
+  const inputSteps = withAllowanceResets(chainId, requestedSteps);
   const normalizedSender = getAddress(sender);
   const steps = inputSteps.map(({ kind, transaction, revertDecode }, index) => {
     const prepared = transaction;
@@ -144,6 +156,53 @@ export function executionPlanFromSteps({
   };
   assertWalletExecutionPlan(plan);
   return plan;
+}
+
+/**
+ * Prefix each approval of a reset-requiring token with a zero approval.
+ *
+ * This server queries no allowance state, so it cannot know whether the sender
+ * already has a standing approval — and for these tokens a standing one makes
+ * the exact approval revert. The reset is therefore unconditional: it costs one
+ * cheap call in the batch when the allowance was already zero, and it is the
+ * difference between a working plan and a reverting one when it was not.
+ *
+ * Applying it here rather than at each preparation site covers every plan this
+ * server emits, including the swap plans that reach `executionPlanFromSteps`
+ * through `executionPlan`. Callers that hash their own step list before
+ * building the plan, as the LP deposit does, will not see the injected step in
+ * that hash; the injection is a pure function of the steps they already hashed,
+ * so the plan ID still identifies exactly one plan.
+ */
+function withAllowanceResets(
+  chainId: string,
+  steps: ExecutionPlanStepInput[],
+): ExecutionPlanStepInput[] {
+  return steps.flatMap((step) => {
+    if (step.kind !== "approval") return [step];
+    const spender = nonzeroApprovalSpender(step.transaction.data);
+    if (spender === null) return [step];
+    if (!requiresAllowanceReset(chainId, step.transaction.to)) return [step];
+    return [
+      {
+        kind: "approval" as const,
+        // Built field by field rather than spread from the approval it
+        // precedes: a `gas` estimate carried over from that call would be
+        // attached to a different one.
+        transaction: {
+          chain_id: step.transaction.chain_id,
+          to: step.transaction.to,
+          data: encodeFunctionData({
+            abi: erc20Abi,
+            functionName: "approve",
+            args: [spender, 0n],
+          }),
+          value: "0",
+        },
+      },
+      step,
+    ];
+  });
 }
 
 function defaultSimulationFailurePolicy(): SimulationFailurePolicy {

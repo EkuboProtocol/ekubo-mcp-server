@@ -33,6 +33,7 @@ const env = {
 const native = "0x0000000000000000000000000000000000000000";
 const usdg = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
 const aapl = "0xaf3d76f1834a1d425780943c99ea8a608f8a93f9";
+const ldo = "0x5a98fcbea516cf06857215779fd812ca3bef1b32";
 const core = "0x00000000000014aA86C5d3c41765bb24e11bd701";
 const ve33 = "0xD18685a514E59b06d59824e16Db07e73345d9953";
 const ve33Positions = "0xdA38ac72CE7220c4dd7719d114ef94eDadb8f068";
@@ -603,6 +604,89 @@ describe("LP position preparation", () => {
     expect(result.withdrawals[0].position.manager_version).toBe("positions_v2");
     expect(planFunctions(result, ALL_ABI)[0]).toBe("withdraw");
     expect(result.withdrawals[0].withdrawal.collects_fees).toBe(true);
+  });
+
+  // The reported failure: a user with a standing LDO approval, granted by the
+  // interface's unlimited default, cannot add liquidity because LDO refuses to
+  // overwrite a nonzero allowance. The server reads no allowance state, so the
+  // reset is unconditional.
+  it("zeroes the LDO allowance before approving an LDO deposit", async () => {
+    const pool = derivePoolId({
+      token0: native,
+      token1: ldo,
+      fee: "0",
+      extension: ve33,
+      tickSpacing: 1024,
+    });
+    const result = await prepareLpPositionDeposit(
+      env,
+      {
+        chainId: "1",
+        sender,
+        coreAddress: core,
+        poolId: pool.pool_id,
+        mode: "mint_new",
+        tickLower: -20_495_360,
+        tickUpper: -19_787_776,
+        maxAmount0: "100000000000000",
+        maxAmount1: "185278",
+        slippageBps: 50,
+        country: null,
+      },
+      (async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/poolKeys/")) {
+          return Response.json({
+            pool_id: pool.pool_id,
+            pool_key: {
+              token0: native,
+              token1: ldo,
+              fee: "0x0",
+              tick_spacing: "0x400",
+              extension: ve33,
+              stableswap_params: null,
+            },
+            state: {
+              sqrt_ratio: "2086582449616150103124962850664448",
+              tick: -20_167_000,
+              liquidity: "1000000000000",
+            },
+          });
+        }
+        if (url.includes("/tokens/batch?")) {
+          return Response.json([
+            { chain_id: "1", address: native, symbol: "ETH", decimals: 18 },
+            { chain_id: "1", address: ldo, symbol: "LDO", decimals: 18 },
+          ]);
+        }
+        return new Response("not found", { status: 404 });
+      }) as typeof fetch,
+    );
+
+    expect(planFunctions(result, ALL_ABI)).toEqual([
+      "approve",
+      "approve",
+      "mintAndDeposit",
+      "refundNativeToken",
+      "approve",
+    ]);
+    expect(planStepKinds(result)).toEqual([
+      "approval",
+      "approval",
+      "execution",
+      "execution",
+      "allowance_cleanup",
+    ]);
+    const [reset, approval] = planTransactions(result);
+    expect(reset?.to).toBe("0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32");
+    expect(approval?.to).toBe(reset?.to);
+    expect(BigInt(`0x${reset!.data.slice(74)}`)).toBe(0n);
+    expect(BigInt(`0x${approval!.data.slice(74)}`)).toBeGreaterThan(0n);
+    // Every approval-bearing plan is already atomic, so the extra step does
+    // not change what the wallet has to support.
+    expect(result.execution_plan.required_capabilities).toEqual([
+      "atomic_batch",
+    ]);
   });
 
   it("rejects zero-liquidity withdrawal plans", async () => {
