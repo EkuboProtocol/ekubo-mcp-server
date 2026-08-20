@@ -958,16 +958,22 @@ export function prepareAerodromeGaugeWithdraw(input: {
     chainId: input.chainId,
     sender,
     request: { chain_id: input.chainId, sender, gauge, amount: amount.toString() },
-    transaction: preparedTransaction(
-      input.chainId,
-      gauge,
-      encodeFunctionData({
-        abi: AERODROME_GAUGE_ABI,
-        functionName: "withdraw",
-        args: [amount],
-      }),
-      0n,
-    ),
+    steps: [
+      {
+        kind: "execution",
+        transaction: preparedTransaction(
+          input.chainId,
+          gauge,
+          encodeFunctionData({
+            abi: AERODROME_GAUGE_ABI,
+            functionName: "withdraw",
+            args: [amount],
+          }),
+          0n,
+        ),
+        revertDecode: errorResultDecodePlan(AERODROME_ERRORS_ABI),
+      },
+    ],
     details: {
       ...aerodromeDetails(),
       gauge,
@@ -1009,16 +1015,22 @@ export function prepareAerodromeGaugeClaim(input: {
     chainId: input.chainId,
     sender,
     request: { chain_id: input.chainId, sender, gauge: getAddress(input.gauge), account },
-    transaction: preparedTransaction(
-      input.chainId,
-      getAddress(input.gauge),
-      encodeFunctionData({
-        abi: AERODROME_GAUGE_ABI,
-        functionName: "getReward",
-        args: [account],
-      }),
-      0n,
-    ),
+    steps: [
+      {
+        kind: "execution",
+        transaction: preparedTransaction(
+          input.chainId,
+          getAddress(input.gauge),
+          encodeFunctionData({
+            abi: AERODROME_GAUGE_ABI,
+            functionName: "getReward",
+            args: [account],
+          }),
+          0n,
+        ),
+        revertDecode: errorResultDecodePlan(AERODROME_ERRORS_ABI),
+      },
+    ],
     details: {
       ...aerodromeDetails(),
       gauge: getAddress(input.gauge),
@@ -1274,7 +1286,16 @@ export function prepareAerodromeVote(input: {
     chainId: input.chainId,
     sender,
     request,
-    transaction: preparedTransaction(input.chainId, voter, data, 0n),
+    // A vote is the one action whose likely failure is a named epoch-timing
+    // revert rather than a balance, so the plan carries the decode that turns
+    // AlreadyVotedOrDeposited into something an agent can act on.
+    steps: [
+      {
+        kind: "execution",
+        transaction: preparedTransaction(input.chainId, voter, data, 0n),
+        revertDecode: errorResultDecodePlan(AERODROME_ERRORS_ABI),
+      },
+    ],
     details: {
       ...aerodromeDetails(),
       voter,

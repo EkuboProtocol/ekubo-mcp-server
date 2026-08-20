@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { decodeFunctionData, decodeFunctionResult, getAddress } from "viem";
+import { decodeFunctionData, decodeFunctionResult, erc20Abi, getAddress } from "viem";
 import {
   AERODROME_CHAIN_ID,
   AERODROME_DEPLOYMENT,
@@ -287,6 +287,44 @@ describe("liquidity", () => {
     expect(deposit().execution_plan.required_capabilities).toContain("atomic_batch");
   });
 
+  /**
+   * A user who already LP'd through Aerodrome's own UI arrives with a standing
+   * router allowance, and for the tokens on the reset list an exact approval
+   * over a nonzero one reverts. The plan builder injects the approve(0) for
+   * every step marked `approval`, so this passes only while these approvals
+   * keep that kind — which is the thing worth pinning.
+   */
+  it("inherits the approve(0) reset for a Base token that needs it", () => {
+    const kta = getAddress("0xc0634090f2fe6c6d75e61be2b949464abb498973");
+    const result = prepareAerodromeLiquidityDeposit({
+      chainId: AERODROME_CHAIN_ID,
+      sender,
+      tokenA: kta,
+      tokenB: usdc,
+      stable: false,
+      amountADesired: "1000",
+      amountBDesired: "1000",
+      amountAMin: "1",
+      amountBMin: "1",
+      deadline: farFuture,
+    });
+    expect(planStepKinds(result)).toEqual([
+      "approval",
+      "approval",
+      "approval",
+      "execution",
+      "allowance_cleanup",
+      "allowance_cleanup",
+    ]);
+    // The injected reset precedes KTA's real approval and zeroes it.
+    expect(planTargets(result).slice(0, 2)).toEqual([kta, kta]);
+    const reset = decodeFunctionData({
+      abi: erc20Abi,
+      data: planTransactions(result)[0].data,
+    });
+    expect(reset.args?.[1]).toBe(0n);
+  });
+
   it("rejects a minimum that exceeds its own desired amount", () => {
     expect(() =>
       prepareAerodromeLiquidityDeposit({
@@ -549,6 +587,28 @@ describe("voting", () => {
     expect(readCall(result, "gauge_0").to).toBe(AERODROME_DEPLOYMENT.voter);
     expect(readCall(result, "gauge_alive_0").to).toBe(AERODROME_DEPLOYMENT.voter);
     expect(details(result).one_vote_per_epoch).toContain("AlreadyVotedOrDeposited");
+  });
+
+  /**
+   * The likely failure of a vote is a named epoch revert, not a balance. If
+   * the plan ships without the decode the user sees four opaque bytes for the
+   * one error they were most likely to hit.
+   */
+  it("carries the revert decode that names the epoch errors", () => {
+    const result = prepareAerodromeVote({
+      chainId: AERODROME_CHAIN_ID,
+      sender,
+      venftId: "42",
+      pools: [{ pool: usdc, weight: "1" }],
+    });
+    const decode = result.execution_plan.ordered_steps[0].revert_decode as {
+      kind: string;
+      abi: { name: string }[];
+    };
+    expect(decode.kind).toBe("error_result");
+    expect(decode.abi.map((entry) => entry.name)).toContain(
+      "AlreadyVotedOrDeposited",
+    );
   });
 
   it("resets instead of voting when asked", () => {
