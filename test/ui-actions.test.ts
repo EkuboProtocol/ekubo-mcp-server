@@ -1,6 +1,6 @@
 import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
-import { numberToHex } from "viem";
+import { numberToHex, type Abi } from "viem";
 import {
   planStepKinds,
   planTargets,
@@ -629,7 +629,10 @@ describe("EVM interface action preparation", () => {
             {
               decode: {
                 kind: "function_result",
-                function_name: "poolPrice",
+                // poolState, not poolPrice: poolPrice returns the Q128
+                // sqrtRatioFixed, which overflows the uint96 the float codec
+                // and the resume argument both require.
+                function_name: "poolState",
                 semantic_codecs: [
                   {
                     path: "sqrtRatio",
@@ -653,6 +656,25 @@ describe("EVM interface action preparation", () => {
         },
       },
     });
+    // The value phase one hands back must be able to satisfy the argument
+    // phase two asks for. poolPrice returned a Q128 number that could never
+    // fit the uint96 pending_current_sqrt_ratio requires, so the two halves of
+    // the tool disagreed and the documented flow could not be completed.
+    const priceCall = (
+      read as typeof read & {
+        current_price_query: {
+          read_calls: { calls: { decode: { abi: Abi } }[] };
+        };
+      }
+    ).current_price_query.read_calls.calls[0];
+    const poolStateEntry = priceCall.decode.abi.find(
+      (entry): entry is Extract<Abi[number], { type: "function" }> =>
+        entry.type === "function" && entry.name === "poolState",
+    );
+    expect(
+      poolStateEntry?.outputs.find((out) => out.name === "sqrtRatio")?.type,
+    ).toBe("uint96");
+
     expect(
       (read as typeof read & { target: Record<string, unknown> }).target,
     ).toEqual({

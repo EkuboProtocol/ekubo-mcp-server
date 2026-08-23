@@ -5,13 +5,20 @@ import {
   YUL_ROUTER_ADDRESS,
   type Hop,
 } from "@ekubo/yul-router-sdk";
-import { encodeFunctionData, getAddress, type Address, type Hex } from "viem";
+import {
+  encodeFunctionData,
+  getAddress,
+  type Abi,
+  type Address,
+  type Hex,
+} from "viem";
 import {
   functionResultDecodePlan,
   readCallsBundle,
   sqrtRatioFloatSemanticCodec,
 } from "./abi-decode.js";
 import { type Env, getTokens, ServiceError } from "./core.js";
+import { coreDataFetcherContract } from "./contracts.js";
 import { decodePoolConfig, getPool } from "./pools.js";
 import {
   assertAssetsTradable,
@@ -26,36 +33,47 @@ import {
 type Fetcher = typeof fetch;
 
 const V3_CORE = getAddress("0x00000000000014aA86C5d3c41765bb24e11bd701");
-const CORE_DATA_FETCHER_V3 = getAddress(
-  "0xF68F25CA6C817733b7B15a42191AE72A34d56a2B",
-);
 const MEV_CAPTURE_V3 = getAddress("0x5555fF9Ff2757500BF4EE020DcfD0210CFfa41Be");
 const VE33 = getAddress("0xD18685a514E59b06d59824e16Db07e73345d9953");
 const NATIVE_TOKEN = getAddress("0x0000000000000000000000000000000000000000");
 const TARGET_PRICE_SPECIFIED_AMOUNT = -(1n << 127n);
 
-const CORE_DATA_FETCHER_ABI = [
-  {
-    type: "function",
-    name: "poolPrice",
-    inputs: [
-      {
-        name: "poolKey",
-        type: "tuple",
-        components: [
-          { name: "token0", type: "address" },
-          { name: "token1", type: "address" },
-          { name: "config", type: "bytes32" },
-        ],
-      },
-    ],
-    outputs: [
-      { name: "sqrtRatio", type: "uint96" },
-      { name: "tick", type: "int32" },
-    ],
-    stateMutability: "view",
-  },
-] as const;
+/**
+ * The current price comes from CoreDataFetcher.poolState, read through the
+ * generated ABI rather than a copy of it.
+ *
+ * This used to call `poolPrice` against a hand-written ABI that declared
+ * `uint96 sqrtRatio`. The deployed function actually returns
+ * `(uint256 sqrtRatioFixed, int32 tick)` -- the Q128 fixed value, not the
+ * compact 96-bit float -- so the float codec was applied to a number that had
+ * already been expanded and rejected it as exceeding its encoding. The read
+ * came back `usable: false`, and the value it did carry could not satisfy the
+ * `pending_current_sqrt_ratio` argument the resume block asked for, which
+ * requires a uint96. The two halves of the tool disagreed and no value could
+ * pass between them.
+ *
+ * `poolState` returns the compact float that phase two wants, and is the same
+ * call get_pool already uses successfully.
+ */
+function coreDataFetcherPoolState(chainId: string) {
+  const dataFetcher = coreDataFetcherContract(chainId);
+  if (dataFetcher === undefined) {
+    throw new ServiceError(
+      "unsupported_chain",
+      `No CoreDataFetcher is deployed on chain ${chainId}`,
+    );
+  }
+  const abi = (dataFetcher.abi as Abi).filter(
+    (entry) => entry.type === "function" && entry.name === "poolState",
+  );
+  if (abi.length !== 1) {
+    throw new ServiceError(
+      "unsupported_chain",
+      `The CoreDataFetcher on chain ${chainId} does not expose poolState`,
+    );
+  }
+  return { address: dataFetcher.address, abi };
+}
 
 export interface PrepareFixPoolPriceInput {
   chainId: string;
@@ -144,14 +162,15 @@ export async function prepareFixPoolPrice(
       error instanceof Error ? error.message : "Target price cannot be encoded",
     );
   }
+  const poolStateRead = coreDataFetcherPoolState(input.chainId);
   const readData = encodeFunctionData({
-    abi: CORE_DATA_FETCHER_ABI,
-    functionName: "poolPrice",
+    abi: poolStateRead.abi,
+    functionName: "poolState",
     args: [poolKey],
   });
   const currentPriceDecodePlan = functionResultDecodePlan(
-    CORE_DATA_FETCHER_ABI,
-    "poolPrice",
+    poolStateRead.abi,
+    "poolState",
     { semanticCodecs: [sqrtRatioFloatSemanticCodec("sqrtRatio")] },
   );
   const currentPriceReadCalls = () =>
@@ -160,7 +179,7 @@ export async function prepareFixPoolPrice(
       calls: [
         {
           id: `ekubo-pool-price-${pool.pool_id}`,
-          to: CORE_DATA_FETCHER_V3,
+          to: poolStateRead.address,
           data: readData,
           decode: currentPriceDecodePlan,
         },
@@ -200,7 +219,7 @@ export async function prepareFixPoolPrice(
       phase: "read_current_price",
       execution_plan_ready: false,
       current_price_query: {
-        decode_as: "(uint96 sqrtRatio,int32 tick)",
+        decode_as: "(uint96 sqrtRatio,int32 tick,uint128 liquidity)",
         read_calls: currentPriceReadCalls(),
         resume: {
           tool: "prepare_fix_pool_price",
