@@ -89,7 +89,6 @@ import {
 } from "./auctions.js";
 import {
   getRewardsClaimsByOwner,
-  prepareRecoveryFundClaim,
   prepareRevenueBuybacks,
   prepareRewardsClaim,
 } from "./claims.js";
@@ -991,20 +990,6 @@ export const prepareRewardsClaimSchema = z.object({
   chain_id: chainId,
   sender: address,
   claims: z.array(rewardsClaimSchema).min(1).max(200),
-});
-
-export const prepareRecoveryFundClaimSchema = z.object({
-  chain_id: chainId,
-  sender: address,
-  claims: z
-    .array(z.object({ token: address, amount }))
-    .min(1)
-    .max(50),
-  has_signed_conditions: z.boolean(),
-  signature: z
-    .string()
-    .regex(/^0x[0-9a-fA-F]{130}$/, "must be a 65-byte signature")
-    .optional(),
 });
 
 export const prepareRevenueBuybacksSchema = z.object({
@@ -2143,13 +2128,6 @@ export const publicToolCatalog = [
     description:
       "Prepare one Incentives claim or the interface's allow-failure Multicall3 aggregate for multiple claims.",
     inputSchema: z.toJSONSchema(prepareRewardsClaimSchema),
-  },
-  {
-    name: "prepare_recovery_fund_claim",
-    title: "Prepare a Recovery Fund claim",
-    description:
-      "Return the exact EIP-712 signature request when needed, then prepare agreement and all selected recovery claims in one atomic batch of decodable steps.",
-    inputSchema: z.toJSONSchema(prepareRecoveryFundClaimSchema),
   },
   {
     name: "prepare_revenue_buybacks",
@@ -3508,16 +3486,6 @@ export function createEkuboServer(
     }),
   );
 
-  registerCatalogTool("prepare_recovery_fund_claim", prepareRecoveryFundClaimSchema, (input) =>
-    prepareRecoveryFundClaim({
-      chainId: canonicalChainId(input.chain_id),
-      sender: input.sender,
-      claims: input.claims,
-      hasSignedConditions: input.has_signed_conditions,
-      signature: input.signature as Hex | undefined,
-    }),
-  );
-
   registerCatalogTool("prepare_revenue_buybacks", prepareRevenueBuybacksSchema, (input) =>
     prepareRevenueBuybacks({
       chainId: canonicalChainId(input.chain_id),
@@ -4389,7 +4357,7 @@ For partial or full LP withdrawals, execute each position's current_state_query 
 
 Pass LP execution plans to the wallet MCP for simulation, wallet-owned authorization, and execution; never use Cast to reconstruct LP calldata. Do not insert a separate agent confirmation step. If wallet policy rejects a plan, report the wallet's exact finding verbatim and do not attempt to change wallet policy; proposing a policy change is the wallet's own tool to offer, not this server's.
 
-For every other EVM action exposed by the interface, use its first-class prepare tool: wrap/unwrap, LP position transfer, phased pool price correction through prepare_fix_pool_price, standalone pool initialization through prepare_pool_initialization, TWAMM/DCA creation/collection/stop/virtual-order execution, auction creation/completion/creator proceeds, manual boosts, oracle capacity, approval revocation, old gEKUBO unwrap, incentive rewards, Recovery Fund claims, revenue buybacks, and direct VeToken increase/merge/withdraw. Phased tools return exact eth_call or EIP-712 requests and tell the caller which decoded values to send back. The Ekubo wallet MCP performs the reads but intentionally does not expose arbitrary EIP-712 signing; a Recovery Fund signature request must go to a separately selected connected wallet with eth_signTypedData_v4 support. Wallets must not invent calldata, append approvals, build multicalls, or choose transaction ordering.
+For every other EVM action exposed by the interface, use its first-class prepare tool: wrap/unwrap, LP position transfer, phased pool price correction through prepare_fix_pool_price, standalone pool initialization through prepare_pool_initialization, TWAMM/DCA creation/collection/stop/virtual-order execution, auction creation/completion/creator proceeds, manual boosts, oracle capacity, approval revocation, old gEKUBO unwrap, incentive rewards, revenue buybacks, and direct VeToken increase/merge/withdraw. Phased tools return exact eth_call requests and tell the caller which decoded values to send back. Wallets must not invent calldata, append approvals, build multicalls, or choose transaction ordering.
 
 Use get_pool for one exact chain/core/pool ID and get_pool_liquidity for tick-level depth. Use list_pool_keys to enumerate a Core deployment's initialized pools with keyset pagination (after_pool_id, ascending pool_id order) and token/pair/extension filters; every returned pool_id is re-derived locally from its PoolKey before it is reported. get_pool returns the latest indexed pool_state snapshot plus current_state_query, whose read_calls_reference the wallet executes for fresh on-chain sqrtRatio, tick, and liquidity. Use derive_pool_id and decode_pool_config for PoolKey construction and inspection. A pool fee is an exact uint64 Q64 integer: accept and return it only as a decimal or hexadecimal string, never a JSON number.
 

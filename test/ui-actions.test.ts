@@ -18,7 +18,6 @@ import {
 } from "../src/auctions.js";
 import {
   getRewardsClaimsByOwner,
-  prepareRecoveryFundClaim,
   prepareRevenueBuybacks,
   prepareRewardsClaim,
 } from "../src/claims.js";
@@ -369,13 +368,7 @@ describe("EVM interface action preparation", () => {
     expect(planTransactions(buybacks)).toHaveLength(3);
   });
 
-  it("returns signature-first recovery and complete incentive claim plans", () => {
-    const recovery = prepareRecoveryFundClaim({
-      chainId: "1",
-      sender,
-      claims: [{ token: token1, amount: "10" }],
-      hasSignedConditions: false,
-    });
+  it("returns a complete incentive claim plan", () => {
     const reward = prepareRewardsClaim({
       chainId: "1",
       sender,
@@ -393,20 +386,6 @@ describe("EVM interface action preparation", () => {
       ],
     });
 
-    expect(recovery).toMatchObject({
-      phase: "sign_claim_conditions",
-      execution_plan_ready: false,
-      agent_confirmation_required: false,
-    });
-    expect(recovery.signature_request?.method).toBe("eth_signTypedData_v4");
-    expect(recovery.wallet_mcp_compatibility).toEqual({
-      compatible: false,
-      missing_capability: "eth_signTypedData_v4",
-      reason:
-        "The Ekubo wallet MCP intentionally does not expose arbitrary typed-data signing.",
-      next_step:
-        "Use a separately selected connected wallet that supports EIP-712, then return its 65-byte signature to this preparation tool. Do not ask the Ekubo wallet MCP to sign it.",
-    });
     expect(planTransactions(reward)).toHaveLength(1);
     expect(planFunctions(reward, ALL_ABI)[0]).toBe("claim");
   });

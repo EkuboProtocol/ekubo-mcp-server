@@ -32,7 +32,6 @@ list, but must not construct calls or decide what transactions belong in it.
 | `EvmRevokeApprovals.tsx`                                                      | Revoke one or many ERC-20 approvals                            | `prepare_approval_revocations`                                 |
 | `UnwrapOldGekubo.tsx`                                                         | Approve and route old gEKUBO unwrap                            | `prepare_old_gekubo_unwrap`                             |
 | `useEvmRewardsClaims.ts`                                                      | Claim one reward or aggregate independent claims               | `prepare_rewards_claim`                                        |
-| `EvmClaimRecoveryFund.tsx`                                                    | Sign conditions and claim Recovery Fund tokens                 | `prepare_recovery_fund_claim`                                  |
 | `EvmRevenueBuybacks.tsx`                                                      | Collect ended orders, withdraw protocol fees, and roll tokens  | `prepare_revenue_buybacks`                                     |
 | `EvmVeStonx.tsx`                                                              | Create a new stake                                             | `prepare_ve33_stake`                                           |
 | `EvmVeStonx.tsx`                                                              | Increase an existing stake                                     | `prepare_ve33_increase_stake`                                  |

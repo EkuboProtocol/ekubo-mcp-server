@@ -82,7 +82,6 @@ const expectedTools = [
   "prepare_old_gekubo_unwrap",
   "get_rewards_claims_by_owner",
   "prepare_rewards_claim",
-  "prepare_recovery_fund_claim",
   "prepare_revenue_buybacks",
   "prepare_ve33_increase_stake",
   "prepare_ve33_merge",

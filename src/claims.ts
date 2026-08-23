@@ -12,7 +12,6 @@ import { type Env, ServiceError } from "./core.js";
 import { preparedTransaction, preparedUiAction } from "./ui-actions.js";
 
 const MULTICALL3 = getAddress("0xcA11bde05977b3631167028862bE2a173976CA11");
-const RECOVERY_FUND = getAddress("0x5E1da6D39d2Aa65B4739EcE2CDE1Ae77d22ECA63");
 const REVENUE_BUYBACKS = getAddress(
   "0x7CA5F67ee6025A4d433ca0595889c76CC960C48A",
 );
@@ -35,11 +34,6 @@ const INTERFACE_EVM_CHAIN_IDS = new Set([
   84_532n,
   421_614n,
   11_155_111n,
-]);
-const RECOVERY_ABI = parseAbi([
-  "function agreeToClaimConditions(address account,bytes signature)",
-  "function claim(address account,address token,uint256 amount)",
-  "function multicall(bytes[] data) payable returns (bytes[] results)",
 ]);
 const REVENUE_BUYBACKS_ABI = parseAbi([
   "function collect(address sellToken,uint64 fee,uint64 endTime) payable",
@@ -281,142 +275,6 @@ export function prepareRewardsClaim(input: {
   });
 }
 
-export function prepareRecoveryFundClaim(input: {
-  chainId: string;
-  sender: string;
-  claims: { token: string; amount: string }[];
-  hasSignedConditions: boolean;
-  signature?: Hex;
-}) {
-  if (input.chainId !== "1") {
-    throw new ServiceError(
-      "unsupported_chain",
-      "The recovery fund is deployed only on Ethereum mainnet",
-    );
-  }
-  const sender = getAddress(input.sender);
-  if (input.claims.length === 0 || input.claims.length > 50) {
-    throw new ServiceError(
-      "invalid_claims",
-      "Provide between 1 and 50 nonzero recovery claims",
-    );
-  }
-  const seen = new Set<string>();
-  const claims = input.claims.map((claim, index) => {
-    const token = getAddress(claim.token);
-    if (seen.has(token.toLowerCase())) {
-      throw new ServiceError(
-        "duplicate_claim",
-        `claims[${index}] repeats token ${token}`,
-      );
-    }
-    seen.add(token.toLowerCase());
-    return {
-      token,
-      amount: positiveUnsigned(claim.amount, 256, `claims[${index}].amount`),
-    };
-  });
-  if (!input.hasSignedConditions && input.signature === undefined) {
-    return {
-      schema_version: "1",
-      action: "ekubo_claim_recovery_fund",
-      phase: "sign_claim_conditions",
-      next_phase: "prepare_execution",
-      execution_plan_ready: false,
-      agent_confirmation_required: false,
-      wallet_validation_required: true,
-      request: {
-        chain_id: input.chainId,
-        sender,
-        claims: claims.map(({ token, amount }) => ({
-          token,
-          amount: amount.toString(),
-        })),
-      },
-      signature_request: recoverySignatureRequest(sender),
-      wallet_mcp_compatibility: {
-        compatible: false,
-        missing_capability: "eth_signTypedData_v4",
-        reason:
-          "The Ekubo wallet MCP intentionally does not expose arbitrary typed-data signing.",
-        next_step:
-          "Use a separately selected connected wallet that supports EIP-712, then return its 65-byte signature to this preparation tool. Do not ask the Ekubo wallet MCP to sign it.",
-      },
-      resume:
-        "Pass this exact typed-data request to a separately selected connected wallet that supports eth_signTypedData_v4. After it presents the request and collects the signature, call this tool again with signature. The Ekubo wallet MCP does not expose arbitrary typed-data signing.",
-      wallet_handoff: {
-        instruction:
-          "Do not send this signature request to the Ekubo wallet MCP. Use a connected wallet with explicit EIP-712 support; that wallet owns presentation and authorization of the signature.",
-        calldata_complete:
-          "The MCP supplies both the exact typed-data request and, after signing, all transaction calldata.",
-      },
-    };
-  }
-  if (
-    !input.hasSignedConditions &&
-    (input.signature === undefined ||
-      !/^0x[0-9a-fA-F]{130}$/.test(input.signature))
-  ) {
-    throw new ServiceError(
-      "invalid_signature",
-      "signature must be a 65-byte EIP-712 signature",
-    );
-  }
-  const calls: Hex[] = [
-    ...(!input.hasSignedConditions
-      ? [
-          encodeFunctionData({
-            abi: RECOVERY_ABI,
-            functionName: "agreeToClaimConditions",
-            args: [sender, input.signature as Hex],
-          }),
-        ]
-      : []),
-    ...claims.map(({ token, amount }) =>
-      encodeFunctionData({
-        abi: RECOVERY_ABI,
-        functionName: "claim",
-        args: [sender, token, amount],
-      }),
-    ),
-  ];
-  // One step per call. An opaque `bytes[]` payload collapses the batch into a
-  // single allowlisted target the wallet cannot decode; separate steps are each
-  // read and authorized, and the atomic batch keeps them all-or-nothing.
-  const transactions = calls.map((call) =>
-    preparedTransaction(input.chainId, RECOVERY_FUND, call, 0n),
-  );
-
-  return {
-    ...preparedUiAction({
-      action: "ekubo_claim_recovery_fund",
-      chainId: input.chainId,
-      sender,
-      request: {
-        chain_id: input.chainId,
-        sender,
-        has_signed_conditions: input.hasSignedConditions,
-        claims: claims.map(({ token, amount }) => ({
-          token,
-          amount: amount.toString(),
-        })),
-      },
-      steps: transactions.map((transaction) => ({
-        kind: "execution" as const,
-        transaction,
-      })),
-      atomicBatchRequired: transactions.length > 1,
-      details: {
-        recovery_fund: RECOVERY_FUND,
-        signature_was_required: !input.hasSignedConditions,
-        claim_count: claims.length,
-      },
-    }),
-    phase: "execute",
-    next_phase: null,
-  };
-}
-
 export function prepareRevenueBuybacks(input: {
   chainId: string;
   sender: string;
@@ -483,7 +341,9 @@ export function prepareRevenueBuybacks(input: {
       }),
     );
   }
-  // One step per call, for the same reason as the recovery-fund claim above.
+  // One step per call. An opaque `bytes[]` payload collapses the batch into a
+  // single allowlisted target the wallet cannot decode; separate steps are each
+  // read and authorized, and the atomic batch keeps them all-or-nothing.
   const transactions = calls.map((call) =>
     preparedTransaction(input.chainId, REVENUE_BUYBACKS, call, 0n),
   );
@@ -510,26 +370,6 @@ export function prepareRevenueBuybacks(input: {
       exact_selected_call_count: calls.length,
     },
   });
-}
-
-function recoverySignatureRequest(sender: Address) {
-  return {
-    method: "eth_signTypedData_v4",
-    account: sender,
-    typed_data: {
-      domain: {
-        name: "Recovery Fund",
-        version: "1",
-        chainId: 1,
-        verifyingContract: RECOVERY_FUND,
-      },
-      types: {
-        AgreeToClaimConditions: [{ name: "claimConditions", type: "string" }],
-      },
-      primaryType: "AgreeToClaimConditions",
-      message: { claimConditions: CLAIM_CONDITIONS },
-    },
-  };
 }
 
 function normalizeIndexedRewardClaim(
@@ -607,13 +447,6 @@ function normalizeIndexedRewardClaim(
     );
   }
 }
-
-const CLAIM_CONDITIONS = [
-  "By signing this message, I accept the conditions for claiming from this Recovery Fund.",
-  "I represent that I am not a sanctioned person, am not located, organized, or resident in a sanctioned or embargoed jurisdiction, am not owned or controlled by a sanctioned person, and am not otherwise prohibited by law from receiving these funds.",
-  "I understand that any recovery distribution is voluntary, discretionary, and ex gratia by the Ekubo DAO. I have no contractual, statutory, equitable, or other entitlement to any recovery distribution. Neither the Ekubo interface, any Ekubo-related smart contract, nor any current or future deployment of the same, similar, derivative, replacement, or related code is provided with any warranty, guarantee, or undertaking. Applicable terms and smart contract disclaimers disclaim warranties and limit liability to the fullest extent permitted by law.",
-  "In exchange for my ability to claim from this Recovery Fund, to the fullest extent permitted by law, I irrevocably and forever release, waive, discharge, and covenant not to sue the Ekubo DAO tokenholders, Ekubo, Inc., and Ekubo, Inc.'s current and former employees, officers, directors, contractors, agents, affiliates, successors, and assigns (the Released Parties) from any and all claims, demands, causes of action, liabilities, losses, damages, costs, and expenses, whether known or unknown, suspected or unsuspected, arising out of or relating to any hack, exploit, vulnerability, bug, incident, approval, transfer, loss, or other consequence involving eip155:1:0x8f52903d17e2d8d6c77d1a1de0cc975b6b5a0d15, eip155:1:0x8ccb1ffd5c2aa6bd926473425dea4c8c15de60fd, eip155:1:0x4f168f17923435c999f5c8565acab52c2218edf2, or eip155:42161:0xc93c4ad185ca48d66fefe80f906a67ef859fc47d.",
-].join("\n\n");
 
 function unsigned(value: string, bits: number, label: string) {
   if (!/^(?:0|[1-9][0-9]*)$/.test(value)) {
