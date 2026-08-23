@@ -398,6 +398,22 @@ describe("EVM interface action preparation", () => {
       ],
     });
     expect(other.details?.token_id).not.toBe(tokenId);
+
+    // So does a different pair on an identical schedule and amount. The order
+    // config packs the fee, direction, and times but not the tokens, so a salt
+    // derived from the config alone would collide here and the mint would
+    // revert on an id that already exists.
+    const otherPair = prepareTwammOrder({
+      chainId: "1",
+      sender,
+      sellToken: native,
+      buyToken: token2,
+      pendingTimestamp: "1000",
+      orders: [
+        { fee: "1", startTime: "1024", endTime: "2048", amount: "10000" },
+      ],
+    });
+    expect(otherPair.details?.token_id).not.toBe(tokenId);
   });
 
   it("rejects TWAMM times the extension would reject", () => {

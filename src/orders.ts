@@ -541,7 +541,10 @@ function positiveUnsigned(value: string, bits: number, label: string) {
 function defaultOrderSalt(
   sender: Address,
   chainId: string,
-  orders: { orderKey: { config: Hex }; amount: bigint }[],
+  orders: {
+    orderKey: { token0: Address; token1: Address; config: Hex };
+    amount: bigint;
+  }[],
 ): Hex {
   return keccak256(
     encodeAbiParameters(
@@ -549,6 +552,13 @@ function defaultOrderSalt(
         { type: "string" },
         { type: "address" },
         { type: "uint256" },
+        // The pair has to be in here. An order's config packs only the fee,
+        // the direction bit, and the times -- not the tokens -- so hashing the
+        // config alone gives two orders on different pairs with the same
+        // schedule and amount the same salt, and the second mint reverts on an
+        // id that already exists.
+        { type: "address[]" },
+        { type: "address[]" },
         { type: "bytes32[]" },
         { type: "uint256[]" },
       ],
@@ -556,6 +566,8 @@ function defaultOrderSalt(
         "ekubo.twamm.order.salt.v1",
         sender,
         BigInt(chainId),
+        orders.map((order) => order.orderKey.token0),
+        orders.map((order) => order.orderKey.token1),
         orders.map((order) => order.orderKey.config),
         orders.map((order) => order.amount),
       ],
