@@ -874,7 +874,11 @@ export const prepareTwammOrderSchema = z.object({
     .max(100),
   pending_timestamp: uintString,
   deadline_seconds: z.number().int().min(0).max(3_600).default(120),
-  salt: bytes32.optional(),
+  salt: bytes32
+    .optional()
+    .describe(
+      "Salt the order NFT is minted against, which fixes its token id. Omit it and one is derived from the request, so the same order always resolves to the same id and a retry is detectable instead of minting a second order. Supply your own only when identical orders need independent ids.",
+    ),
 });
 
 export const prepareTwammOrderCollectionSchema = z.object({
@@ -2052,7 +2056,7 @@ export const publicToolCatalog = [
     name: "prepare_twamm_order",
     title: "Prepare a TWAMM or DCA order",
     description:
-      "Prepare one or many current-interface TWAMM order splits, including deterministic minting, exact approval and per-order native value, and the complete plan as one atomic batch of decodable steps.",
+      "Prepare one or many current-interface TWAMM order splits, including exact approval and per-order native value, and the complete plan as one atomic batch of decodable steps. Every order mints against a salt, so details.token_id is the id that will exist on chain and is returned before anything is sent -- keep it, because prepare_twamm_order_collection and prepare_twamm_order_stop are keyed by it and nothing here enumerates orders by owner. Omitting salt derives one from the request, which also makes a retry resolve to the same id instead of minting a second order. Start and end times must be multiples of 256 seconds near the present, widening in powers of 16 further out; an unaligned time is rejected here rather than reverting on chain.",
     inputSchema: z.toJSONSchema(prepareTwammOrderSchema),
   },
   {

@@ -263,7 +263,7 @@ describe("EVM interface action preparation", () => {
       buyToken: token2,
       pendingTimestamp: "1000",
       orders: [
-        { fee: "1", startTime: "1010", endTime: "2000", amount: "10000" },
+        { fee: "1", startTime: "1024", endTime: "2048", amount: "10000" },
       ],
     });
     const stop = prepareTwammOrderStop({
@@ -281,9 +281,12 @@ describe("EVM interface action preparation", () => {
       ],
     });
 
+    // A single order mints against a salt too, so its id is knowable before
+    // the transaction is sent rather than only from the receipt.
     expect(planFunctions(create, ALL_ABI)).toEqual([
       "approve",
-      "mintAndIncreaseSellAmount",
+      "mint",
+      "increaseSellAmount",
     ]);
     expect(planFunctions(stop, ALL_ABI)).toEqual([
       "collectProceeds",
@@ -306,8 +309,8 @@ describe("EVM interface action preparation", () => {
       pendingTimestamp: "1000",
       salt: `0x${"34".repeat(32)}`,
       orders: [
-        { fee: "1", startTime: "1010", endTime: "2000", amount: "10000" },
-        { fee: "1", startTime: "1010", endTime: "3000", amount: "25000" },
+        { fee: "1", startTime: "1024", endTime: "2048", amount: "10000" },
+        { fee: "1", startTime: "1024", endTime: "3072", amount: "25000" },
       ],
     });
     expect(planValues(create)).toEqual([
@@ -319,6 +322,73 @@ describe("EVM interface action preparation", () => {
     expect(create.execution_plan.required_capabilities).toEqual([
       "atomic_batch",
     ]);
+  });
+
+  it("returns the token id a TWAMM order will actually mint", () => {
+    const create = prepareTwammOrder({
+      chainId: "1",
+      sender,
+      sellToken: token1,
+      buyToken: token2,
+      pendingTimestamp: "1000",
+      orders: [
+        { fee: "1", startTime: "1024", endTime: "2048", amount: "10000" },
+      ],
+    });
+    // The salt-free mint() derives its salt from prevrandao() and gas(), so a
+    // simulated id can never be the minted one. Deriving the salt here makes
+    // the id knowable up front, which is the only way back to the order:
+    // collection and stop are keyed by it and nothing enumerates by owner.
+    const tokenId = create.details?.token_id as string;
+    expect(tokenId).toMatch(/^[0-9]+$/);
+    expect(create.request.salt).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(create.request.salt_source).toBe("derived");
+
+    // The same request derives the same id, so a retry is detectable rather
+    // than silently minting a second order.
+    const again = prepareTwammOrder({
+      chainId: "1",
+      sender,
+      sellToken: token1,
+      buyToken: token2,
+      pendingTimestamp: "1000",
+      orders: [
+        { fee: "1", startTime: "1024", endTime: "2048", amount: "10000" },
+      ],
+    });
+    expect(again.details?.token_id).toBe(tokenId);
+
+    // A different amount is a different order and gets its own id.
+    const other = prepareTwammOrder({
+      chainId: "1",
+      sender,
+      sellToken: token1,
+      buyToken: token2,
+      pendingTimestamp: "1000",
+      orders: [
+        { fee: "1", startTime: "1024", endTime: "2048", amount: "10001" },
+      ],
+    });
+    expect(other.details?.token_id).not.toBe(tokenId);
+  });
+
+  it("rejects TWAMM times the extension would reject", () => {
+    const order = (startTime: string, endTime: string) => () =>
+      prepareTwammOrder({
+        chainId: "1",
+        sender,
+        sellToken: token1,
+        buyToken: token2,
+        pendingTimestamp: "1000",
+        orders: [{ fee: "1", startTime, endTime, amount: "10000" }],
+      });
+
+    // Near the current time every boundary is a multiple of 256 seconds.
+    expect(order("1010", "2048")).toThrow(/must be a multiple of 256 seconds/);
+    expect(order("1024", "2000")).toThrow(/must be a multiple of 256 seconds/);
+    // An end time already behind pending_timestamp is OrderAlreadyEnded.
+    expect(order("512", "768")).toThrow(/already passed/);
+    expect(order("1024", "2048")).not.toThrow();
   });
 
   it("puts the auction sell amount on the payable call, not on mint", () => {

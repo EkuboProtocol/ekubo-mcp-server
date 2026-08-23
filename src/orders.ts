@@ -4,6 +4,7 @@ import {
   encodeEvmTwammOrderConfig,
 } from "@ekubo/sdk";
 import {
+  encodeAbiParameters,
   encodeFunctionData,
   getAddress,
   keccak256,
@@ -11,7 +12,11 @@ import {
   type Address,
   type Hex,
 } from "viem";
-import { functionReadCall, readCallsBundle } from "./abi-decode.js";
+import {
+  errorResultDecodePlan,
+  functionReadCall,
+  readCallsBundle,
+} from "./abi-decode.js";
 import { ServiceError } from "./core.js";
 import {
   erc20ApprovalTransaction,
@@ -33,6 +38,61 @@ const ORDERS_ABI = parseAbi([
   "function multicall(bytes[] data) payable returns (bytes[] results)",
   "function ownerOf(uint256 id) view returns (address owner)",
 ]);
+
+// Without these a TWAMM revert reaches the caller as a bare four-byte selector
+// and "execution reverted", which says nothing about which precondition failed.
+// From ITWAMM plus the sale-rate errors in math/twamm.sol.
+const TWAMM_ERRORS_ABI = parseAbi([
+  "error TimeNumOrdersOverflow()",
+  "error FullRangePoolOnly()",
+  "error OrderAlreadyEnded()",
+  "error InvalidTimestamps()",
+  "error MaxSaleRateDeltaPerTime()",
+  "error PoolNotInitialized()",
+  "error SaleRateOverflow()",
+  "error SaleRateDeltaOverflow()",
+]);
+
+/**
+ * The step size a TWAMM start or end time must be a multiple of, mirroring
+ * `computeStepSize` in evm-contracts math/time.sol: 256 seconds near the
+ * current time, then growing in powers of 16 as the gap widens.
+ */
+function twammStepSize(currentTime: bigint, time: bigint): bigint {
+  if (time <= currentTime + 4095n) {
+    return 256n;
+  }
+  const diff = time - currentTime;
+  let msb = BigInt(diff.toString(2).length - 1);
+  msb -= msb % 4n;
+  return 1n << msb;
+}
+
+/**
+ * Reject a start or end time the TWAMM extension will reject, rather than
+ * shipping a plan that is a guaranteed InvalidTimestamps revert. This is pure
+ * arithmetic over values the caller already supplied, so there is no reason to
+ * spend a transaction finding out.
+ */
+function assertValidTwammTime(
+  currentTime: bigint,
+  time: bigint,
+  label: string,
+): void {
+  const stepSize = twammStepSize(currentTime, time);
+  if (time % stepSize !== 0n) {
+    throw new ServiceError(
+      "invalid_order_time",
+      `${label} must be a multiple of ${stepSize} seconds at this distance from pending_timestamp; ${time} is not. The nearest valid times are ${(time / stepSize) * stepSize} and ${((time / stepSize) + 1n) * stepSize}.`,
+    );
+  }
+  if (time >= currentTime && time - currentTime >= 1n << 32n) {
+    throw new ServiceError(
+      "invalid_order_time",
+      `${label} is more than 2^32 seconds past pending_timestamp`,
+    );
+  }
+}
 
 export interface OrderSplitInput {
   fee: string;
@@ -106,6 +166,18 @@ export function prepareTwammOrder(input: {
         `orders[${index}] must end after its start`,
       );
     }
+    if (endTime <= pendingTimestamp) {
+      throw new ServiceError(
+        "invalid_order_time",
+        `orders[${index}].end_time has already passed at pending_timestamp; the extension reverts with OrderAlreadyEnded`,
+      );
+    }
+    assertValidTwammTime(
+      pendingTimestamp,
+      startTime,
+      `orders[${index}].start_time`,
+    );
+    assertValidTwammTime(pendingTimestamp, endTime, `orders[${index}].end_time`);
     let maxSaleRate: bigint;
     try {
       maxSaleRate = calculateEvmTwammMaxSaleRate({
@@ -139,60 +211,47 @@ export function prepareTwammOrder(input: {
   );
   assertFits(totalAmount, 128, "total_amount");
 
-  let tokenId: bigint | null = null;
-  let calls: Hex[];
+  if (input.salt !== undefined && !/^0x[0-9a-fA-F]{64}$/.test(input.salt)) {
+    throw new ServiceError("invalid_salt", "salt must be a bytes32 value");
+  }
+  // Every order is minted against a salt, including a single one. The salt-free
+  // `mint()` derives its own from prevrandao() and gas(), so the id it returns
+  // in a simulation is never the id that gets minted on chain -- and once the
+  // receipt is out of reach there is no way back to the order, because every
+  // downstream TWAMM tool is keyed by token_id and nothing here enumerates
+  // orders by owner. `mintAndIncreaseSellAmount` only exists in the salt-free
+  // form, so a deterministic id costs one extra call.
+  const salt = input.salt ?? defaultOrderSalt(sender, input.chainId, parsedOrders);
+  const tokenId = deriveEvmTwammOrderTokenId(
+    {
+      minter: sender,
+      salt,
+      chainId: BigInt(input.chainId),
+      contract: ORDERS_V3,
+    },
+    keccak256,
+  );
   // The native value each call carries when the sell token is the native one.
   // A multicall let one msg.value cover every inner call; as separate steps
   // each call funds its own order, and the total is unchanged.
-  let callValues: bigint[];
-  if (parsedOrders.length === 1) {
-    const order = parsedOrders[0];
-    assertFits(order.amount, 112, "orders[0].amount");
-    calls = [
+  const calls: Hex[] = [
+    encodeFunctionData({
+      abi: ORDERS_ABI,
+      functionName: "mint",
+      args: [salt],
+    }),
+    ...parsedOrders.map((order) =>
       encodeFunctionData({
         abi: ORDERS_ABI,
-        functionName: "mintAndIncreaseSellAmount",
-        args: [order.orderKey, order.amount, order.maxSaleRate],
+        functionName: "increaseSellAmount",
+        args: [tokenId, order.orderKey, order.amount, order.maxSaleRate],
       }),
-    ];
-    callValues = [order.amount];
-  } else {
-    if (input.salt === undefined || !/^0x[0-9a-fA-F]{64}$/.test(input.salt)) {
-      throw new ServiceError(
-        "missing_salt",
-        "A bytes32 salt is required when creating multiple splits",
-      );
-    }
-    tokenId = deriveEvmTwammOrderTokenId(
-      {
-        minter: sender,
-        salt: input.salt,
-        chainId: BigInt(input.chainId),
-        contract: ORDERS_V3,
-      },
-      keccak256,
-    );
-    calls = [
-      encodeFunctionData({
-        abi: ORDERS_ABI,
-        functionName: "mint",
-        args: [input.salt],
-      }),
-      ...parsedOrders.map((order) =>
-        encodeFunctionData({
-          abi: ORDERS_ABI,
-          functionName: "increaseSellAmount",
-          args: [
-            tokenId as bigint,
-            order.orderKey,
-            order.amount,
-            order.maxSaleRate,
-          ],
-        }),
-      ),
-    ];
-    callValues = [0n, ...parsedOrders.map((order) => order.amount)];
-  }
+    ),
+  ];
+  const callValues: bigint[] = [
+    0n,
+    ...parsedOrders.map((order) => order.amount),
+  ];
   const nativeValue = sellToken === NATIVE_TOKEN ? totalAmount : 0n;
   // One step per call so the wallet decodes each, with each order funding
   // itself instead of one msg.value covering an opaque payload.
@@ -227,7 +286,8 @@ export function prepareTwammOrder(input: {
       buy_token: buyToken,
       pending_timestamp: pendingTimestamp.toString(),
       deadline_seconds: deadlineSeconds,
-      salt: input.salt ?? null,
+      salt,
+      salt_source: input.salt === undefined ? "derived" : "caller",
       orders: parsedOrders.map(serializeOrder),
     },
     steps: [
@@ -238,13 +298,15 @@ export function prepareTwammOrder(input: {
       ...transactions.map((transaction) => ({
         kind: "execution" as const,
         transaction,
+        revertDecode: errorResultDecodePlan(TWAMM_ERRORS_ABI),
       })),
     ],
     atomicBatchRequired: approvals.length + transactions.length > 1,
     details: {
       orders_manager: ORDERS_V3,
-      expected_token_id:
-        tokenId?.toString() ?? "returned_by_mintAndIncreaseSellAmount",
+      token_id: tokenId.toString(),
+      token_id_is_deterministic:
+        "This is saltToId(sender, salt) and is the id that will be minted. Keep it: prepare_twamm_order_collection and prepare_twamm_order_stop are keyed by it, and nothing in this catalog enumerates orders by owner.",
       total_sell_amount: totalAmount.toString(),
       native_value: nativeValue.toString(),
       complete_atomic_manager_multicall: calls.length > 1,
@@ -466,6 +528,39 @@ function positiveUnsigned(value: string, bits: number, label: string) {
     throw new ServiceError("invalid_integer", `${label} must be positive`);
   }
   return parsed;
+}
+
+/**
+ * A salt for callers that did not choose one, derived from the request itself
+ * so the same order always resolves to the same id. That makes a retry
+ * detectable -- the second attempt derives an id that already exists rather
+ * than silently minting a second order -- which is the property the salt-free
+ * `mint()` cannot offer at all. Callers who want independent ids for identical
+ * orders pass their own salt.
+ */
+function defaultOrderSalt(
+  sender: Address,
+  chainId: string,
+  orders: { orderKey: { config: Hex }; amount: bigint }[],
+): Hex {
+  return keccak256(
+    encodeAbiParameters(
+      [
+        { type: "string" },
+        { type: "address" },
+        { type: "uint256" },
+        { type: "bytes32[]" },
+        { type: "uint256[]" },
+      ],
+      [
+        "ekubo.twamm.order.salt.v1",
+        sender,
+        BigInt(chainId),
+        orders.map((order) => order.orderKey.config),
+        orders.map((order) => order.amount),
+      ],
+    ),
+  );
 }
 
 function assertFits(value: bigint, bits: number, label: string) {
