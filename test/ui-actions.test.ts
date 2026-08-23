@@ -84,6 +84,69 @@ describe("EVM interface action preparation", () => {
     );
   });
 
+  it("wraps the verified native token of whichever chain it is given", () => {
+    const base = prepareWrapUnwrap({
+      chainId: "8453",
+      sender,
+      direction: "wrap",
+      amount: "100",
+    });
+    expect(planTransactions(base)[0]?.to).toBe(
+      "0x4200000000000000000000000000000000000006",
+    );
+    expect(base.request.wrapped_token_symbol).toBe("WETH");
+
+    const arbitrum = prepareWrapUnwrap({
+      chainId: "42161",
+      sender,
+      direction: "wrap",
+      amount: "100",
+    });
+    expect(planTransactions(arbitrum)[0]?.to).toBe(
+      "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+    );
+  });
+
+  it("names the wrapped asset on chains whose native token is not ether", () => {
+    const bnb = prepareWrapUnwrap({
+      chainId: "56",
+      sender,
+      direction: "wrap",
+      amount: "100",
+    });
+    expect(bnb.request.wrapped_token_symbol).toBe("WBNB");
+    expect(planTransactions(bnb)[0]?.to).toBe(
+      "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+    );
+
+    const polygon = prepareWrapUnwrap({
+      chainId: "137",
+      sender,
+      direction: "wrap",
+      amount: "100",
+    });
+    expect(polygon.request.wrapped_token_symbol).toBe("WPOL");
+
+    const monad = prepareWrapUnwrap({
+      chainId: "143",
+      sender,
+      direction: "wrap",
+      amount: "100",
+    });
+    expect(monad.request.wrapped_token_symbol).toBe("WMON");
+  });
+
+  it("refuses a chain whose wrapped native token has not been verified", () => {
+    expect(() =>
+      prepareWrapUnwrap({
+        chainId: "999999",
+        sender,
+        direction: "wrap",
+        amount: "100",
+      }),
+    ).toThrow(/No verified wrapped native token is known for chain 999999/);
+  });
+
   it("returns every approval revocation as an ordered top-level transaction", () => {
     const result = prepareApprovalRevocations({
       chainId: "1",

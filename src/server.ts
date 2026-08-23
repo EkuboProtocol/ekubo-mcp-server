@@ -2012,9 +2012,9 @@ export const publicToolCatalog = [
   },
   {
     name: "prepare_wrap_unwrap",
-    title: "Prepare direct WETH wrap or unwrap",
+    title: "Prepare a direct wrapped-native wrap or unwrap",
     description:
-      "Prepare the Ethereum interface's direct WETH deposit or withdrawal with exact calldata and native value.",
+      "Prepare the interface's direct wrapped-native deposit or withdrawal with exact calldata and native value, on any chain whose wrapped native token has been verified. The wrapped asset is not ether everywhere -- BNB Chain wraps BNB, Polygon wraps POL, Monad wraps MON -- so the response names the token being wrapped rather than assuming WETH.",
     inputSchema: z.toJSONSchema(prepareWrapUnwrapSchema),
   },
   {

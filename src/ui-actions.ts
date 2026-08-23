@@ -26,7 +26,40 @@ import {
 import { getOwnedIndexedPosition } from "./positions.js";
 
 const NATIVE_TOKEN = getAddress("0x0000000000000000000000000000000000000000");
-const WETH_MAINNET = getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+
+// The canonical wrapped-native token per chain. Every entry was verified on
+// chain rather than copied from a token list: `symbol()` was read and
+// `withdraw(uint256)` was probed with a zero amount, which reverts on a
+// contract that does not implement the WETH9 interface this tool encodes.
+//
+// The symbol is carried alongside the address because the wrapped native is
+// not ether everywhere: BNB Chain wraps BNB, Polygon wraps POL, and Monad
+// wraps MON. Naming the asset in the response keeps a caller from telling a
+// user they are wrapping ETH on a chain where they are not.
+//
+// A chain absent from this map is one whose wrapped native has not been
+// verified, not one that is known to lack it.
+const WRAPPED_NATIVE_BY_CHAIN: Record<
+  string,
+  { address: Address; symbol: string }
+> = {
+  "1": { address: getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"), symbol: "WETH" },
+  "10": { address: getAddress("0x4200000000000000000000000000000000000006"), symbol: "WETH" },
+  "56": { address: getAddress("0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c"), symbol: "WBNB" },
+  "130": { address: getAddress("0x4200000000000000000000000000000000000006"), symbol: "WETH" },
+  "137": { address: getAddress("0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270"), symbol: "WPOL" },
+  "143": { address: getAddress("0x3bd359c1119da7da1d913d1c4d2b7c461115433a"), symbol: "WMON" },
+  "1301": { address: getAddress("0x4200000000000000000000000000000000000006"), symbol: "WETH" },
+  "4663": { address: getAddress("0x0bd7d308f8e1639fab988df18a8011f41eacad73"), symbol: "WETH" },
+  "8453": { address: getAddress("0x4200000000000000000000000000000000000006"), symbol: "WETH" },
+  "42161": { address: getAddress("0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"), symbol: "WETH" },
+  "57073": { address: getAddress("0x4200000000000000000000000000000000000006"), symbol: "WETH" },
+  "84532": { address: getAddress("0x4200000000000000000000000000000000000006"), symbol: "WETH" },
+  "421614": { address: getAddress("0x980B62Da83eFf3D4576C647993b0c1D7faf17c73"), symbol: "WETH" },
+  "763373": { address: getAddress("0x4200000000000000000000000000000000000006"), symbol: "WETH" },
+  "11155111": { address: getAddress("0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9"), symbol: "WETH" },
+  "11155420": { address: getAddress("0x4200000000000000000000000000000000000006"), symbol: "WETH" },
+};
 const ORACLE_V3 = getAddress("0x517E506700271AEa091b02f42756F5E174Af5230");
 const TWAMM_V3 = getAddress("0xd47f1B1eDCfEaBb08F6eBd8FC337c27E636C75BA");
 const OLD_TWAMM_V3 = getAddress("0xd4F1060cB9c1A13e1d2d20379b8aa2cF7541eD9b");
@@ -87,10 +120,13 @@ export function prepareWrapUnwrap(input: {
   direction: "wrap" | "unwrap";
   amount: string;
 }) {
-  if (input.chainId !== "1") {
+  const wrapped = WRAPPED_NATIVE_BY_CHAIN[input.chainId];
+  if (wrapped === undefined) {
     throw new ServiceError(
       "unsupported_chain",
-      "The interface's direct WETH wrap/unwrap action is available only on Ethereum mainnet",
+      `No verified wrapped native token is known for chain ${input.chainId}; supported chains are ${Object.keys(
+        WRAPPED_NATIVE_BY_CHAIN,
+      ).join(", ")}`,
     );
   }
   const sender = getAddress(input.sender);
@@ -105,7 +141,7 @@ export function prepareWrapUnwrap(input: {
         });
   const transaction = preparedTransaction(
     input.chainId,
-    WETH_MAINNET,
+    wrapped.address,
     data,
     input.direction === "wrap" ? amount : 0n,
   );
@@ -119,12 +155,14 @@ export function prepareWrapUnwrap(input: {
       sender,
       direction: input.direction,
       amount: amount.toString(),
-      wrapped_token: WETH_MAINNET,
+      wrapped_token: wrapped.address,
+      wrapped_token_symbol: wrapped.symbol,
     },
     transaction,
     details: {
       native_amount: amount.toString(),
       wrapped_token_amount: amount.toString(),
+      wrapped_token_symbol: wrapped.symbol,
     },
   });
 }
@@ -656,7 +694,7 @@ function assertFits(value: bigint, bits: number, label: string) {
 
 export const UI_ACTION_ADDRESSES = {
   native_token: NATIVE_TOKEN,
-  weth_mainnet: WETH_MAINNET,
+  weth_mainnet: WRAPPED_NATIVE_BY_CHAIN["1"]!.address,
   oracle_v3: ORACLE_V3,
   twamm_v3: TWAMM_V3,
   old_twamm_v3: OLD_TWAMM_V3,
