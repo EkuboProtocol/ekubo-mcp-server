@@ -784,6 +784,7 @@ export function prepareAerodromeLiquidityWithdraw(input: {
   amountBMin: string;
   deadline: string;
   recipient?: string;
+  lpToken?: string;
 }) {
   requireBase(input.chainId);
   const sender = getAddress(input.sender);
@@ -798,6 +799,82 @@ export function prepareAerodromeLiquidityWithdraw(input: {
   const deadline = futureDeadline(input.deadline);
   const router = AERODROME_DEPLOYMENT.router;
 
+  const poolReadCalls = () =>
+    readCallsBundle({
+      chainId: input.chainId,
+      from: sender,
+      calls: [
+        routerRead("pool", "poolFor", [
+          tokenA,
+          tokenB,
+          input.stable,
+          AERODROME_DEPLOYMENT.pool_factory,
+        ]),
+        routerRead("quote_remove_liquidity", "quoteRemoveLiquidity", [
+          tokenA,
+          tokenB,
+          input.stable,
+          AERODROME_DEPLOYMENT.pool_factory,
+          liquidity,
+        ]),
+      ],
+    });
+
+  // removeLiquidity pulls the LP token, so the plan is only complete once it
+  // carries that approval. The LP token is the pool, and the pool address is
+  // whatever poolFor returns -- this server does not derive Aerodrome
+  // addresses, it reads them. So the first phase hands back the read that
+  // resolves it and the second phase builds approve + remove + cleanup as one
+  // atomic batch. Returning the bare removeLiquidity call, as this tool used
+  // to, is a guaranteed ERC20 allowance revert.
+  if (input.lpToken === undefined) {
+    return {
+      schema_version: "1",
+      action: "aerodrome_liquidity_withdraw",
+      phase: "resolve_pool",
+      next_phase: "execute",
+      execution_plan_ready: false,
+      agent_confirmation_required: false,
+      wallet_validation_required: true,
+      request: {
+        chain_id: input.chainId,
+        sender,
+        token_a: tokenA,
+        token_b: tokenB,
+        stable: input.stable,
+        liquidity: liquidity.toString(),
+        amount_a_min: amountAMin.toString(),
+        amount_b_min: amountBMin.toString(),
+        recipient,
+        deadline: deadline.toString(),
+      },
+      details: {
+        ...aerodromeDetails(),
+        pool_kind: input.stable ? "v2_stable" : "v2_volatile",
+        router,
+        returns_both_underlying_tokens: true,
+      },
+      pool_query: {
+        decode_as: "(address pool)",
+        read_calls: poolReadCalls(),
+        resume: {
+          tool: "prepare_aerodrome_liquidity_withdraw",
+          preserve_original_arguments: true,
+          arguments: {
+            lp_token: "<wallet_batch_eth_call.results[0].decoded>",
+          },
+          instruction:
+            "A zero pool address means this pair and stable flag have no pool, so there is nothing to withdraw. Compare quote_remove_liquidity with the minimums before resuming.",
+        },
+      },
+      wallet_handoff: {
+        instruction:
+          "Pass pool_query.read_calls_reference unchanged as wallet_batch_eth_call's reference argument, then call this tool again with lp_token set to the resolved pool address. Do not reconstruct the approval or the removeLiquidity call.",
+      },
+    };
+  }
+
+  const lpToken = getAddress(input.lpToken);
   return preparedUiAction({
     action: "aerodrome_liquidity_withdraw",
     chainId: input.chainId,
@@ -813,11 +890,10 @@ export function prepareAerodromeLiquidityWithdraw(input: {
       amount_b_min: amountBMin.toString(),
       recipient,
       deadline: deadline.toString(),
+      lp_token: lpToken,
     },
     steps: [
-      // The LP token itself is the approval subject here, and its address is
-      // whatever poolFor returns; the read bundle below is how the agent
-      // confirms the approval target it just authorized.
+      approvalStep(input.chainId, lpToken, router, liquidity),
       {
         kind: "execution",
         transaction: preparedTransaction(
@@ -841,19 +917,23 @@ export function prepareAerodromeLiquidityWithdraw(input: {
         ),
         revertDecode: errorResultDecodePlan(AERODROME_ERRORS_ABI),
       },
+      // removeLiquidity consumes the whole approval, but an exact allowance
+      // that reverted leaves a standing grant to the router; zero it.
+      approvalStep(input.chainId, lpToken, router, 0n, "allowance_cleanup"),
     ],
+    atomicBatchRequired: true,
     details: {
       ...aerodromeDetails(),
       pool_kind: input.stable ? "v2_stable" : "v2_volatile",
       router,
-      lp_token_approval_required:
-        "removeLiquidity pulls the LP token, so the pool address returned by the read below must already have approved the router for at least this liquidity. Staked LP tokens are held by the gauge and must be withdrawn from it first.",
+      lp_token: lpToken,
+      exact_approval_then_cleanup: true,
       returns_both_underlying_tokens: true,
     },
     onchainValidation: {
       status: "not_executed",
       instruction:
-        "Pass onchain_validation.read_calls_reference unchanged as wallet_batch_eth_call's reference argument. Require lp_balance to be at least liquidity — if it is short, the missing amount is probably staked in the gauge and needs prepare_aerodrome_gauge_withdraw first. Require lp_allowance to cover liquidity, and compare quote_remove_liquidity with the minimums before authorizing.",
+        "Pass onchain_validation.read_calls_reference unchanged as wallet_batch_eth_call's reference argument. Require pool to equal the lp_token this plan approves — a mismatch means the resolved address is stale and the plan must be rebuilt. Require lp_balance to be at least liquidity; if it is short, the missing amount is probably staked in the gauge and needs prepare_aerodrome_gauge_withdraw first. Compare quote_remove_liquidity with the minimums before authorizing.",
       read_calls: readCallsBundle({
         chainId: input.chainId,
         from: sender,
@@ -871,6 +951,7 @@ export function prepareAerodromeLiquidityWithdraw(input: {
             AERODROME_DEPLOYMENT.pool_factory,
             liquidity,
           ]),
+          erc20Read("lp_balance", lpToken, "balanceOf", [sender]),
         ],
       }),
     },
@@ -883,21 +964,89 @@ export function prepareAerodromeGaugeDeposit(input: {
   sender: string;
   gauge: string;
   amount: string;
+  lpToken?: string;
 }) {
   requireBase(input.chainId);
   const sender = getAddress(input.sender);
   const gauge = getAddress(input.gauge);
   const amount = positiveUint256(input.amount, "amount");
 
+  const stakingTokenReadCalls = () =>
+    readCallsBundle({
+      chainId: input.chainId,
+      from: sender,
+      calls: [
+        gaugeRead("staking_token", gauge, "stakingToken", []),
+        gaugeRead("reward_token", gauge, "rewardToken", []),
+        gaugeRead("staked_balance", gauge, "balanceOf", [sender]),
+        voterRead("gauge_alive", "isAlive", [gauge]),
+      ],
+    });
+
+  // The gauge pulls the LP token, so the plan is only complete once it carries
+  // that approval. Which token the gauge pulls is the gauge's own
+  // stakingToken(), not something this server can infer from the gauge
+  // address, so the first phase hands back the read that resolves it and the
+  // second builds approve + deposit + cleanup as one atomic batch. Returning
+  // the bare deposit call, as this tool used to, is a guaranteed allowance
+  // revert.
+  if (input.lpToken === undefined) {
+    return {
+      schema_version: "1",
+      action: "aerodrome_gauge_deposit",
+      phase: "resolve_staking_token",
+      next_phase: "execute",
+      execution_plan_ready: false,
+      agent_confirmation_required: false,
+      wallet_validation_required: true,
+      request: {
+        chain_id: input.chainId,
+        sender,
+        gauge,
+        amount: amount.toString(),
+      },
+      details: {
+        ...aerodromeDetails(),
+        gauge,
+        staking_redirects_trading_fees:
+          "While staked, this position's share of trading fees goes to the pool's voters and the position earns AERO emissions instead.",
+        concentrated_gauges_not_supported:
+          "This is the v2 gauge interface, which stakes a fungible amount. A Slipstream gauge stakes an ERC-721 position id instead and is not prepared here.",
+      },
+      staking_token_query: {
+        decode_as: "(address stakingToken)",
+        read_calls: stakingTokenReadCalls(),
+        resume: {
+          tool: "prepare_aerodrome_gauge_deposit",
+          preserve_original_arguments: true,
+          arguments: {
+            lp_token: "<wallet_batch_eth_call.results[0].decoded>",
+          },
+          instruction:
+            "Confirm staking_token is the LP token the user means to stake, and size amount from the live LP balance rather than from an earlier deposit simulation: the LP minted by addLiquidity moves with the reserve ratio between blocks, and a stale figure reverts with ERC20: transfer amount exceeds balance. If gauge_alive is false the gauge no longer receives emissions and staking into it earns nothing -- say so before authorizing.",
+        },
+      },
+      wallet_handoff: {
+        instruction:
+          "Pass staking_token_query.read_calls_reference unchanged as wallet_batch_eth_call's reference argument, then call this tool again with lp_token set to the resolved staking token. Do not reconstruct the approval or the deposit call.",
+      },
+    };
+  }
+
+  const lpToken = getAddress(input.lpToken);
   return preparedUiAction({
     action: "aerodrome_gauge_deposit",
     chainId: input.chainId,
     sender,
-    request: { chain_id: input.chainId, sender, gauge, amount: amount.toString() },
+    request: {
+      chain_id: input.chainId,
+      sender,
+      gauge,
+      amount: amount.toString(),
+      lp_token: lpToken,
+    },
     steps: [
-      // The staking token is read, not assumed: the approval below is written
-      // against the gauge's own stakingToken(), which the validation read
-      // confirms before anything is signed.
+      approvalStep(input.chainId, lpToken, gauge, amount),
       {
         kind: "execution",
         transaction: preparedTransaction(
@@ -912,12 +1061,14 @@ export function prepareAerodromeGaugeDeposit(input: {
         ),
         revertDecode: errorResultDecodePlan(AERODROME_ERRORS_ABI),
       },
+      approvalStep(input.chainId, lpToken, gauge, 0n, "allowance_cleanup"),
     ],
+    atomicBatchRequired: true,
     details: {
       ...aerodromeDetails(),
       gauge,
-      lp_approval_required:
-        "The gauge pulls the LP token, so staking_token from the read below must have approved this gauge for at least amount before this plan is sent.",
+      lp_token: lpToken,
+      exact_approval_then_cleanup: true,
       staking_redirects_trading_fees:
         "While staked, this position's share of trading fees goes to the pool's voters and the position earns AERO emissions instead.",
       concentrated_gauges_not_supported:
@@ -926,11 +1077,12 @@ export function prepareAerodromeGaugeDeposit(input: {
     onchainValidation: {
       status: "not_executed",
       instruction:
-        "Pass onchain_validation.read_calls_reference unchanged as wallet_batch_eth_call's reference argument. Confirm staking_token is the LP token the user means to stake and that its balance and allowance for this gauge both cover amount. If gauge_alive is false the gauge no longer receives emissions and staking into it earns nothing — say so before authorizing.",
+        "Pass onchain_validation.read_calls_reference unchanged as wallet_batch_eth_call's reference argument. Require staking_token to equal the lp_token this plan approves — a mismatch means the resolved address is stale and the plan must be rebuilt. Require lp_balance to be at least amount; the LP minted by addLiquidity moves with the reserve ratio between blocks, so an amount taken from an earlier deposit simulation reverts here. If gauge_alive is false the gauge no longer receives emissions and staking into it earns nothing — say so before authorizing.",
       read_calls: readCallsBundle({
         chainId: input.chainId,
         from: sender,
         calls: [
+          erc20Read("lp_balance", lpToken, "balanceOf", [sender]),
           gaugeRead("staking_token", gauge, "stakingToken", []),
           gaugeRead("reward_token", gauge, "rewardToken", []),
           gaugeRead("staked_balance", gauge, "balanceOf", [sender]),

@@ -30,6 +30,8 @@ const aero = AERODROME_DEPLOYMENT.aero;
 const usdc = getAddress("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
 /** The gauge of the vAMM-tBTC/USDbC pool, from the Lp fixture below. */
 const gauge = getAddress("0x50f0249B824033Cf0AF0C8b9fe1c67c2842A34d5");
+/** The vAMM-tBTC/USDbC pool itself, which is that gauge's staking token. */
+const lpToken = getAddress("0x723AEf6543aecE026a15662Be4D3fb3424D502A9");
 const farFuture = "4102444800"; // 2100-01-01
 
 /** The details block a prepared action attaches, which is part of its contract. */
@@ -38,10 +40,28 @@ function details(result: any): Record<string, unknown> {
   return result.details;
 }
 
+/** Read a field off a phased result, which is a union with the plan shape. */
+// biome-ignore lint/suspicious/noExplicitAny: test helper over prepared results
+function phaseOf(result: any, key = "phase"): unknown {
+  return result[key];
+}
+
 /** Pull one call's shipped decode plan out of a prepared read bundle. */
 // biome-ignore lint/suspicious/noExplicitAny: test helper over prepared results
 function readCall(result: any, id: string) {
-  const bundle = result.read_calls ?? result.onchain_validation?.read_calls;
+  // A phased result carries its reads under the query that resolves that
+  // phase, the way prepare_fix_pool_price does.
+  const phaseQuery = Object.entries(result).find(
+    ([key, value]) =>
+      key.endsWith("_query") &&
+      typeof value === "object" &&
+      value !== null &&
+      "read_calls" in value,
+  )?.[1] as { read_calls?: { calls: { id: string }[] } } | undefined;
+  const bundle =
+    result.read_calls ??
+    result.onchain_validation?.read_calls ??
+    phaseQuery?.read_calls;
   const call = bundle.calls.find((entry: { id: string }) => entry.id === id);
   if (call === undefined) {
     throw new Error(`no read call ${id} in [${bundle.calls.map((c: { id: string }) => c.id)}]`);
@@ -369,8 +389,8 @@ describe("liquidity", () => {
     expect(readCall(result, "pool").to).toBe(AERODROME_DEPLOYMENT.router);
   });
 
-  it("withdraws through the router and quotes what comes back", () => {
-    const result = prepareAerodromeLiquidityWithdraw({
+  it("resolves the pool before it can build a withdrawal", () => {
+    const phase1 = prepareAerodromeLiquidityWithdraw({
       chainId: AERODROME_CHAIN_ID,
       sender,
       tokenA: aero,
@@ -381,9 +401,48 @@ describe("liquidity", () => {
       amountBMin: "1",
       deadline: farFuture,
     });
+    // Without the pool address there is no approval to build, so the tool
+    // returns the read rather than a plan that cannot execute.
+    expect(phaseOf(phase1)).toBe("resolve_pool");
+    expect(phaseOf(phase1, "execution_plan_ready")).toBe(false);
+    expect(readCall(phase1, "quote_remove_liquidity").to).toBe(
+      AERODROME_DEPLOYMENT.router,
+    );
+  });
+
+  it("withdraws with the LP approval the router needs, then clears it", () => {
+    const result = prepareAerodromeLiquidityWithdraw({
+      chainId: AERODROME_CHAIN_ID,
+      sender,
+      tokenA: aero,
+      tokenB: usdc,
+      stable: false,
+      liquidity: "1000000",
+      amountAMin: "1",
+      amountBMin: "1",
+      deadline: farFuture,
+      lpToken,
+    });
+    expect(planStepKinds(result)).toEqual([
+      "approval",
+      "execution",
+      "allowance_cleanup",
+    ]);
+    expect(planTargets(result)).toEqual([
+      lpToken,
+      AERODROME_DEPLOYMENT.router,
+      lpToken,
+    ]);
+    const approval = decodeFunctionData({
+      abi: erc20Abi,
+      data: planTransactions(result)[0].data,
+    });
+    expect(approval.functionName).toBe("approve");
+    expect(approval.args?.[0]).toBe(AERODROME_DEPLOYMENT.router);
+    expect(approval.args?.[1]).toBe(1000000n);
     const call = decodeFunctionData({
       abi: AERODROME_ROUTER_ABI,
-      data: planTransactions(result)[0].data,
+      data: planTransactions(result)[1].data,
     });
     expect(call.functionName).toBe("removeLiquidity");
     expect(readCall(result, "quote_remove_liquidity").to).toBe(AERODROME_DEPLOYMENT.router);
@@ -408,23 +467,50 @@ describe("liquidity", () => {
 });
 
 describe("gauges", () => {
-  it("stakes into the gauge and reads back the staking token it pulls", () => {
-    const result = prepareAerodromeGaugeDeposit({
+  it("resolves the staking token before it can build a stake", () => {
+    const phase1 = prepareAerodromeGaugeDeposit({
       chainId: AERODROME_CHAIN_ID,
       sender,
       gauge,
       amount: "1000",
     });
-    expect(planTargets(result)).toEqual([gauge]);
+    // Which token the gauge pulls is its own stakingToken(), never assumed, so
+    // without it the tool returns the read rather than a bare deposit that is
+    // a guaranteed allowance revert.
+    expect(phaseOf(phase1)).toBe("resolve_staking_token");
+    expect(phaseOf(phase1, "execution_plan_ready")).toBe(false);
+    expect(readCall(phase1, "staking_token").to).toBe(gauge);
+    expect(readCall(phase1, "gauge_alive").to).toBe(AERODROME_DEPLOYMENT.voter);
+  });
+
+  it("stakes with the LP approval the gauge needs, then clears it", () => {
+    const result = prepareAerodromeGaugeDeposit({
+      chainId: AERODROME_CHAIN_ID,
+      sender,
+      gauge,
+      amount: "1000",
+      lpToken,
+    });
+    expect(planStepKinds(result)).toEqual([
+      "approval",
+      "execution",
+      "allowance_cleanup",
+    ]);
+    expect(planTargets(result)).toEqual([lpToken, gauge, lpToken]);
+    const approval = decodeFunctionData({
+      abi: erc20Abi,
+      data: planTransactions(result)[0].data,
+    });
+    expect(approval.functionName).toBe("approve");
+    expect(approval.args?.[0]).toBe(gauge);
+    expect(approval.args?.[1]).toBe(1000n);
     const call = decodeFunctionData({
       abi: AERODROME_GAUGE_ABI,
-      data: planTransactions(result)[0].data,
+      data: planTransactions(result)[1].data,
     });
     expect(call.functionName).toBe("deposit");
     expect(call.args?.[0]).toBe(1000n);
-    // The approval target is the gauge's own stakingToken(), never assumed.
     expect(readCall(result, "staking_token").to).toBe(gauge);
-    expect(readCall(result, "gauge_alive").to).toBe(AERODROME_DEPLOYMENT.voter);
   });
 
   it("surfaces unclaimed emissions when unstaking", () => {

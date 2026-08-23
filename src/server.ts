@@ -1576,10 +1576,20 @@ export const prepareAerodromeLiquidityWithdrawSchema = aerodromeActionSchema.ext
   amount_b_min: amount.describe("Minimum token_b to receive"),
   deadline: aerodromeDeadline,
   recipient: address.optional().describe("Token recipient; defaults to sender"),
+  lp_token: address
+    .optional()
+    .describe(
+      "The pool address the router will pull LP tokens from, as resolved by this tool's first-phase pool read. Omit it to get that read back; supply it to get the complete approve + removeLiquidity + cleanup plan.",
+    ),
 });
 export const prepareAerodromeGaugeDepositSchema = aerodromeActionSchema.extend({
   gauge: address.describe("The pool's gauge address, from a Sugar pools read"),
   amount: amount.describe("Exact LP token amount to stake in base units"),
+  lp_token: address
+    .optional()
+    .describe(
+      "The gauge's stakingToken, as resolved by this tool's first-phase read. Omit it to get that read back; supply it to get the complete approve + deposit + cleanup plan.",
+    ),
 });
 export const prepareAerodromeGaugeWithdrawSchema = aerodromeActionSchema.extend({
   gauge: address.describe("The pool's gauge address, from a Sugar pools read"),
@@ -2315,14 +2325,14 @@ export const publicToolCatalog = [
     name: "prepare_aerodrome_liquidity_withdraw",
     title: "Prepare an Aerodrome v2 liquidity withdrawal",
     description:
-      "Prepare a v2 removeLiquidity that burns LP tokens back into the underlying pair. The read bundle resolves the pool and quotes what comes back, and an LP balance short of the requested liquidity usually means the rest is staked in the gauge and needs unstaking first.",
+      "Prepare a v2 removeLiquidity that burns LP tokens back into the underlying pair, with the LP-token approval the router needs and an allowance cleanup after. Phased, because the token being approved is the pool and this server resolves Aerodrome addresses by reading them: call it without lp_token to get the pool read back, then again with the resolved address for the complete atomic plan. An LP balance short of the requested liquidity usually means the rest is staked in the gauge and needs unstaking first.",
     inputSchema: z.toJSONSchema(prepareAerodromeLiquidityWithdrawSchema),
   },
   {
     name: "prepare_aerodrome_gauge_deposit",
     title: "Prepare an Aerodrome gauge stake",
     description:
-      "Stake v2 LP tokens into a pool's gauge to earn AERO emissions. Staking redirects that position's trading fees to the pool's voters, so it trades fee income for emissions rather than adding to it. The read bundle returns the gauge's own stakingToken and whether the gauge is still alive — a dead gauge accepts the stake and pays nothing.",
+      "Stake v2 LP tokens into a pool's gauge to earn AERO emissions, with the LP-token approval the gauge needs and an allowance cleanup after. Phased, because which token the gauge pulls is its own stakingToken: call it without lp_token to get that read back, then again with the resolved address for the complete atomic plan. Staking redirects that position's trading fees to the pool's voters, so it trades fee income for emissions rather than adding to it. A dead gauge accepts the stake and pays nothing, so check gauge_alive. Size amount from the live LP balance, not from an earlier deposit simulation.",
     inputSchema: z.toJSONSchema(prepareAerodromeGaugeDepositSchema),
   },
   {
@@ -3829,6 +3839,7 @@ export function createEkuboServer(
         amountBMin: input.amount_b_min,
         deadline: input.deadline,
         recipient: input.recipient,
+        lpToken: input.lp_token,
       }),
   );
   registerCatalogTool(
@@ -3840,6 +3851,7 @@ export function createEkuboServer(
         sender: input.sender,
         gauge: input.gauge,
         amount: input.amount,
+        lpToken: input.lp_token,
       }),
   );
   registerCatalogTool(
