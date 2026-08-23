@@ -11,6 +11,7 @@ import {
   type Address,
   type Hex,
 } from "viem";
+import { boostedFeesAddresses } from "./contracts.js";
 import { type Env, ServiceError } from "./core.js";
 import {
   executionPlan,
@@ -306,6 +307,25 @@ export function prepareManualPoolBoost(input: {
 }) {
   const sender = getAddress(input.sender);
   const poolKey = normalizeExactPoolKey(input.poolKey);
+  // A boost forwards to the pool's own extension (BoostedFeesLib.addIncentives
+  // -> core.forward(poolKey.config.extension(), ...)), so a pool with no
+  // BoostedFees extension sends the call to an address with no code. That
+  // surfaces as a bare CallFailed("0x") with nothing to act on, and
+  // re-preparing produces the identical unexecutable plan. The extension is
+  // packed into the config the caller already supplied, so this is decidable
+  // here without touching the network.
+  const boostExtension = getAddress(
+    numberToHex(BigInt(poolKey.config) >> 96n, { size: 20 }),
+  );
+  const boostedFees = boostedFeesAddresses(input.chainId);
+  if (!boostedFees.some((address) => address === boostExtension)) {
+    throw new ServiceError(
+      "invalid_pool_extension",
+      boostedFees.length === 0
+        ? `No BoostedFees extension is deployed on chain ${input.chainId}, so no pool there can be boosted`
+        : `This pool's extension is ${boostExtension}, which is not a BoostedFees deployment; boostable pools on chain ${input.chainId} use ${boostedFees.join(" or ")}`,
+    );
+  }
   const startTime = unsigned(input.startTime, 64, "start_time");
   const endTime = unsigned(input.endTime, 64, "end_time");
   if (endTime <= startTime) {

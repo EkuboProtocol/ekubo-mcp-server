@@ -259,6 +259,16 @@ export function poolKeyIndexContract(chainId: string) {
   return namedContract(chainId, "PoolKeyIndex");
 }
 
+/**
+ * Every BoostedFees extension deployed on a chain. There is more than one on
+ * some chains, so this returns the set rather than a single address.
+ */
+export function boostedFeesAddresses(chainId: string): Address[] {
+  return Object.values(contractsForChain(chainId))
+    .filter((contract) => contract.name === "BoostedFees")
+    .map((contract) => contract.address);
+}
+
 function namedContract(chainId: string, name: string) {
   const contract = Object.values(contractsForChain(chainId)).find(
     (candidate) => candidate.name === name,

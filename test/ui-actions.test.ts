@@ -52,10 +52,19 @@ const native = "0x0000000000000000000000000000000000000000";
 const token1 = "0x2222222222222222222222222222222222222222";
 const token2 = "0x3333333333333333333333333333333333333333";
 const twamm = "0xd47f1b1edcfeabb08f6ebd8fc337c27e636c75ba";
+const boostedFees = "0x948b9c2c99718034954110cb61a6e08e107745f9";
 const poolKey = {
   token0: native,
   token1,
   config: numberToHex((BigInt(twamm) << 96n) | (1n << 31n) | 4n, {
+    size: 32,
+  }),
+} as const;
+/** A boostable pool: its extension is a BoostedFees deployment. */
+const boostedPoolKey = {
+  token0: native,
+  token1,
+  config: numberToHex((BigInt(boostedFees) << 96n) | (1n << 31n) | 4n, {
     size: 32,
   }),
 } as const;
@@ -167,6 +176,25 @@ describe("EVM interface action preparation", () => {
     ]);
   });
 
+  it("refuses to boost a pool that has no BoostedFees extension", () => {
+    // A boost forwards to the pool's own extension, so an extensionless pool
+    // sends the call to an address with no code and reverts as a bare
+    // CallFailed("0x") that re-preparing cannot fix. The extension is packed
+    // into the config the caller supplied, so it is decidable without the
+    // network.
+    expect(() =>
+      prepareManualPoolBoost({
+        chainId: "1",
+        sender,
+        poolKey,
+        startTime: "1000",
+        endTime: "1100",
+        amount0: "100",
+        amount1: "200",
+      }),
+    ).toThrow(/not a BoostedFees deployment/);
+  });
+
   it("prepares LP NFT transfer with pending ownership validation", async () => {
     const positions = "0x02D9876A21AF7545f8632C3af76eC90b5ad4b66D";
     const recipient = "0x4444444444444444444444444444444444444444";
@@ -224,7 +252,7 @@ describe("EVM interface action preparation", () => {
     const boost = prepareManualPoolBoost({
       chainId: "1",
       sender,
-      poolKey,
+      poolKey: boostedPoolKey,
       startTime: "1000",
       endTime: "1100",
       amount0: "100",
