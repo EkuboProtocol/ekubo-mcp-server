@@ -145,9 +145,8 @@ describe("LI.FI value transfers", () => {
     expect(planStepKinds(result)).toEqual([
       "approval",
       "execution",
-      "allowance_cleanup",
     ]);
-    expect(planTargets(result)).toEqual([tokenA, lifiDiamond, tokenA]);
+    expect(planTargets(result)).toEqual([tokenA, lifiDiamond]);
     // The hex value and gas limit are carried through as decimal base units.
     expect(planTransactions(result)[1]).toMatchObject({
       value: "7",

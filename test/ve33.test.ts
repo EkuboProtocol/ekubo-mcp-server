@@ -261,7 +261,7 @@ describe("ve(3,3) call generation", () => {
     ]);
     expect(
       increase.execution_plan?.ordered_steps.map((step) => step.kind),
-    ).toEqual(["approval", "execution", "allowance_cleanup"]);
+    ).toEqual(["approval", "execution"]);
     expect(planFunctions(merge, VE_TOKEN_ABI)).toEqual([
       "claimPoolFeesToSelf",
       "claimPoolFeesAndMergeStakesToSelf",
@@ -305,11 +305,9 @@ describe("ve(3,3) call generation", () => {
       data: planTransactions(result)[0].data,
     });
     expect(approval.args).toEqual([veToken, BigInt(amount)]);
-    // The stake approval is cleared afterwards, so a reset-requiring stake
-    // token does not leave a standing allowance for the next plan to trip on.
     expect(
       result.execution_plan?.ordered_steps.map((step) => step.kind),
-    ).toEqual(["approval", "execution", "allowance_cleanup"]);
+    ).toEqual(["approval", "execution"]);
     expect(result.execution_plan?.sender).toBe(sender);
   });
 
@@ -615,8 +613,8 @@ describe("ve(3,3) call generation", () => {
     expect(
       staked.plan.allocations.map((allocation) => allocation.increase_amount),
     ).toEqual(["34", "66"]);
-    // One approval step, one increase per allocation, one cleanup.
-    expect(planTransactions(staked.plan)).toHaveLength(4);
+    // One approval step plus one increase per allocation.
+    expect(planTransactions(staked.plan)).toHaveLength(3);
     expect(staked.plan.safety).toMatchObject({
       every_existing_active_allocation_is_increased: true,
       increase_stake_amount_preserves_existing_votes_and_fee_accounting: true,

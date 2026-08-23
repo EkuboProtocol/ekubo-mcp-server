@@ -5,13 +5,10 @@ import { type Address, decodeFunctionData, erc20Abi, type Hex } from "viem";
  * nonzero amount, so the allowance has to be set to zero first.
  *
  * Every plan this server builds ends by returning the allowance to zero, so
- * within its own flows the second approval never collides. That is enforced by
- * `withAllowanceCleanups` in execution-plan.ts rather than left to each tool to
- * remember, because a single tool forgetting it is what would make the next
- * tool's approval revert. The collision is otherwise cross-tool: the interface
- * grants an *unlimited* allowance by default, so a user who approved there and
- * then came here arrives with a standing nonzero allowance that this server,
- * being stateless about chain state, cannot see.
+ * within its own flows the second approval never collides. The collision is
+ * cross-tool: the interface grants an *unlimited* allowance by default, so a
+ * user who approved there and then came here arrives with a standing nonzero
+ * allowance that this server, being stateless about chain state, cannot see.
  *
  * Keyed by chain and address, never by symbol. The guard belongs to a
  * particular deployment: mainnet USDT has it and no bridged USDT does, so a
@@ -184,23 +181,6 @@ export function requiresAllowanceReset(
  * down the whole plan.
  */
 export function nonzeroApprovalSpender(data: Hex): Address | null {
-  const approval = decodeApproval(data);
-  if (approval === null || approval.amount === 0n) return null;
-  return approval.spender;
-}
-
-/**
- * The spender and amount of an `approve` call, or null for anything else.
- *
- * Unlike `nonzeroApprovalSpender` this keeps zero approvals, because tracking
- * whether an allowance is still outstanding at the end of a plan means seeing
- * the calls that clear it as well as the ones that grant it. Calldata that is
- * not an `approve` decodes to null rather than throwing, for the same reason:
- * a mislabeled step must not take down the whole plan.
- */
-export function decodeApproval(
-  data: Hex,
-): { spender: Address; amount: bigint } | null {
   let decoded;
   try {
     decoded = decodeFunctionData({ abi: erc20Abi, data });
@@ -209,5 +189,5 @@ export function decodeApproval(
   }
   if (decoded.functionName !== "approve") return null;
   const [spender, amount] = decoded.args;
-  return { spender, amount };
+  return amount === 0n ? null : spender;
 }

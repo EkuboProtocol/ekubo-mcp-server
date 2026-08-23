@@ -210,12 +210,7 @@ describe("LayerZero value transfers", () => {
 
     expect(result.action).toBe("ekubo_bridge");
     expect(result.source).toBe("layerzero");
-    // The transfer's approval is cleared afterwards rather than left standing.
-    expect(planStepKinds(result)).toEqual([
-      "approval",
-      "execution",
-      "allowance_cleanup",
-    ]);
+    expect(planStepKinds(result)).toEqual(["approval", "execution"]);
     expect(result.quote).toMatchObject({
       provider_quote_id: "quote-oft",
       amount_in: "1000",
