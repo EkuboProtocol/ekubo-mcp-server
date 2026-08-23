@@ -301,4 +301,109 @@ describe("allowance resets for tokens that reject an overwrite", () => {
       walletExecutionPlanSchema.parse(planApproving("1", LDO)),
     ).not.toThrow();
   });
+
+  /**
+   * A step's kind is a label the producing tool chose; the calldata is what the
+   * chain sees. A tool that emits an approval as an execution step must not
+   * silently lose its reset and ship a plan that reverts for these tokens only.
+   */
+  it("resets a mislabeled approval, because the calldata is the trigger", () => {
+    const result = executionPlanFromSteps({
+      chainId: "1",
+      sender,
+      steps: [
+        {
+          kind: "execution",
+          transaction: {
+            chain_id: "1",
+            to: USDT,
+            data: approvalCalldata(1_000n),
+            value: "0",
+          },
+        },
+      ],
+    });
+    expect(result.ordered_steps.map((step) => step.transaction.data)).toEqual([
+      approvalCalldata(0n),
+      approvalCalldata(1_000n),
+    ]);
+  });
+
+  /**
+   * The swap path builds its own zero approval when a provider reports a
+   * standing allowance. Adding a second one on top would just be a wasted call.
+   */
+  it("adds no second reset when the caller already zeroed the allowance", () => {
+    const result = executionPlanFromSteps({
+      chainId: "1",
+      sender,
+      steps: [
+        {
+          kind: "approval",
+          transaction: {
+            chain_id: "1",
+            to: USDT,
+            data: approvalCalldata(0n),
+            value: "0",
+          },
+        },
+        {
+          kind: "approval",
+          transaction: {
+            chain_id: "1",
+            to: USDT,
+            data: approvalCalldata(1_000n),
+            value: "0",
+          },
+        },
+      ],
+    });
+    expect(result.ordered_steps.map((step) => step.transaction.data)).toEqual([
+      approvalCalldata(0n),
+      approvalCalldata(1_000n),
+    ]);
+  });
+
+  /**
+   * The dedup is deliberately narrow: only a zero approval standing
+   * *immediately* before counts. A zero approval for a different spender leaves
+   * the one this approval needs untouched.
+   */
+  it("still resets when the preceding zero approval is for another spender", () => {
+    const otherSpender = "0x5555555555555555555555555555555555555555" as const;
+    const zeroForOther = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: "approve",
+      args: [otherSpender, 0n],
+    });
+    const result = executionPlanFromSteps({
+      chainId: "1",
+      sender,
+      steps: [
+        {
+          kind: "approval",
+          transaction: {
+            chain_id: "1",
+            to: USDT,
+            data: zeroForOther,
+            value: "0",
+          },
+        },
+        {
+          kind: "approval",
+          transaction: {
+            chain_id: "1",
+            to: USDT,
+            data: approvalCalldata(1_000n),
+            value: "0",
+          },
+        },
+      ],
+    });
+    expect(result.ordered_steps.map((step) => step.transaction.data)).toEqual([
+      zeroForOther,
+      approvalCalldata(0n),
+      approvalCalldata(1_000n),
+    ]);
+  });
 });

@@ -173,36 +173,57 @@ export function executionPlanFromSteps({
  * building the plan, as the LP deposit does, will not see the injected step in
  * that hash; the injection is a pure function of the steps they already hashed,
  * so the plan ID still identifies exactly one plan.
+ *
+ * The trigger is the calldata, not the step's `kind`. A kind is a label the
+ * producing tool chose, and a tool that emits an approval as an `execution`
+ * step -- or invents a new kind later -- would otherwise silently lose its
+ * reset and ship a plan that reverts for these tokens only. What makes a step
+ * need a reset is that it is a nonzero `approve` of a listed token, which is
+ * visible in the bytes and cannot be mislabeled.
+ *
+ * No reset is added when the step is already preceded by a zero approval of the
+ * same token and spender. The swap path builds its own reset when a provider
+ * reports a standing allowance, and two zero approvals in a row would just be a
+ * wasted call.
  */
 function withAllowanceResets(
   chainId: string,
   steps: ExecutionPlanStepInput[],
 ): ExecutionPlanStepInput[] {
-  return steps.flatMap((step) => {
-    if (step.kind !== "approval") return [step];
+  const result: ExecutionPlanStepInput[] = [];
+  for (const step of steps) {
     const spender = nonzeroApprovalSpender(step.transaction.data);
-    if (spender === null) return [step];
-    if (!requiresAllowanceReset(chainId, step.transaction.to)) return [step];
-    return [
-      {
-        kind: "approval" as const,
+    if (spender === null || !requiresAllowanceReset(chainId, step.transaction.to)) {
+      result.push(step);
+      continue;
+    }
+    const zeroApproval = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: "approve",
+      args: [spender, 0n],
+    });
+    const previous = result.at(-1);
+    const alreadyReset =
+      previous !== undefined &&
+      getAddress(previous.transaction.to) === getAddress(step.transaction.to) &&
+      previous.transaction.data === zeroApproval;
+    if (!alreadyReset) {
+      result.push({
+        kind: "approval",
         // Built field by field rather than spread from the approval it
         // precedes: a `gas` estimate carried over from that call would be
         // attached to a different one.
         transaction: {
           chain_id: step.transaction.chain_id,
           to: step.transaction.to,
-          data: encodeFunctionData({
-            abi: erc20Abi,
-            functionName: "approve",
-            args: [spender, 0n],
-          }),
+          data: zeroApproval,
           value: "0",
         },
-      },
-      step,
-    ];
-  });
+      });
+    }
+    result.push(step);
+  }
+  return result;
 }
 
 function defaultSimulationFailurePolicy(): SimulationFailurePolicy {
