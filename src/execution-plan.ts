@@ -7,6 +7,7 @@ import {
   numberToHex,
 } from "viem";
 import {
+  decodeApproval,
   nonzeroApprovalSpender,
   requiresAllowanceReset,
 } from "./allowance-reset.js";
@@ -120,7 +121,9 @@ export function executionPlanFromSteps({
       "internal execution plan error: at least one step is required",
     );
   }
-  const inputSteps = withAllowanceResets(chainId, requestedSteps);
+  const inputSteps = withAllowanceCleanups(
+    withAllowanceResets(chainId, requestedSteps),
+  );
   const normalizedSender = getAddress(sender);
   const steps = inputSteps.map(({ kind, transaction, revertDecode }, index) => {
     const prepared = transaction;
@@ -203,6 +206,81 @@ function withAllowanceResets(
       step,
     ];
   });
+}
+
+/**
+ * End every plan with the allowances it granted returned to zero.
+ *
+ * `allowance-reset.ts` states this as an invariant -- "every plan this server
+ * builds ends by returning the allowance to zero, so within its own flows the
+ * second approval never collides" -- and the reset logic depends on it: for a
+ * token that refuses to replace a nonzero allowance, a remainder left behind
+ * by one tool is what makes the *next* tool's approval revert. Mainnet USDT is
+ * the obvious case, but there are 91 of them.
+ *
+ * Several tools honored it by hand and several did not, so it is applied here
+ * instead. A tool that grants an allowance no longer has to remember to clear
+ * it, and a new one cannot forget.
+ *
+ * Only allowances still outstanding at the end are cleared: an approval a tool
+ * already zeroed itself is not zeroed twice, and the zero approvals that
+ * `withAllowanceResets` prefixes are not mistaken for grants. Approvals that
+ * an action is expected to consume exactly are cleared too, because "expected"
+ * is not "guaranteed" -- a router that refunds, rounds, or partially fills
+ * leaves a remainder that is invisible from here.
+ *
+ * Tools that clear their own allowances keep doing so, and should: an explicit
+ * cleanup can sit immediately after the action that used it, where this one
+ * can only append to the end. This is the floor, not the mechanism.
+ *
+ * As with the reset, callers that hash their own step list before building the
+ * plan will not see the appended steps in that hash. The append is a pure
+ * function of the steps they already hashed, so the plan ID still identifies
+ * exactly one plan.
+ */
+function withAllowanceCleanups(
+  steps: ExecutionPlanStepInput[],
+): ExecutionPlanStepInput[] {
+  const outstanding = new Map<
+    string,
+    { chainId: string; token: Address; spender: Address }
+  >();
+  for (const step of steps) {
+    if (step.kind !== "approval" && step.kind !== "allowance_cleanup") continue;
+    const approval = decodeApproval(step.transaction.data);
+    if (approval === null) continue;
+    const token = getAddress(step.transaction.to);
+    const spender = getAddress(approval.spender);
+    const key = `${token.toLowerCase()}:${spender.toLowerCase()}`;
+    if (approval.amount === 0n) {
+      outstanding.delete(key);
+      continue;
+    }
+    outstanding.set(key, {
+      chainId: step.transaction.chain_id,
+      token,
+      spender,
+    });
+  }
+  if (outstanding.size === 0) return steps;
+  return [
+    ...steps,
+    ...[...outstanding.values()].map(
+      ({ chainId, token, spender }): ExecutionPlanStepInput => ({
+        kind: "allowance_cleanup",
+        transaction: {
+          chain_id: chainId,
+          to: token,
+          data: encodeFunctionData({
+            abi: erc20Abi,
+            functionName: "approve",
+            args: [spender, 0n],
+          }),
+          value: "0",
+        },
+      }),
+    ),
+  ];
 }
 
 function defaultSimulationFailurePolicy(): SimulationFailurePolicy {

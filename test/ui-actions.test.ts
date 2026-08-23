@@ -270,10 +270,14 @@ describe("EVM interface action preparation", () => {
       poolKey,
     });
 
+    // The boost approval is cleared afterwards, like every other allowance
+    // this server grants.
     expect(planFunctions(boost, ALL_ABI)).toEqual([
       "approve",
       "boost",
+      "approve",
     ]);
+    expect(planStepKinds(boost).at(-1)).toBe("allowance_cleanup");
     expect(boost.details).toMatchObject({
       rate_scale: "Q32 token base units per second",
     });
@@ -315,7 +319,9 @@ describe("EVM interface action preparation", () => {
       "approve",
       "mint",
       "increaseSellAmount",
+      "approve",
     ]);
+    expect(planStepKinds(create).at(-1)).toBe("allowance_cleanup");
     expect(planFunctions(stop, ALL_ABI)).toEqual([
       "collectProceeds",
       "decreaseSaleRate",
@@ -492,7 +498,9 @@ describe("EVM interface action preparation", () => {
       "approve",
       "mint",
       "sellAmountByAuction",
+      "approve",
     ]);
+    expect(planStepKinds(create).at(-1)).toBe("allowance_cleanup");
     expect(planFunctions(complete, ALL_ABI)).toEqual([
       "maybeInitializeGraduationPool",
       "completeAuctionAndStartBoost",
@@ -763,7 +771,11 @@ describe("EVM interface action preparation", () => {
     });
     // The route call is opaque calldata from the quote provider, so only the
     // approval decodes; the plan still states both steps.
-    expect(planStepKinds(execute)).toEqual(["approval", "execution"]);
-    expect(planTransactions(execute)).toHaveLength(2);
+    expect(planStepKinds(execute)).toEqual([
+      "approval",
+      "execution",
+      "allowance_cleanup",
+    ]);
+    expect(planTransactions(execute)).toHaveLength(3);
   });
 });

@@ -586,7 +586,11 @@ describe("aggregated quote providers", () => {
     expect(result.action).toBe("ekubo_bridge");
     expect(result.source).toBe("across");
     // The approval and the bridge call are both steps of the one plan.
-    expect(planStepKinds(result)).toEqual(["approval", "execution"]);
+    expect(planStepKinds(result)).toEqual([
+      "approval",
+      "execution",
+      "allowance_cleanup",
+    ]);
     // Across returns an unlimited approval (0xaaaa here); it must be discarded
     // in favour of an exact-amount approve for maxInputAmount.
     expect(planTransactions(result)[0].data).not.toBe("0xaaaa");

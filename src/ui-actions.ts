@@ -485,8 +485,11 @@ export function prepareApprovalRevocations(input: {
       0n,
     ),
   );
+  // These are allowance changes, so they are labelled as such rather than as
+  // generic executions: a wallet reviewing the plan sees the same step kind it
+  // sees for the cleanup every other plan ends with.
   const steps = transactions.map((transaction): ExecutionPlanStepInput => ({
-    kind: "execution",
+    kind: "allowance_cleanup",
     transaction,
   }));
 
