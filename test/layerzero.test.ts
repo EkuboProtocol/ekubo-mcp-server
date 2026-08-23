@@ -418,6 +418,25 @@ describe("LayerZero value transfers", () => {
     // Both options arrive executable, so the comparison is between plans.
     expect(layerZero.execution?.execution_plan_ready).toBe(true);
     expect(result.quotes[0].execution?.execution_plan_ready).toBe(true);
+
+    // LayerZero charges a messaging fee in native token on top of the input.
+    // It is nowhere in amount_out, so a comparison on amount_out alone ranks
+    // it above options that are cheaper all in.
+    expect(layerZero.normalized.native_fee).toBe("7");
+    expect(layerZero.normalized.total_native_input).toBe("7");
+    expect(result.quotes[0].normalized.native_fee).toBe("0");
+
+    // The output is an ERC-20 here, so the fee is in a different unit than
+    // amount_out and the basis cannot net it. Say that rather than claiming a
+    // complete comparison.
+    expect(result.comparison.comparison_basis).toBe(
+      "highest_calculated_amount_out",
+    );
+    expect(result.comparison.comparison_complete).toBe(false);
+    expect(result.comparison.native_fee_sources).toEqual(["layerzero"]);
+    expect(result.comparison.native_fee_instruction).toMatch(
+      /ranking on amount_out alone understates their cost/,
+    );
   });
 
   it("leaves the exact-output request to Across and says why", async () => {

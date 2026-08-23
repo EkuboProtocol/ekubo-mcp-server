@@ -659,7 +659,12 @@ export async function getQuotesWithPlans(
   return {
     request: quoteDiscoveryRequest(intent),
     quotes: result.candidates.map((candidate) =>
-      serializeCompleteQuote(candidate, preparation, intent.includeRawQuotes),
+      serializeCompleteQuote(
+        intent,
+        candidate,
+        preparation,
+        intent.includeRawQuotes,
+      ),
     ),
     unavailable_sources: result.failures,
     comparison: quoteComparison(intent, result),
@@ -901,6 +906,10 @@ function preparedQuote(
     amount_out: selected.amountOut.toString(),
     minimum_amount_out: prepared.minimumAmountOut?.toString() ?? null,
     maximum_amount_in: prepared.maximumAmountIn?.toString() ?? null,
+    // Repeated on the executable quote so the number a caller signs against
+    // carries the surcharge too, not just the comparison block.
+    native_fee: nativeFee(intent, selected)?.toString() ?? null,
+    total_native_input: selected.transaction?.value.toString() ?? null,
     slippage_bps: intent.slippageBps.toString(),
     price_impact: prepared.priceImpact,
     estimated_route_gas: prepared.estimatedRouteGas,
@@ -1049,13 +1058,38 @@ function quoteComparison(
   const retryRecommended =
     result.candidates.length === 0 &&
     result.failures.some((failure) => failure.retry_recommended);
+  // A provider that charges a native surcharge on top of the input is not
+  // comparable to one that does not on amount_out alone. When the output is
+  // the native token the two are the same unit and the basis can net them;
+  // otherwise they are different units, so say so rather than advertising a
+  // basis that silently omits a real cost.
+  const surcharged = result.candidates.filter((candidate) => {
+    const fee = nativeFee(intent, candidate);
+    return fee !== null && fee > 0n;
+  });
+  const outputIsNative = BigInt(intent.tokenOut) === 0n;
+  const exactOutput = intent.quoteType === "exact_output";
+  const basis = exactOutput
+    ? "lowest_calculated_amount_in"
+    : surcharged.length > 0 && outputIsNative
+      ? "highest_calculated_amount_out_net_of_native_fee"
+      : "highest_calculated_amount_out";
+  const basisOmitsFee = surcharged.length > 0 && !outputIsNative;
   return {
-    comparison_basis:
-      intent.quoteType === "exact_output"
-        ? "lowest_calculated_amount_in"
-        : "highest_calculated_amount_out",
+    comparison_basis: basis,
     compared_sources: result.candidates.map((candidate) => candidate.source),
-    comparison_complete: result.failures.length === 0,
+    // A comparison whose basis leaves out a cost some options charge and
+    // others do not is not a complete comparison, even when every provider
+    // answered.
+    comparison_complete: result.failures.length === 0 && !basisOmitsFee,
+    ...(surcharged.length > 0
+      ? {
+          native_fee_sources: surcharged.map((candidate) => candidate.source),
+          native_fee_instruction: basisOmitsFee
+            ? `${surcharged.map((candidate) => candidate.source).join(", ")} charge a native fee on top of the input, in a different token than the output. Compare native_fee and total_native_input alongside amount_out; ranking on amount_out alone understates their cost.`
+            : `${surcharged.map((candidate) => candidate.source).join(", ")} charge a native fee on top of the input. The basis nets it out, so rank on amount_out minus native_fee rather than on amount_out.`,
+        }
+      : {}),
     retry_recommended: retryRecommended,
     retry_instruction: retryRecommended
       ? "No provider returned a usable quote; retry before relying on this result."
@@ -2050,6 +2084,7 @@ function quoteRequest(intent: QuoteSelectionIntent, source: QuoteSource) {
 }
 
 function serializeCompleteQuote(
+  intent: QuoteIntent,
   candidate: QuoteCandidate,
   preparation: SwapPreparationIntent | null,
   includeRawQuotes = false,
@@ -2061,7 +2096,7 @@ function serializeCompleteQuote(
   return {
     source: candidate.source,
     source_url: candidate.sourceUrl,
-    normalized: serializeCandidate(candidate),
+    normalized: serializeCandidate(intent, candidate),
     ...(includeRawQuotes ? { quote: candidate.raw } : {}),
     ...(preparation === null
       ? { execution: null, execution_unavailable: null }
@@ -2109,7 +2144,31 @@ function executableQuote(
   };
 }
 
-function serializeCandidate(candidate: QuoteCandidate) {
+/**
+ * Native value the sender parts with beyond the amount being swapped.
+ *
+ * Some providers charge a messaging fee in the chain's native token on top of
+ * the input: LayerZero's plan asks for roughly 0.000266 ETH more than it
+ * bridges. That surcharge appears nowhere in `amount_out`, so comparing
+ * providers on `amount_out` alone ranks such a quote above one that is an
+ * order of magnitude cheaper all in. It is visible here because the plan's
+ * transaction value is known.
+ *
+ * Null when this request asked for no calldata, since an indicative quote has
+ * no transaction to read a value from -- unknown, not zero.
+ */
+function nativeFee(
+  intent: QuoteIntent,
+  candidate: QuoteCandidate,
+): bigint | null {
+  if (candidate.transaction === null) return null;
+  const swapped = BigInt(intent.tokenIn) === 0n ? candidate.amountIn : 0n;
+  const value = candidate.transaction.value;
+  return value > swapped ? value - swapped : 0n;
+}
+
+function serializeCandidate(intent: QuoteIntent, candidate: QuoteCandidate) {
+  const fee = nativeFee(intent, candidate);
   return {
     source: candidate.source,
     provider_quote_id: candidate.providerQuoteId,
@@ -2117,6 +2176,11 @@ function serializeCandidate(candidate: QuoteCandidate) {
     amount_out: candidate.amountOut.toString(),
     minimum_amount_out: candidate.minimumAmountOut?.toString() ?? null,
     maximum_amount_in: candidate.maximumAmountIn?.toString() ?? null,
+    // What actually leaves the wallet in native token, and the part of it that
+    // is not the swap itself. Compare options on these, not on amount_out
+    // alone, whenever native_fee is non-zero.
+    native_fee: fee?.toString() ?? null,
+    total_native_input: candidate.transaction?.value.toString() ?? null,
     estimated_gas: candidate.estimatedGas,
     price_impact: candidate.priceImpact,
     quote_expiry_timestamp: candidate.quoteExpiryTimestamp,
