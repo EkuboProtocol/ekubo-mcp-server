@@ -1,0 +1,97 @@
+{
+  "src/aerodrome.ts": {
+    "complexity": {
+      "count": 3
+    }
+  },
+  "src/claims.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/core.ts": {
+    "complexity": {
+      "count": 12
+    }
+  },
+  "src/fix-price.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/index.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/liquidity.ts": {
+    "complexity": {
+      "count": 3
+    }
+  },
+  "src/opportunities.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/orders.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/pools.ts": {
+    "complexity": {
+      "count": 7
+    }
+  },
+  "src/positions.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/recommendations.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/server.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/transfers.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/ui-actions.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/ve33.ts": {
+    "complexity": {
+      "count": 10
+    }
+  },
+  "src/yul-router.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "test/discovery.test.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "test/reallocation.test.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "test/transfers-endpoint.test.ts": {
+    "complexity": {
+      "count": 1
+    }
+  }
+}
