@@ -656,8 +656,25 @@ the origin transaction is indexed. A LI.FI transfer reports `REFUNDED` and
 `PARTIAL` as substatuses of status `DONE`, so `substatus` rather than `status`
 decides whether the funds arrived.
 
-Cloudflare routing protects the default `workers.dev` hostname and any custom
-domain. Set optional comma-separated `ALLOWED_HOSTNAMES` and `ALLOWED_ORIGINS`
+`mcp.ekubo.org` is the only name this server is published under. The default
+`mcp.<subdomain>.workers.dev` hostname is unrouted in `wrangler.jsonc`
+(`"workers_dev": false`), so a request on it never reaches the Worker.
+
+To be precise about what that does: the account subdomain is a wildcard, so the
+name still resolves and Cloudflare answers **404** at the edge — the same 404
+returned for a name that was never a Worker at all. The DNS record does not
+disappear; the routing does.
+
+It is an unrouting rather than a redirect on purpose. An edge rule is scoped to
+a zone, and `workers.dev` belongs to Cloudflare rather than to this account, so
+there is no zone to attach a redirect rule to, and bouncing the name would mean
+running the Worker on every request that arrives on it. Since the hostname was
+never published, not answering is preferred to spending an invocation on it.
+
+`preview_urls` defaults to whatever `workers_dev` is set to, so it is stated
+separately above rather than left to follow this setting.
+
+Set optional comma-separated `ALLOWED_HOSTNAMES` and `ALLOWED_ORIGINS`
 variables if the deployment needs a stricter host list or cross-origin browser
 MCP clients. The request's own hostname is always accepted as a browser origin;
 non-browser MCP clients normally omit `Origin`.

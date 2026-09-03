@@ -11,11 +11,27 @@
       "fallthrough": true
     }
   ],
-  "workers_dev": true,
+  // `mcp.ekubo.org` is the only name this server is published under. The
+  // default `mcp.<subdomain>.workers.dev` hostname was serving the same
+  // Worker, and nothing that fronts the custom domain fronts it: an edge rule
+  // is scoped to a zone, and `workers.dev` is Cloudflare's zone rather than
+  // this account's, so no redirect rule can be written against it at all.
+  //
+  // This unroutes the Worker from that hostname rather than deleting it. The
+  // account subdomain is a wildcard, so `mcp.<subdomain>.workers.dev` still
+  // resolves and Cloudflare answers 404 at the edge — the same 404 a name that
+  // was never a Worker gets. The point is that the request stops reaching this
+  // Worker, not that the DNS name disappears.
+  //
+  // `preview_urls` below defaults to this value, which is why it is stated
+  // separately rather than left to follow.
+  "workers_dev": false,
   // Per-version preview URLs are off deliberately: this Worker is a public
   // unauthenticated endpoint fronted by an edge rule, and a preview URL is the
   // same server without it. Declared here rather than left to the dashboard,
   // because a deploy resets an undeclared setting to wrangler's default of on.
+  // The same is true of `workers_dev` above, which is why it is now stated
+  // rather than omitted.
   "preview_urls": false,
   "keep_vars": true,
   "secrets": {
