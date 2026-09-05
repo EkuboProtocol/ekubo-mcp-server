@@ -10,6 +10,15 @@ import { ServiceError } from "./core.js";
  * lists, prices, and quotes restricted assets, and so do `list_tokens`,
  * `get_token`, and the opportunity tools here.
  *
+ * The restricted sets are still mirrored, but the *decision* has deliberately
+ * diverged: the interface blocks both directions, so a holder in a restricted
+ * region cannot use it to sell an asset they already own. That leaves no path
+ * to compliance for a rule the holder is already out of step with, so this
+ * server permits the disposal where the restriction is offering-based, and
+ * only there. Any change to which countries that covers belongs in
+ * `DISPOSAL_EXEMPT_COUNTRIES`, and the interface still needs the same carve-out
+ * before the two products agree.
+ *
  * Country codes are ISO 3166-1 alpha-2: https://www.iso.org/obp/ui/#search
  */
 
@@ -23,19 +32,54 @@ const ROBINHOOD_CHAIN_ID = 4663n;
 const RESTRICTED_CHAIN_COUNTRIES: ReadonlyMap<bigint, ReadonlySet<string>> =
   new Map([[ROBINHOOD_CHAIN_ID, new Set<string>([])]]);
 
-const RHC_STOCK_TOKEN_COUNTRIES: ReadonlySet<string> = new Set([
+/**
+ * Countries that restrict the tokenized equities because the offering is not
+ * registered for their residents. The asset may not be *acquired* there, but
+ * disposing of one already held is the act that ends the exposure, so these
+ * countries are exempt on the sell side -- see `DISPOSAL_EXEMPT_COUNTRIES`.
+ */
+const RHC_STOCK_OFFERING_COUNTRIES: readonly string[] = [
   "US",
   "GB",
   "CA",
   "SG",
   "AE",
   "CH",
+];
+
+/**
+ * Countries under comprehensive sanctions programs. These are a different
+ * regime from the offering restrictions above: a disposal is still a
+ * transaction facilitated for a sanctioned jurisdiction, and no "exiting is
+ * the only way to comply" argument reaches it absent a license. They are
+ * deliberately NOT disposal-exempt, and nothing may be added to
+ * `DISPOSAL_EXEMPT_COUNTRIES` from this list without counsel signing off.
+ */
+const RHC_STOCK_SANCTIONED_COUNTRIES: readonly string[] = [
   "IR",
   "KP",
   "SY",
   "CU",
   "UA",
+];
+
+const RHC_STOCK_TOKEN_COUNTRIES: ReadonlySet<string> = new Set([
+  ...RHC_STOCK_OFFERING_COUNTRIES,
+  ...RHC_STOCK_SANCTIONED_COUNTRIES,
 ]);
+
+/**
+ * Countries whose restriction is offering-based only, and which therefore do
+ * not block a *disposal* of an already-held restricted asset.
+ *
+ * This is an allowlist rather than a subtraction from the restricted set on
+ * purpose: the exemption has to fail closed. A country added to a restriction
+ * map in the future is fully blocked in both directions until it is named
+ * here, so forgetting to update this set can only ever be over-restrictive.
+ */
+const DISPOSAL_EXEMPT_COUNTRIES: ReadonlySet<string> = new Set(
+  RHC_STOCK_OFFERING_COUNTRIES,
+);
 
 /** Tokenized equities on Robinhood chain mainnet. */
 const RHC_STOCK_TOKEN_ADDRESSES = [
@@ -244,6 +288,79 @@ export function isTokenCountryRestricted({
 export interface RestrictableAsset {
   chainId: string | bigint;
   token: string | bigint | undefined;
+  side: AssetSide;
+}
+
+/**
+ * Which way an asset moves in the transaction being prepared.
+ *
+ * `sell` means the caller gives the asset up: the swap input, the TWAMM or
+ * auction sell token, a claimed fee balance being swapped away. `buy` means the
+ * caller ends up holding it. Anything that is neither — a pool pair being
+ * rebalanced, a token whose oracle capacity is being extended — is `buy`,
+ * because it is not a disposal and must not inherit the disposal exemption.
+ *
+ * There is no default: the exemption turns on this field, so every call site is
+ * made to state it rather than inherit whichever value was less work to add.
+ */
+export type AssetSide = "sell" | "buy";
+
+/**
+ * Whether disposing of a restricted asset is permitted from this country.
+ *
+ * An unresolved country is never exempt. The exemption is a claim about one
+ * jurisdiction's rules, and an origin that could not be resolved has not been
+ * shown to be in one — the same reasoning that makes null fail closed in
+ * `isTokenCountryRestricted`.
+ */
+function isDisposalExempt(country: RequestCountry): boolean {
+  if (country === null) return false;
+  return DISPOSAL_EXEMPT_COUNTRIES.has(country.toUpperCase());
+}
+
+/**
+ * Whether this server refuses to move the asset the way the caller asked.
+ *
+ * A restricted asset on the sell side passes when the country's restriction is
+ * offering-based: continuing to hold is not a way to comply with a rule against
+ * holding, so the disposal has to stay available. Acquiring it stays blocked,
+ * which also settles the restricted-for-restricted case — swapping one blocked
+ * equity for another is refused on the buy side without needing its own rule.
+ */
+function isAssetBlocked(
+  asset: RestrictableAsset,
+  country: RequestCountry,
+): boolean {
+  if (asset.token === undefined) return false;
+  const restricted = isTokenCountryRestricted({
+    chainId: asset.chainId,
+    token: asset.token,
+    country,
+  });
+  if (!restricted) return false;
+  return !(asset.side === "sell" && isDisposalExempt(country));
+}
+
+/**
+ * "Do not retry through another tool" is only true when no path exists. Where
+ * the block is acquisition-side and this country may still dispose, saying so
+ * is what lets an automation route itself to the exit rather than treat the
+ * position as stuck.
+ */
+function restrictionMessage(
+  restricted: readonly RestrictableAsset[],
+  country: RequestCountry,
+): string {
+  if (country === null) {
+    return "This asset is unavailable because the country of the requesting IP address could not be determined. No execution plan was prepared. Do not retry through another network path or another Ekubo tool.";
+  }
+  const base = `This asset is unavailable in your region (${country.toUpperCase()}). No execution plan was prepared.`;
+  const acquisitionOnly =
+    isDisposalExempt(country) &&
+    restricted.every((asset) => asset.side === "buy");
+  return acquisitionOnly
+    ? `${base} Acquiring it is restricted; disposing of a balance you already hold is not, so a sell of this asset for an unrestricted one will still be prepared. Do not retry the same acquisition through another Ekubo tool: the same restriction applies to every path that would acquire it.`
+    : `${base} Do not retry through another Ekubo tool: the same restriction applies to every path that would trade it.`;
 }
 
 /**
@@ -261,25 +378,19 @@ export function assertAssetsTradable(
 ): void {
   const restricted = assets.filter(
     (asset): asset is RestrictableAsset & { token: string | bigint } =>
-      asset.token !== undefined &&
-      isTokenCountryRestricted({
-        chainId: asset.chainId,
-        token: asset.token,
-        country,
-      }),
+      isAssetBlocked(asset, country),
   );
   if (restricted.length === 0) return;
 
   throw new ServiceError(
     "restricted_jurisdiction",
-    country === null
-      ? "This asset is unavailable because the country of the requesting IP address could not be determined. No execution plan was prepared. Do not retry through another network path or another Ekubo tool."
-      : `This asset is unavailable in your region (${country.toUpperCase()}). No execution plan was prepared. Do not retry through another Ekubo tool: the same restriction applies to every path that would trade it.`,
+    restrictionMessage(restricted, country),
     {
       country,
       restricted_assets: restricted.map((asset) => ({
         chain_id: BigInt(asset.chainId).toString(),
         token: `0x${BigInt(asset.token).toString(16).padStart(40, "0")}`,
+        side: asset.side,
       })),
     },
   );

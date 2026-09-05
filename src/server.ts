@@ -2667,8 +2667,8 @@ export function createEkuboServer(
       // output on the destination chain, where a different rule may apply.
       assertAssetsTradable(
         [
-          { chainId: inputChainId, token: tokenIn },
-          { chainId: destinationChainId, token: tokenOut },
+          { chainId: inputChainId, token: tokenIn, side: "sell" },
+          { chainId: destinationChainId, token: tokenOut, side: "buy" },
         ],
         country,
       );
@@ -3340,8 +3340,8 @@ export function createEkuboServer(
     const chainId = canonicalChainId(input.chain_id);
     assertAssetsTradable(
       [
-        { chainId, token: input.sell_token },
-        { chainId, token: input.buy_token },
+        { chainId, token: input.sell_token, side: "sell" },
+        { chainId, token: input.buy_token, side: "buy" },
       ],
       country,
     );
@@ -3399,8 +3399,8 @@ export function createEkuboServer(
     const chainId = canonicalChainId(input.chain_id);
     assertAssetsTradable(
       [
-        { chainId, token: input.sell_token },
-        { chainId, token: input.buy_token },
+        { chainId, token: input.sell_token, side: "sell" },
+        { chainId, token: input.buy_token, side: "buy" },
       ],
       country,
     );
@@ -3454,7 +3454,9 @@ export function createEkuboServer(
 
   registerCatalogTool("prepare_oracle_capacity_expansion", prepareOracleCapacityExpansionSchema, (input) => {
     const chainId = canonicalChainId(input.chain_id);
-    assertAssetsTradable([{ chainId, token: input.token }], country);
+    // Not a disposal: extending an oracle's capacity is an action taken to keep
+    // holding the asset, so it stays blocked wherever the asset is restricted.
+    assertAssetsTradable([{ chainId, token: input.token, side: "buy" }], country);
     return prepareOracleCapacityExpansion({
       chainId,
       sender: input.sender,
@@ -4337,7 +4339,7 @@ A quote is only worth what it can still execute for, so treat the interval betwe
 
 For "all", "max", or "entire balance" swaps, first obtain the wallet and network with the Ekubo Wallet MCP, resolve token symbols with list_tokens, read the exact input-token balance with the wallet's own balance tooling, then call get_quotes_with_plans with that exact amount plus sender and slippage_bps and pass the chosen option's execution_plan_reference to the Ekubo Wallet MCP.
 
-Some assets may not be traded from some countries, and a tool that would acquire or dispose of one fails with error code restricted_jurisdiction instead of returning a plan. This is a property of the request's own country, not of a missing argument: tell the user the asset is unavailable in their region, and do not retry the same trade through another tool, another route, or a different pool. Exiting a position the user already holds is never restricted, so withdrawals, fee and proceeds collection, and transfers remain available.
+Some assets may not be acquired from some countries, and a tool that would acquire one fails with error code restricted_jurisdiction instead of returning a plan. This is a property of the request's own country, not of a missing argument: tell the user the asset is unavailable in their region, and do not retry the same acquisition through another tool, another route, or a different pool. Selling a restricted asset the user already holds for an unrestricted one is a separate case and is usually still permitted, so treat a restricted_jurisdiction error on an acquisition as no obstacle to preparing an exit; the error text says which case you are in. Exiting a position the user already holds is never restricted either, so withdrawals, fee and proceeds collection, and transfers remain available. Where a disposal is itself refused, the country is under a broader restriction and no sell route exists — do not go looking for one.
 
 For direct asset sends, use prepare_transfers instead of constructing calldata. Supply one chain and sender plus 1 to 4,096 ordered entries; native, ERC-20, ERC-721, and ERC-1155 transfers may be mixed. Amounts are positive decimal base-unit strings. ERC-721 safe transfer is the default and safe=false explicitly selects transferFrom; ERC-1155 has only safeTransferFrom. Pass the resulting execution_plan_reference unchanged to the wallet.
 

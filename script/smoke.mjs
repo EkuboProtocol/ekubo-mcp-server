@@ -1,6 +1,6 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-const expectedServerVersion = "0.37.0";
-const expectedCatalogRevision = "2026-08-20.allowance-reset-scan";
+const expectedServerVersion = "0.38.0";
+const expectedCatalogRevision = "2026-09-05.disposal-exemption";
 const smokeNonce = `${Date.now()}-${Math.random()}`;
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
 
@@ -105,6 +105,16 @@ const expectedTools = [
   "prepare_sky_savings_redeem",
   "get_merkl_deployment",
   "prepare_merkl_claim",
+  "get_aerodrome_deployment",
+  "prepare_aerodrome_sugar_reads",
+  "prepare_aerodrome_liquidity_deposit",
+  "prepare_aerodrome_liquidity_withdraw",
+  "prepare_aerodrome_gauge_deposit",
+  "prepare_aerodrome_gauge_withdraw",
+  "prepare_aerodrome_gauge_claim",
+  "prepare_aerodrome_lock",
+  "prepare_aerodrome_vote",
+  "prepare_aerodrome_incentive_claim",
   "get_lido_deployment",
   "prepare_lido_stake",
   "prepare_lido_wrap",

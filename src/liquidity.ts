@@ -530,10 +530,15 @@ export async function prepareLpPositionDeposit(
   }
   // Checked against the resolved pair rather than the input, because a caller
   // may identify the pool by pool_id alone and never name its tokens.
+  //
+  // Both sides are acquisitions: this path only ever mints or adds liquidity,
+  // which takes on exposure to the pair rather than shedding it. Withdrawing
+  // is prepared elsewhere and is deliberately not gated at all, so the exit
+  // from an existing position was already available.
   assertAssetsTradable(
     [
-      { chainId: input.chainId, token: pool.pool_key.token0 },
-      { chainId: input.chainId, token: pool.pool_key.token1 },
+      { chainId: input.chainId, token: pool.pool_key.token0, side: "buy" },
+      { chainId: input.chainId, token: pool.pool_key.token1, side: "buy" },
     ],
     input.country,
   );

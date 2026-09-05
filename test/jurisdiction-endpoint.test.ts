@@ -159,7 +159,7 @@ describe("jurisdiction restrictions over the MCP endpoint", () => {
     expect(result.structuredContent).toHaveProperty("execution_plan_reference");
   });
 
-  it("refuses a swap quote that would trade a restricted asset", async () => {
+  it("refuses a swap quote that would acquire a restricted asset", async () => {
     const result = await callTool(
       "get_quotes_with_plans",
       {
@@ -172,6 +172,51 @@ describe("jurisdiction restrictions over the MCP endpoint", () => {
         slippage_bps: 10,
       },
       "US",
+    );
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      error: { code: "restricted_jurisdiction" },
+    });
+  });
+
+  /**
+   * The disposal is the point of the carve-out, so it is checked through the
+   * endpoint and not only against the gate. There is no quoter here, so this
+   * asserts the jurisdiction gate specifically rather than a successful quote:
+   * whatever this fails on downstream, it must no longer be the region.
+   */
+  it("does not stop a swap quote that disposes of a restricted asset", async () => {
+    const result = await callTool(
+      "get_quotes_with_plans",
+      {
+        chain_id: ROBINHOOD_CHAIN,
+        token_in: NVDA,
+        token_out: USDG,
+        quote_type: "exact_input",
+        amount: "1000000",
+        sender: SENDER,
+        slippage_bps: 10,
+      },
+      "US",
+    );
+    expect(result.structuredContent).not.toMatchObject({
+      error: { code: "restricted_jurisdiction" },
+    });
+  });
+
+  it("still refuses that disposal from a sanctioned jurisdiction", async () => {
+    const result = await callTool(
+      "get_quotes_with_plans",
+      {
+        chain_id: ROBINHOOD_CHAIN,
+        token_in: NVDA,
+        token_out: USDG,
+        quote_type: "exact_input",
+        amount: "1000000",
+        sender: SENDER,
+        slippage_bps: 10,
+      },
+      "IR",
     );
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({
