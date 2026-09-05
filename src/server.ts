@@ -2667,8 +2667,8 @@ export function createEkuboServer(
       // output on the destination chain, where a different rule may apply.
       assertAssetsTradable(
         [
-          { chainId: inputChainId, token: tokenIn },
-          { chainId: destinationChainId, token: tokenOut },
+          { chainId: inputChainId, token: tokenIn, side: "sell" },
+          { chainId: destinationChainId, token: tokenOut, side: "buy" },
         ],
         country,
       );
@@ -3340,8 +3340,8 @@ export function createEkuboServer(
     const chainId = canonicalChainId(input.chain_id);
     assertAssetsTradable(
       [
-        { chainId, token: input.sell_token },
-        { chainId, token: input.buy_token },
+        { chainId, token: input.sell_token, side: "sell" },
+        { chainId, token: input.buy_token, side: "buy" },
       ],
       country,
     );
@@ -3399,8 +3399,8 @@ export function createEkuboServer(
     const chainId = canonicalChainId(input.chain_id);
     assertAssetsTradable(
       [
-        { chainId, token: input.sell_token },
-        { chainId, token: input.buy_token },
+        { chainId, token: input.sell_token, side: "sell" },
+        { chainId, token: input.buy_token, side: "buy" },
       ],
       country,
     );
@@ -3454,7 +3454,9 @@ export function createEkuboServer(
 
   registerCatalogTool("prepare_oracle_capacity_expansion", prepareOracleCapacityExpansionSchema, (input) => {
     const chainId = canonicalChainId(input.chain_id);
-    assertAssetsTradable([{ chainId, token: input.token }], country);
+    // Not a disposal: extending an oracle's capacity is an action taken to keep
+    // holding the asset, so it stays blocked wherever the asset is restricted.
+    assertAssetsTradable([{ chainId, token: input.token, side: "buy" }], country);
     return prepareOracleCapacityExpansion({
       chainId,
       sender: input.sender,

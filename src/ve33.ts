@@ -2036,13 +2036,18 @@ export async function prepareVe33Reinvest(
     const swapBalances = [...balancesByToken]
       .filter(([token, amount]) => token !== stakeToken && amount > 0n)
       .map(([token, amount]) => ({ token, amount: amount.toString() }));
+    // Claimed fees are swapped away, so each is a disposal; the stake token is
+    // what the reinvestment acquires. A restricted fee token can therefore be
+    // swapped out even from a region that restricts it, which is what keeps a
+    // reinvest loop from stalling on fees it is not allowed to keep holding.
     assertAssetsTradable(
       [
         ...swapBalances.map(({ token }) => ({
           chainId: intent.chainId,
           token,
+          side: "sell" as const,
         })),
-        { chainId: intent.chainId, token: stakeToken },
+        { chainId: intent.chainId, token: stakeToken, side: "buy" as const },
       ],
       intent.country,
     );

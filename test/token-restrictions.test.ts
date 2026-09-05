@@ -119,13 +119,24 @@ describe("token country restrictions", () => {
   });
 });
 
+function throwsFrom(call: () => void): ServiceError {
+  let thrown: unknown;
+  try {
+    call();
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(ServiceError);
+  return thrown as ServiceError;
+}
+
 describe("assertAssetsTradable", () => {
   it("passes when nothing is restricted", () => {
     expect(() =>
       assertAssetsTradable(
         [
-          { chainId: ROBINHOOD_CHAIN, token: USDG },
-          { chainId: ROBINHOOD_CHAIN, token: NVDA },
+          { chainId: ROBINHOOD_CHAIN, token: USDG, side: "sell" },
+          { chainId: ROBINHOOD_CHAIN, token: NVDA, side: "buy" },
         ],
         "FR",
       ),
@@ -135,46 +146,126 @@ describe("assertAssetsTradable", () => {
   it("skips an asset whose token was not supplied", () => {
     expect(() =>
       assertAssetsTradable(
-        [{ chainId: ROBINHOOD_CHAIN, token: undefined }],
+        [{ chainId: ROBINHOOD_CHAIN, token: undefined, side: "buy" }],
         "US",
       ),
     ).not.toThrow();
   });
 
-  it("refuses to prepare anything touching a restricted asset", () => {
-    let thrown: unknown;
-    try {
+  it("refuses to prepare an acquisition of a restricted asset", () => {
+    const error = throwsFrom(() =>
       assertAssetsTradable(
         [
-          { chainId: ROBINHOOD_CHAIN, token: USDG },
-          { chainId: ROBINHOOD_CHAIN, token: NVDA },
+          { chainId: ROBINHOOD_CHAIN, token: USDG, side: "sell" },
+          { chainId: ROBINHOOD_CHAIN, token: NVDA, side: "buy" },
         ],
         "US",
-      );
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(ServiceError);
-    const error = thrown as ServiceError;
+      ),
+    );
     expect(error.code).toBe("restricted_jurisdiction");
     expect(error.message).toContain("US");
     expect(error.details).toEqual({
       country: "US",
-      restricted_assets: [{ chain_id: ROBINHOOD_CHAIN, token: NVDA }],
+      restricted_assets: [
+        { chain_id: ROBINHOOD_CHAIN, token: NVDA, side: "buy" },
+      ],
     });
   });
 
   it("reports an unresolved country without naming a region", () => {
-    let thrown: unknown;
-    try {
-      assertAssetsTradable([{ chainId: ROBINHOOD_CHAIN, token: NVDA }], null);
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(ServiceError);
-    const error = thrown as ServiceError;
+    const error = throwsFrom(() =>
+      assertAssetsTradable(
+        [{ chainId: ROBINHOOD_CHAIN, token: NVDA, side: "buy" }],
+        null,
+      ),
+    );
     expect(error.code).toBe("restricted_jurisdiction");
     expect(error.message).toContain("could not be determined");
     expect((error.details as { country: unknown }).country).toBeNull();
+  });
+});
+
+describe("assertAssetsTradable disposal exemption", () => {
+  it("permits selling a restricted asset for an unrestricted one", () => {
+    expect(() =>
+      assertAssetsTradable(
+        [
+          { chainId: ROBINHOOD_CHAIN, token: NVDA, side: "sell" },
+          { chainId: ROBINHOOD_CHAIN, token: USDG, side: "buy" },
+        ],
+        "US",
+      ),
+    ).not.toThrow();
+  });
+
+  it("exempts every offering-restricted country, not just the US", () => {
+    for (const country of ["GB", "CA", "SG", "AE", "CH", "gb"]) {
+      expect(() =>
+        assertAssetsTradable(
+          [{ chainId: ROBINHOOD_CHAIN, token: NVDA, side: "sell" }],
+          country,
+        ),
+      ).not.toThrow();
+    }
+  });
+
+  it("still blocks a sale into another restricted asset", () => {
+    const error = throwsFrom(() =>
+      assertAssetsTradable(
+        [
+          { chainId: ROBINHOOD_CHAIN, token: NVDA, side: "sell" },
+          { chainId: ROBINHOOD_CHAIN, token: AAPL, side: "buy" },
+        ],
+        "US",
+      ),
+    );
+    expect(error.details).toEqual({
+      country: "US",
+      restricted_assets: [
+        { chain_id: ROBINHOOD_CHAIN, token: AAPL.toLowerCase(), side: "buy" },
+      ],
+    });
+  });
+
+  it("does not exempt a sanctioned jurisdiction", () => {
+    for (const country of ["IR", "KP", "SY", "CU", "UA"]) {
+      const error = throwsFrom(() =>
+        assertAssetsTradable(
+          [{ chainId: ROBINHOOD_CHAIN, token: NVDA, side: "sell" }],
+          country,
+        ),
+      );
+      expect(error.code).toBe("restricted_jurisdiction");
+      expect(error.message).toContain("every path that would trade it");
+    }
+  });
+
+  it("does not exempt an unresolved country", () => {
+    expect(() =>
+      assertAssetsTradable(
+        [{ chainId: ROBINHOOD_CHAIN, token: NVDA, side: "sell" }],
+        null,
+      ),
+    ).toThrow(ServiceError);
+  });
+
+  it("tells an acquisition-side caller that the disposal is still open", () => {
+    const error = throwsFrom(() =>
+      assertAssetsTradable(
+        [{ chainId: ROBINHOOD_CHAIN, token: NVDA, side: "buy" }],
+        "US",
+      ),
+    );
+    expect(error.message).toContain("disposing of a balance you already hold");
+  });
+
+  it("does not offer the disposal route where disposal is also blocked", () => {
+    const error = throwsFrom(() =>
+      assertAssetsTradable(
+        [{ chainId: ROBINHOOD_CHAIN, token: NVDA, side: "buy" }],
+        "IR",
+      ),
+    );
+    expect(error.message).not.toContain("disposing of a balance");
   });
 });

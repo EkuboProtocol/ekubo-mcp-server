@@ -54,21 +54,30 @@ Audited against `ekubo/interface` `src/util/common/tokenRestrictions.ts` and its
 action button; this server refuses to produce the plan. `src/token-restrictions.ts`
 carries the same restriction data and the same evaluation order.
 
-| Interface source                                       | Gated tokens          | MCP coverage                                                  |
-| ------------------------------------------------------ | --------------------- | ------------------------------------------------------------- |
-| `SwapMainActionButton.tsx`                             | input and output      | `get_quotes_with_plans`                                        |
-| `DcaMainActionButton.tsx`                              | input and output      | `prepare_twamm_order`                                          |
-| `EvmCreatePosition.tsx`, `EvmManagePosition.tsx`       | base and quote        | `prepare_lp_position_deposit`                                  |
-| `EvmCreateAuction.tsx`                                 | sell and buy          | `prepare_auction_create`                                       |
-| `EvmOracleCapacity.tsx`                                | the selected token    | `prepare_oracle_capacity_expansion`                            |
-| no interface equivalent                                | the pool pair         | `prepare_fix_pool_price`                                       |
-| no interface equivalent                                | claimed fee tokens    | `prepare_ve33_reinvest` (`phase="swap"`)                       |
+**One deliberate divergence, added 2026-09-05.** The interface gates on the token
+alone, so it blocks both directions and a holder in a restricted region cannot
+use it to sell an asset they already own. This server gates on the token *and*
+the direction: where the restriction is offering-based rather than a sanctions
+program, the disposal is prepared and only the acquisition is refused. The
+column below therefore records which side of each call site is gated. Until
+`useTokenCountryRestriction` grows the same distinction, the interface is
+stricter than this server on exactly one case — selling a restricted asset for
+an unrestricted one from `US`, `GB`, `CA`, `SG`, `AE`, or `CH`.
+
+| Interface source                                       | Gated tokens          | MCP coverage                                                  | Side gated here                          |
+| ------------------------------------------------------ | --------------------- | ------------------------------------------------------------- | ---------------------------------------- |
+| `SwapMainActionButton.tsx`                             | input and output      | `get_quotes_with_plans`                                        | `token_out` only (`token_in` is a sell)  |
+| `DcaMainActionButton.tsx`                              | input and output      | `prepare_twamm_order`                                          | `buy_token` only                         |
+| `EvmCreatePosition.tsx`, `EvmManagePosition.tsx`       | base and quote        | `prepare_lp_position_deposit`                                  | both — adding liquidity acquires both    |
+| `EvmCreateAuction.tsx`                                 | sell and buy          | `prepare_auction_create`                                       | `buy_token` only                         |
+| `EvmOracleCapacity.tsx`                                | the selected token    | `prepare_oracle_capacity_expansion`                            | both — not a disposal                    |
+| no interface equivalent                                | the pool pair         | `prepare_fix_pool_price`                                       | both — direction is set by target price  |
+| no interface equivalent                                | claimed fee tokens    | `prepare_ve33_reinvest` (`phase="swap"`)                       | stake token only (fees are sells)        |
 
 `useTokenCountryRestriction` is called in `EvmManagePosition.tsx` from
 `AddLiquidityModal` only. Withdrawal, fee and proceeds collection, position
 transfer, and approval revocation are ungated there and are ungated here: a
-restriction prevents acquiring or disposing of an asset, never exiting a
-position already held.
+restriction prevents acquiring an asset, never exiting a position already held.
 
 Three further tools were examined and are deliberately left ungated.
 `prepare_pool_initialization` sets a starting price and moves no tokens.

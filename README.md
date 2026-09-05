@@ -684,7 +684,7 @@ the offending assets in `details`. It is raised before any upstream quote is
 fetched, so a restricted request never spends 0x, Across, LayerZero, or LI.FI
 credit.
 
-What is gated is the acquisition or disposal of a restricted asset:
+What is gated is the *acquisition* of a restricted asset:
 `get_quotes_with_plans`, `prepare_twamm_order`, `prepare_lp_position_deposit`,
 `prepare_auction_create`, `prepare_oracle_capacity_expansion`,
 `prepare_fix_pool_price`, and the swap phase of `prepare_ve33_reinvest`. Exits
@@ -694,7 +694,36 @@ everyone, as they do in the interface. Discovery is also untouched: restricted
 assets remain listed and priced by `list_tokens`, `get_token`, and the
 opportunity tools, exactly as the interface still displays them.
 
-Two behaviours are worth stating explicitly, because both are deliberate:
+### Disposals are exempt where the restriction is offering-based
+
+Selling a restricted asset for an unrestricted one is prepared even from a
+country that restricts it, provided that country appears in
+`DISPOSAL_EXEMPT_COUNTRIES` — currently `US`, `GB`, `CA`, `SG`, `AE`, and `CH`,
+the countries whose restriction exists because the offering is not registered
+for their residents. Blocking the sale there leaves a holder no way to stop
+holding, which is the opposite of what the restriction is for.
+
+The exemption is narrow, and three limits are load-bearing:
+
+- **It does not extend to the sanctions countries** — `IR`, `KP`, `SY`, `CU`,
+  `UA`. A disposal is still a transaction facilitated for a sanctioned
+  jurisdiction, so those stay blocked in both directions.
+- **It does not extend to an unresolved country.** The exemption is a claim
+  about one jurisdiction's rules, and an unresolved origin has not been shown
+  to be in one.
+- **Only the asset being given up is exempt.** Selling one restricted equity
+  for another is still refused, on the acquisition side, without needing a
+  rule of its own.
+
+Every call site declares which way its asset moves, via the required `side`
+field on `RestrictableAsset`. There is no default, so a new gated tool has to
+state its direction rather than inherit an exemption by omission. This is the
+one place where this server deliberately diverges from the interface, which
+blocks both directions and therefore still offers its users no exit; the
+interface needs the same carve-out before the two agree.
+
+Two further behaviours are worth stating explicitly, because both are
+deliberate:
 
 - **An unresolved country fails closed, but only for assets that are actually
   restricted.** A chain-wide restriction entry that names no countries restricts
