@@ -56,6 +56,7 @@ import {
   getVe33Allocations,
   prepareAllVe33FeeClaims,
   prepareVe33Claim,
+  prepareVe33ClearVote,
   prepareVe33Extend,
   prepareVe33IncreaseStake,
   prepareVe33Merge,
@@ -1154,6 +1155,26 @@ export const prepareVe33ClaimSchema = z.object({
   claims: z.array(claimSchema).min(1).max(100),
 });
 
+export const prepareVe33ClearVoteSchema = z.object({
+  chain_id: chainId,
+  ve_token: address,
+  sender: address,
+  recipient: address
+    .optional()
+    .describe("Fee recipient; defaults to sender for claimPoolFeesToSelf"),
+  votes: z
+    .array(
+      z.object({
+        ve_id: uintString,
+        current_pool_key: poolKeySchema.describe(
+          "The pool this stake currently votes for. Required: its fees are claimed immediately before the clear, and a key that is not the stake's active pool reverts the whole batch before anything is cleared.",
+        ),
+      }),
+    )
+    .min(1)
+    .max(100),
+});
+
 export const prepareAllVe33FeeClaimsSchema = z.object({
   chain_id: chainId,
   ve_token: address,
@@ -1881,14 +1902,14 @@ export const publicToolCatalog = [
     name: "prepare_ve33_vote",
     title: "Prepare one ve(3,3) NFT vote change",
     description:
-      "Compile one actively voted ve-token into multiple allocations. Unconditionally claims its current pool first, then splits and changes votes in one atomic batch of decodable VeToken steps. Prefer the portfolio reallocation workflow for complete state validation.",
+      "Compile one actively voted ve-token into multiple allocations. Unconditionally claims its current pool first, then splits and changes votes in one atomic batch of decodable VeToken steps. Nothing is burned, withdrawn, or transferred: the source keeps a stake and every additional allocation is a newly minted NFT with the same lock end. Prefer the portfolio reallocation workflow for complete state validation.",
     inputSchema: z.toJSONSchema(prepareVe33VoteSchema),
   },
   {
     name: "prepare_ve33_extend",
     title: "Prepare a ve-token extension",
     description:
-      "Prepare a direct extension for an unvoted VeToken or an atomic claim-and-extend call when current_pool_key identifies an active vote, so pending voter fees are preserved.",
+      "Prepare a direct extension for an unvoted VeToken or an atomic claim-and-extend call when current_pool_key identifies an active vote, so pending voter fees are preserved. Extending moves the stake to a later end time and clears its vote — that is why the claim is compounded into the same call. A stake's end time only ever moves later, here and everywhere else in Ve33. No NFT is burned and no stake leaves the wallet; re-vote afterwards with prepare_ve33_vote.",
     inputSchema: z.toJSONSchema(prepareVe33ExtendSchema),
   },
   {
@@ -1902,14 +1923,14 @@ export const publicToolCatalog = [
     name: "prepare_ve33_split",
     title: "Prepare a ve-token split",
     description:
-      "Split a source ve-token with an explicit salt and return the deterministic child token ID; the source vote is preserved and the child starts unvoted.",
+      "Split a source ve-token with an explicit salt and return the deterministic child token ID; the source vote is preserved with reduced weight and the child starts unvoted with the same lock end. Non-destructive: no stake leaves the wallet, no NFT is burned, no vote is cleared, and no fees are discarded.",
     inputSchema: z.toJSONSchema(prepareVe33SplitSchema),
   },
   {
     name: "prepare_ve33_claim_fees",
     title: "Prepare ve-token fee claims",
     description:
-      "Generate one call, or an atomic batch of decodable VeToken steps, claiming voter fees from one or more ve-tokens.",
+      "Generate one call, or an atomic batch of decodable VeToken steps, claiming voter fees from one or more ve-tokens. Fees only: votes, stake amounts, lock ends, and NFT ownership are all unchanged, so this is always safe to run before any other ve(3,3) action.",
     inputSchema: z.toJSONSchema(prepareVe33ClaimSchema),
   },
   {
@@ -1923,8 +1944,15 @@ export const publicToolCatalog = [
     name: "prepare_ve33_claim_all_fees",
     title: "Prepare all ve-token fee claims",
     description:
-      "Discover every active vote on VeTokens owned by the sender and generate one atomic batch of decodable VeToken steps claiming all indexed pool fees, with ownerOf and voteState validation calldata.",
+      "Discover every active vote on VeTokens owned by the sender and generate one atomic batch of decodable VeToken steps claiming all indexed pool fees, with ownerOf and voteState validation calldata. Fees only: votes, stake amounts, lock ends, and NFT ownership are all unchanged.",
     inputSchema: z.toJSONSchema(prepareAllVe33FeeClaimsSchema),
+  },
+  {
+    name: "prepare_ve33_clear_vote",
+    title: "Prepare ve-token vote clearing",
+    description:
+      "Remove the active vote from one or more ve-tokens, claiming each stake's current pool fees immediately before its clearVote in one atomic batch. Use this instead of raw clearVote calldata: Ve33 discards a stake's pending voter fees when its weight goes to zero, and the required current_pool_key reverts the whole batch with PoolNotVoted if it is not that stake's active pool, so no vote is cleared against a stale key. Nothing is burned, withdrawn, split, merged, or transferred: stake amount, lock end, and NFT ownership are untouched and the vote can be re-applied later with prepare_ve33_vote. What it does release is vote weight — a cleared stake stops directing emissions and stops earning that pool's voter fees, the pool's active swap fee re-averages over the fee votes that remain, and a pool left with no vote weight charges a zero extension fee. Prefer prepare_ve33_reallocation when votes are moving to other pools rather than going away.",
+    inputSchema: z.toJSONSchema(prepareVe33ClearVoteSchema),
   },
   {
     name: "get_ve33_allocations",
@@ -1944,7 +1972,7 @@ export const publicToolCatalog = [
     name: "prepare_ve33_reallocation",
     title: "Prepare atomic ve(3,3) reallocation",
     description:
-      "Compile a reviewed current allocation into at most 25 target pool-weight shares as one atomic batch of decodable VeToken steps. The optional compact_max_lock strategy fee-safely consolidates active NFTs, extends the survivor to four years, then creates exactly one voting NFT per target; it explicitly discloses burned source IDs and lock extension.",
+      "Compile a reviewed current allocation into at most 25 target pool-weight shares as one atomic batch of decodable VeToken steps. The default path only claims, splits, and votes: nothing is burned, no lock is extended, and nothing is withdrawn. The optional compact_max_lock strategy fee-safely consolidates active NFTs, extends the survivor to four years, then creates exactly one voting NFT per target; it burns every merged source NFT and lengthens the lock, and explicitly discloses both.",
     inputSchema: z.toJSONSchema(prepareVe33ReallocationSchema),
   },
   {
@@ -2154,21 +2182,21 @@ export const publicToolCatalog = [
     name: "prepare_ve33_increase_stake",
     title: "Prepare increasing a ve-token stake",
     description:
-      "Prepare the exact approval/native value and increaseStakeAmount call while preserving the existing vote and fee accounting.",
+      "Prepare the exact approval/native value and increaseStakeAmount call while preserving the existing vote and fee accounting. Non-destructive: the vote is resized rather than cleared, no fees are discarded, and no NFT is burned. The added stake takes the NFT's existing lock end, so it cannot be withdrawn before that time.",
     inputSchema: z.toJSONSchema(prepareVe33IncreaseStakeSchema),
   },
   {
     name: "prepare_ve33_merge",
     title: "Prepare merging ve-token stakes",
     description:
-      "Prepare fee-safe merging of one or more source NFTs into a destination, including required claims and the selected resulting vote in one atomic batch of decodable steps.",
+      "Prepare fee-safe merging of one or more source NFTs into a destination, including required claims and the selected resulting vote in one atomic batch of decodable steps. Destructive to the sources: each source's stake moves to the destination, its vote is cleared, and the source NFT is burned, so its fees are claimed first and its ID is reported in the plan. The destination keeps its own lock end, which is why no source may end later than it.",
     inputSchema: z.toJSONSchema(prepareVe33MergeSchema),
   },
   {
     name: "prepare_ve33_withdraw",
     title: "Prepare expired ve-token withdrawal",
     description:
-      "Prepare fee-safe withdrawal of an expired ve-token stake, claiming the active pool first when voted and returning pending owner/stake validation.",
+      "Prepare fee-safe withdrawal of an expired ve-token stake, claiming the active pool first when voted and returning pending owner/stake validation. Ends the position: the stake leaves Ve33 and returns to the owner and the vote is cleared. Only an expired stake can be withdrawn — Ve33 reverts with StakeNotExpired at any earlier time, and there is no early exit or penalty path.",
     inputSchema: z.toJSONSchema(prepareVe33WithdrawSchema),
   },
   {
@@ -2928,6 +2956,22 @@ export function createEkuboServer(
           recipient: input.recipient as Address | undefined,
         }),
       ),
+  );
+
+  registerCatalogTool(
+    "prepare_ve33_clear_vote",
+    prepareVe33ClearVoteSchema,
+    (input) =>
+      prepareVe33ClearVote({
+        chainId: canonicalChainId(input.chain_id),
+        veToken: input.ve_token as Address,
+        sender: input.sender as Address,
+        recipient: input.recipient as Address | undefined,
+        votes: input.votes.map((vote) => ({
+          veId: vote.ve_id,
+          currentPoolKey: mapPoolKey(vote.current_pool_key),
+        })),
+      }),
   );
 
   server.registerTool(
@@ -4379,7 +4423,7 @@ For every other EVM action exposed by the interface, use its first-class prepare
 
 Use get_pool for one exact chain/core/pool ID and get_pool_liquidity for tick-level depth. Use list_pool_keys to enumerate a Core deployment's initialized pools with keyset pagination (after_pool_id, ascending pool_id order) and token/pair/extension filters; every returned pool_id is re-derived locally from its PoolKey before it is reported. get_pool returns the latest indexed pool_state snapshot plus current_state_query, whose read_calls_reference the wallet executes for fresh on-chain sqrtRatio, tick, and liquidity. Use derive_pool_id and decode_pool_config for PoolKey construction and inspection. A pool fee is an exact uint64 Q64 integer: accept and return it only as a decimal or hexadecimal string, never a JSON number.
 
-For VeToken vote reorganization, first call get_ve33_allocations and show the owner, state_id, total applied vote weight, every pool allocation, and contributing ve_ids. Pass that exact state_id to prepare_ve33_reallocation. Never construct raw vote, clearVote, extendStake, mergeStakes, withdrawStake, or burn calldata from the ABI resource when a first-class safe workflow exists.
+For VeToken vote reorganization, first call get_ve33_allocations and show the owner, state_id, total applied vote weight, every pool allocation, and contributing ve_ids. Pass that exact state_id to prepare_ve33_reallocation, or prepare_ve33_clear_vote when weight is being removed rather than moved. Never construct raw vote, clearVote, extendStake, mergeStakes, withdrawStake, or burn calldata from the ABI resource when a first-class safe workflow exists.
 
 For "update my STONX allocations to the suggested allocations", call get_stonx_allocation_recommendation, require execution_ready=true, at most 25 targets, and an exact 10,000-bps target total, then call get_ve33_allocations for the connected wallet. Validate its onchain request and pass its exact state_id, recommendation targets, and strategy=compact_max_lock to prepare_ve33_reallocation. Pass the surviving NFT, every source NFT burned by a compound merge, the maximum four-year extension, exactly one final voting NFT per target, every decoded call, and the complete plan to the wallet.
 
@@ -4591,7 +4635,7 @@ const VE33_WORKFLOW = `# Ekubo ve(3,3) call workflow
 - For a suggested STONX update, first call get_stonx_allocation_recommendation. Use its at-most-25 executable targets only when execution_ready is true and target_total_weight_bps is exactly 10,000, then pass strategy=compact_max_lock to the normal state-validated reallocation workflow.
 - compact_max_lock selects one surviving active NFT, claims its fees and extends it to the maximum four-year duration, then fee-safely claims and merges every other active NFT into it, splits once per additional target, and applies exactly one NFT vote per target. Never detach or reorder those calls.
 - Compound merges burn their source NFT IDs after moving the stake. Pass every burned ID, the survivor, the lock extension, final NFT count, decoded calls, and complete plan to the wallet. Unvoted NFTs remain outside the reallocation scope; withdrawals and direct burn calldata remain forbidden.
-- Raw VeToken vote, clearVote, extendStake*, and full-source mergeStakes calls can discard pending voter fees. Prefer the fee-preserving tools or compound claim methods. Never call burn on a stake-bearing NFT; it can orphan the underlying stake. Withdraw only an expired stake, claim its active-pool fees first, and verify the recipient.
+- Raw VeToken vote, clearVote, extendStake*, and full-source mergeStakes calls can discard pending voter fees. Prefer the fee-preserving tools or compound claim methods. To remove a vote without moving it elsewhere, use prepare_ve33_clear_vote: it claims each stake's current pool immediately before clearing it, and its required current_pool_key makes a stale key revert the batch instead of silently discarding fees. The stake, its lock end, and its ownership survive a clear; the pool does not keep the weight, and a pool with no remaining vote weight charges a zero extension fee. Never call burn on a stake-bearing NFT; it can orphan the underlying stake. Withdraw only an expired stake, claim its active-pool fees first, and verify the recipient.
 - Reinvestment takes three sequential wallet phases: snapshot balances and automatically claim all active allocations, swap each complete post-claim delta exact-input into the stake token, then refresh portfolio state and use stake_all to apportion the complete output across every existing active allocation without replacing its vote. Each executable phase is passed to the wallet, which owns simulation and authorization.
 - New stakes default to stakeMaxDuration and affect no existing NFT. Existing lock extension is intentionally explicit because it clears the vote; the extension tool uses a compound fee claim before either max-duration or custom-duration extension.
 - transferOwnership, ownership handover, ERC721 transfer/approval, safe transfer, and burn are forbidden in every first-class workflow.

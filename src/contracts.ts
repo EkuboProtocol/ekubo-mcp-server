@@ -154,6 +154,7 @@ export function contractAddressResource(chainId: string, address: string) {
               "prepare_ve33_extend",
               "prepare_ve33_stake",
               "prepare_ve33_claim_all_fees",
+              "prepare_ve33_clear_vote",
               "prepare_ve33_reinvest",
             ],
             forbidden_ownership_and_nft_actions: [
@@ -190,6 +191,7 @@ export function contractAddressResource(chainId: string, address: string) {
             ],
             notes: [
               "vote replaces the old vote even when the pool and swap fee appear unchanged, so claim first even when claimable amounts are zero.",
+              "clearVote has a first-class tool: prepare_ve33_clear_vote pairs each clear with a claim of the same pool and reverts on a pool key that is not the stake's active one. Removing vote weight is not destructive to the stake, whose amount, lock end, and ownership all survive and whose vote can be re-applied, but the pool loses that weight and a pool with no vote weight charges a zero extension fee.",
               "splitStake preserves a nonzero source stake and its fee accounting; the child NFT starts unvoted.",
               "increaseStakeAmount adjusts a nonzero vote without fully clearing it and does not require a pre-claim.",
               "withdrawStake requires expiry; claim any active-pool fees first and verify the recipient.",

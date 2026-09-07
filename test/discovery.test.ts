@@ -264,6 +264,7 @@ describe("Worker discovery", () => {
       "prepare_ve33_claim_fees",
       "prepare_ve33_reinvest",
       "prepare_ve33_claim_all_fees",
+      "prepare_ve33_clear_vote",
       "get_ve33_allocations",
       "get_stonx_allocation_recommendation",
       "prepare_ve33_reallocation",
@@ -1119,6 +1120,64 @@ describe("Worker discovery", () => {
       chain_id: "4663",
       ordered_steps: [{ kind: "execution" }],
     });
+
+    const clearVotePlan = await worker.fetch(
+      new Request("https://mcp.ekubo.org/mcp", {
+        method: "POST",
+        headers: { ...headers, "mcp-protocol-version": "2025-11-25" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 6,
+          method: "tools/call",
+          params: {
+            name: "prepare_ve33_clear_vote",
+            arguments: {
+              chain_id: "4663",
+              ve_token: "0x9d7008E169D040B6c0140eb92E7cA82B12643497",
+              sender: "0x1111111111111111111111111111111111111111",
+              votes: [
+                {
+                  ve_id: "123",
+                  current_pool_key: {
+                    token0: "0x0000000000000000000000000000000000000000",
+                    token1: "0x2222222222222222222222222222222222222222",
+                    fee: "0",
+                    tick_spacing: 4,
+                    extension: "0x4444444444444444444444444444444444444444",
+                  },
+                },
+              ],
+            },
+          },
+        }),
+      }),
+      env,
+      context,
+    );
+    expect(clearVotePlan.status).toBe(200);
+    const clearVoteResult = (await mcpJson(clearVotePlan)) as {
+      result: {
+        structuredContent: {
+          action: string;
+          execution_plan_reference: { artifact_type: string };
+          onchain_validation: {
+            read_calls?: unknown;
+            read_calls_reference: { artifact_type: string; url: string };
+          };
+        };
+      };
+    };
+    const cleared = clearVoteResult.result.structuredContent;
+    expect(cleared.action).toBe("ve33_clear_vote");
+    expect(cleared.execution_plan_reference.artifact_type).toBe(
+      "execution_plan",
+    );
+    // The owner/voteState bundle leaves as a reference too, so a hundred-stake
+    // clear does not drag two hundred decode plans through the agent.
+    expect(cleared.onchain_validation.read_calls).toBeUndefined();
+    expect(cleared.onchain_validation.read_calls_reference.artifact_type).toBe(
+      "read_calls",
+    );
 
     const missingPlan = await worker.fetch(
       new Request(

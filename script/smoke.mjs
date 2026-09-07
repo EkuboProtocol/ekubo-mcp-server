@@ -1,6 +1,6 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-const expectedServerVersion = "0.38.0";
-const expectedCatalogRevision = "2026-09-05.disposal-exemption";
+const expectedServerVersion = "0.39.0";
+const expectedCatalogRevision = "2026-09-06.ve33-clear-vote";
 const smokeNonce = `${Date.now()}-${Math.random()}`;
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
 
@@ -51,6 +51,7 @@ const expectedTools = [
   "prepare_ve33_claim_fees",
   "prepare_ve33_reinvest",
   "prepare_ve33_claim_all_fees",
+  "prepare_ve33_clear_vote",
   "get_ve33_allocations",
   "get_stonx_allocation_recommendation",
   "prepare_ve33_reallocation",

@@ -16,6 +16,7 @@ import {
   getVe33Allocations,
   prepareAllVe33FeeClaims,
   prepareVe33Claim,
+  prepareVe33ClearVote,
   prepareVe33Extend,
   prepareVe33IncreaseStake,
   prepareVe33Merge,
@@ -626,7 +627,143 @@ describe("ve(3,3) call generation", () => {
     });
     expect(approval.args).toEqual([veToken, 100n]);
   });
+
+  it("claims each stake's current pool immediately before clearing its vote", () => {
+    const result = prepareVe33ClearVote({
+      chainId: "4663",
+      veToken,
+      sender,
+      votes: [
+        { veId: "10", currentPoolKey: poolA },
+        { veId: "11", currentPoolKey: poolB },
+      ],
+    });
+
+    // Interleaved, not two blocks: every clear is preceded by the claim that
+    // rescues the fees that clear would otherwise discard.
+    expect(planFunctions(result, VE_TOKEN_ABI)).toEqual([
+      "claimPoolFeesToSelf",
+      "clearVote",
+      "claimPoolFeesToSelf",
+      "clearVote",
+    ]);
+    const claim = decodeFunctionData({
+      abi: VE_TOKEN_ABI,
+      data: planTransactions(result)[0].data,
+    });
+    expect(claim.args).toEqual([10n, toPoolKeyArgument(poolA)]);
+    const clear = decodeFunctionData({
+      abi: VE_TOKEN_ABI,
+      data: planTransactions(result)[1].data,
+    });
+    expect(clear.args).toEqual([10n]);
+    expect(result.execution_plan?.required_capabilities).toContain(
+      "atomic_batch",
+    );
+    expect(result.safety).toMatchObject({
+      current_pool_fees_are_claimed_unconditionally_first: true,
+      claims_are_unconditional_even_when_claimable_is_zero: true,
+      wrong_current_pool_key_reverts_before_any_vote_is_cleared: true,
+      stake_amount_lock_end_and_nft_ownership_are_unchanged: true,
+      no_splits_merges_extensions_withdrawals_or_burns: true,
+      vote_can_be_reapplied_with_prepare_ve33_vote: true,
+    });
+  });
+
+  it("returns owner and vote-state validation for every cleared stake", () => {
+    const result = prepareVe33ClearVote({
+      chainId: "4663",
+      veToken,
+      sender,
+      votes: [
+        { veId: "10", currentPoolKey: poolA },
+        { veId: "11", currentPoolKey: poolB },
+      ],
+    });
+    const validation = result.onchain_validation;
+    expect(validation.status).toBe("not_executed");
+    expect(validation.read_calls.calls.map((call) => call.id)).toEqual([
+      "ekubo-ve33-owner-10",
+      "ekubo-ve33-vote-10",
+      "ekubo-ve33-owner-11",
+      "ekubo-ve33-vote-11",
+    ]);
+    // The expected pool id is what makes a moved vote detectable before
+    // signing: the claim leg reverts with PoolNotVoted if it no longer holds.
+    expect(validation.reads[1]).toMatchObject({
+      label: "vote_state",
+      ve_id: "10",
+      expected_pool_id: clearVotePoolId(toPoolKeyArgument(poolA)),
+    });
+    expect(validation.reads[0]).toMatchObject({
+      label: "owner",
+      ve_id: "10",
+      expected: sender,
+    });
+    expect(result.cleared_votes).toEqual([
+      { ve_id: "10", pool_id: clearVotePoolId(toPoolKeyArgument(poolA)) },
+      { ve_id: "11", pool_id: clearVotePoolId(toPoolKeyArgument(poolB)) },
+    ]);
+  });
+
+  it("sends claimed fees to an explicit recipient before clearing", () => {
+    const recipient = "0x5555555555555555555555555555555555555555" as const;
+    const result = prepareVe33ClearVote({
+      chainId: "4663",
+      veToken,
+      sender,
+      recipient,
+      votes: [{ veId: "10", currentPoolKey: poolA }],
+    });
+    expect(planFunctions(result, VE_TOKEN_ABI)).toEqual([
+      "claimPoolFees",
+      "clearVote",
+    ]);
+    expect(
+      decodeFunctionData({
+        abi: VE_TOKEN_ABI,
+        data: planTransactions(result)[0].data,
+      }).args,
+    ).toEqual([10n, toPoolKeyArgument(poolA), recipient]);
+    expect(result.recipient).toBe(recipient);
+  });
+
+  it("refuses an empty or repeated clear list", () => {
+    expect(() =>
+      prepareVe33ClearVote({ chainId: "4663", veToken, sender, votes: [] }),
+    ).toThrow("at least one vote is required");
+    expect(() =>
+      prepareVe33ClearVote({
+        chainId: "4663",
+        veToken,
+        sender,
+        votes: [
+          { veId: "10", currentPoolKey: poolA },
+          { veId: "10", currentPoolKey: poolB },
+        ],
+      }),
+    ).toThrow("each ve_id may be cleared at most once");
+  });
 });
+
+/** Pool id as Ve33 hashes it, for clear-vote validation expectations. */
+function clearVotePoolId(poolKey: ReturnType<typeof toPoolKeyArgument>) {
+  return keccak256(
+    encodeAbiParameters(
+      [
+        {
+          type: "tuple",
+          components: [
+            { name: "token0", type: "address" },
+            { name: "token1", type: "address" },
+            { name: "config", type: "bytes32" },
+          ],
+        },
+      ],
+      [poolKey],
+    ),
+  );
+}
 
 function portfolioToken(
   veId: bigint,
