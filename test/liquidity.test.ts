@@ -38,6 +38,7 @@ const core = "0x00000000000014aA86C5d3c41765bb24e11bd701";
 const ve33 = "0xD18685a514E59b06d59824e16Db07e73345d9953";
 const ve33Positions = "0xdA38ac72CE7220c4dd7719d114ef94eDadb8f068";
 const positionsV3 = "0x02D9876A21AF7545f8632C3af76eC90b5ad4b66D";
+const recompiledPositionsV3 = "0xA2971E0C37cFdb13aE8440A0C94Ef1A1af39e326";
 const positionsV2 = "0xA37cc341634AFD9E0919D334606E676dbAb63E17";
 const sender = "0xaf42bF32648740e62A754413EFFDEB1782ce5443";
 
@@ -331,6 +332,54 @@ describe("LP position preparation", () => {
       "approve",
     ]);
     expect(planTransactions(result)).toHaveLength(5);
+  });
+
+  // Robinhood predates the v3.2.0 recompile and keeps the original Positions;
+  // the chains deployed after it only ever had the recompiled one, so building
+  // against the original there is a call to an address with no code.
+  it("mints through the recompiled Positions on a post-recompile chain", async () => {
+    const pool = derivePoolId({
+      token0: native,
+      token1: usdg,
+      fee: "0",
+      extension: native,
+      tickSpacing: 1024,
+    });
+    const result = await prepareLpPositionDeposit(
+      env,
+      {
+        chainId: "10",
+        sender,
+        coreAddress: core,
+        poolKey: pool.pool_key,
+        poolInitialized: false,
+        mode: "mint_new",
+        tickLower: -20_495_360,
+        tickUpper: -19_787_776,
+        initialTick: -20_167_000,
+        maxAmount0: "100000000000000",
+        maxAmount1: "185278",
+        slippageBps: 50,
+        country: null,
+      },
+      (async (input: RequestInfo | URL) => {
+        if (input.toString().includes("/tokens/batch?")) {
+          return Response.json([
+            { chain_id: "10", address: native, symbol: "ETH", decimals: 18 },
+            { chain_id: "10", address: usdg, symbol: "USDG", decimals: 6 },
+          ]);
+        }
+        return new Response("not found", { status: 404 });
+      }) as typeof fetch,
+    );
+
+    const targets = new Set(
+      planTransactions(result).map((transaction: { to: string }) =>
+        transaction.to.toLowerCase(),
+      ),
+    );
+    expect(targets.has(recompiledPositionsV3.toLowerCase())).toBe(true);
+    expect(targets.has(positionsV3.toLowerCase())).toBe(false);
   });
 
   it("prepares standard fee collection without removing liquidity", async () => {

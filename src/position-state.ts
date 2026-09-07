@@ -18,6 +18,7 @@ import {
   type ReadCall,
   readCallsBundle,
 } from "./abi-decode.js";
+import { contractChainIds, isPositionsV3Address } from "./contracts.js";
 import { ServiceError } from "./core.js";
 import { assertWalletAbiDecodePlan } from "./wallet-compatibility.js";
 
@@ -27,9 +28,6 @@ export const MULTICALL3_ADDRESS = getAddress(
 
 const POSITIONS_V2_ADDRESS = getAddress(
   "0xA37cc341634AFD9E0919D334606E676dbAb63E17",
-);
-const POSITIONS_V3_ADDRESS = getAddress(
-  "0x02D9876A21AF7545f8632C3af76eC90b5ad4b66D",
 );
 const VE33_POSITIONS_ADDRESS = getAddress(
   "0xdA38ac72CE7220c4dd7719d114ef94eDadb8f068",
@@ -44,16 +42,10 @@ const TWAMM_V3_ADDRESS = getAddress(
 const OLD_TWAMM_V3_ADDRESS = getAddress(
   "0xd4F1060cB9c1A13e1d2d20379b8aa2cF7541eD9b",
 );
-const SUPPORTED_EVM_CHAIN_IDS = new Set([
-  "1",
-  "4663",
-  "8453",
-  "42161",
-  "84532",
-  "46630",
-  "421614",
-  "11155111",
-]);
+// Every chain the generated catalog knows has the contracts this builder reads
+// through, at the canonical Multicall3 address, so deriving the set means a
+// newly deployed chain works as soon as the catalog is regenerated.
+const SUPPORTED_EVM_CHAIN_IDS = new Set(contractChainIds());
 
 const POOL_KEY_COMPONENTS = [
   { name: "token0", type: "address", internalType: "address" },
@@ -619,7 +611,7 @@ function encodeV2PoolConfig(
 
 function positionManagerVersion(address: Address): ManagerVersion | undefined {
   if (address === POSITIONS_V2_ADDRESS) return "positions_v2";
-  if (address === POSITIONS_V3_ADDRESS) return "positions_v3";
+  if (isPositionsV3Address(address)) return "positions_v3";
   if (address === VE33_POSITIONS_ADDRESS) return "ve33_positions_v3";
   return undefined;
 }

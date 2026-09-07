@@ -46,17 +46,87 @@ interface ResolvedContract {
 const catalog = generated as unknown as GeneratedCatalog;
 
 // These are the EVM networks on which the published SDK router is supported by
-// the Ekubo interface. The address and ABI themselves always come from the SDK.
+// the Ekubo interface. The router is not part of the generated catalog because
+// it is built from a separate repository, so its chains are listed here; the
+// address and ABI themselves always come from the SDK.
 const YUL_ROUTER_CHAIN_IDS = new Set([
   "1",
-  "8453",
+  "10",
+  "56",
+  "100",
+  "130",
+  "137",
+  "143",
+  "480",
+  "4326",
   "4663",
+  "8453",
   "42161",
+  "57073",
   "84532",
   "46630",
   "421614",
   "11155111",
 ]);
+
+// evm-contracts v3.2.0 rebuilt the managers with a newer Solidity compiler,
+// which changed their init code and so moved their CREATE2 addresses. Chains
+// deployed before the recompile run the original managers, chains deployed
+// after it run the recompiled ones, and the chains that predate it and were
+// redeployed since carry both. Resolving against the generated catalog rather
+// than a hand-kept chain list keeps this in step with the interface and the
+// indexer, which both stay on the original manager wherever it exists, and
+// makes the next chain correct without another edit here.
+function preferredDeployment(
+  chainId: string,
+  candidates: readonly Address[],
+): Address {
+  const deployed = catalog.chains[chainId];
+  const fallback = candidates[candidates.length - 1]!;
+  if (deployed === undefined) return fallback;
+  return (
+    candidates.find((candidate) =>
+      Object.hasOwn(deployed, getAddress(candidate)),
+    ) ?? fallback
+  );
+}
+
+// Original first, recompiled second: `preferredDeployment` takes the first of
+// these that the chain actually has, and falls back to the recompiled address
+// for a chain the catalog does not know, which is what a new deployment gets.
+export const POSITIONS_V3_ADDRESSES = [
+  getAddress("0x02D9876A21AF7545f8632C3af76eC90b5ad4b66D"),
+  getAddress("0xA2971E0C37cFdb13aE8440A0C94Ef1A1af39e326"),
+] as const;
+
+export const ORDERS_V3_ADDRESSES = [
+  getAddress("0x3325428adB409c239E88ca472F50b0efe00E98B4"),
+  getAddress("0x9bB520B6192F71ec3D015C8a74F914f9c94bF794"),
+] as const;
+
+/** The v3 Positions manager to build new transactions against on `chainId`. */
+export function positionsV3Address(chainId: string): Address {
+  return preferredDeployment(chainId, POSITIONS_V3_ADDRESSES);
+}
+
+/** The v3 Orders manager to build new transactions against on `chainId`. */
+export function ordersV3Address(chainId: string): Address {
+  return preferredDeployment(chainId, ORDERS_V3_ADDRESSES);
+}
+
+/**
+ * Whether `address` is any generation of the v3 Positions manager. Recognizing
+ * an existing position is deliberately not chain-aware: both generations are
+ * live on several chains, so one minted through either must still resolve.
+ */
+export function isPositionsV3Address(address: Address): boolean {
+  return POSITIONS_V3_ADDRESSES.includes(address as never);
+}
+
+/** Whether `address` is any generation of the v3 Orders manager. */
+export function isOrdersV3Address(address: Address): boolean {
+  return ORDERS_V3_ADDRESSES.includes(address as never);
+}
 
 export const CONTRACT_DIRECTORY_URI = "ekubo://contracts/evm";
 export const CONTRACT_CHAIN_TEMPLATE = "ekubo://contracts/evm/{chain_id}";

@@ -22,6 +22,7 @@ import {
   functionReadCall,
   readCallsBundle,
 } from "./abi-decode.js";
+import { positionsV3Address } from "./contracts.js";
 import { type Env, getTokens, ServiceError } from "./core.js";
 import {
   assertAssetsTradable,
@@ -46,9 +47,6 @@ type Fetcher = typeof fetch;
 const NATIVE_TOKEN = getAddress("0x0000000000000000000000000000000000000000");
 const V3_CORE_ADDRESS = getAddress(
   "0x00000000000014aA86C5d3c41765bb24e11bd701",
-);
-const V3_POSITIONS_ADDRESS = getAddress(
-  "0x02D9876A21AF7545f8632C3af76eC90b5ad4b66D",
 );
 const VE33_POSITIONS_ADDRESS = getAddress(
   "0xdA38ac72CE7220c4dd7719d114ef94eDadb8f068",
@@ -330,6 +328,7 @@ export function preparePoolInitialization(input: {
   const pool = derivePoolId(input.poolKey);
   const decodedConfig = decodePoolConfig(pool.pool_key.config);
   const positionsAddress = positionsAddressForExtension(
+    input.chainId,
     decodedConfig.extension,
   );
   const expectedSqrtRatio = toSqrtRatio(input.initialTick, "evm");
@@ -632,6 +631,7 @@ export async function prepareLpPositionDeposit(
   }
 
   const positionsAddress = positionsAddressForExtension(
+    input.chainId,
     decodedConfig.extension,
   );
   const poolKey = pool.pool_key;
@@ -894,10 +894,10 @@ export async function prepareLpPositionDeposit(
   };
 }
 
-function positionsAddressForExtension(extension: string) {
+function positionsAddressForExtension(chainId: string, extension: string) {
   return normalizeAddress(extension) === VE33_EXTENSION_ADDRESS
     ? VE33_POSITIONS_ADDRESS
-    : V3_POSITIONS_ADDRESS;
+    : positionsV3Address(chainId);
 }
 
 export async function prepareLpPositionEarningsClaim(
