@@ -101,6 +101,22 @@ describe("LP position preparation", () => {
         initialTick: 0,
       }).positions_manager,
     ).toMatchObject({ address: positionsV3, contract: "Positions" });
+
+    // The reported symptom: this named the original manager on a chain that
+    // only has the recompiled one, and its resource_uri was a dangling link.
+    expect(
+      preparePoolInitialization({
+        chainId: "10",
+        sender,
+        coreAddress: core,
+        poolKey: standardPool.pool_key,
+        initialTick: 0,
+      }).positions_manager,
+    ).toMatchObject({
+      address: recompiledPositionsV3,
+      contract: "Positions",
+      resource_uri: `ekubo://contracts/evm/10/${recompiledPositionsV3}`,
+    });
   });
 
   it("builds approvals, a nonzero liquidity floor, native refund, and wallet plan", async () => {
