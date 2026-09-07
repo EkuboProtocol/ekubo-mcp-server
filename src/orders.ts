@@ -17,6 +17,11 @@ import {
   functionReadCall,
   readCallsBundle,
 } from "./abi-decode.js";
+import {
+  isOrdersV3Address,
+  ORDERS_V3_ADDRESSES,
+  ordersV3Address,
+} from "./contracts.js";
 import { ServiceError } from "./core.js";
 import {
   erc20ApprovalTransaction,
@@ -27,7 +32,6 @@ import {
 const NATIVE_TOKEN = getAddress("0x0000000000000000000000000000000000000000");
 const ORDERS_V2 = getAddress("0xae1430e3e089794beacba260657fcd0f0967c18a");
 const OLD_ORDERS_V3 = getAddress("0xfF6cF0Ca6d7a30a60539AcD4bB20B3df84EA0644");
-const ORDERS_V3 = getAddress("0x3325428adB409c239E88ca472F50b0efe00E98B4");
 
 const ORDERS_ABI = parseAbi([
   "function mint(bytes32 salt) payable returns (uint256 id)",
@@ -222,12 +226,15 @@ export function prepareTwammOrder(input: {
   // orders by owner. `mintAndIncreaseSellAmount` only exists in the salt-free
   // form, so a deterministic id costs one extra call.
   const salt = input.salt ?? defaultOrderSalt(sender, input.chainId, parsedOrders);
+  // The manager address is part of the derived id, so this has to be the same
+  // generation the transactions below are actually sent to.
+  const ordersManager = ordersV3Address(input.chainId);
   const tokenId = deriveEvmTwammOrderTokenId(
     {
       minter: sender,
       salt,
       chainId: BigInt(input.chainId),
-      contract: ORDERS_V3,
+      contract: ordersManager,
     },
     keccak256,
   );
@@ -258,7 +265,7 @@ export function prepareTwammOrder(input: {
   const transactions = calls.map((call, index) =>
     preparedTransaction(
       input.chainId,
-      ORDERS_V3,
+      ordersManager,
       call,
       sellToken === NATIVE_TOKEN ? callValues[index] : 0n,
     ),
@@ -270,7 +277,7 @@ export function prepareTwammOrder(input: {
           erc20ApprovalTransaction(
             input.chainId,
             sellToken,
-            ORDERS_V3,
+            ordersManager,
             totalAmount,
           ),
         ];
@@ -303,7 +310,7 @@ export function prepareTwammOrder(input: {
     ],
     atomicBatchRequired: approvals.length + transactions.length > 1,
     details: {
-      orders_manager: ORDERS_V3,
+      orders_manager: ordersManager,
       token_id: tokenId.toString(),
       token_id_is_deterministic:
         "This is saltToId(sender, salt) and is the id that will be minted. Keep it: prepare_twamm_order_collection and prepare_twamm_order_stop are keyed by it, and nothing in this catalog enumerates orders by owner.",
@@ -365,7 +372,10 @@ function prepareExistingOrderAction(
 ) {
   const sender = getAddress(input.sender);
   const ordersAddress = getAddress(input.ordersAddress);
-  if (![ORDERS_V2, OLD_ORDERS_V3, ORDERS_V3].includes(ordersAddress)) {
+  if (
+    ![ORDERS_V2, OLD_ORDERS_V3].includes(ordersAddress) &&
+    !isOrdersV3Address(ordersAddress)
+  ) {
     throw new ServiceError(
       "unsupported_orders_manager",
       "orders_address is not a manager used by the current EVM interface",
@@ -584,5 +594,6 @@ function assertFits(value: bigint, bits: number, label: string) {
 export const ORDER_MANAGER_ADDRESSES = {
   v2: ORDERS_V2,
   old_v3: OLD_ORDERS_V3,
-  v3: ORDERS_V3,
+  v3: ORDERS_V3_ADDRESSES[0],
+  v3_recompiled: ORDERS_V3_ADDRESSES[1],
 } as const;

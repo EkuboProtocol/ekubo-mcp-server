@@ -540,21 +540,32 @@ describe("pool and position reads", () => {
     ).rejects.toMatchObject({ code: "unsupported_core" });
   });
 
-  it("returns an empty page without on-chain index metadata off Base", async () => {
+  const emptyPage = (async () =>
+    Response.json({
+      pools: [],
+      next_cursor: null,
+      has_more: false,
+    })) as unknown as typeof fetch;
+
+  it("returns an empty page without on-chain index metadata where PoolKeyIndex is not deployed", async () => {
     const result = await listPoolKeys(
       env,
-      { chainId: "1", coreAddress: core, pageSize: 100 },
-      (async () =>
-        Response.json({
-          pools: [],
-          next_cursor: null,
-          has_more: false,
-        })) as unknown as typeof fetch,
+      { chainId: "4663", coreAddress: core, pageSize: 100 },
+      emptyPage,
     );
     expect(result.pools).toHaveLength(0);
     expect(result.page.next_after_pool_id).toBeNull();
     expect(result.page.has_more).toBe(false);
     expect(result.onchain_index).toBeNull();
+  });
+
+  it("advertises the on-chain index where PoolKeyIndex is deployed", async () => {
+    const result = await listPoolKeys(
+      env,
+      { chainId: "1", coreAddress: core, pageSize: 100 },
+      emptyPage,
+    );
+    expect(result.onchain_index).toMatchObject({ contract: "PoolKeyIndex" });
   });
 
   it("returns tick liquidity deltas with their reconstruction semantics", async () => {

@@ -3,6 +3,12 @@ import {
   contractAddressResource,
   contractChainResource,
   contractDirectory,
+  isOrdersV3Address,
+  isPositionsV3Address,
+  ORDERS_V3_ADDRESSES,
+  ordersV3Address,
+  POSITIONS_V3_ADDRESSES,
+  positionsV3Address,
   tokenDataFetcherContract,
 } from "../src/contracts.js";
 import releaseDeployments from "../script/evm-contracts-release-deployments.json";
@@ -11,9 +17,11 @@ const productionChainIds = [
   "1",
   "10",
   "56",
+  "100",
   "130",
   "137",
   "143",
+  "480",
   "4326",
   "4663",
   "8453",
@@ -68,6 +76,54 @@ describe("contract resource provenance", () => {
         tokenDataFetcherAddress,
       );
     }
+  });
+
+  // The recompile in v3.2.0 moved Positions and Orders. Getting this wrong is
+  // silent: the plan is built against an address with no code on that chain.
+  const [POSITIONS_ORIGINAL, POSITIONS_RECOMPILED] = POSITIONS_V3_ADDRESSES;
+  const [ORDERS_ORIGINAL, ORDERS_RECOMPILED] = ORDERS_V3_ADDRESSES;
+  const originalManagerChainIds = ["1", "143", "4326", "4663", "8453", "42161"];
+
+  it("prefers the original managers only where they are actually deployed", () => {
+    for (const chainId of productionChainIds) {
+      const expectsOriginal = originalManagerChainIds.includes(chainId);
+      expect({
+        chainId,
+        positions: positionsV3Address(chainId),
+      }).toEqual({
+        chainId,
+        positions: expectsOriginal ? POSITIONS_ORIGINAL : POSITIONS_RECOMPILED,
+      });
+      // Orders moved in the same recompile and splits the chains identically.
+      expect({ chainId, orders: ordersV3Address(chainId) }).toEqual({
+        chainId,
+        orders: expectsOriginal ? ORDERS_ORIGINAL : ORDERS_RECOMPILED,
+      });
+    }
+  });
+
+  it("resolves every chain's managers to a contract in the catalog", () => {
+    for (const chainId of productionChainIds) {
+      const contracts = contractChainResource(chainId)?.contracts ?? {};
+      expect({
+        chainId,
+        positions: contracts[positionsV3Address(chainId)]?.name,
+      }).toEqual({ chainId, positions: "Positions" });
+      expect({ chainId, orders: contracts[ordersV3Address(chainId)]?.name }).toEqual(
+        { chainId, orders: "Orders" },
+      );
+    }
+  });
+
+  it("recognizes a position or order from either generation on any chain", () => {
+    for (const address of POSITIONS_V3_ADDRESSES) {
+      expect(isPositionsV3Address(address)).toBe(true);
+    }
+    for (const address of ORDERS_V3_ADDRESSES) {
+      expect(isOrdersV3Address(address)).toBe(true);
+    }
+    expect(isPositionsV3Address(ORDERS_ORIGINAL)).toBe(false);
+    expect(isOrdersV3Address(POSITIONS_ORIGINAL)).toBe(false);
   });
 
   it("retains release addresses whose legacy ABI is absent from the checkout", () => {

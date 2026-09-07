@@ -22,6 +22,7 @@ import {
 import {
   coreDataFetcherContract,
   poolKeyIndexContract,
+  positionsV3Address,
 } from "./contracts.js";
 import { type Env, getTokens, ServiceError } from "./core.js";
 import {
@@ -56,9 +57,6 @@ const V3_CORE_ADDRESS = getAddress(
 );
 const V2_POSITIONS_ADDRESS = getAddress(
   "0xA37cc341634AFD9E0919D334606E676dbAb63E17",
-);
-const V3_POSITIONS_ADDRESS = getAddress(
-  "0x02D9876A21AF7545f8632C3af76eC90b5ad4b66D",
 );
 const VE33_POSITIONS_ADDRESS = getAddress(
   "0xdA38ac72CE7220c4dd7719d114ef94eDadb8f068",
@@ -978,7 +976,7 @@ function normalizePoolCandidate(
     );
   }
   const poolType = stableswapParams === null ? "concentrated" : "stableswap";
-  const manager = positionManager(generation, extension);
+  const manager = positionManager(chainId, generation, extension);
   return {
     rank: index + 1,
     pool_id: poolId,
@@ -1093,7 +1091,11 @@ function encodeV2PoolConfig(input: PoolKeyInput): Hex {
   );
 }
 
-function positionManager(generation: "v2" | "v3", extension: Address) {
+function positionManager(
+  chainId: string,
+  generation: "v2" | "v3",
+  extension: Address,
+) {
   if (generation === "v2") {
     return { address: V2_POSITIONS_ADDRESS, contract: "Positions", version: "v2" };
   }
@@ -1104,7 +1106,11 @@ function positionManager(generation: "v2" | "v3", extension: Address) {
       version: "v3",
     };
   }
-  return { address: V3_POSITIONS_ADDRESS, contract: "Positions", version: "v3" };
+  return {
+    address: positionsV3Address(chainId),
+    contract: "Positions",
+    version: "v3",
+  };
 }
 
 function extensionType(generation: "v2" | "v3", extension: Address) {
