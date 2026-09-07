@@ -87,6 +87,14 @@ schemas after a Git-triggered deployment.
 - `prepare_ve33_claim_all_fees` — discover every active vote owned by a
   sender and prepare one native VeToken claim multicall, including `ownerOf`
   and `voteState` validation calldata
+- `prepare_ve33_clear_vote` — remove the active vote from one or more
+  VeTokens, claiming each stake's current pool immediately before its
+  `clearVote` in one atomic batch. `current_pool_key` is required per stake:
+  Ve33 discards pending voter fees when a stake's weight goes to zero, and a
+  key that is not that stake's active pool reverts the batch before anything
+  clears. The stake, its lock end, and its ownership are unchanged; the pool
+  loses that weight, and a pool with no vote weight charges a zero extension
+  fee
 - `get_ve33_allocations` — handle “show all my Ekubo STONX allocations”
   with only the connected wallet address because the production Ve33
   deployment is the STONX voting system; defaults to Robinhood Chain `4663`

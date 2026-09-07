@@ -226,6 +226,14 @@ export interface PrepareVe33ClaimIntent {
   claims: { veId: string; poolKey: Ve33PoolKeyInput }[];
 }
 
+export interface PrepareVe33ClearVoteIntent {
+  chainId: string;
+  veToken: Address;
+  sender: Address;
+  recipient?: Address;
+  votes: { veId: string; currentPoolKey: Ve33PoolKeyInput }[];
+}
+
 export interface PrepareAllVe33FeeClaimsIntent {
   chainId: string;
   veToken: Address;
@@ -1044,6 +1052,158 @@ export function prepareVe33Claim(intent: PrepareVe33ClaimIntent) {
     calls,
     details: { recipient },
   });
+}
+
+/**
+ * Clearing a vote is the one weight-removing action with no first-class tool
+ * until now, so agents reached for raw `clearVote` calldata and lost fees.
+ *
+ * Ve33 discards a stake's pending voter fees when its weight goes to zero:
+ * `_adjustVoteWeight` snaps the fee-growth snapshot forward instead of paying
+ * out. Every clear is therefore paired with a claim of the same pool, emitted
+ * immediately before it in the same atomic batch, unconditionally — the only
+ * claimable figure this server can see is indexed rather than chain state, so
+ * "it looked like zero" is not a reason to drop the claim.
+ *
+ * `currentPoolKey` is required for that reason and for a second one that does
+ * not depend on this server being right: `claimPoolFees` reverts with
+ * `PoolNotVoted` unless the key is the stake's actual voted pool, so a stale or
+ * mistaken key fails the whole batch before any vote is cleared.
+ */
+export function prepareVe33ClearVote(intent: PrepareVe33ClearVoteIntent) {
+  if (intent.votes.length === 0) throw invalid("at least one vote is required");
+  const sender = getAddress(intent.sender);
+  const recipient = getAddress(intent.recipient ?? sender);
+  const toSelf = recipient === sender;
+  const veToken = getAddress(intent.veToken);
+  const cleared = intent.votes.map((vote) => {
+    const veId = unsigned(vote.veId, 192, "ve_id");
+    const poolKey = toPoolKeyArgument(vote.currentPoolKey);
+    return { veId, poolKey, poolId: poolIdFor(poolKey) };
+  });
+  if (new Set(cleared.map(({ veId }) => veId)).size !== cleared.length) {
+    throw invalid("each ve_id may be cleared at most once");
+  }
+
+  // Interleaved as claim, clear, claim, clear so a wallet reviewer reads each
+  // pair adjacent rather than matching a block of claims to a block of clears.
+  const calls = cleared.flatMap(({ veId, poolKey, poolId }) => [
+    {
+      type: "claim_pool_fees",
+      ve_id: veId.toString(),
+      pool_id: poolId,
+      recipient,
+      data: toSelf
+        ? encodeFunctionData({
+            abi: VE_TOKEN_ABI,
+            functionName: "claimPoolFeesToSelf",
+            args: [veId, poolKey],
+          })
+        : encodeFunctionData({
+            abi: VE_TOKEN_ABI,
+            functionName: "claimPoolFees",
+            args: [veId, poolKey, recipient],
+          }),
+    },
+    {
+      type: "clear_vote",
+      ve_id: veId.toString(),
+      cleared_pool_id: poolId,
+      data: encodeFunctionData({
+        abi: VE_TOKEN_ABI,
+        functionName: "clearVote",
+        args: [veId],
+      }),
+    },
+  ]);
+
+  return ve33Plan({
+    action: "ve33_clear_vote",
+    chainId: intent.chainId,
+    veToken,
+    sender,
+    calls,
+    details: {
+      recipient,
+      cleared_votes: cleared.map(({ veId, poolId }) => ({
+        ve_id: veId.toString(),
+        pool_id: poolId,
+      })),
+      onchain_validation: clearVoteValidation({
+        chainId: intent.chainId,
+        veToken,
+        sender,
+        cleared,
+      }),
+      safety: {
+        current_pool_fees_are_claimed_unconditionally_first: true,
+        claims_are_unconditional_even_when_claimable_is_zero: true,
+        wrong_current_pool_key_reverts_before_any_vote_is_cleared: true,
+        stake_amount_lock_end_and_nft_ownership_are_unchanged: true,
+        no_splits_merges_extensions_withdrawals_or_burns: true,
+        vote_can_be_reapplied_with_prepare_ve33_vote: true,
+        released_vote_weight:
+          "Each cleared stake stops directing emissions to its pool and stops earning that pool's voter fees. The active swap fee is the voting-power-weighted average of the fee votes remaining on a pool, and a pool left with no vote weight charges a zero extension fee.",
+        exact_call_list_is_complete: true,
+      },
+    },
+  });
+}
+
+/** Owner and vote-state reads for every stake a clear-vote plan touches. */
+function clearVoteValidation(input: {
+  chainId: string;
+  veToken: Address;
+  sender: Address;
+  cleared: { veId: bigint; poolId: Hex }[];
+}) {
+  const calls = input.cleared.flatMap(({ veId }) => [
+    functionReadCall({
+      id: `ekubo-ve33-owner-${veId}`,
+      to: input.veToken,
+      data: encodeFunctionData({
+        abi: VE_TOKEN_ABI,
+        functionName: "ownerOf",
+        args: [veId],
+      }),
+      abi: VE_TOKEN_PORTFOLIO_READ_ABIS.ownerOf,
+      functionName: "ownerOf",
+    }),
+    functionReadCall({
+      id: `ekubo-ve33-vote-${veId}`,
+      to: input.veToken,
+      data: encodeFunctionData({
+        abi: VE_TOKEN_ABI,
+        functionName: "voteState",
+        args: [veId],
+      }),
+      abi: VE_TOKEN_PORTFOLIO_READ_ABIS.voteState,
+      functionName: "voteState",
+    }),
+  ]);
+  return {
+    status: "not_executed",
+    read_calls: readCallsBundle({ chainId: input.chainId, calls }),
+    reads: input.cleared.flatMap(({ veId, poolId }) => [
+      {
+        label: "owner",
+        ve_id: veId.toString(),
+        call_id: `ekubo-ve33-owner-${veId}`,
+        decode_as: "address",
+        expected: input.sender,
+      },
+      {
+        label: "vote_state",
+        ve_id: veId.toString(),
+        call_id: `ekubo-ve33-vote-${veId}`,
+        decode_as:
+          "(bytes32 poolId,uint128 weight,uint64 votedSwapFee,uint128 claimable0,uint128 claimable1)",
+        expected_pool_id: poolId,
+      },
+    ]),
+    instruction:
+      "Pass read_calls_reference unchanged as wallet_batch_eth_call's reference argument. Require every owner to equal the sender and every vote_state poolId to equal the expected_pool_id recorded for that ve_id: a mismatch means the vote moved after the pool key was read, and the paired claim would revert with PoolNotVoted. Report claimable0 and claimable1 to the user before authorizing — those are the fees the paired claim rescues and that a bare clearVote would discard. A vote_state weight or poolId of zero means that stake has no vote at all: its paired claim reverts with PoolNotVoted and takes the whole batch with it, so drop that ve_id and prepare again rather than submitting.",
+  };
 }
 
 export async function getVe33Allocations(
