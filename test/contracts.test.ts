@@ -94,7 +94,7 @@ describe("contract resource provenance", () => {
         chainId,
         positions: expectsOriginal ? POSITIONS_ORIGINAL : POSITIONS_RECOMPILED,
       });
-      // Robinhood predates the recompile and never received the new Orders.
+      // Orders moved in the same recompile and splits the chains identically.
       expect({ chainId, orders: ordersV3Address(chainId) }).toEqual({
         chainId,
         orders: expectsOriginal ? ORDERS_ORIGINAL : ORDERS_RECOMPILED,
@@ -109,8 +109,6 @@ describe("contract resource provenance", () => {
         chainId,
         positions: contracts[positionsV3Address(chainId)]?.name,
       }).toEqual({ chainId, positions: "Positions" });
-      // Robinhood is the one production chain without a v3 Orders deployment.
-      if (chainId === "4663") continue;
       expect({ chainId, orders: contracts[ordersV3Address(chainId)]?.name }).toEqual(
         { chainId, orders: "Orders" },
       );
