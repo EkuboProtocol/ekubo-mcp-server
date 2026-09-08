@@ -913,3 +913,7 @@ The implementation uses the recommended stateless `createMcpHandler` path and
 does not require Durable Objects. Authorization is intentionally omitted
 because all tools operate on public data and cannot mutate protocol or user
 state. Signing and submission remain client-side.
+
+## License
+
+MIT, © 2026 Ekubo, Inc. See [LICENSE](LICENSE).
