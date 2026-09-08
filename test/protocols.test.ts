@@ -172,7 +172,11 @@ describe("Per-protocol MCP endpoints", () => {
     expect((await serverInfo("/mcp")).serverInfo.name).toBe("ekubo");
     for (const protocol of PROTOCOLS) {
       const info = await serverInfo(protocolMcpPath(protocol.slug));
-      expect(info.serverInfo.name).toBe(`ekubo-${protocol.slug}`);
+      // Ekubo's own endpoint keeps the plain name; the satellites are
+      // suffixed, so a harness listing all seven names them apart.
+      expect(info.serverInfo.name).toBe(
+        protocol.slug === "ekubo" ? "ekubo" : `ekubo-${protocol.slug}`,
+      );
       expect(info.serverInfo.title).toBe(protocol.title);
     }
   });

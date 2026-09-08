@@ -2539,15 +2539,20 @@ export function createEkuboServer(
   protocols: ReadonlySet<ProtocolSlug> = ALL_PROTOCOLS,
 ) {
   // A single-protocol endpoint identifies itself as that protocol so a harness
-  // showing two Ekubo-hosted servers side by side names them apart. `/mcp`
-  // keeps the plain `ekubo` identity every configured client already holds.
+  // showing seven Ekubo-hosted servers side by side names them apart. `/mcp`
+  // keeps the plain `ekubo` identity every configured client already holds,
+  // and so does `/mcp/ekubo`: it serves Ekubo's own protocol, and
+  // `ekubo-ekubo` would be a name nobody chose.
   const only =
     protocols.size === 1
       ? protocolBySlug([...protocols][0] as string)
       : undefined;
   const server = new McpServer(
     {
-      name: only === undefined ? "ekubo" : `ekubo-${only.slug}`,
+      name:
+        only === undefined || only.slug === "ekubo"
+          ? "ekubo"
+          : `ekubo-${only.slug}`,
       title: only === undefined ? "Ekubo Protocol" : only.title,
       version: MCP_SERVER_VERSION,
       websiteUrl: "https://mcp.ekubo.org",
