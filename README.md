@@ -26,14 +26,36 @@ a data API and the quoter remains a route-data service.
 
 ## Public endpoints
 
-- `POST/GET /mcp` — MCP Streamable HTTP endpoint
-- `GET /` — service metadata and canonical documentation links
-- `GET /tools` — deterministic tool catalog for non-MCP discovery
+- `POST/GET /mcp` — MCP Streamable HTTP endpoint serving every protocol
+- `POST/GET /mcp/{ekubo,aave,aerodrome,lido,merkl,morpho,sky}` — the same MCP
+  contract narrowed to one protocol
+- `GET /` — service metadata, per-protocol endpoints, and canonical
+  documentation links
+- `GET /tools` — deterministic tool catalog for non-MCP discovery, filterable
+  with `?protocol=<slug>`
 - `GET /openapi.json` — OpenAPI 3.1 discovery contract
 - `GET /llms.txt` — concise agent workflow
 - `GET /skills/{use-morpho,use-sky,use-lido,use-merkl,use-aerodrome}/SKILL.md` — reusable direct-data
   agent instructions, with each skill's discovery reference beneath
   `references/discovery.md`
+
+### One endpoint per protocol
+
+`src/protocols.ts` partitions the catalog: every tool belongs to exactly one
+protocol, `/mcp/<slug>` registers that protocol's tools and its own skill
+resources, and `/mcp` registers all of them. The partition is checked against
+`publicToolCatalog` in `test/protocols.test.ts`, so a tool added to the catalog
+without a protocol fails the build rather than quietly appearing on no
+per-protocol endpoint.
+
+`/mcp` exists for backwards compatibility and is unchanged — same tools, same
+name, and byte-identical instructions. A client that wants one protocol's tools
+in its context instead of all eighty-four adds the narrower URL instead.
+
+Filtering happens at the two registration choke points in `createEkuboServer`
+rather than at the call sites, and the instructions are composed from
+protocol-scoped paragraphs, so a single-protocol server never tells an agent to
+call a tool it does not serve.
 
 `/` and `/llms.txt` link the two public documentation pages:
 [the server](https://docs.ekubo.org/products/mcp-server/) and
@@ -876,7 +898,8 @@ bun run check
 bun run dev
 ```
 
-Connect MCP Inspector to `http://localhost:8787/mcp`.
+Connect MCP Inspector to `http://localhost:8787/mcp`, or to
+`http://localhost:8787/mcp/<protocol>` for one protocol's tools.
 
 ## Deployment
 
