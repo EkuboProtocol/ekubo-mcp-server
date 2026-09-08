@@ -913,3 +913,22 @@ The implementation uses the recommended stateless `createMcpHandler` path and
 does not require Durable Objects. Authorization is intentionally omitted
 because all tools operate on public data and cannot mutate protocol or user
 state. Signing and submission remain client-side.
+
+## License
+
+Copyright 2026 Ekubo, Inc.
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or
+  <https://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or
+  <https://opensource.org/licenses/MIT>)
+
+at your option. The SPDX expression for the combination is `MIT OR
+Apache-2.0`.
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in this repository by you, as defined in the Apache
+2.0 license, shall be dual licensed as above, without any additional terms or
+conditions.
