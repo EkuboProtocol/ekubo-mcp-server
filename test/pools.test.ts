@@ -1,3 +1,4 @@
+import { informationalOutputSchemas } from "../src/informational-output-schemas.js";
 import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
 import { encodeAbiParameters, keccak256 } from "viem";
@@ -61,6 +62,8 @@ describe("pool and position reads", () => {
     expect(derived.pool_key.config).toBe(
       "0x0000000000000000000000000000000000000000ffffffffffffffff80000400",
     );
+    expect(informationalOutputSchemas.derive_pool_id!.parse(derived)).toEqual(derived);
+    expect(informationalOutputSchemas.derive_pool_id!.safeParse({ ...derived, pool_id_decimal: 1 }).success).toBe(false);
     expect(derived.decoded_config.fee).toBe("18446744073709551615");
     expect(derived.pool_id).toBe(
       keccak256(
@@ -453,6 +456,7 @@ describe("pool and position reads", () => {
     expect(url.searchParams.get("after")).toBe(`0x${"0".repeat(63)}1`);
 
     expect(result.core_generation).toBe("v3");
+    expect(informationalOutputSchemas.list_pool_keys!.parse(result)).toEqual(result);
     expect(result.pools).toHaveLength(2);
     expect(result.pools[0]?.pool_id).toBe(derivedA.pool_id);
     expect(result.pools[0]?.pool_key.config).toBe(derivedA.pool_key.config);
@@ -580,6 +584,7 @@ describe("pool and position reads", () => {
           ],
         })) as unknown as typeof fetch,
     );
+    expect(informationalOutputSchemas.get_pool_liquidity!.parse(result)).toEqual(result);
     expect(result.liquidity_deltas).toHaveLength(2);
     expect(result.interpretation).toContain("cumulatively");
   });
@@ -627,6 +632,7 @@ describe("pool and position reads", () => {
       }) as typeof fetch,
     );
 
+    expect(informationalOutputSchemas.get_position_pool_candidates!.parse(result)).toEqual(result);
     expect(result.pair).toEqual({ token0, token1 });
     expect(result.candidate_count).toBe(1);
     expect(result.candidates[0]).toMatchObject({

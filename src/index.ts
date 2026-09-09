@@ -70,7 +70,7 @@ export default {
             origin: requestOrigin ?? url.origin,
             methods: "GET, POST, OPTIONS",
             headers:
-              "content-type, accept, mcp-protocol-version, mcp-session-id, last-event-id",
+              "content-type, accept, mcp-protocol-version, mcp-method, mcp-name, mcp-session-id, last-event-id",
             exposeHeaders: "mcp-session-id, mcp-protocol-version",
             maxAge: 86400,
           },
@@ -78,6 +78,9 @@ export default {
         },
       );
       const response = withSecurityHeaders(await handler(mcpRequest, env, ctx));
+      // MCP clients cache result payloads using ttlMs/cacheScope. HTTP caches
+      // must not replay the JSON-RPC envelope (including another request's id)
+      // for a different POST body sent to this same endpoint.
       response.headers.set("cache-control", "no-store");
       return response;
     }
@@ -338,7 +341,7 @@ export default {
             $schema:
               "https://static.modelcontextprotocol.io/schemas/mcp-server-card/v1.json",
             version: "1.0",
-            protocolVersion: "2025-06-18",
+            protocolVersion: "2026-07-28",
             serverInfo: {
               name: "ekubo-mcp",
               title: "Ekubo Protocol MCP",

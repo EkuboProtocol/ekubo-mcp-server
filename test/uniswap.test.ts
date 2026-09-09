@@ -1,3 +1,4 @@
+import { informationalOutputSchemas } from "../src/informational-output-schemas.js";
 import { decodeV4PositionInfo } from "../src/uniswap/pool-key.js";
 import { describe, expect, it } from "bun:test";
 import {
@@ -327,6 +328,7 @@ describe("Uniswap liquidity plans", () => {
       amount0: "1000000000000000000",
       amount1: "0",
     });
+    expect(informationalOutputSchemas.quote_uniswap_liquidity!.parse(result)).toEqual(result);
     expect(BigInt(result.liquidity)).toBeGreaterThan(0n);
     expect(result.mint_amount1).toBe("0");
     expect(BigInt(result.mint_amount0)).toBeLessThanOrEqual(
@@ -351,6 +353,7 @@ describe("Uniswap indexed data", () => {
       { chain_id: "8453", version: "v4", first: 5, tvl_cursor: 100 },
       fetcher,
     );
+    expect(informationalOutputSchemas.discover_uniswap_pools!.parse(result)).toEqual(result);
     expect(result.partial).toBe(true);
     expect(result.errors).toHaveLength(1);
   });
