@@ -1,3 +1,4 @@
+import { uniswapTools } from "./uniswap/tools.js";
 /**
  * The protocol partition behind the per-protocol MCP endpoints.
  *
@@ -20,6 +21,7 @@ export const PROTOCOL_SLUGS = [
   "merkl",
   "morpho",
   "sky",
+  "uniswap",
 ] as const;
 
 export type ProtocolSlug = (typeof PROTOCOL_SLUGS)[number];
@@ -193,6 +195,14 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
       "prepare_sky_savings_withdraw",
       "prepare_sky_savings_redeem",
     ],
+  },
+  {
+    slug: "uniswap",
+    title: "Uniswap",
+    description:
+      "Uniswap V2/V3/V4 pools, charts, positions, liquidity and fee claims across five EVM chains",
+    skill: null,
+    tools: uniswapTools.map((tool) => tool.name),
   },
 ];
 
