@@ -1,3 +1,4 @@
+import { uniswapTools, uniswapCatalog } from "./uniswap/tools.js";
 import {
   McpServer,
   ResourceNotFoundError,
@@ -1743,6 +1744,9 @@ const localAnnotations = {
 } as const;
 
 const LOCAL_TOOLS = new Set([
+  "get_uniswap_deployments",
+  "quote_uniswap_liquidity",
+  "decode_uniswap_v4_position_info",
   "derive_pool_id",
   "decode_pool_config",
   "get_aave_v3_markets",
@@ -1821,9 +1825,16 @@ const chainReadBundleListSchema = z.array(
     read_calls_reference: artifactReferenceSchema,
   }),
 );
+function preparerOutputSchema(name: string) {
+  if (name === "prepare_uniswap_reads") {
+    return z.looseObject({ read_calls_reference: artifactReferenceSchema });
+  }
+  return preparedPlanOutputSchema;
+}
+
 export function toolOutputSchema(name: string) {
   if (name === "get_quotes_with_plans") return quotesOutputSchema;
-  if (name.startsWith("prepare_")) return preparedPlanOutputSchema;
+  if (name.startsWith("prepare_")) return preparerOutputSchema(name);
   switch (name) {
     case "export_tokens":
       return exportedTokenListOutputSchema;
@@ -2413,6 +2424,7 @@ export const publicToolCatalog = [
       "Claim a veNFT's voting rewards — trading fees, bribes, or both — and optionally the RewardsDistributor rebase, as one plan. The fee and bribe contract addresses are required inputs because they are per-pool contracts that only a Sugar rewards read returns; this server cannot derive them, and a wrong address claims nothing rather than failing loudly. Distinct from prepare_aerodrome_gauge_claim, which collects an LP's emissions rather than a voter's rewards.",
     inputSchema: z.toJSONSchema(prepareAerodromeIncentiveClaimSchema),
   },
+  ...uniswapCatalog,
   {
     name: "get_lido_deployment",
     title: "Get the fixed Lido mainnet deployment",
@@ -4049,6 +4061,10 @@ export function createEkuboServer(
         claimRebase: input.claim_rebase,
       }),
   );
+
+  for (const tool of uniswapTools) {
+    registerCatalogTool(tool.name, tool.schema, tool.handler);
+  }
 
   registerCatalogTool("get_lido_deployment", getLidoDeploymentSchema, () =>
     getLidoDeployment(),

@@ -19,7 +19,7 @@ plans, prepares proof-verified Merkl reward claims for campaigns on any
 protocol, and prepares Aerodrome v2 liquidity, gauge, veAERO lock, vote, and
 reward-claim actions on Base alongside the Sugar lens reads that feed them. Agents
 discover live protocol data from official public APIs or the user's wallet/RPC
-directly; this server is not in that data path.
+directly for those protocols. Uniswap V2/V3/V4 support additionally fetches indexed pool discovery, price/volume charts, and liquidity-depth ticks from the official Uniswap interface API, and prepares pool/position reads and liquidity transactions on six EVM chains. See [Uniswap coverage](docs/uniswap.md).
 
 The MCP server owns agent-facing transaction construction. `prod-api` remains
 a data API and the quoter remains a route-data service.
@@ -27,7 +27,7 @@ a data API and the quoter remains a route-data service.
 ## Public endpoints
 
 - `POST/GET /mcp` — MCP Streamable HTTP endpoint serving every protocol
-- `POST/GET /mcp/{ekubo,aave,aerodrome,lido,merkl,morpho,sky}` — the same MCP
+- `POST/GET /mcp/{ekubo,aave,aerodrome,lido,merkl,morpho,sky,uniswap}` — the same MCP
   contract narrowed to one protocol
 - `GET /` — service metadata, per-protocol endpoints, and canonical
   documentation links
@@ -48,9 +48,7 @@ resources, and `/mcp` registers all of them. The partition is checked against
 without a protocol fails the build rather than quietly appearing on no
 per-protocol endpoint.
 
-`/mcp` exists for backwards compatibility and is unchanged — same tools, same
-name, and byte-identical instructions. A client that wants one protocol's tools
-in its context instead of all eighty-four adds the narrower URL instead.
+`/mcp` remains the endpoint for the complete catalog. A client that wants one protocol's tools in its context adds the narrower URL instead.
 
 Filtering happens at the two registration choke points in `createEkuboServer`
 rather than at the call sites, and the instructions are composed from

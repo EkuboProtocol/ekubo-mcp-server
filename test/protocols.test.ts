@@ -377,7 +377,7 @@ describe("Per-protocol discovery documents", () => {
 
   it("refuses an unknown protocol filter rather than serving everything", async () => {
     const response = await worker.fetch(
-      new Request("https://mcp.ekubo.org/tools?protocol=uniswap"),
+      new Request("https://mcp.ekubo.org/tools?protocol=not-a-protocol"),
       env,
       context,
     );
@@ -402,5 +402,21 @@ describe("Per-protocol discovery documents", () => {
         `https://mcp.ekubo.org${protocolMcpPath(protocol.slug)}`,
       );
     }
+  });
+});
+
+describe("Uniswap MCP wallet handoff", () => {
+  it("stores executable V3 calldata and decoded read bundles on its own endpoint", async () => {
+    const args = { chain_id: "8453", sender: "0x1111111111111111111111111111111111111111", deadline: String(Math.floor(Date.now() / 1000) + 600), token0: "0x4200000000000000000000000000000000000006", token1: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", token_id: "1" };
+    const response = await mcpCall("/mcp/uniswap", "tools/call", 99, { name: "prepare_uniswap_v3_collect_fees", arguments: args }) as { result: { isError?: boolean; structuredContent: { execution_plan_reference: { url: string } } } };
+    expect(response.result.isError).not.toBe(true);
+    const ref = response.result.structuredContent.execution_plan_reference;
+    const artifact = await worker.fetch(new Request(ref.url), env, context);
+    expect(artifact.status).toBe(200);
+    const plan = await artifact.json() as { ordered_steps: { transaction: { to: string } }[] };
+    expect(plan.ordered_steps[0].transaction.to).toBe("0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1");
+    const reads = await mcpCall("/mcp/uniswap", "tools/call", 100, { name: "prepare_uniswap_reads", arguments: { ...args, owner: args.sender, version: "v3", token_ids: ["1"] } }) as { result: { isError?: boolean; structuredContent: { read_calls_reference: { url: string } } } };
+    expect(reads.result.isError).not.toBe(true);
+    expect((await worker.fetch(new Request(reads.result.structuredContent.read_calls_reference.url), env, context)).status).toBe(200);
   });
 });

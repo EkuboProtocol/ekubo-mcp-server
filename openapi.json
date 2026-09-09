@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Ekubo Protocol MCP Gateway",
-    "version": "0.31.1",
-    "description": "Discovery contract for the public, unauthenticated, non-custodial Ekubo MCP server. It exposes interface-equivalent Ekubo tools plus fixed local Aave, Morpho, Sky, and Lido catalogs with signer-neutral transaction preparation. Agents query official public APIs and the user's wallet/RPC directly; this server does not proxy or index protocol market data. Reusable protocol skills describe those direct workflows. MCP clients discover typed tool schemas through tools/list; GET /tools provides the same revisioned catalog to ordinary HTTP clients.",
+    "version": "0.41.0",
+    "description": "Discovery contract for the public, unauthenticated, non-custodial Ekubo MCP server. It exposes interface-equivalent Ekubo tools plus fixed local Aave, Morpho, Sky, and Lido catalogs with signer-neutral transaction preparation. Agents query official public APIs and the user's wallet/RPC directly; Uniswap tools additionally fetch indexed pool discovery and chart data from the official interface GraphQL API. Reusable protocol skills describe those direct workflows. MCP clients discover typed tool schemas through tools/list; GET /tools provides the same revisioned catalog to ordinary HTTP clients.",
     "contact": {
       "url": "https://ekubo.org",
       "email": "eng@ekubo.org"
@@ -93,7 +93,8 @@
                         "lido",
                         "merkl",
                         "morpho",
-                        "sky"
+                        "sky",
+                        "uniswap"
                       ],
                       "description": "Present only when the catalog was filtered."
                     }
@@ -124,7 +125,8 @@
                 "lido",
                 "merkl",
                 "morpho",
-                "sky"
+                "sky",
+                "uniswap"
               ]
             }
           }
@@ -356,7 +358,8 @@
               "lido",
               "merkl",
               "morpho",
-              "sky"
+              "sky",
+              "uniswap"
             ]
           }
         }
@@ -531,7 +534,8 @@
               "lido",
               "merkl",
               "morpho",
-              "sky"
+              "sky",
+              "uniswap"
             ],
             "description": "The /mcp/<slug> endpoint that serves this tool. /mcp serves every tool."
           }
