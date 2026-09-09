@@ -7,7 +7,7 @@ signs, holds funds or submits transactions.
 ## Coverage
 
 Contracts are pinned through `@uniswap/sdk-core@7.19.2` for Ethereum (1),
-Optimism (10), Base (8453), Arbitrum (42161) and Unichain (130).
+Optimism (10), Base (8453), Arbitrum (42161), Unichain (130) and Robinhood (4663).
 
 | Tool | Behavior |
 | --- | --- |

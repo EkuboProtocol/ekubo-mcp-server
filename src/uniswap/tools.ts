@@ -68,7 +68,7 @@ export const uniswapTools = [
   tool(
     "get_uniswap_deployments",
     "Get Uniswap deployments",
-    "Canonical V2/V3/V4 contracts on Ethereum, Optimism, Base, Arbitrum and Unichain, including Permit2 and wrapped native addresses.",
+    "Canonical V2/V3/V4 contracts on Ethereum, Optimism, Base, Arbitrum, Unichain and Robinhood, including Permit2 and wrapped native addresses.",
     z.object({}),
     getUniswapDeployments,
   ),

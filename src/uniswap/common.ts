@@ -19,8 +19,9 @@ export const chainNames = {
   "8453": "BASE",
   "42161": "ARBITRUM",
   "130": "UNICHAIN",
+  "4663": "ROBINHOOD",
 } as const;
-export const chainSchema = z.enum(["1", "10", "8453", "42161", "130"]);
+export const chainSchema = z.enum(["1", "10", "8453", "42161", "130", "4663"]);
 export const addressSchema = z
   .string()
   .regex(/^0x[0-9a-fA-F]{40}$/)

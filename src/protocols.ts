@@ -200,7 +200,7 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
     slug: "uniswap",
     title: "Uniswap",
     description:
-      "Uniswap V2/V3/V4 pools, charts, positions, liquidity and fee claims across five EVM chains",
+      "Uniswap V2/V3/V4 pools, charts, positions, liquidity and fee claims across six EVM chains",
     skill: null,
     tools: uniswapTools.map((tool) => tool.name),
   },

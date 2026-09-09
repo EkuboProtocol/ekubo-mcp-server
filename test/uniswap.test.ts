@@ -86,14 +86,45 @@ function v4Actions(data: `0x${string}`, wrapped = false) {
   );
 }
 describe("Uniswap liquidity plans", () => {
-  it("pins separate deployments on five chains", () => {
-    expect(getUniswapDeployments().deployments).toHaveLength(5);
+  it("pins separate deployments on six chains", () => {
+    expect(getUniswapDeployments().deployments).toHaveLength(6);
     expect(
       new Set(
         getUniswapDeployments().deployments.map((d) => d.v4_position_manager),
       ).size,
-    ).toBe(5);
+    ).toBe(6);
     expect(() => deployment("56")).toThrow();
+  });
+  it("uses Robinhood deployments for all liquidity versions", () => {
+    const chain_id = "4663";
+    const contracts = deployment(chain_id);
+    expect(contracts.network).toBe("ROBINHOOD");
+    expect(contracts.v4_position_manager.toLowerCase()).toBe(
+      "0x58daec3116aae6d93017baaea7749052e8a04fa7",
+    );
+    const input = {
+      ...deposit(),
+      chain_id,
+      token0: contracts.wrapped_native,
+      token1: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+    } as const;
+    expect(
+      v2PairAddress(chain_id, input.token0, input.token1).toLowerCase(),
+    ).toBe("0x8803c117ccae7b5146297876c2a25df135141c4d");
+    for (const [result, target] of [
+      [prepareV2Add({ ...input, use_native: true }), contracts.v2_router],
+      [
+        prepareV3Add({ ...input, use_native: true }),
+        contracts.v3_position_manager,
+      ],
+      [prepareV4Add({ ...v4(), chain_id }), contracts.v4_position_manager],
+    ] as const) {
+      expect(
+        planTransactions(result).some(
+          (tx: { to: string }) => tx.to.toLowerCase() === target.toLowerCase(),
+        ),
+      ).toBe(true);
+    }
   });
   it("derives the canonical Ethereum V2 USDC/WETH pair", () => {
     expect(

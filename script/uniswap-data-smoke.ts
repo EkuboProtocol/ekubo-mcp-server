@@ -5,8 +5,11 @@ import {
   getUniswapCharts,
   getUniswapPoolTicks,
 } from "../src/uniswap/data.js";
+import { chainSchema } from "../src/uniswap/common.js";
 const results = [];
-for (const chain_id of ["8453", "42161"] as const) {
+const chains = process.argv.slice(2).map((chain) => chainSchema.parse(chain));
+if (!chains.length) chains.push("8453", "42161");
+for (const chain_id of chains) {
   for (const version of ["v2", "v3", "v4"] as const) {
     const discovery = await discoverUniswapPools({
       chain_id,
@@ -57,4 +60,5 @@ for (const chain_id of ["8453", "42161"] as const) {
     results.push(record);
   }
 }
-if (results.length !== 6) throw new Error("Incomplete test matrix");
+if (results.length !== chains.length * 3)
+  throw new Error("Incomplete test matrix");

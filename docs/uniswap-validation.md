@@ -36,7 +36,7 @@ All 23 transactions below were simulated through Ekubo Wallet, authorized by its
 - V3 on both chains: mint, increase, fee claim, full withdrawal, native unwrapping and NFT burn. Base fee collection returned nonzero ETH fees; the Arbitrum fee-only claim returned zero at execution and withdrawal later collected accrued amounts.
 - V4 on both chains: mint, increase, fee claim, full withdrawal and burn. Base additionally exercised an exact partial decrease before burning the remainder. Base fee collection returned nonzero ETH fees; the low-liquidity Arbitrum test pool had no fees to collect.
 - V4 Base used the indexed ETH/USDC pool ID `0xe070797535b13431808f8fc81fdbe7b41362960ed0b55bc2b6117c49c51b7eb9` with immutable fee 3000. Arbitrum used existing ETH/USDC fee-625 pool `0xda07cfebdfb3164fa2c7aa4110cc8b5917f003e8a6fa8b077e15635d9782876b`. The latter differs from the displayed fee-625 indexed pool, whose immutable fee is 500; this finding drove the mandatory pool-ID hash check and discovery key resolution.
-- Only Base and Arbitrum received live transaction tests. Ethereum, Optimism and Unichain have pinned deployment configuration; no claim is made of live transaction coverage there.
+- Only Base and Arbitrum received live transaction tests. Ethereum, Optimism, Unichain and Robinhood have pinned deployment configuration; no claim is made of live transaction coverage there.
 
 ## Final chain state
 
@@ -58,3 +58,11 @@ After the final receipts, wallet reads confirmed:
 Recorded receipt gas fees on chain 8453: 0.000013687927429279 ETH (receipt gas_used × effective_gas_price; rollup-specific extra fee accounting may differ).
 
 Recorded receipt gas fees on chain 42161: 0.000059942856896 ETH (receipt gas_used × effective_gas_price; rollup-specific extra fee accounting may differ).
+
+## Robinhood (4663)
+
+Robinhood uses the V2/V3/V4 addresses and WETH from the pinned SDK and the interface API's `ROBINHOOD` chain enum. Regression coverage checks all three add-liquidity transaction targets and the canonical V2 WETH/USDG pair derivation.
+
+Live wallet reads succeeded for V2 WETH/USDG reserves, supply and factory; V3 WETH/USDG canonical pool, price, liquidity, fee and tick spacing; and V4 WETH/STATICS pool state and position-manager counter. No Robinhood transactions were submitted.
+
+Public API checks returned V2 price/volume history (100/17 points), V3 price/volume history (168/28 points) and 100 depth ticks, and V4 price history (116 points) and 64 depth ticks. V4 volume fields returned explicit upstream errors. V3 discovery returned a pool with `first: 2`, but a subsequent `first: 10` request returned no pools, causing the strict smoke test to fail; direct pool queries still succeeded. Indexed data availability is therefore partial and can vary by request. Run the chain-specific smoke check with `bun script/uniswap-data-smoke.ts 4663`.
