@@ -1,4 +1,5 @@
 import { uniswapTools, uniswapCatalog } from "./uniswap/tools.js";
+import { informationalOutputSchemas } from "./informational-output-schemas.js";
 import {
   McpServer,
   ResourceNotFoundError,
@@ -1778,14 +1779,14 @@ function toolAnnotations(name: string) {
   return LOCAL_TOOLS.has(name) ? localAnnotations : readerAnnotations;
 }
 
-// Output schemas for the handoff tools only: loose shapes that pin where the
+// Output schemas for handoff tools: loose shapes that pin where the
 // result's primary wallet handoff sits — the execution plan for a preparer,
 // the token list for an export, the read bundle a reader wants executed — so
 // typed clients can find it without the schema constraining anything else.
 // They are not an inventory of every envelope in a result: a preparation
 // tool's own validation reads travel under shapes that differ per tool, and
-// the plan is the handoff its schema names. Pure informational tools declare
-// no output schema.
+// the plan is the handoff its schema names. Informational tool schemas live
+// separately and describe their stable result envelopes.
 const preparedPlanOutputSchema = z.looseObject({
   execution_plan_reference: artifactReferenceSchema.optional(),
 });
@@ -1873,7 +1874,7 @@ export function toolOutputSchema(name: string) {
           .nullish(),
       });
     default:
-      return undefined;
+      return informationalOutputSchemas[name];
   }
 }
 
@@ -2570,6 +2571,15 @@ export function createEkuboServer(
       websiteUrl: "https://mcp.ekubo.org",
     },
     {
+      cacheHints: {
+        "server/discover": { ttlMs: 300_000, cacheScope: "public" },
+        "tools/list": { ttlMs: 300_000, cacheScope: "public" },
+        "resources/list": { ttlMs: 300_000, cacheScope: "public" },
+        "resources/templates/list": { ttlMs: 300_000, cacheScope: "public" },
+        // Resources are bundled, public documentation/ABIs. The externally
+        // fetched OpenAPI resource overrides this policy below.
+        "resources/read": { ttlMs: 3_600_000, cacheScope: "public" },
+      },
       instructions:
         protocols === ALL_PROTOCOLS
           ? SERVER_INSTRUCTIONS
@@ -4231,6 +4241,7 @@ export function createEkuboServer(
       title: "Ekubo data API OpenAPI",
       description: "Canonical public token and protocol-data HTTP contract",
       mimeType: "application/json",
+      cacheHint: { ttlMs: 0, cacheScope: "private" },
     },
     async (uri) => ({
       contents: [

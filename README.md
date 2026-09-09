@@ -69,6 +69,18 @@ capabilities. `GET /tools` is deliberately uncached and includes both the
 server version and a tool-catalog revision so integrations can detect stale
 schemas after a Git-triggered deployment.
 
+MCP `2026-07-28` clients can use `server/discover` and standalone requests
+without an initialization handshake. Browser preflights allow `Mcp-Method`
+and `Mcp-Name` alongside the protocol-version header. Discovery and catalogs
+carry a five-minute public cache hint; bundled documentation and ABI resource
+reads carry a one-hour hint. Cache entries belong to the exact endpoint and
+resource URI (the protocol-specific endpoints have different catalogs). The
+externally fetched API OpenAPI document remains uncached. HTTP RPC envelopes
+remain `no-store`: clients cache MCP result payloads, not another request's ID.
+Legacy clients retain their existing result shapes. All tools publish output
+schemas; informational schemas describe stable envelopes while preserving
+additional upstream fields.
+
 ## Tools
 
 - `list_tokens` — list the canonical token list, ordered by descending

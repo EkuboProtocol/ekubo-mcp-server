@@ -90,7 +90,7 @@ describe("Worker discovery", () => {
       };
       expect(card.$schema).toContain("mcp-server-card/v1.json");
       expect(card.version).toBe("1.0");
-      expect(card.protocolVersion).toBe("2025-06-18");
+      expect(card.protocolVersion).toBe("2026-07-28");
       expect(card.serverInfo).toEqual({
         name: "ekubo-mcp",
         title: "Ekubo Protocol MCP",
@@ -404,14 +404,14 @@ describe("Worker discovery", () => {
     ]) {
       expect(annotationFor(name)).toMatchObject({ openWorldHint: true });
     }
-    // outputSchema only on the handoff tools.
+    // Both handoff tools and informational envelopes declare output schemas.
     const outputSchemaFor = (name: string) =>
       catalog.tools.find((tool) => tool.name === name)?.outputSchema;
     expect(outputSchemaFor("prepare_wrap_unwrap")).toBeDefined();
     expect(outputSchemaFor("get_quotes_with_plans")).toBeDefined();
     expect(outputSchemaFor("get_pool")).toBeDefined();
-    expect(outputSchemaFor("list_tokens")).toBeUndefined();
-    expect(outputSchemaFor("derive_pool_id")).toBeUndefined();
+    expect(outputSchemaFor("list_tokens")).toBeDefined();
+    expect(outputSchemaFor("derive_pool_id")).toBeDefined();
     const batchTokens = catalog.tools.find(
       (tool) => tool.name === "get_tokens",
     );

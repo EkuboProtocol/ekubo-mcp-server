@@ -1,3 +1,4 @@
+import { informationalOutputSchemas } from "../src/informational-output-schemas.js";
 import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
 import { numberToHex } from "viem";
@@ -65,6 +66,7 @@ describe("STONX allocation recommendations", () => {
       recommendationFetcher(),
     );
 
+    expect(informationalOutputSchemas.get_stonx_allocation_recommendation!.parse(result)).toEqual(result);
     expect(result.execution_ready).toBe(true);
     expect(result.snapshot_refreshed_on_request).toBe(false);
     expect(result.snapshot_max_age_seconds).toBe(604_800);

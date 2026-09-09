@@ -1,3 +1,4 @@
+import { informationalOutputSchemas } from "../src/informational-output-schemas.js";
 import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
 import { decodeFunctionData, encodeFunctionData, erc20Abi, maxUint256 } from "viem";
@@ -541,6 +542,7 @@ describe("LayerZero transfer status", () => {
       }) as typeof fetch,
     );
 
+    expect(informationalOutputSchemas.get_value_transfer_status!.parse(result)).toEqual(result);
     const url = new URL(requestUrl);
     expect(url.pathname).toBe("/v1/status/quote-oft");
     expect(url.searchParams.get("txHash")).toBe(`0x${"1".repeat(64)}`);

@@ -1,3 +1,4 @@
+import { informationalOutputSchemas } from "../src/informational-output-schemas.js";
 import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
 import { decodeFunctionData, encodeFunctionData, erc20Abi } from "viem";
@@ -398,6 +399,7 @@ describe("LI.FI transfer status", () => {
       fetcher,
     );
 
+    expect(informationalOutputSchemas.get_value_transfer_status!.parse(result)).toEqual(result);
     const requested = new URL(url());
     expect(requested.pathname).toBe("/v1/status");
     expect(requested.searchParams.get("txHash")).toBe(originHash);
