@@ -5,6 +5,7 @@
     "": {
       "name": "@ekubo/mcp-worker",
       "dependencies": {
+        "@ekubo/jurisdiction": "./vendor/ekubo-jurisdiction-0.1.0-509e3fc9bce2.tgz",
         "@ekubo/sdk": "0.0.10-alpha.0",
         "@ekubo/yul-router-sdk": "0.6.0",
         "@modelcontextprotocol/server": "2.0.0",
@@ -99,6 +100,8 @@
     "@cloudflare/workers-types": ["@cloudflare/workers-types@5.20260801.1", "", {}, "sha512-XCv5xWi47WQOK0LpLa6997Mrpz8Ct+nZmp/M5Xp8Z4BFsarf7nYjkznGOcOoYK5m1GfbMFEEuQ2OIZnbIWoe9A=="],
 
     "@cspotcode/source-map-support": ["@cspotcode/source-map-support@0.8.1", "", { "dependencies": { "@jridgewell/trace-mapping": "0.3.9" } }, "sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw=="],
+
+    "@ekubo/jurisdiction": ["@ekubo/jurisdiction@./vendor/ekubo-jurisdiction-0.1.0-509e3fc9bce2.tgz", { "peerDependencies": { "viem": "^2.49.0", "zod": "^4.4.3" }, "optionalPeers": ["zod"] }, "sha512-vaUUW3dBFHAi8H5B+NZ+KKyTbaDh8uUjRiIoCX0xmUx3NllUGiQK2R+KqgwGukYISxcdFFg7wurhRTX1erHZBA=="],
 
     "@ekubo/sdk": ["@ekubo/sdk@0.0.10-alpha.0", "", {}, "sha512-1koNXODon0kaQBX5CbYRyfvj5viEBmyxZFlOTWPlK79gItDoIEeJIUYM8IlTu3YTT8m2xb3XcvNXUCEXuCi0rw=="],
 

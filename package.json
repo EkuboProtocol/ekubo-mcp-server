@@ -18,6 +18,7 @@
     "lint:prune": "eslint . --prune-suppressions"
   },
   "dependencies": {
+    "@ekubo/jurisdiction": "./vendor/ekubo-jurisdiction-0.1.0-509e3fc9bce2.tgz",
     "@ekubo/sdk": "0.0.10-alpha.0",
     "@ekubo/yul-router-sdk": "0.6.0",
     "@modelcontextprotocol/server": "2.0.0",

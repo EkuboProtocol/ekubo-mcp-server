@@ -1,3 +1,4 @@
+import { attestationTypedData } from "../src/jurisdiction-message.js";
 import { describe, expect, it } from "bun:test";
 import worker from "../src/index.js";
 import { fakeArtifactStore } from "./fake-r2.js";
@@ -86,6 +87,61 @@ async function callTool(
 }
 
 describe("jurisdiction restrictions over the MCP endpoint", () => {
+  it("requires a signed attestation for indicative restricted-token quotes", async () => {
+    const result = await callTool(
+      "get_quotes_with_plans",
+      {
+        chain_id: ROBINHOOD_CHAIN,
+        token_in: USDG,
+        token_out: NVDA,
+        quote_type: "exact_input",
+        amount: "1000000",
+        attestation_address: SENDER,
+        jurisdiction_code: "DE",
+      },
+      "DE",
+    );
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: "jurisdiction_attestation_required",
+        details: {
+          typed_data: {
+            primaryType: "JurisdictionAttestation",
+            message: { wallet: SENDER },
+          },
+        },
+      },
+    });
+  });
+
+  it("verifies signatures submitted through the quote schema", async () => {
+    const result = await callTool(
+      "get_quotes_with_plans",
+      {
+        chain_id: ROBINHOOD_CHAIN,
+        token_in: USDG,
+        token_out: NVDA,
+        quote_type: "exact_input",
+        amount: "1000000",
+        sender: SENDER,
+        slippage_bps: 10,
+        attestation: {
+          typed_data: attestationTypedData(
+            SENDER,
+            "DE",
+            Math.floor(Date.now() / 1000),
+          ),
+          signature: `0x${"00".repeat(65)}`,
+        },
+      },
+      "DE",
+    );
+    expect(result.structuredContent).toMatchObject({
+      error: { code: "invalid_attestation" },
+    });
+  });
+
   it("refuses to prepare a restricted asset for a restricted country", async () => {
     const result = await callTool(
       "prepare_oracle_capacity_expansion",

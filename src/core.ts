@@ -1,3 +1,4 @@
+import { requireJurisdictionAttestation, type SignedAttestation } from "./jurisdiction-attestation.js";
 import {
   type Address,
   decodeFunctionData,
@@ -58,6 +59,7 @@ export interface QuoteIntent {
   destinationChainId?: string;
   tokenIn: Address;
   tokenOut: Address;
+  attestation?: SignedAttestation;
   quoteType: EvmQuoterQuoteType;
   amount: string;
 }
@@ -92,6 +94,8 @@ export interface PrepareSwapIntent extends SwapPreparationIntent {
  * get" questions that are not going anywhere near a signature.
  */
 export interface QuoteDiscoveryIntent extends QuoteIntent {
+  attestationAddress?: Address;
+  jurisdictionCode?: string;
   slippageBps?: number;
   recipient?: Address;
   sender?: Address;
@@ -650,6 +654,7 @@ export async function getQuotesWithPlans(
   // just what is done with the answer: 0x returns a firm quote with calldata
   // instead of an indicative price, and Across estimates the real origin
   // transaction for the real depositor.
+  await requireJurisdictionAttestation(intent);
   const preparation = swapPreparationIntent(intent);
   const result = await collectQuotes(
     env,
@@ -1124,7 +1129,9 @@ async function quoteEkubo(
     quoteType: intent.quoteType,
     amount: intent.amount,
   });
-  const quote = await fetchJson<EvmQuoterQuote>(url, fetcher);
+  const quote = await fetchJson<EvmQuoterQuote>(url, fetcher, {
+    headers: intent.attestation ? { "X-Ekubo-Jurisdiction": JSON.stringify(intent.attestation) } : undefined,
+  });
   const calculated = parseSignedAmount(
     quote.total_calculated,
     "total_calculated",

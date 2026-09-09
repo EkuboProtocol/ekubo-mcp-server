@@ -6,9 +6,9 @@ import { ServiceError } from "./core.js";
  * This mirrors the Ekubo interface's `src/util/common/tokenRestrictions.ts`.
  * The interface disables its action buttons; this server refuses to produce an
  * execution plan at all, which is the equivalent control for a caller that has
- * no UI to disable. Discovery is deliberately untouched: the interface still
- * lists, prices, and quotes restricted assets, and so do `list_tokens`,
- * `get_token`, and the opportunity tools here.
+ * no UI to disable. Token metadata and opportunity discovery remain available.
+ * Swap quotes additionally require a signed domicile attestation; see
+ * `jurisdiction-attestation.ts`.
  *
  * The restricted sets are still mirrored, but the *decision* has deliberately
  * diverged: the interface blocks both directions, so a holder in a restricted

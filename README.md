@@ -957,3 +957,39 @@ state. Signing and submission remain client-side.
 ## License
 
 MIT, © 2026 Ekubo, Inc. See [LICENSE](LICENSE).
+
+### Stateless jurisdiction attestations
+
+Every `get_quotes_with_plans` request involving a restricted token must carry
+`attestation: { typed_data, signature }`. Supply the user's declared
+`jurisdiction_code` and either `sender` (with slippage) or `attestation_address`
+(indicative quotes) to receive the known EIP-712 payload in an
+`jurisdiction_attestation_required` error. Have the user review and sign it.
+Never infer legal domicile from the connecting IP.
+
+The domain is `Ekubo Jurisdiction Attestation`, version `1`; the signed message
+contains the wallet, ISO country code, fixed statement, `issuedAt`, and
+`expiresAt` in Unix seconds. Only that known schema and statement are accepted.
+On every request we verify the EOA signature and require
+`issuedAt <= now < expiresAt` and `0 < expiresAt - issuedAt <= 604800`.
+The wallet must match the quote's sender or indicative address. Both existing
+request-country restrictions and the signed domicile's restrictions apply.
+
+There is no KV binding, verification history, public lookup, or access token.
+The client holds and resends its proof until expiry, then asks the user to
+reattest. The proof goes to the Ekubo quoter in `X-Ekubo-Jurisdiction`, never a
+URL, and is not forwarded to third-party quote providers. Do not log request
+bodies or this header, and do not publicly cache restricted quotes. The quoter
+independently verifies the proof. Contract-wallet signatures are not supported.
+
+Roll out the quoter and clients together after publishing the privacy notice
+and honoring its notice period. The privacy policy update is in the interface
+repository. This change prepares code; it does not deploy or publish the notice.
+
+Jurisdiction payload construction, EIP-712 schemas, and verification now come
+from `@ekubo/jurisdiction`. The Worker entry runs the same Rust verifier as the
+native quoter, compiled to Wasm; this server only handles MCP errors and asset
+policy. The package source is `EkuboProtocol/typescript-sdk/packages/jurisdiction`.
+The checked-in release artifact under `vendor/` keeps this branch installable
+before initial publication; replace it with the matching npm version after
+release. Do not reintroduce local payload or signature validators.

@@ -1,4 +1,5 @@
 import { uniswapTools, uniswapCatalog } from "./uniswap/tools.js";
+import { signedAttestationSchema, jurisdictionCodeSchema, type SignedAttestation } from "./jurisdiction-message.js";
 import {
   McpServer,
   ResourceNotFoundError,
@@ -395,6 +396,11 @@ export const getValueTransferStatusSchema = z.object({
 });
 
 export const getQuotesWithPlansSchema = quoteRequestSchema.extend({
+  attestation_address: address.optional().describe(
+    "Wallet to attest for indicative restricted-token quotes. Must match sender when sender is supplied.",
+  ),
+  jurisdiction_code: jurisdictionCodeSchema.optional().describe("User-declared legal domicile, required only to generate an EIP-712 payload when no attestation is supplied. Never infer it from IP location."),
+  attestation: signedAttestationSchema.optional().describe("Known EIP-712 payload and wallet signature, supplied on every restricted-token quote. Must be unexpired and valid for at most seven days from its signed issuedAt. No server-side storage."),
   sender: address
     .optional()
     .describe(
@@ -1910,7 +1916,7 @@ export const publicToolCatalog = [
     name: "get_quotes_with_plans",
     title: "Get swap or bridge quotes with execution plans",
     description:
-      "The whole non-browser swap path for onchain swap, trade, exchange, or convert requests on supported EVM chains: one call returns every available Ekubo and 0x quote for a same-chain swap, each already carrying the execution_plan_reference that executes it, without accepting or selecting a source. Choose an option and pass its execution.execution_plan_reference envelope unchanged as the wallet's reference argument; the wallet fetches and verifies the plan body itself; there is no second preparation step, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Do not call this tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the request. Omit sender and slippage_bps for an indicative comparison that fetches no calldata; supply both for plans. Unless the user specifies otherwise, choose a low slippage_bps whose maximum value impact is approximately one estimated gas fee (10,000 * gas-cost value / swap-notional value), not a generic 50 bps/0.5%; prefer re-quoting and retrying with a newly prepared transaction after slippage failure to exposing the trade to a wider bound. Never retry reverted calldata unchanged. Cross-chain requests are quoted by Across, LayerZero's Value Transfer API, and LI.FI where each is configured, and are compared the same way as same-chain options; after executing a LayerZero or LI.FI option, get_value_transfer_status is polled to confirm delivery, with that option's provider_quote_id for LayerZero and with the origin transaction hash for LI.FI. Provider failures are reported separately in unavailable_sources, and an option that could not be made executable reports its own execution_unavailable while the rest stand. Compare options on amount_out together with native_fee: some providers, LayerZero among them, charge a messaging fee in native token on top of the input that amount_out does not reflect, and ranking on amount_out alone can pick an option that costs an order of magnitude more all in. When any option charges one the comparison block names it in native_fee_sources and says whether its basis nets it out. Set include_raw_quotes only to diagnose a provider; the normalized amounts carry every field a choice turns on. Supports EIP-155 token identifiers.",
+      "Restricted-token quotes require an unexpired wallet-signed domicile attestation on every request. Supply the user-declared jurisdiction_code to obtain the known EIP-712 payload, then pass attestation: { typed_data, signature }. Its signed validity period cannot exceed seven days. Never attest on the user's behalf. The whole non-browser swap path for onchain swap, trade, exchange, or convert requests on supported EVM chains: one call returns every available Ekubo and 0x quote for a same-chain swap, each already carrying the execution_plan_reference that executes it, without accepting or selecting a source. Choose an option and pass its execution.execution_plan_reference envelope unchanged as the wallet's reference argument; the wallet fetches and verifies the plan body itself; there is no second preparation step, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Do not call this tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the request. Omit sender and slippage_bps for an indicative comparison that fetches no calldata; supply both for plans. Unless the user specifies otherwise, choose a low slippage_bps whose maximum value impact is approximately one estimated gas fee (10,000 * gas-cost value / swap-notional value), not a generic 50 bps/0.5%; prefer re-quoting and retrying with a newly prepared transaction after slippage failure to exposing the trade to a wider bound. Never retry reverted calldata unchanged. Cross-chain requests are quoted by Across, LayerZero's Value Transfer API, and LI.FI where each is configured, and are compared the same way as same-chain options; after executing a LayerZero or LI.FI option, get_value_transfer_status is polled to confirm delivery, with that option's provider_quote_id for LayerZero and with the origin transaction hash for LI.FI. Provider failures are reported separately in unavailable_sources, and an option that could not be made executable reports its own execution_unavailable while the rest stand. Compare options on amount_out together with native_fee: some providers, LayerZero among them, charge a messaging fee in native token on top of the input that amount_out does not reflect, and ranking on amount_out alone can pick an option that costs an order of magnitude more all in. When any option charges one the comparison block names it in native_fee_sources and says whether its basis nets it out. Set include_raw_quotes only to diagnose a provider; the normalized amounts carry every field a choice turns on. Supports EIP-155 token identifiers.",
     inputSchema: z.toJSONSchema(getQuotesWithPlansSchema),
   },
   {
@@ -2814,6 +2820,9 @@ export function createEkuboServer(
         recipient: input.recipient as Address | undefined,
         sender: input.sender as Address | undefined,
         includeRawQuotes: input.include_raw_quotes,
+        attestationAddress: input.attestation_address as Address | undefined,
+        attestation: input.attestation as SignedAttestation | undefined,
+        jurisdictionCode: input.jurisdiction_code,
       });
     },
   );
