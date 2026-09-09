@@ -26,14 +26,36 @@ a data API and the quoter remains a route-data service.
 
 ## Public endpoints
 
-- `POST/GET /mcp` — MCP Streamable HTTP endpoint
-- `GET /` — service metadata and canonical documentation links
-- `GET /tools` — deterministic tool catalog for non-MCP discovery
+- `POST/GET /mcp` — MCP Streamable HTTP endpoint serving every protocol
+- `POST/GET /mcp/{ekubo,aave,aerodrome,lido,merkl,morpho,sky}` — the same MCP
+  contract narrowed to one protocol
+- `GET /` — service metadata, per-protocol endpoints, and canonical
+  documentation links
+- `GET /tools` — deterministic tool catalog for non-MCP discovery, filterable
+  with `?protocol=<slug>`
 - `GET /openapi.json` — OpenAPI 3.1 discovery contract
 - `GET /llms.txt` — concise agent workflow
 - `GET /skills/{use-morpho,use-sky,use-lido,use-merkl,use-aerodrome}/SKILL.md` — reusable direct-data
   agent instructions, with each skill's discovery reference beneath
   `references/discovery.md`
+
+### One endpoint per protocol
+
+`src/protocols.ts` partitions the catalog: every tool belongs to exactly one
+protocol, `/mcp/<slug>` registers that protocol's tools and its own skill
+resources, and `/mcp` registers all of them. The partition is checked against
+`publicToolCatalog` in `test/protocols.test.ts`, so a tool added to the catalog
+without a protocol fails the build rather than quietly appearing on no
+per-protocol endpoint.
+
+`/mcp` exists for backwards compatibility and is unchanged — same tools, same
+name, and byte-identical instructions. A client that wants one protocol's tools
+in its context instead of all eighty-four adds the narrower URL instead.
+
+Filtering happens at the two registration choke points in `createEkuboServer`
+rather than at the call sites, and the instructions are composed from
+protocol-scoped paragraphs, so a single-protocol server never tells an agent to
+call a tool it does not serve.
 
 `/` and `/llms.txt` link the two public documentation pages:
 [the server](https://docs.ekubo.org/products/mcp-server/) and
@@ -783,8 +805,8 @@ any two of them at once. `src/rate-limit.ts` holds the cost table.
 
 | Binding | Window | Default | Bounds |
 | --- | --- | --- | --- |
-| `RATE_LIMITER_BURST` | 10s | 30 requests | A flood, visible within ten seconds rather than after a minute of it |
-| `RATE_LIMITER` | 60s | 120 requests | Sustained request volume across every route |
+| `RATE_LIMITER_BURST` | 10s | 120 requests | A flood, visible within ten seconds rather than after a minute of it |
+| `RATE_LIMITER` | 60s | 300 requests | Sustained request volume across every route |
 | `RATE_LIMITER_TOOLS` | 60s | 120 units | Weighted tool cost: scraping and upstream load |
 | `RATE_LIMITER_METERED` | 60s | 20 calls | Calls that spend 0x, Across, LayerZero, LI.FI, or Dune credit |
 
@@ -796,6 +818,17 @@ entry in the table is charged 3 if it is a preparation and 2 otherwise, so a
 tool added later without a deliberate price is over-charged rather than free.
 At the defaults a caller gets roughly ten complete swap flows or a hundred
 catalog reads a minute, and a catalog scrape stalls within seconds.
+
+The two request budgets are sized for a client that opens *seven* sessions,
+not one. A harness configured with the per-protocol endpoints connects to
+`ekubo` and to each satellite protocol, and every one of those opens with a
+stream GET, `initialize`, `notifications/initialized`, `tools/list`,
+`resources/list`, and `prompts/list` — around forty requests from one caller
+in a couple of seconds. They were 30 and 120, sized when a client opened one
+session, and the first harness start after the split overran the burst budget
+and took 429s on an arbitrary subset of the servers. None of that traffic
+reaches a third party or costs a tool unit, which is why the two cost budgets
+below did not move with them.
 
 `RATE_LIMITER_METERED` is separate from `RATE_LIMITER_TOOLS` on purpose: it is
 the budget that maps to an invoice, and no volume of cheap local calls should
@@ -811,12 +844,13 @@ for a per-caller limit — one caller's requests land in one colo — and leaves
 the distributed case to the edge rule below.
 
 They are also eventually consistent *within* a colo, which matters the moment
-anyone tries to verify this by hand. Measured against production: 60 requests
-issued back to back over one keep-alive connection, 1.3 seconds total, returned
-31 × 200 and then 429 from request 32 with `Retry-After: 10` — the burst budget
-behaving exactly as configured. The same 60 requests fired 25-at-a-time all
-returned 200, because concurrent requests read the counter before any of their
-increments land. A burst test that passes proves nothing; test sequentially.
+anyone tries to verify this by hand. Measured against production when the
+burst budget was 30: 60 requests issued back to back over one keep-alive
+connection, 1.3 seconds total, returned 31 × 200 and then 429 from request 32
+with `Retry-After: 10` — the budget behaving exactly as configured. The same
+60 requests fired 25-at-a-time all returned 200, because concurrent requests
+read the counter before any of their increments land. A burst test that passes
+proves nothing; test sequentially, and issue more than the budget now allows.
 
 Verifying `RATE_LIMITER_TOOLS` does not require spending anything upstream.
 Cost is charged from the tool name before dispatch, so calling an expensive
@@ -876,7 +910,8 @@ bun run check
 bun run dev
 ```
 
-Connect MCP Inspector to `http://localhost:8787/mcp`.
+Connect MCP Inspector to `http://localhost:8787/mcp`, or to
+`http://localhost:8787/mcp/<protocol>` for one protocol's tools.
 
 ## Deployment
 
@@ -901,12 +936,19 @@ npx @modelcontextprotocol/inspector@latest
 ```
 
 `bun run smoke` checks root discovery, OpenAPI, the HTTP tool catalog, MCP
-initialization, protocol-native tools, and the contract resource templates.
+initialization, protocol-native tools, the contract resource templates, and
+that each `/mcp/<protocol>` endpoint serves exactly the tools the deployed root
+document says it does — against the deployment rather than against a list in
+the script, so a deployment routing every slug back to the full catalog fails
+rather than passing a check that only asked whether some tools came back.
 
 Connect MCP Inspector to
 `https://mcp.ekubo.org/mcp`, initialize the server,
 list tools, list tokens, request same-chain and cross-chain quotes, and
-prepare unsigned execution plans. Validate every plan through the user's
+prepare unsigned execution plans. Connect it to
+`https://mcp.ekubo.org/mcp/<protocol>` as well: a narrower endpoint should
+list only that protocol's tools, offer only its own skill resource, and open
+with instructions that name no tool it does not serve. Validate every plan through the user's
 connected wallet or provider before signing.
 
 The implementation uses the recommended stateless `createMcpHandler` path and

@@ -1,6 +1,6 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-const expectedServerVersion = "0.39.0";
-const expectedCatalogRevision = "2026-09-06.ve33-clear-vote";
+const expectedServerVersion = "0.40.1";
+const expectedCatalogRevision = "2026-09-08.per-protocol-endpoints";
 const smokeNonce = `${Date.now()}-${Math.random()}`;
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
 
@@ -306,7 +306,82 @@ assert(
   "list_tokens requires arguments it should default",
 );
 
+// The per-protocol endpoints, checked against the deployment rather than
+// against this file's own list: the point of the check is that /mcp/<slug>
+// answers at all and serves exactly what the deployed root document says it
+// does. A deployment that routed every slug back to the full catalog would
+// pass a tools/list that only asserted "some tools came back".
+// The server card is a discovery surface of its own, and the one that was
+// left behind when the per-protocol endpoints landed everywhere else.
+const card = await getJson("/.well-known/mcp.json");
+assert(
+  card.transport?.endpoint === `${origin}/mcp`,
+  "server card does not advertise /mcp as its canonical endpoint",
+);
+const cardEndpoints = card["com.ekubo/protocolEndpoints"];
+assert(
+  Array.isArray(cardEndpoints) && cardEndpoints.length > 0,
+  "server card advertises no per-protocol endpoints",
+);
+
+const advertised = metadata.mcp_endpoints;
+assert(
+  advertised?.all?.url === `${origin}/mcp`,
+  "root document does not advertise /mcp as the all-protocol endpoint",
+);
+assert(
+  Array.isArray(advertised.by_protocol) && advertised.by_protocol.length > 0,
+  "root document advertises no per-protocol endpoints",
+);
+const seenPerProtocol = [];
+for (const entry of advertised.by_protocol) {
+  assert(
+    entry.url === `${origin}/mcp/${entry.protocol}`,
+    `${entry.protocol} endpoint URL is incorrect`,
+  );
+  assert(
+    cardEndpoints.some(
+      (candidate) =>
+        candidate.protocol === entry.protocol && candidate.endpoint === entry.url,
+    ),
+    `server card omits the ${entry.protocol} endpoint`,
+  );
+  const filtered = await getJson(`/tools?protocol=${entry.protocol}`);
+  const names = (filtered.tools ?? []).map((tool) => tool.name);
+  assert(
+    names.length === entry.tool_count &&
+      names.every((name) => entry.tools.includes(name)),
+    `/tools?protocol=${entry.protocol} disagrees with the root document`,
+  );
+  const listed = await mcpRequest(
+    100,
+    "tools/list",
+    {},
+    `/mcp/${entry.protocol}`,
+  );
+  const served = (listed.result?.tools ?? []).map((tool) => tool.name).sort();
+  assert(
+    served.length === names.length &&
+      served.every((name, index) => name === [...names].sort()[index]),
+    `/mcp/${entry.protocol} does not serve exactly its own tools`,
+  );
+  seenPerProtocol.push(...served);
+}
+assert(
+  new Set(seenPerProtocol).size === seenPerProtocol.length,
+  "a tool is served by more than one per-protocol endpoint",
+);
+assert(
+  seenPerProtocol.length === expectedTools.length,
+  "the per-protocol endpoints do not cover the whole catalog",
+);
+
 console.log(`Ekubo MCP deployment smoke checks passed at ${origin}/mcp`);
+console.log(
+  `Per-protocol endpoints: ${advertised.by_protocol
+    .map((entry) => `${entry.protocol} (${entry.tool_count})`)
+    .join(", ")}`,
+);
 console.log(`Discovered tools: ${expectedTools.join(", ")}`);
 
 async function getJson(path) {
@@ -322,8 +397,8 @@ async function getJson(path) {
   return response.json();
 }
 
-async function mcpRequest(id, method, params) {
-  const response = await fetch(`${origin}/mcp`, {
+async function mcpRequest(id, method, params, path = "/mcp") {
+  const response = await fetch(`${origin}${path}`, {
     method: "POST",
     headers: {
       accept: "application/json, text/event-stream",

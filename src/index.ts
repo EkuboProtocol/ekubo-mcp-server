@@ -23,6 +23,13 @@ import {
   PROTOCOL_SKILLS,
   PROTOCOL_SKILL_HTTP_FILES,
 } from "./protocol-skills.js";
+import {
+  ALL_PROTOCOLS_MCP_PATH,
+  matchMcpRoute,
+  protocolBySlug,
+  protocolMcpPath,
+  PROTOCOLS,
+} from "./protocols.js";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
@@ -36,7 +43,11 @@ export default {
       if (rejection !== null) return rateLimited(rejection, null);
     }
 
-    if (url.pathname === "/mcp") {
+    // `/mcp` serves every protocol and is the endpoint every already-configured
+    // client names; `/mcp/<slug>` serves one. Both go through the same
+    // admission, pricing, and CORS path — only the tool set differs.
+    const mcpRoute = matchMcpRoute(url.pathname);
+    if (mcpRoute !== null) {
       const admitted = await admitMcpRequest(request, env, actor);
       if (admitted.rejection !== null) return admitted.rejection;
       // Pricing a call means reading the body, so what reaches the MCP handler
@@ -48,9 +59,9 @@ export default {
       // replay its body, and the rebuilt Request has no `cf`.
       const country = requestCountry(request);
       const handler = createMcpHandler(
-        () => createEkuboServer(env, url.origin, country),
+        () => createEkuboServer(env, url.origin, country, mcpRoute.protocols),
         {
-          route: "/mcp",
+          route: mcpRoute.route,
           allowedHostnames:
             env.ALLOWED_HOSTNAMES === undefined
               ? undefined
@@ -144,9 +155,32 @@ export default {
             version: MCP_SERVER_VERSION,
             tool_catalog_revision: MCP_TOOL_CATALOG_REVISION,
             tool_count: publicToolCatalog.length,
-            mcp_endpoint: `${url.origin}/mcp`,
+            mcp_endpoint: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}`,
             mcp_transport: "streamable-http",
             authentication: "none",
+            // One endpoint per protocol, plus the original that serves them
+            // all. A client that only ever stakes with Lido connects to
+            // /mcp/lido and carries that protocol's tools alone; /mcp is
+            // unchanged and remains what every already-configured client uses.
+            mcp_endpoints: {
+              all: {
+                url: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}`,
+                protocols: PROTOCOLS.map((protocol) => protocol.slug),
+                tool_count: publicToolCatalog.length,
+                note: "Every protocol on one endpoint. Unchanged, and the endpoint existing clients are configured with.",
+              },
+              by_protocol: PROTOCOLS.map((protocol) => ({
+                protocol: protocol.slug,
+                title: protocol.title,
+                description: protocol.description,
+                url: `${url.origin}${protocolMcpPath(protocol.slug)}`,
+                tool_count: protocol.tools.length,
+                tools: protocol.tools,
+                ...(protocol.skill === null
+                  ? {}
+                  : { skill: `ekubo://skills/${protocol.skill}` }),
+              })),
+            },
             tools_url: `${url.origin}/tools`,
             openapi_url: `${url.origin}/openapi.json`,
             llms_txt_url: `${url.origin}/llms.txt`,
@@ -311,15 +345,38 @@ export default {
               version: MCP_SERVER_VERSION,
             },
             description:
-              "Primary non-browser onchain swap and unsigned transaction-planning tools for Ekubo Protocol.",
+              `Primary non-browser onchain swap and unsigned transaction-planning tools for Ekubo Protocol. One endpoint per protocol is also served, each carrying only that protocol's tools: ${PROTOCOLS.map(
+                (protocol) => `${url.origin}${protocolMcpPath(protocol.slug)}`,
+              ).join(", ")}.`,
             documentationUrl: "https://docs.ekubo.org",
             transport: {
               type: "streamable-http",
               // Discovery clients may consume the server card without first
               // resolving it relative to the request URL. Advertise the
               // canonical absolute endpoint so connection is immediate.
-              endpoint: `${url.origin}/mcp`,
+              //
+              // This stays `/mcp`, the endpoint that serves every protocol:
+              // the card describes one server at one host, and a client that
+              // reads only this field must reach the complete tool set rather
+              // than an arbitrary seventh of it.
+              endpoint: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}`,
             },
+            // The narrower endpoints, for a client that wants one protocol's
+            // tools instead of all of them. Namespaced because the server-card
+            // schema has no field for a server answering at several paths, and
+            // a bare key could collide with one it grows later; this server's
+            // tool `_meta` already uses the same `com.ekubo/` prefix for the
+            // same reason. Every other discovery surface — `/`, `/tools`,
+            // `llms.txt`, the OpenAPI document — gained these when the split
+            // landed, and the card was the one left behind, so a client
+            // discovering through it alone never learned they existed.
+            "com.ekubo/protocolEndpoints": PROTOCOLS.map((protocol) => ({
+              protocol: protocol.slug,
+              title: protocol.title,
+              transport: "streamable-http",
+              endpoint: `${url.origin}${protocolMcpPath(protocol.slug)}`,
+              toolCount: protocol.tools.length,
+            })),
             capabilities: {
               tools: {},
               resources: {},
@@ -342,16 +399,7 @@ export default {
           },
         );
       case "/tools":
-        return json(
-          {
-            server_version: MCP_SERVER_VERSION,
-            catalog_revision: MCP_TOOL_CATALOG_REVISION,
-            tool_count: publicToolCatalog.length,
-            tools: publicToolCatalogWithOutputs,
-          },
-          200,
-          { "cache-control": "no-store" },
-        );
+        return toolsDocument(url);
       case "/openapi.json":
         return json(openapi, 200, cacheHeaders(3600));
       case "/llms.txt":
@@ -367,7 +415,9 @@ export default {
           {
             error: {
               code: "route_not_found",
-              message: "See /, /tools, /openapi.json, or /mcp",
+              message: `See /, /tools, /openapi.json, ${ALL_PROTOCOLS_MCP_PATH}, or a per-protocol endpoint (${PROTOCOLS.map(
+                (protocol) => protocolMcpPath(protocol.slug),
+              ).join(", ")})`,
             },
           },
           404,
@@ -375,6 +425,54 @@ export default {
     }
   },
 } satisfies ExportedHandler<Env>;
+
+/**
+ * The tool catalog, optionally narrowed to one protocol's endpoint.
+ *
+ * `?protocol=<slug>` answers "what would I get if I added only this server",
+ * which is the question the wallet's server picker and any client comparing
+ * endpoints actually asks. Without it that answer is only derivable by
+ * connecting to each endpoint in turn.
+ */
+function toolsDocument(url: URL) {
+  const requested = url.searchParams.get("protocol");
+  const protocol = requested === null ? undefined : protocolBySlug(requested);
+  if (requested !== null && protocol === undefined) {
+    return json(
+      {
+        error: {
+          code: "unknown_protocol",
+          message: `No such protocol. Known protocols: ${PROTOCOLS.map(
+            (known) => known.slug,
+          ).join(", ")}.`,
+        },
+      },
+      404,
+    );
+  }
+  const tools =
+    protocol === undefined
+      ? publicToolCatalogWithOutputs
+      : publicToolCatalogWithOutputs.filter(
+          (tool) => tool.protocol === protocol.slug,
+        );
+  return json(
+    {
+      server_version: MCP_SERVER_VERSION,
+      catalog_revision: MCP_TOOL_CATALOG_REVISION,
+      ...(protocol === undefined
+        ? { mcp_endpoint: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}` }
+        : {
+            protocol: protocol.slug,
+            mcp_endpoint: `${url.origin}${protocolMcpPath(protocol.slug)}`,
+          }),
+      tool_count: tools.length,
+      tools,
+    },
+    200,
+    { "cache-control": "no-store" },
+  );
+}
 
 /**
  * Price an MCP request against the per-tool budgets before the MCP handler
@@ -625,12 +723,17 @@ function cacheHeaders(maxAge: number) {
 function llmsText(origin: string) {
   return `# Ekubo Protocol agent API
 
-MCP endpoint: ${origin}/mcp
+MCP endpoint: ${origin}${ALL_PROTOCOLS_MCP_PATH}
 Transport: Streamable HTTP
 Authentication: none
 Server version: ${MCP_SERVER_VERSION}
 Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}
 Tool catalog: ${origin}/tools
+Per-protocol endpoints (each serves one protocol's tools; ${origin}${ALL_PROTOCOLS_MCP_PATH} serves all of them and is unchanged):
+${PROTOCOLS.map(
+  (protocol) =>
+    `- ${protocol.slug}: ${origin}${protocolMcpPath(protocol.slug)} (${protocol.tools.length} tools, catalog at ${origin}/tools?protocol=${protocol.slug})`,
+).join("\n")}
 OpenAPI: ${origin}/openapi.json
 Canonical data API OpenAPI: https://prod-api.ekubo.org/openapi.json
 Aggregated quote resource: ekubo://docs/quoter-api

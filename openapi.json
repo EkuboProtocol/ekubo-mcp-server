@@ -49,7 +49,7 @@
       "get": {
         "operationId": "listPublicTools",
         "summary": "List MCP tools without an MCP client",
-        "description": "MCP clients should use tools/list at /mcp. This uncached endpoint makes the deterministic, revisioned tool catalog visible to crawlers and ordinary HTTP clients.",
+        "description": "MCP clients should use tools/list at /mcp, or at /mcp/{protocol} for one protocol's tools. This uncached endpoint makes the deterministic, revisioned tool catalog visible to crawlers and ordinary HTTP clients.",
         "responses": {
           "200": {
             "description": "Tool names, descriptions, and JSON input schemas",
@@ -79,6 +79,23 @@
                       "items": {
                         "$ref": "#/components/schemas/Tool"
                       }
+                    },
+                    "mcp_endpoint": {
+                      "type": "string",
+                      "description": "The endpoint that serves exactly the returned tools."
+                    },
+                    "protocol": {
+                      "type": "string",
+                      "enum": [
+                        "ekubo",
+                        "aave",
+                        "aerodrome",
+                        "lido",
+                        "merkl",
+                        "morpho",
+                        "sky"
+                      ],
+                      "description": "Present only when the catalog was filtered."
                     }
                   }
                 }
@@ -91,7 +108,27 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "protocol",
+            "in": "query",
+            "required": false,
+            "description": "Return only the tools served by /mcp/{protocol}. Omit for the whole catalog. An unknown value is a 404 rather than a silent full catalog.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ekubo",
+                "aave",
+                "aerodrome",
+                "lido",
+                "merkl",
+                "morpho",
+                "sky"
+              ]
+            }
+          }
+        ]
       }
     },
     "/openapi.json": {
@@ -125,9 +162,17 @@
         "responses": {
           "200": {
             "description": "Markdown skill instructions",
-            "content": { "text/markdown": { "schema": { "type": "string" } } }
+            "content": {
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
         }
       }
     },
@@ -138,9 +183,17 @@
         "responses": {
           "200": {
             "description": "Markdown skill instructions",
-            "content": { "text/markdown": { "schema": { "type": "string" } } }
+            "content": {
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
         }
       }
     },
@@ -151,9 +204,17 @@
         "responses": {
           "200": {
             "description": "Markdown skill instructions",
-            "content": { "text/markdown": { "schema": { "type": "string" } } }
+            "content": {
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
         }
       }
     },
@@ -218,6 +279,88 @@
           }
         }
       }
+    },
+    "/mcp/{protocol}": {
+      "get": {
+        "operationId": "openProtocolMcpStream",
+        "summary": "Open the MCP Streamable HTTP receive channel for one protocol",
+        "responses": {
+          "200": {
+            "description": "MCP response or server-sent event stream"
+          },
+          "405": {
+            "description": "No stream is available for the request"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "post": {
+        "operationId": "sendProtocolMcpMessage",
+        "summary": "Send an MCP JSON-RPC message to one protocol's server",
+        "description": "The same MCP contract as /mcp, narrowed to one protocol. Use it to give an agent a single protocol's tools instead of the whole catalog. /mcp remains available and unchanged.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JsonRpcRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "MCP JSON-RPC response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "MCP notification accepted"
+          },
+          "400": {
+            "description": "Invalid MCP request, more than 20 JSON-RPC messages in one request, or tool calls whose combined cost exceeds the 40-unit per-request ceiling"
+          },
+          "413": {
+            "description": "Request body larger than 262144 bytes",
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "parameters": [
+        {
+          "name": "protocol",
+          "in": "path",
+          "required": true,
+          "description": "The protocol this endpoint serves. Each endpoint registers exactly that protocol's tools and its own skill resources; the tool names and schemas are identical to the ones /mcp serves.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "ekubo",
+              "aave",
+              "aerodrome",
+              "lido",
+              "merkl",
+              "morpho",
+              "sky"
+            ]
+          }
+        }
+      ]
     }
   },
   "components": {
@@ -378,6 +521,19 @@
           },
           "outputSchema": {
             "type": "object"
+          },
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "ekubo",
+              "aave",
+              "aerodrome",
+              "lido",
+              "merkl",
+              "morpho",
+              "sky"
+            ],
+            "description": "The /mcp/<slug> endpoint that serves this tool. /mcp serves every tool."
           }
         }
       },

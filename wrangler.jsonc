@@ -74,15 +74,32 @@
       "name": "RATE_LIMITER_BURST",
       "namespace_id": "1001",
       // A flood is visible within ten seconds instead of after a minute of it.
-      // Sized above any legitimate client's start-up burst: an MCP session
-      // opens with initialize, tools/list, and resources/list back to back.
-      "simple": { "limit": 30, "period": 10 }
+      // Sized above any legitimate client's start-up burst, which is now seven
+      // sessions rather than one: a harness configured with the per-protocol
+      // endpoints opens `ekubo` plus one server per satellite protocol, and
+      // each of those opens with a stream GET, initialize,
+      // notifications/initialized, tools/list, resources/list, and
+      // prompts/list back to back — around forty requests from one caller
+      // inside a couple of seconds, against a ceiling of thirty. The wallet
+      // writes all seven by default and brings already-connected agents up to
+      // that set on its next launch, so the first harness start after an
+      // update was the case that overran this.
+      //
+      // Raising it costs no upstream spend. Every request in that burst is
+      // local work — a catalog the Worker already holds — and prices at zero
+      // tool units, so RATE_LIMITER_TOOLS and RATE_LIMITER_METERED below are
+      // untouched and still bound everything that reaches a third party.
+      // These two budgets bound request volume, which is the cheap axis.
+      "simple": { "limit": 120, "period": 10 }
     },
     {
       "name": "RATE_LIMITER",
       "namespace_id": "1002",
-      // Sustained requests across every route, tool calls included.
-      "simple": { "limit": 120, "period": 60 }
+      // Sustained requests across every route, tool calls included. Scaled
+      // with the burst above for the same reason: two harness restarts inside
+      // a minute is ordinary and already cost eighty-four requests before a
+      // single tool was called.
+      "simple": { "limit": 300, "period": 60 }
     },
     {
       "name": "RATE_LIMITER_TOOLS",
