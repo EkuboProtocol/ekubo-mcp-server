@@ -345,15 +345,38 @@ export default {
               version: MCP_SERVER_VERSION,
             },
             description:
-              "Primary non-browser onchain swap and unsigned transaction-planning tools for Ekubo Protocol.",
+              `Primary non-browser onchain swap and unsigned transaction-planning tools for Ekubo Protocol. One endpoint per protocol is also served, each carrying only that protocol's tools: ${PROTOCOLS.map(
+                (protocol) => `${url.origin}${protocolMcpPath(protocol.slug)}`,
+              ).join(", ")}.`,
             documentationUrl: "https://docs.ekubo.org",
             transport: {
               type: "streamable-http",
               // Discovery clients may consume the server card without first
               // resolving it relative to the request URL. Advertise the
               // canonical absolute endpoint so connection is immediate.
-              endpoint: `${url.origin}/mcp`,
+              //
+              // This stays `/mcp`, the endpoint that serves every protocol:
+              // the card describes one server at one host, and a client that
+              // reads only this field must reach the complete tool set rather
+              // than an arbitrary seventh of it.
+              endpoint: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}`,
             },
+            // The narrower endpoints, for a client that wants one protocol's
+            // tools instead of all of them. Namespaced because the server-card
+            // schema has no field for a server answering at several paths, and
+            // a bare key could collide with one it grows later; this server's
+            // tool `_meta` already uses the same `com.ekubo/` prefix for the
+            // same reason. Every other discovery surface — `/`, `/tools`,
+            // `llms.txt`, the OpenAPI document — gained these when the split
+            // landed, and the card was the one left behind, so a client
+            // discovering through it alone never learned they existed.
+            "com.ekubo/protocolEndpoints": PROTOCOLS.map((protocol) => ({
+              protocol: protocol.slug,
+              title: protocol.title,
+              transport: "streamable-http",
+              endpoint: `${url.origin}${protocolMcpPath(protocol.slug)}`,
+              toolCount: protocol.tools.length,
+            })),
             capabilities: {
               tools: {},
               resources: {},

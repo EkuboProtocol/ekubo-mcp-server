@@ -4480,7 +4480,20 @@ async function fetchDocumentation(url: string): Promise<string> {
 type InstructionSection = {
   /** `null` means every endpoint; otherwise the protocols this applies to. */
   readonly protocols: readonly ProtocolSlug[] | null;
-  readonly text: string;
+  /**
+   * Stored prose, or the generator that composes this paragraph for the
+   * endpoint being built.
+   *
+   * A generated paragraph is an entry in the list rather than something
+   * spliced in at a remembered index. The position it belongs at is the
+   * position it occupies, so inserting or reordering a section above it moves
+   * it correctly instead of silently relocating it — which would change the
+   * text `/mcp` serves while every test that compares the generator against
+   * itself still passed.
+   */
+  readonly text:
+    | string
+    | ((protocols: ReadonlySet<ProtocolSlug>) => string | null);
   /**
    * A closing sentence that only holds where Ekubo's own tools are registered.
    *
@@ -4596,6 +4609,14 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
     protocols: ["aave"],
     text: `Aave market discovery happens directly between the agent and Aave's public APIs; this MCP is not a proxy, indexer, cache, or credential holder. Use the public GraphQL endpoint https://api.v3.aave.com/graphql with https://aave.com/docs/aave-v3/getting-started/graphql and https://aave.com/docs/aave-v3/markets/data to inspect current supply and borrow rates, liquidity, caps, pause/freeze state, eMode categories, and user positions. Then call get_aave_v3_markets and use only a returned fixed chain, Pool, and reserve address with a prepare_aave_v3_* tool. Live API data and this server's fixed deployment catalog are inputs to wallet simulation, never substitutes for it.`,
   },
+  // The direct-discovery paragraph, generated for exactly the skill-bearing
+  // protocols this endpoint carries. It sits here, between the Aave paragraph
+  // and the Merkl one, because that is where the stored paragraph it replaced
+  // sat — and because sitting here is now the whole of how that is expressed.
+  {
+    protocols: null,
+    text: directDiscoverySection,
+  },
   {
     protocols: ["merkl"],
     text: `Merkl rewards are the one case where an amount and a proof arrive from an outside API and still do not have to be trusted. Fetch https://api.merkl.xyz/v4/users/{address}/rewards/summary yourself — it is public and needs no key — and hand each token's exact amount and proofs to prepare_merkl_claim, which folds every proof into the root it implies and refuses a batch spanning two roots. Then run the returned read bundle and require the chain's getMerkleRoot() to equal the derived root before authorizing: a mismatch means the tree rotated or is still inside its dispute period, and the fix is to re-fetch and prepare again, never to resend. Merkl's amount field is cumulative and includes what was already claimed, so the claimable figure to show a user is amount minus claimed, and its pending field is not claimable at all. prepare_merkl_claim covers Merkl campaigns on any protocol; prepare_rewards_claim covers Ekubo's own incentive drops, and they are not interchangeable.`,
@@ -4695,23 +4716,25 @@ export function serverInstructions(
   origin = "https://mcp.ekubo.org",
 ): string {
   const sections: string[] = [];
-  for (const [index, section] of INSTRUCTION_SECTIONS.entries()) {
-    // The generated direct-discovery paragraph sits where the stored one used
-    // to, between the Aave paragraph and the Merkl one.
-    if (index === 7) {
-      const discovery = directDiscoverySection(protocols);
-      if (discovery !== null) sections.push(discovery);
-    }
+  for (const section of INSTRUCTION_SECTIONS) {
     if (
-      section.protocols === null ||
-      section.protocols.some((slug) => protocols.has(slug))
+      section.protocols !== null &&
+      !section.protocols.some((slug) => protocols.has(slug))
     ) {
-      const tail =
-        section.ekuboOnlyTail !== undefined && protocols.has("ekubo")
-          ? ` ${section.ekuboOnlyTail}`
-          : "";
-      sections.push(`${section.text}${tail}`);
+      continue;
     }
+    const text =
+      typeof section.text === "string"
+        ? section.text
+        : section.text(protocols);
+    // A generator returns null when its subject is absent from this endpoint,
+    // which is how the direct-discovery paragraph disappears from `/mcp/ekubo`.
+    if (text === null) continue;
+    const tail =
+      section.ekuboOnlyTail !== undefined && protocols.has("ekubo")
+        ? ` ${section.ekuboOnlyTail}`
+        : "";
+    sections.push(`${text}${tail}`);
   }
   const scope = endpointScopeSection(protocols, origin);
   if (scope !== null) sections.push(scope);

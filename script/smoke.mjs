@@ -1,5 +1,5 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-const expectedServerVersion = "0.40.0";
+const expectedServerVersion = "0.40.1";
 const expectedCatalogRevision = "2026-09-08.per-protocol-endpoints";
 const smokeNonce = `${Date.now()}-${Math.random()}`;
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
@@ -311,6 +311,19 @@ assert(
 // answers at all and serves exactly what the deployed root document says it
 // does. A deployment that routed every slug back to the full catalog would
 // pass a tools/list that only asserted "some tools came back".
+// The server card is a discovery surface of its own, and the one that was
+// left behind when the per-protocol endpoints landed everywhere else.
+const card = await getJson("/.well-known/mcp.json");
+assert(
+  card.transport?.endpoint === `${origin}/mcp`,
+  "server card does not advertise /mcp as its canonical endpoint",
+);
+const cardEndpoints = card["com.ekubo/protocolEndpoints"];
+assert(
+  Array.isArray(cardEndpoints) && cardEndpoints.length > 0,
+  "server card advertises no per-protocol endpoints",
+);
+
 const advertised = metadata.mcp_endpoints;
 assert(
   advertised?.all?.url === `${origin}/mcp`,
@@ -325,6 +338,13 @@ for (const entry of advertised.by_protocol) {
   assert(
     entry.url === `${origin}/mcp/${entry.protocol}`,
     `${entry.protocol} endpoint URL is incorrect`,
+  );
+  assert(
+    cardEndpoints.some(
+      (candidate) =>
+        candidate.protocol === entry.protocol && candidate.endpoint === entry.url,
+    ),
+    `server card omits the ${entry.protocol} endpoint`,
   );
   const filtered = await getJson(`/tools?protocol=${entry.protocol}`);
   const names = (filtered.tools ?? []).map((tool) => tool.name);

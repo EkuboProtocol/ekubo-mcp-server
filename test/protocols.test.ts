@@ -12,6 +12,8 @@ import {
   toolProtocol,
 } from "../src/protocols.js";
 import { PROTOCOL_SKILLS } from "../src/protocol-skills.js";
+import { MCP_TOOL_CATALOG_REVISION } from "../src/version.js";
+import preSplitInstructions from "./fixtures/pre-split-instructions.txt" with { type: "text" };
 
 const env = {
   ARTIFACT_STORE: fakeArtifactStore(),
@@ -200,6 +202,20 @@ describe("Per-protocol MCP endpoints", () => {
 });
 
 describe("Per-protocol server instructions", () => {
+  // The claim README makes about `/mcp` — same text as before the split —
+  // against the text as it actually was, captured from 854cea7. Comparing the
+  // served instructions to `serverInstructions(ALL_PROTOCOLS)` only checks the
+  // generator against itself: reorder a section, or move the generated
+  // paragraph, and that comparison still passes while the endpoint serves
+  // something else. This is the only assertion here that can fail for that.
+  it("serves /mcp the exact text it served before the split", async () => {
+    const expected = preSplitInstructions
+      .replace("{{CATALOG_REVISION}}", MCP_TOOL_CATALOG_REVISION)
+      .trimEnd();
+    expect(serverInstructions(ALL_PROTOCOLS)).toBe(expected);
+    expect((await serverInfo("/mcp")).instructions).toBe(expected);
+  });
+
   it("leaves /mcp's instructions unchanged by the split", async () => {
     const instructions = (await serverInfo("/mcp")).instructions;
     expect(instructions).toBe(serverInstructions(ALL_PROTOCOLS));
@@ -289,6 +305,49 @@ describe("Per-protocol discovery documents", () => {
         0,
       ),
     ).toBe(publicToolCatalog.length);
+  });
+
+  it("advertises every endpoint from the well-known server card", async () => {
+    for (const path of [
+      "/.well-known/mcp.json",
+      "/.well-known/mcp/server-card.json",
+    ]) {
+      const response = await worker.fetch(
+        new Request(`https://mcp.ekubo.org${path}`),
+        env,
+        context,
+      );
+      expect(response.status).toBe(200);
+      const card = (await response.json()) as {
+        description: string;
+        transport: { endpoint: string };
+        "com.ekubo/protocolEndpoints": {
+          protocol: string;
+          endpoint: string;
+          toolCount: number;
+        }[];
+      };
+      // The canonical endpoint stays the one that serves everything: a client
+      // reading only this field must not land on a seventh of the catalog.
+      expect(card.transport.endpoint).toBe("https://mcp.ekubo.org/mcp");
+      const advertised = card["com.ekubo/protocolEndpoints"];
+      expect(advertised.map((entry) => entry.protocol)).toEqual([
+        ...PROTOCOL_SLUGS,
+      ]);
+      for (const protocol of PROTOCOLS) {
+        const entry = advertised.find(
+          (candidate) => candidate.protocol === protocol.slug,
+        );
+        expect(entry?.endpoint).toBe(
+          `https://mcp.ekubo.org${protocolMcpPath(protocol.slug)}`,
+        );
+        expect(entry?.toolCount).toBe(protocol.tools.length);
+        // Also in prose, for a reader or model consuming the card as text.
+        expect(card.description).toContain(
+          `https://mcp.ekubo.org${protocolMcpPath(protocol.slug)}`,
+        );
+      }
+    }
   });
 
   it("filters the tool catalog by protocol", async () => {
