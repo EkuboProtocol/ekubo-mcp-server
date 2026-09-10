@@ -13,7 +13,7 @@ import {
 } from "../src/protocols.js";
 import { PROTOCOL_SKILLS } from "../src/protocol-skills.js";
 import { MCP_TOOL_CATALOG_REVISION } from "../src/version.js";
-import preSplitInstructions from "./fixtures/pre-split-instructions.txt" with { type: "text" };
+import expectedInstructions from "./fixtures/server-instructions.txt" with { type: "text" };
 
 const env = {
   ARTIFACT_STORE: fakeArtifactStore(),
@@ -202,14 +202,10 @@ describe("Per-protocol MCP endpoints", () => {
 });
 
 describe("Per-protocol server instructions", () => {
-  // The claim README makes about `/mcp` — same text as before the split —
-  // against the text as it actually was, captured from 854cea7. Comparing the
-  // served instructions to `serverInstructions(ALL_PROTOCOLS)` only checks the
-  // generator against itself: reorder a section, or move the generated
-  // paragraph, and that comparison still passes while the endpoint serves
-  // something else. This is the only assertion here that can fail for that.
-  it("serves /mcp the exact text it served before the split", async () => {
-    const expected = preSplitInstructions
+  // Reviewed instruction fixture, updated explicitly when agent policy changes.
+  // Comparing only the generator with its own output would miss text drift.
+  it("serves the reviewed all-protocol instructions", async () => {
+    const expected = expectedInstructions
       .replace("{{CATALOG_REVISION}}", MCP_TOOL_CATALOG_REVISION)
       .trimEnd();
     expect(serverInstructions(ALL_PROTOCOLS)).toBe(expected);

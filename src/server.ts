@@ -1,3 +1,4 @@
+import { QUOTE_JURISDICTION_NOTICE } from "./token-restrictions.js";
 import { uniswapTools, uniswapCatalog } from "./uniswap/tools.js";
 import { informationalOutputSchemas } from "./informational-output-schemas.js";
 import {
@@ -1800,12 +1801,24 @@ const exportedTokenListOutputSchema = z.looseObject({
   count: z.number().int(),
   complete: z.boolean(),
 });
+const quoteJurisdictionSchema = z.object({
+  policy_version: z.string(),
+  restricted_jurisdictions: z.array(z.string().regex(/^[A-Z]{2}$/)),
+  assets: z.array(z.object({
+    chain_id: z.string(), token: z.string(), side: z.enum(["sell", "buy"]),
+    restricted_jurisdictions: z.array(z.string().regex(/^[A-Z]{2}$/)),
+  })),
+  execution_notice: z.string().nullable(),
+});
 const quotesOutputSchema = z.looseObject({
+  jurisdiction: quoteJurisdictionSchema,
   quotes: z
     .array(
       z.looseObject({
+        jurisdiction: quoteJurisdictionSchema,
         execution: z
           .looseObject({
+            jurisdiction: quoteJurisdictionSchema,
             execution_plan_reference: artifactReferenceSchema.optional(),
           })
           .nullish(),
@@ -1911,7 +1924,7 @@ export const publicToolCatalog = [
     name: "get_quotes_with_plans",
     title: "Get swap or bridge quotes with execution plans",
     description:
-      "The whole non-browser swap path for onchain swap, trade, exchange, or convert requests on supported EVM chains: one call returns every available Ekubo and 0x quote for a same-chain swap, each already carrying the execution_plan_reference that executes it, without accepting or selecting a source. Choose an option and pass its execution.execution_plan_reference envelope unchanged as the wallet's reference argument; the wallet fetches and verifies the plan body itself; there is no second preparation step, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Do not call this tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the request. Omit sender and slippage_bps for an indicative comparison that fetches no calldata; supply both for plans. Unless the user specifies otherwise, choose a low slippage_bps whose maximum value impact is approximately one estimated gas fee (10,000 * gas-cost value / swap-notional value), not a generic 50 bps/0.5%; prefer re-quoting and retrying with a newly prepared transaction after slippage failure to exposing the trade to a wider bound. Never retry reverted calldata unchanged. Cross-chain requests are quoted by Across, LayerZero's Value Transfer API, and LI.FI where each is configured, and are compared the same way as same-chain options; after executing a LayerZero or LI.FI option, get_value_transfer_status is polled to confirm delivery, with that option's provider_quote_id for LayerZero and with the origin transaction hash for LI.FI. Provider failures are reported separately in unavailable_sources, and an option that could not be made executable reports its own execution_unavailable while the rest stand. Compare options on amount_out together with native_fee: some providers, LayerZero among them, charge a messaging fee in native token on top of the input that amount_out does not reflect, and ranking on amount_out alone can pick an option that costs an order of magnitude more all in. When any option charges one the comparison block names it in native_fee_sources and says whether its basis nets it out. Set include_raw_quotes only to diagnose a provider; the normalized amounts carry every field a choice turns on. Supports EIP-155 token identifiers.",
+      QUOTE_JURISDICTION_NOTICE + " " + "The whole non-browser swap path for onchain swap, trade, exchange, or convert requests on supported EVM chains: one call returns every available Ekubo and 0x quote for a same-chain swap, each already carrying the execution_plan_reference that executes it, without accepting or selecting a source. Choose an option and pass its execution.execution_plan_reference envelope unchanged as the wallet's reference argument; the wallet fetches and verifies the plan body itself; there is no second preparation step, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Do not call this tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the request. Omit sender and slippage_bps for an indicative comparison that fetches no calldata; supply both for plans. Unless the user specifies otherwise, choose a low slippage_bps whose maximum value impact is approximately one estimated gas fee (10,000 * gas-cost value / swap-notional value), not a generic 50 bps/0.5%; prefer re-quoting and retrying with a newly prepared transaction after slippage failure to exposing the trade to a wider bound. Never retry reverted calldata unchanged. Cross-chain requests are quoted by Across, LayerZero's Value Transfer API, and LI.FI where each is configured, and are compared the same way as same-chain options; after executing a LayerZero or LI.FI option, get_value_transfer_status is polled to confirm delivery, with that option's provider_quote_id for LayerZero and with the origin transaction hash for LI.FI. Provider failures are reported separately in unavailable_sources, and an option that could not be made executable reports its own execution_unavailable while the rest stand. Compare options on amount_out together with native_fee: some providers, LayerZero among them, charge a messaging fee in native token on top of the input that amount_out does not reflect, and ranking on amount_out alone can pick an option that costs an order of magnitude more all in. When any option charges one the comparison block names it in native_fee_sources and says whether its basis nets it out. Set include_raw_quotes only to diagnose a provider; the normalized amounts carry every field a choice turns on. Supports EIP-155 token identifiers.",
     inputSchema: z.toJSONSchema(getQuotesWithPlansSchema),
   },
   {
@@ -2803,15 +2816,6 @@ export function createEkuboServer(
         input.token_out,
         destinationChainId,
         "token_out",
-      );
-      // Both sides, each against its own chain: a bridge quote settles the
-      // output on the destination chain, where a different rule may apply.
-      assertAssetsTradable(
-        [
-          { chainId: inputChainId, token: tokenIn, side: "sell" },
-          { chainId: destinationChainId, token: tokenOut, side: "buy" },
-        ],
-        country,
       );
       return getQuotesWithPlans(env, {
         chainId: inputChainId,
@@ -4626,7 +4630,7 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
   },
   {
     protocols: null,
-    text: `Some assets may not be acquired from some countries, and a tool that would acquire one fails with error code restricted_jurisdiction instead of returning a plan. This is a property of the request's own country, not of a missing argument: tell the user the asset is unavailable in their region, and do not retry the same acquisition through another tool, another route, or a different pool. Selling a restricted asset the user already holds for an unrestricted one is a separate case and is usually still permitted, so treat a restricted_jurisdiction error on an acquisition as no obstacle to preparing an exit; the error text says which case you are in. Exiting a position the user already holds is never restricted either, so withdrawals, fee and proceeds collection, and transfers remain available. Where a disposal is itself refused, the country is under a broader restriction and no sell route exists — do not go looking for one.`,
+    text: QUOTE_JURISDICTION_NOTICE + ` Swap quotes always return jurisdiction metadata, independent of the MCP connection country. Other preparation tools retain their existing country-based controls and may fail with restricted_jurisdiction. Explain such a refusal to the user rather than retrying that preparation through another route. Withdrawals, fee and proceeds collection, and transfers remain available.`,
   },
   {
     protocols: ["ekubo"],
@@ -4912,6 +4916,18 @@ provider fails, the result marks the set incomplete and instructs the user to re
 Cross-chain requests use the Across Swap API, LayerZero's Value Transfer API,
 and the LI.FI API, each included where it is configured. Provider API keys are server-side
 and are never accepted as tool arguments.
+
+Every quote and its execution envelope include jurisdiction metadata:
+policy_version, restricted_jurisdictions (ISO alpha-2 country codes), assets
+(chain_id, token, side, restricted_jurisdictions), and execution_notice.
+Restrictions depend on direction: the union covers the input disposal and output
+acquisition, including the destination chain for bridges. An empty list means no
+restriction in this policy version, not a general eligibility certification.
+Quotes are available regardless of the connection country and require no proof.
+${QUOTE_JURISDICTION_NOTICE}
+The agent must retain this metadata when handing the plan reference to the wallet;
+the plan also carries it in extensions["ekubo.jurisdiction"]. This advisory
+extension does not automatically enforce attestation.
 
 Ekubo base URL: https://prod-api-quoter.ekubo.org
 

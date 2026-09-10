@@ -1,0 +1,236 @@
+[
+  {
+    "name": "buy",
+    "chain_id": 4663,
+    "amount": "1",
+    "specified_token": "0x0000000000000000000000000000000000000000",
+    "other_token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
+    "expected": {
+      "policy_version": "ekubo-token-jurisdictions-v1",
+      "restricted_jurisdictions": [
+        "AE",
+        "CA",
+        "CH",
+        "CU",
+        "GB",
+        "IR",
+        "KP",
+        "SG",
+        "SY",
+        "UA",
+        "US"
+      ],
+      "assets": [
+        {
+          "chain_id": "4663",
+          "token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
+          "side": "buy",
+          "restricted_jurisdictions": [
+            "AE",
+            "CA",
+            "CH",
+            "CU",
+            "GB",
+            "IR",
+            "KP",
+            "SG",
+            "SY",
+            "UA",
+            "US"
+          ]
+        }
+      ],
+      "execution_notice": "Beware jurisdiction restrictions: a quote or execution plan is not permission to trade. For a nonempty restricted_jurisdictions list, before requesting transaction signatures or submitting any approval or swap, the agent/wallet must evaluate the user's connection jurisdiction against restricted_jurisdictions. If it is restricted or unknown, obtain the user's explicit attestation that they are not legally domiciled in any listed jurisdiction; never infer domicile from an agent/server IP or attest on the user's behalf. Do not execute if the user cannot attest. Any reused attestation must match the executing wallet, cover these restrictions, be unexpired, and have at most seven days of validity. Keep the attestation client-side; do not send it to the quote API or MCP server."
+    }
+  },
+  {
+    "name": "sell",
+    "chain_id": 4663,
+    "amount": "1",
+    "specified_token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
+    "other_token": "0x0000000000000000000000000000000000000000",
+    "expected": {
+      "policy_version": "ekubo-token-jurisdictions-v1",
+      "restricted_jurisdictions": [
+        "CU",
+        "IR",
+        "KP",
+        "SY",
+        "UA"
+      ],
+      "assets": [
+        {
+          "chain_id": "4663",
+          "token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
+          "side": "sell",
+          "restricted_jurisdictions": [
+            "CU",
+            "IR",
+            "KP",
+            "SY",
+            "UA"
+          ]
+        }
+      ],
+      "execution_notice": "Beware jurisdiction restrictions: a quote or execution plan is not permission to trade. For a nonempty restricted_jurisdictions list, before requesting transaction signatures or submitting any approval or swap, the agent/wallet must evaluate the user's connection jurisdiction against restricted_jurisdictions. If it is restricted or unknown, obtain the user's explicit attestation that they are not legally domiciled in any listed jurisdiction; never infer domicile from an agent/server IP or attest on the user's behalf. Do not execute if the user cannot attest. Any reused attestation must match the executing wallet, cover these restrictions, be unexpired, and have at most seven days of validity. Keep the attestation client-side; do not send it to the quote API or MCP server."
+    }
+  },
+  {
+    "name": "exact-output buy",
+    "chain_id": 4663,
+    "amount": "-1",
+    "specified_token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
+    "other_token": "0x0000000000000000000000000000000000000000",
+    "expected": {
+      "policy_version": "ekubo-token-jurisdictions-v1",
+      "restricted_jurisdictions": [
+        "AE",
+        "CA",
+        "CH",
+        "CU",
+        "GB",
+        "IR",
+        "KP",
+        "SG",
+        "SY",
+        "UA",
+        "US"
+      ],
+      "assets": [
+        {
+          "chain_id": "4663",
+          "token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
+          "side": "buy",
+          "restricted_jurisdictions": [
+            "AE",
+            "CA",
+            "CH",
+            "CU",
+            "GB",
+            "IR",
+            "KP",
+            "SG",
+            "SY",
+            "UA",
+            "US"
+          ]
+        }
+      ],
+      "execution_notice": "Beware jurisdiction restrictions: a quote or execution plan is not permission to trade. For a nonempty restricted_jurisdictions list, before requesting transaction signatures or submitting any approval or swap, the agent/wallet must evaluate the user's connection jurisdiction against restricted_jurisdictions. If it is restricted or unknown, obtain the user's explicit attestation that they are not legally domiciled in any listed jurisdiction; never infer domicile from an agent/server IP or attest on the user's behalf. Do not execute if the user cannot attest. Any reused attestation must match the executing wallet, cover these restrictions, be unexpired, and have at most seven days of validity. Keep the attestation client-side; do not send it to the quote API or MCP server."
+    }
+  },
+  {
+    "name": "exact-output sell",
+    "chain_id": 4663,
+    "amount": "-1",
+    "specified_token": "0x0000000000000000000000000000000000000000",
+    "other_token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
+    "expected": {
+      "policy_version": "ekubo-token-jurisdictions-v1",
+      "restricted_jurisdictions": [
+        "CU",
+        "IR",
+        "KP",
+        "SY",
+        "UA"
+      ],
+      "assets": [
+        {
+          "chain_id": "4663",
+          "token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
+          "side": "sell",
+          "restricted_jurisdictions": [
+            "CU",
+            "IR",
+            "KP",
+            "SY",
+            "UA"
+          ]
+        }
+      ],
+      "execution_notice": "Beware jurisdiction restrictions: a quote or execution plan is not permission to trade. For a nonempty restricted_jurisdictions list, before requesting transaction signatures or submitting any approval or swap, the agent/wallet must evaluate the user's connection jurisdiction against restricted_jurisdictions. If it is restricted or unknown, obtain the user's explicit attestation that they are not legally domiciled in any listed jurisdiction; never infer domicile from an agent/server IP or attest on the user's behalf. Do not execute if the user cannot attest. Any reused attestation must match the executing wallet, cover these restrictions, be unexpired, and have at most seven days of validity. Keep the attestation client-side; do not send it to the quote API or MCP server."
+    }
+  },
+  {
+    "name": "restricted pair",
+    "chain_id": 4663,
+    "amount": "1",
+    "specified_token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
+    "other_token": "0xff080c8ce2e5feadaca0da81314ae59d232d4afd",
+    "expected": {
+      "policy_version": "ekubo-token-jurisdictions-v1",
+      "restricted_jurisdictions": [
+        "AE",
+        "CA",
+        "CH",
+        "CU",
+        "GB",
+        "IR",
+        "KP",
+        "SG",
+        "SY",
+        "UA",
+        "US"
+      ],
+      "assets": [
+        {
+          "chain_id": "4663",
+          "token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
+          "side": "sell",
+          "restricted_jurisdictions": [
+            "CU",
+            "IR",
+            "KP",
+            "SY",
+            "UA"
+          ]
+        },
+        {
+          "chain_id": "4663",
+          "token": "0xff080c8ce2e5feadaca0da81314ae59d232d4afd",
+          "side": "buy",
+          "restricted_jurisdictions": [
+            "AE",
+            "CA",
+            "CH",
+            "CU",
+            "GB",
+            "IR",
+            "KP",
+            "SG",
+            "SY",
+            "UA",
+            "US"
+          ]
+        }
+      ],
+      "execution_notice": "Beware jurisdiction restrictions: a quote or execution plan is not permission to trade. For a nonempty restricted_jurisdictions list, before requesting transaction signatures or submitting any approval or swap, the agent/wallet must evaluate the user's connection jurisdiction against restricted_jurisdictions. If it is restricted or unknown, obtain the user's explicit attestation that they are not legally domiciled in any listed jurisdiction; never infer domicile from an agent/server IP or attest on the user's behalf. Do not execute if the user cannot attest. Any reused attestation must match the executing wallet, cover these restrictions, be unexpired, and have at most seven days of validity. Keep the attestation client-side; do not send it to the quote API or MCP server."
+    }
+  },
+  {
+    "name": "other chain",
+    "chain_id": 1,
+    "amount": "1",
+    "specified_token": "0x0000000000000000000000000000000000000000",
+    "other_token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
+    "expected": {
+      "policy_version": "ekubo-token-jurisdictions-v1",
+      "restricted_jurisdictions": [],
+      "assets": [],
+      "execution_notice": null
+    }
+  },
+  {
+    "name": "unrestricted",
+    "chain_id": 4663,
+    "amount": "1",
+    "specified_token": "0x0000000000000000000000000000000000000000",
+    "other_token": "0x1111111111111111111111111111111111111111",
+    "expected": {
+      "policy_version": "ekubo-token-jurisdictions-v1",
+      "restricted_jurisdictions": [],
+      "assets": [],
+      "execution_notice": null
+    }
+  }
+]
