@@ -6,7 +6,9 @@ import { ServiceError } from "./core.js";
  * This mirrors the Ekubo interface's `src/util/common/tokenRestrictions.ts`.
  * The interface disables its action buttons; this server refuses to produce an
  * execution plan at all, which is the equivalent control for a caller that has
- * no UI to disable. Discovery is deliberately untouched: the interface still
+ * no UI to disable. Swap quotes and their plans return restriction metadata for the agent/wallet
+ * to evaluate before execution. Other preparation tools retain this gate.
+ * Discovery is deliberately untouched: the interface still
  * lists, prices, and quotes restricted assets, and so do `list_tokens`,
  * `get_token`, and the opportunity tools here.
  *
@@ -394,4 +396,34 @@ export function assertAssetsTradable(
       })),
     },
   );
+}
+
+/** Public policy metadata, independent of the caller's location or domicile. */
+export const JURISDICTION_POLICY_VERSION = "ekubo-token-jurisdictions-v1";
+export const QUOTE_JURISDICTION_NOTICE = "Beware jurisdiction restrictions: a quote or execution plan is not permission to trade. For a nonempty restricted_jurisdictions list, before requesting transaction signatures or submitting any approval or swap, the agent/wallet must evaluate the user's connection jurisdiction against restricted_jurisdictions. If it is restricted or unknown, obtain the user's explicit attestation that they are not legally domiciled in any listed jurisdiction; never infer domicile from an agent/server IP or attest on the user's behalf. Do not execute if the user cannot attest. Keep the attestation client-side; do not send it to the quote API or MCP server.";
+
+export function quoteJurisdiction(assets: readonly RestrictableAsset[]) {
+  const restrictions = assets.flatMap((asset) => {
+    if (asset.token === undefined) return [];
+    const chain = BigInt(asset.chainId);
+    const token = BigInt(asset.token);
+    const countries = new Set([
+      ...(token === NATIVE_TOKEN_ADDRESS ? [] : RESTRICTED_CHAIN_COUNTRIES.get(chain) ?? []),
+      ...(RESTRICTED_TOKEN_COUNTRIES.get(chain)?.get(token) ?? []),
+    ]);
+    const restricted = [...countries].filter((country) => isAssetBlocked(asset, country)).sort();
+    return restricted.length === 0 ? [] : [{
+      chain_id: chain.toString(),
+      token: `0x${token.toString(16).padStart(40, "0")}`,
+      side: asset.side,
+      restricted_jurisdictions: restricted,
+    }];
+  });
+  const restricted = [...new Set(restrictions.flatMap((asset) => asset.restricted_jurisdictions))].sort();
+  return {
+    policy_version: JURISDICTION_POLICY_VERSION,
+    restricted_jurisdictions: restricted,
+    assets: restrictions,
+    execution_notice: restricted.length ? QUOTE_JURISDICTION_NOTICE : null,
+  };
 }

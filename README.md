@@ -721,9 +721,27 @@ non-browser MCP clients normally omit `Origin`.
 
 ## Jurisdiction restrictions
 
+Swap quotes (`get_quotes_with_plans`) are always available regardless of the
+MCP connection country. Each quote and execution envelope returns `jurisdiction`
+metadata: a policy version, the union of restricted ISO alpha-2 jurisdictions,
+and per-asset restrictions for selling the input and buying the output. This
+applies to every quote provider, including cross-chain outputs. An empty list
+means this policy lists no restriction, not that the API certified eligibility.
+
+The agent/wallet must read `execution_notice` before signing or submitting any
+approval or swap. A restricted or unknown user connection jurisdiction requires
+an explicit user attestation of domicile outside the listed jurisdictions; an
+agent/server IP is not evidence of the user's domicile. The API/MCP does not receive, verify, store, or publish proofs
+or the user's declared country. Metadata accompanies plan references and is preserved in the fetched plan as
+`extensions["ekubo.jurisdiction"]`, so this is agent/client policy, not automatic wallet
+or on-chain enforcement. No shared signature package or privacy-policy change
+is introduced by this metadata-only change.
+
+The following controls continue to apply to **other preparation tools**:
+
 Some assets may not be traded from some countries. The Ekubo interface disables
-its action buttons for them; this server has no UI to disable, so it refuses to
-produce an execution plan at all. The restriction data and its semantics mirror
+its action buttons for them; this server has no UI to disable, so other preparation tools refuse to
+produce an execution plan. The restriction data and its semantics mirror
 `interface/src/util/common/tokenRestrictions.ts` — currently the tokenized
 equities on Robinhood chain (`4663`), which are restricted in `US`, `GB`, `CA`,
 `SG`, `AE`, `CH`, `IR`, `KP`, `SY`, `CU`, and `UA`. `src/token-restrictions.ts`
@@ -742,7 +760,7 @@ fetched, so a restricted request never spends 0x, Across, LayerZero, or LI.FI
 credit.
 
 What is gated is the *acquisition* of a restricted asset:
-`get_quotes_with_plans`, `prepare_twamm_order`, `prepare_lp_position_deposit`,
+`prepare_twamm_order`, `prepare_lp_position_deposit`,
 `prepare_auction_create`, `prepare_oracle_capacity_expansion`,
 `prepare_fix_pool_price`, and the swap phase of `prepare_ve33_reinvest`. Exits
 are deliberately never gated — withdrawing liquidity, collecting fees or

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import worker from "../src/index.js";
 import { fakeArtifactStore } from "./fake-r2.js";
 
@@ -159,7 +159,42 @@ describe("jurisdiction restrictions over the MCP endpoint", () => {
     expect(result.structuredContent).toHaveProperty("execution_plan_reference");
   });
 
-  it("refuses a swap quote that would acquire a restricted asset", async () => {
+  it("returns the same restriction metadata for restricted, allowed and unknown connections", async () => {
+    const mockedFetch = spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL) => {
+      if (!input.toString().startsWith("https://quoter.test/")) return new Response("not found", { status: 404 });
+      return Response.json({
+        block_number: 123, block_hash: "0x01", total_calculated: "900",
+        estimated_gas_cost: 25000, price_impact: 0.001,
+        splits: [{ amount_specified: "1000", amount_calculated: "900", route: [{ swap: {
+          type: "core", pool_key: { token0: "0x0000000000000000000000000000000000000000", token1: NVDA, config: `0x${"00".repeat(32)}` },
+          sqrt_ratio_limit: "0x000000000000000000000000", skip_ahead: 0,
+        } }] }],
+      });
+    }) as typeof fetch);
+    try {
+      for (const country of ["US", "IR", "FR", undefined]) {
+        const result = await callTool("get_quotes_with_plans", {
+          chain_id: ROBINHOOD_CHAIN,
+          token_in: "0x0000000000000000000000000000000000000000", token_out: NVDA,
+          quote_type: "exact_input", amount: "1000", sender: SENDER, slippage_bps: 10,
+        }, country);
+        expect(result.isError).toBeUndefined();
+        expect(result.structuredContent).toMatchObject({
+          jurisdiction: { restricted_jurisdictions: ["AE", "CA", "CH", "CU", "GB", "IR", "KP", "SG", "SY", "UA", "US"] },
+          quotes: [{ execution: { jurisdiction: { policy_version: "ekubo-token-jurisdictions-v1" } } }],
+        });
+        const quotes = result.structuredContent.quotes as { execution: Record<string, unknown> }[];
+        expect(quotes[0]!.execution).toHaveProperty("execution_plan_reference");
+        expect(quotes[0]!.execution).not.toHaveProperty("execution_plan");
+        const stored = [...env.ARTIFACT_STORE.entries.values()].map((entry) => JSON.parse(entry.value));
+        expect(stored.some((plan) => plan.extensions?.["ekubo.jurisdiction"]?.restricted_jurisdictions.includes("US"))).toBe(true);
+      }
+    } finally {
+      mockedFetch.mockRestore();
+    }
+  });
+
+  it("does not block swap quoting for a restricted acquisition", async () => {
     const result = await callTool(
       "get_quotes_with_plans",
       {
@@ -173,8 +208,7 @@ describe("jurisdiction restrictions over the MCP endpoint", () => {
       },
       "US",
     );
-    expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({
+    expect(result.structuredContent).not.toMatchObject({
       error: { code: "restricted_jurisdiction" },
     });
   });
@@ -204,7 +238,7 @@ describe("jurisdiction restrictions over the MCP endpoint", () => {
     });
   });
 
-  it("still refuses that disposal from a sanctioned jurisdiction", async () => {
+  it("does not block quoting a disposal from a restricted jurisdiction", async () => {
     const result = await callTool(
       "get_quotes_with_plans",
       {
@@ -218,8 +252,7 @@ describe("jurisdiction restrictions over the MCP endpoint", () => {
       },
       "IR",
     );
-    expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({
+    expect(result.structuredContent).not.toMatchObject({
       error: { code: "restricted_jurisdiction" },
     });
   });

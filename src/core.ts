@@ -1,3 +1,4 @@
+import { quoteJurisdiction } from "./token-restrictions.js";
 import {
   type Address,
   decodeFunctionData,
@@ -160,7 +161,7 @@ interface PreparedCandidate {
   blockHash: Hex | null;
   estimatedRouteGas: number | null;
   priceImpact: number | null;
-  executionPlan: ReturnType<typeof executionPlan>;
+  executionPlan: ReturnType<typeof executionPlan> & { extensions: { "ekubo.jurisdiction": ReturnType<typeof quoteJurisdiction> } };
 }
 
 interface CandidateFailure {
@@ -658,6 +659,7 @@ export async function getQuotesWithPlans(
   );
   return {
     request: quoteDiscoveryRequest(intent),
+    jurisdiction: swapJurisdiction(intent),
     quotes: result.candidates.map((candidate) =>
       serializeCompleteQuote(
         intent,
@@ -864,7 +866,7 @@ function prepareCandidate(
     blockHash,
     estimatedRouteGas,
     priceImpact,
-    executionPlan: executionPlan({
+    executionPlan: { ...executionPlan({
       chainId: intent.chainId,
       sender: intent.sender,
       approvals: serializedApprovals,
@@ -890,7 +892,7 @@ function prepareCandidate(
             "Check that the wallet and network match this plan and that the wallet simulation environment is healthy before requesting new calldata.",
         },
       },
-    }),
+    }), extensions: { "ekubo.jurisdiction": swapJurisdiction(intent) } },
   };
 }
 
@@ -2083,6 +2085,13 @@ function quoteRequest(intent: QuoteSelectionIntent, source: QuoteSource) {
   };
 }
 
+function swapJurisdiction(intent: QuoteIntent) {
+  return quoteJurisdiction([
+    { chainId: intent.chainId, token: intent.tokenIn, side: "sell" },
+    { chainId: intent.destinationChainId ?? intent.chainId, token: intent.tokenOut, side: "buy" },
+  ]);
+}
+
 function serializeCompleteQuote(
   intent: QuoteIntent,
   candidate: QuoteCandidate,
@@ -2097,6 +2106,7 @@ function serializeCompleteQuote(
     source: candidate.source,
     source_url: candidate.sourceUrl,
     normalized: serializeCandidate(intent, candidate),
+    jurisdiction: swapJurisdiction(intent),
     ...(includeRawQuotes ? { quote: candidate.raw } : {}),
     ...(preparation === null
       ? { execution: null, execution_unavailable: null }
@@ -2137,6 +2147,7 @@ function executableQuote(
     execution: {
       plan_id: prepared.planId,
       execution_plan_ready: true,
+      jurisdiction: swapJurisdiction(intent),
       quote: preparedQuote(intent, candidate, prepared),
       execution_plan: prepared.executionPlan,
     },
