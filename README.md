@@ -731,9 +731,7 @@ means this policy lists no restriction, not that the API certified eligibility.
 The agent/wallet must read `execution_notice` before signing or submitting any
 approval or swap. A restricted or unknown user connection jurisdiction requires
 an explicit user attestation of domicile outside the listed jurisdictions; an
-agent/server IP is not evidence of the user's domicile. Reused attestations must
-match the executing wallet, cover the restrictions, be unexpired and valid for
-at most seven days. The API/MCP does not receive, verify, store, or publish proofs
+agent/server IP is not evidence of the user's domicile. The API/MCP does not receive, verify, store, or publish proofs
 or the user's declared country. Metadata accompanies plan references and is preserved in the fetched plan as
 `extensions["ekubo.jurisdiction"]`, so this is agent/client policy, not automatic wallet
 or on-chain enforcement. No shared signature package or privacy-policy change
