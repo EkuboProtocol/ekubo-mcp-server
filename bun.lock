@@ -6,7 +6,7 @@
       "name": "@ekubo/mcp-worker",
       "dependencies": {
         "@ekubo/sdk": "0.0.10-alpha.0",
-        "@ekubo/yul-router-sdk": "0.6.0",
+        "@ekubo/yul-router-sdk": "0.7.1",
         "@modelcontextprotocol/server": "2.0.0",
         "@morpho-org/morpho-sdk": "5.5.0",
         "@uniswap/sdk-core": "7.19.2",
@@ -102,7 +102,7 @@
 
     "@ekubo/sdk": ["@ekubo/sdk@0.0.10-alpha.0", "", {}, "sha512-1koNXODon0kaQBX5CbYRyfvj5viEBmyxZFlOTWPlK79gItDoIEeJIUYM8IlTu3YTT8m2xb3XcvNXUCEXuCi0rw=="],
 
-    "@ekubo/yul-router-sdk": ["@ekubo/yul-router-sdk@0.6.0", "", { "peerDependencies": { "viem": "^2.31.7" } }, "sha512-cDtCJ4eVkxYDu2PfEE0d6aUq4q6svfCAADiuIqX1NvjlWWvMmqzHrJ8pJnh9mhIc9lo42+gDvop8VAdwcT/jKA=="],
+    "@ekubo/yul-router-sdk": ["@ekubo/yul-router-sdk@0.7.1", "", { "peerDependencies": { "viem": "^2.31.7" } }, "sha512-9HNkF5PTU37P+uL3/wuqMQBaqLIHHwoEMmFLT4XSiO8M0YgOMqj8gmyeDGZr0oMj8/LWYgWoV9HZJQwYyKwzvw=="],
 
     "@emnapi/core": ["@emnapi/core@2.0.0-alpha.3", "", { "dependencies": { "@emnapi/wasi-threads": "2.0.1", "tslib": "^2.4.0" } }, "sha512-AZypUeJ/yByuxyS7BlSNRDOMLMlROYtjYdIAuBmJssVz1UJDSeYxLrdizhXCFYhedC5bqd/ASy8EuNXbVVXp9g=="],
 
