@@ -5,7 +5,7 @@
     "": {
       "name": "@ekubo/mcp-worker",
       "dependencies": {
-        "@ekubo/sdk": "0.0.10-alpha.0",
+        "@ekubo/sdk": "0.0.10",
         "@ekubo/yul-router-sdk": "0.7.1",
         "@modelcontextprotocol/server": "2.0.0",
         "@morpho-org/morpho-sdk": "5.9.0",
@@ -104,7 +104,7 @@
 
     "@cspotcode/source-map-support": ["@cspotcode/source-map-support@0.8.1", "", { "dependencies": { "@jridgewell/trace-mapping": "0.3.9" } }, "sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw=="],
 
-    "@ekubo/sdk": ["@ekubo/sdk@0.0.10-alpha.0", "", {}, "sha512-1koNXODon0kaQBX5CbYRyfvj5viEBmyxZFlOTWPlK79gItDoIEeJIUYM8IlTu3YTT8m2xb3XcvNXUCEXuCi0rw=="],
+    "@ekubo/sdk": ["@ekubo/sdk@0.0.10", "", {}, "sha512-lH+gA6MBkvdC4xwyv6sBulHrewj6tu3lwShSoorVe6YBsCnd7QZOmNQ175JIfi2cZXruZ28A25SiyJ+3Z+2trA=="],
 
     "@ekubo/yul-router-sdk": ["@ekubo/yul-router-sdk@0.7.1", "", { "peerDependencies": { "viem": "^2.31.7" } }, "sha512-9HNkF5PTU37P+uL3/wuqMQBaqLIHHwoEMmFLT4XSiO8M0YgOMqj8gmyeDGZr0oMj8/LWYgWoV9HZJQwYyKwzvw=="],
 
