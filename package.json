@@ -18,7 +18,7 @@
     "lint:prune": "eslint . --prune-suppressions"
   },
   "dependencies": {
-    "@ekubo/sdk": "0.0.10-alpha.0",
+    "@ekubo/sdk": "0.0.10",
     "@ekubo/yul-router-sdk": "0.7.1",
     "@modelcontextprotocol/server": "2.0.0",
     "@morpho-org/morpho-sdk": "5.9.0",
