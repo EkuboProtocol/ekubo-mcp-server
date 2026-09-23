@@ -25,6 +25,7 @@ import {
 } from "./protocol-skills.js";
 import {
   ALL_PROTOCOLS_MCP_PATH,
+  ALL_PROTOCOLS,
   matchMcpRoute,
   protocolBySlug,
   protocolMcpPath,
@@ -43,7 +44,7 @@ export default {
       if (rejection !== null) return rateLimited(rejection, null);
     }
 
-    // `/mcp` serves every protocol and is the endpoint every already-configured
+    // `/mcp` serves bundled protocols and is the endpoint every already-configured
     // client names; `/mcp/<slug>` serves one. Both go through the same
     // admission, pricing, and CORS path — only the tool set differs.
     const mcpRoute = matchMcpRoute(url.pathname);
@@ -161,16 +162,16 @@ export default {
             mcp_endpoint: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}`,
             mcp_transport: "streamable-http",
             authentication: "none",
-            // One endpoint per protocol, plus the original that serves them
-            // all. A client that only ever stakes with Lido connects to
+            // One endpoint per protocol, plus the original bundle (except Safe).
+            // A client that only ever stakes with Lido connects to
             // /mcp/lido and carries that protocol's tools alone; /mcp is
             // unchanged and remains what every already-configured client uses.
             mcp_endpoints: {
               all: {
                 url: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}`,
-                protocols: PROTOCOLS.map((protocol) => protocol.slug),
+                protocols: [...ALL_PROTOCOLS],
                 tool_count: publicToolCatalog.length,
-                note: "Every protocol on one endpoint. Unchanged, and the endpoint existing clients are configured with.",
+                note: "Bundled protocols. Safe is available only at /mcp/safe.",
               },
               by_protocol: PROTOCOLS.map((protocol) => ({
                 protocol: protocol.slug,
@@ -455,7 +456,7 @@ function toolsDocument(url: URL) {
   }
   const tools =
     protocol === undefined
-      ? publicToolCatalogWithOutputs
+      ? publicToolCatalogWithOutputs.filter((tool) => tool.protocol !== "safe")
       : publicToolCatalogWithOutputs.filter(
           (tool) => tool.protocol === protocol.slug,
         );
@@ -732,7 +733,7 @@ Authentication: none
 Server version: ${MCP_SERVER_VERSION}
 Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}
 Tool catalog: ${origin}/tools
-Per-protocol endpoints (each serves one protocol's tools; ${origin}${ALL_PROTOCOLS_MCP_PATH} serves all of them and is unchanged):
+Per-protocol endpoints (each serves one protocol's tools; ${origin}${ALL_PROTOCOLS_MCP_PATH} bundles all except Safe, which is available only at /mcp/safe):
 ${PROTOCOLS.map(
   (protocol) =>
     `- ${protocol.slug}: ${origin}${protocolMcpPath(protocol.slug)} (${protocol.tools.length} tools, catalog at ${origin}/tools?protocol=${protocol.slug})`,

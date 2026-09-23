@@ -26,9 +26,10 @@ a data API and the quoter remains a route-data service.
 
 ## Public endpoints
 
-- `POST/GET /mcp` — MCP Streamable HTTP endpoint serving every protocol
+- `POST/GET /mcp` — MCP Streamable HTTP endpoint serving bundled protocols (excludes Safe)
 - `POST/GET /mcp/{ekubo,aave,aerodrome,lido,merkl,morpho,sky,uniswap}` — the same MCP
   contract narrowed to one protocol
+- `POST/GET /mcp/safe` — dedicated Safe signer preparation; see [Safe coverage](docs/safe.md)
 - `GET /` — service metadata, per-protocol endpoints, and canonical
   documentation links
 - `GET /tools` — deterministic tool catalog for non-MCP discovery, filterable
@@ -43,12 +44,14 @@ a data API and the quoter remains a route-data service.
 
 `src/protocols.ts` partitions the catalog: every tool belongs to exactly one
 protocol, `/mcp/<slug>` registers that protocol's tools and its own skill
-resources, and `/mcp` registers all of them. The partition is checked against
-`publicToolCatalog` in `test/protocols.test.ts`, so a tool added to the catalog
+resources, and `/mcp` registers the bundled protocols only. Safe is explicitly
+excluded from that bundle. The partition is checked against
+`hostedToolCatalog` in `test/protocols.test.ts`, so a tool added to the catalog
 without a protocol fails the build rather than quietly appearing on no
 per-protocol endpoint.
 
-`/mcp` remains the endpoint for the complete catalog. A client that wants one protocol's tools in its context adds the narrower URL instead.
+`/mcp` remains the endpoint for the bundled catalog. Safe clients must add `/mcp/safe`.
+`/tools?protocol=safe` publishes the Safe catalog; unfiltered `/tools` describes `/mcp`.
 
 Filtering happens at the two registration choke points in `createEkuboServer`
 rather than at the call sites, and the instructions are composed from

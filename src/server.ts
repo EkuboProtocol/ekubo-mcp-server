@@ -1,5 +1,6 @@
 import { QUOTE_JURISDICTION_NOTICE } from "./token-restrictions.js";
 import { uniswapTools, uniswapCatalog } from "./uniswap/tools.js";
+import { safeTools, safeCatalog } from "./safe.js";
 import { informationalOutputSchemas } from "./informational-output-schemas.js";
 import {
   McpServer,
@@ -1840,6 +1841,13 @@ const chainReadBundleListSchema = z.array(
   }),
 );
 function preparerOutputSchema(name: string) {
+  if (name.startsWith("prepare_safe_")) {
+    return z.looseObject({
+      typed_data_signature_request_reference: artifactReferenceSchema.optional(),
+      execution_plan_reference: artifactReferenceSchema.optional(),
+      read_calls_reference: artifactReferenceSchema,
+    });
+  }
   if (name === "prepare_uniswap_reads") {
     return z.looseObject({ read_calls_reference: artifactReferenceSchema });
   }
@@ -2488,11 +2496,12 @@ export const publicToolCatalog = [
  * for handoff tools, the JSON Schema of the result shape that carries the
  * artifact-reference envelope.
  */
-export const publicToolCatalogWithOutputs = publicToolCatalog.map((entry) => {
+export const hostedToolCatalog = [...publicToolCatalog, ...safeCatalog];
+export const publicToolCatalogWithOutputs = hostedToolCatalog.map((entry) => {
   const outputSchema = toolOutputSchema(entry.name);
   return {
     ...entry,
-    // Which /mcp/<slug> endpoint serves this tool. /mcp serves all of them.
+    // Which /mcp/<slug> endpoint serves this tool. Safe is standalone-only.
     protocol: toolProtocol(entry.name),
     annotations: toolAnnotations(entry.name),
     ...(outputSchema === undefined
@@ -2510,7 +2519,7 @@ export const publicToolCatalogWithOutputs = publicToolCatalog.map((entry) => {
  * the wrong entry. Names do not move when the list does.
  */
 function catalogEntry(name: string) {
-  const entry = publicToolCatalog.find((tool) => tool.name === name);
+  const entry = hostedToolCatalog.find((tool) => tool.name === name);
   if (entry === undefined) {
     throw new Error(`internal error: no tool named ${name} in the catalog`);
   }
@@ -4076,7 +4085,7 @@ export function createEkuboServer(
       }),
   );
 
-  for (const tool of uniswapTools) {
+  for (const tool of [...uniswapTools, ...safeTools]) {
     registerCatalogTool(tool.name, tool.schema, tool.handler);
   }
 
@@ -4746,6 +4755,13 @@ export function serverInstructions(
   protocols: ReadonlySet<ProtocolSlug>,
   origin = "https://mcp.ekubo.org",
 ): string {
+  if (protocols.size === 1 && protocols.has("safe")) {
+    return `Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}\n\nSafe preparation only: this server never signs, broadcasts, proxies RPC, or submits to the Safe Transaction Service. Supported Safe versions are 1.3.0 and 1.4.1. Verify version, owners, threshold, nonce and transaction hash through the wallet's read_calls_reference. Decode locally and retain raw bytes. Pass typed_data_signature_request_reference unchanged to a wallet supporting ERC-8410 typed-data signing, with the actual owner as signer. Sign the EIP-712 signing digest, never the request digest. Wallet authorization for transactions does not authorize signatures. Review the full Safe transaction including delegatecall and refund fields, and simulate before signing. SafeMessage signatures require a compatible fallback handler and verifier. valid_until only limits signing/release, not the lifetime of released signatures. No controlled delivery is configured: signatures return to the caller for aggregation. For execution plans follow ekubo://docs/execution-plan and pass execution_plan_reference unchanged to the wallet. Require inner Safe success, not merely a successful outer receipt. Owner changes are Safe self-calls requiring the current threshold, not direct owner transactions.\n\nEndpoint scope: ${origin}/mcp/safe only. Safe tools are excluded from ${origin}/mcp.`;
+  }
+  return bundledServerInstructions(protocols, origin);
+}
+
+function bundledServerInstructions(protocols: ReadonlySet<ProtocolSlug>, origin: string): string {
   const sections: string[] = [];
   for (const section of INSTRUCTION_SECTIONS) {
     if (
@@ -4796,7 +4812,7 @@ function endpointScopeSection(
     (protocol) => protocol.slug !== only.slug,
   )
     .map((protocol) => `${origin}${protocolMcpPath(protocol.slug)}`)
-    .join(", ")} — and ${origin}${ALL_PROTOCOLS_MCP_PATH} carries every one of them together. Where the guidance above names a tool this server does not list, that tool is on one of those endpoints: tell the user which server to add rather than constructing the call yourself.`;
+    .join(", ")} — and ${origin}${ALL_PROTOCOLS_MCP_PATH} carries every protocol except Safe, which is available only at /mcp/safe. Where the guidance above names a tool this server does not list, that tool is on one of those endpoints: tell the user which server to add rather than constructing the call yourself.`;
 }
 
 const SERVER_INSTRUCTIONS = serverInstructions(ALL_PROTOCOLS);

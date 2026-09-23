@@ -19,7 +19,7 @@ import { walletBatchEthCallInputSchema } from "./wallet-compatibility.js";
  */
 export const ARTIFACT_TTL_SECONDS = 3600;
 
-export type ArtifactType = "execution_plan" | "read_calls" | "token_list";
+export type ArtifactType = "execution_plan" | "read_calls" | "token_list" | "typed_data_signature_request";
 
 /**
  * The compact handoff an agent relays instead of a wallet payload's body.
@@ -51,7 +51,7 @@ export interface ArtifactReference {
  */
 export const artifactReferenceSchema = z.looseObject({
   kind: z.literal("artifact_reference"),
-  artifact_type: z.enum(["execution_plan", "read_calls", "token_list"]),
+  artifact_type: z.enum(["execution_plan", "read_calls", "token_list", "typed_data_signature_request"]),
   url: z.string(),
   integrity: z.looseObject({
     algorithm: z.literal("keccak256"),
@@ -118,7 +118,8 @@ export async function storeArtifact(
   artifact:
     | { artifactType: "execution_plan"; body: StorableExecutionPlan }
     | { artifactType: "read_calls"; body: StorableReadCalls }
-    | { artifactType: "token_list"; body: StorableTokenList },
+    | { artifactType: "token_list"; body: StorableTokenList }
+    | { artifactType: "typed_data_signature_request"; body: Record<string, unknown> },
 ): Promise<ArtifactReference> {
   const body = JSON.stringify(artifact.body);
   const id = crypto.randomUUID();
@@ -141,6 +142,7 @@ export async function storeArtifact(
 }
 
 const INSTRUCTIONS: Record<ArtifactType, string> = {
+  typed_data_signature_request: "Pass this reference unchanged to the wallet's typed-data signing tool. The wallet must fetch, verify, validate and authorize this ERC-8410 signature request. Do not reconstruct the typed data or sign its request digest. A 404 requires fresh preparation.",
   execution_plan: PLAN_INSTRUCTION,
   read_calls: READ_CALLS_INSTRUCTION,
   token_list: TOKEN_LIST_INSTRUCTION,
@@ -192,6 +194,10 @@ export async function referenceWalletArtifacts(
     const rewritten = await Promise.all(
       Object.entries(record).map(
         async ([key, entry]): Promise<[string, unknown]> => {
+          if (key === "typed_data_signature_request" && isSignatureRequest(entry)) {
+            replaced += 1;
+            return ["typed_data_signature_request_reference", await storeArtifact(env, origin, { artifactType: "typed_data_signature_request", body: entry })];
+          }
           if (key === "execution_plan" && isExecutionPlan(entry)) {
             replaced += 1;
             return [
@@ -220,6 +226,12 @@ export async function referenceWalletArtifacts(
   }
 
   return { value: await walk(value), replaced };
+}
+
+function isSignatureRequest(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object") return false;
+  const request = value as Record<string, unknown>;
+  return request.kind === "typed_data_signature_request" && request.schema_version === "1" && typeof request.signer === "string" && typeof request.typed_data === "object";
 }
 
 function isExecutionPlan(value: unknown): value is StorableExecutionPlan {

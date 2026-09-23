@@ -1,14 +1,15 @@
 import { uniswapTools } from "./uniswap/tools.js";
+import { safeTools } from "./safe.js";
 /**
  * The protocol partition behind the per-protocol MCP endpoints.
  *
- * `/mcp` serves every tool and stays the backwards-compatible endpoint. Each
+ * `/mcp` serves bundled protocols, excluding the standalone Safe endpoint. Each
  * `/mcp/<slug>` serves exactly the tools of one protocol, so an agent that only
  * ever stakes with Lido carries six tool definitions in its context instead of
  * eighty-four.
  *
  * The partition is exhaustive and disjoint by construction: `protocols.test.ts`
- * checks the union of every list here against `publicToolCatalog`, so a tool
+ * checks the union of every list here against `hostedToolCatalog`, so a tool
  * added to the catalog without a protocol fails the build rather than quietly
  * appearing on no endpoint.
  */
@@ -22,6 +23,7 @@ export const PROTOCOL_SLUGS = [
   "morpho",
   "sky",
   "uniswap",
+  "safe",
 ] as const;
 
 export type ProtocolSlug = (typeof PROTOCOL_SLUGS)[number];
@@ -204,10 +206,17 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
     skill: null,
     tools: uniswapTools.map((tool) => tool.name),
   },
+  {
+    slug: "safe",
+    title: "Safe",
+    description: "Safe owner typed-data signatures and signer actions; separate endpoint only, excluded from /mcp",
+    skill: null,
+    tools: safeTools.map((tool) => tool.name),
+  },
 ];
 
-/** Every protocol, which is what `/mcp` serves. */
-export const ALL_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(PROTOCOL_SLUGS);
+/** Bundled protocols served by `/mcp`; Safe is standalone-only. */
+export const ALL_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(PROTOCOL_SLUGS.filter((slug) => slug !== "safe"));
 
 const TOOL_PROTOCOLS: ReadonlyMap<string, ProtocolSlug> = new Map(
   PROTOCOLS.flatMap((protocol) =>
@@ -253,8 +262,7 @@ export function enabledSkillNames(
 
 /**
  * The MCP path a protocol is served at. `/mcp` is not derived from a slug: it
- * is the pre-existing endpoint that serves every protocol, and it keeps that
- * meaning whatever the partition grows into.
+ * is the pre-existing bundled endpoint; standalone protocols are excluded.
  */
 export function protocolMcpPath(slug: ProtocolSlug): string {
   return `/mcp/${slug}`;
@@ -265,7 +273,7 @@ export const ALL_PROTOCOLS_MCP_PATH = "/mcp";
 /**
  * Resolve a request path to the protocol set its MCP server should serve.
  *
- * `/mcp` is every protocol, for the clients configured before the split.
+ * `/mcp` is the bundled protocol set, for clients configured before the split.
  * `/mcp/<slug>` is exactly one. Anything else is not an MCP route, and the
  * caller falls through to the discovery handlers.
  */

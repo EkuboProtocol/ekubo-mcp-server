@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { fakeArtifactStore } from "./fake-r2.js";
 import worker from "../src/index.js";
-import { publicToolCatalog, serverInstructions } from "../src/server.js";
+import { hostedToolCatalog, publicToolCatalog, serverInstructions } from "../src/server.js";
 import {
   ALL_PROTOCOLS,
   ALL_PROTOCOLS_MCP_PATH,
@@ -106,7 +106,7 @@ describe("Protocol partition", () => {
     const assigned = PROTOCOLS.flatMap((protocol) => protocol.tools);
     expect(new Set(assigned).size).toBe(assigned.length);
     expect([...assigned].sort()).toEqual(
-      publicToolCatalog.map((tool) => tool.name).sort(),
+      hostedToolCatalog.map((tool) => tool.name).sort(),
     );
   });
 
@@ -167,7 +167,8 @@ describe("Per-protocol MCP endpoints", () => {
       served.push(...(await listedTools(protocolMcpPath(protocol.slug))));
     }
     expect(new Set(served).size).toBe(served.length);
-    expect(served.sort()).toEqual(await listedTools("/mcp").then((t) => t.sort()));
+    expect(served.sort()).toEqual(hostedToolCatalog.map((tool) => tool.name).sort());
+    expect((await listedTools("/mcp")).some((name) => name.startsWith("prepare_safe_"))).toBe(false);
   });
 
   it("identifies each single-protocol server distinctly", async () => {
@@ -251,7 +252,7 @@ describe("Per-protocol server instructions", () => {
       expect(instructions).toContain(
         `https://mcp.ekubo.org${protocolMcpPath(protocol.slug)}`,
       );
-      expect(instructions).toContain("https://mcp.ekubo.org/mcp carries every");
+      expect(instructions).toContain("https://mcp.ekubo.org/mcp");
     }
   });
 
@@ -287,7 +288,7 @@ describe("Per-protocol discovery documents", () => {
     expect(document.mcp_endpoints.all.tool_count).toBe(
       publicToolCatalog.length,
     );
-    expect(document.mcp_endpoints.all.protocols).toEqual([...PROTOCOL_SLUGS]);
+    expect(document.mcp_endpoints.all.protocols).toEqual([...ALL_PROTOCOLS]);
     expect(
       document.mcp_endpoints.by_protocol.map((entry) => entry.url),
     ).toEqual(
@@ -300,7 +301,7 @@ describe("Per-protocol discovery documents", () => {
         (total, entry) => total + entry.tool_count,
         0,
       ),
-    ).toBe(publicToolCatalog.length);
+    ).toBe(hostedToolCatalog.length);
   });
 
   it("advertises every endpoint from the well-known server card", async () => {
@@ -414,5 +415,20 @@ describe("Uniswap MCP wallet handoff", () => {
     const reads = await mcpCall("/mcp/uniswap", "tools/call", 100, { name: "prepare_uniswap_reads", arguments: { ...args, owner: args.sender, version: "v3", token_ids: ["1"] } }) as { result: { isError?: boolean; structuredContent: { read_calls_reference: { url: string } } } };
     expect(reads.result.isError).not.toBe(true);
     expect((await worker.fetch(new Request(reads.result.structuredContent.read_calls_reference.url), env, context)).status).toBe(200);
+  });
+});
+
+describe("Safe endpoint isolation and handoff", () => {
+  it("rejects Safe calls on root and serves ERC-8410 signature artifacts only on Safe", async () => {
+    const params = { name: "prepare_safe_message_signature", arguments: { chain_id: "1", safe: "0x1111111111111111111111111111111111111111", signer: "0x2222222222222222222222222222222222222222", safe_version: "1.4.1", message: "0x1234" } };
+    const root = await mcpCall("/mcp", "tools/call", 110, params) as any;
+    expect(root.error !== undefined || root.result?.isError === true).toBe(true);
+    const safe = await mcpCall("/mcp/safe", "tools/call", 111, params) as any;
+    expect(safe.result.isError).not.toBe(true);
+    const result = safe.result.structuredContent;
+    expect(result.typed_data_signature_request).toBeUndefined();
+    expect(result.typed_data_signature_request_reference.artifact_type).toBe("typed_data_signature_request");
+    const artifact = await worker.fetch(new Request(result.typed_data_signature_request_reference.url), env, context);
+    expect((await artifact.json() as any).kind).toBe("typed_data_signature_request");
   });
 });

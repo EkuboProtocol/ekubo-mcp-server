@@ -1,6 +1,6 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-const expectedServerVersion = "0.43.0";
-const expectedCatalogRevision = "2026-09-09.quote-jurisdiction-metadata";
+const expectedServerVersion = "0.44.0";
+const expectedCatalogRevision = "2026-09-23.safe-signatures";
 const smokeNonce = `${Date.now()}-${Math.random()}`;
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
 
@@ -387,9 +387,13 @@ assert(
   new Set(seenPerProtocol).size === seenPerProtocol.length,
   "a tool is served by more than one per-protocol endpoint",
 );
+const safeEndpoint = advertised.by_protocol.find((entry) => entry.protocol === "safe");
+assert(safeEndpoint?.tool_count === 6, "standalone Safe endpoint is missing tools");
+assert(!advertised.all.protocols.includes("safe"), "Safe leaked into the root protocol bundle");
+assert(safeEndpoint.tools.every((name) => !expectedTools.includes(name)), "Safe leaked into the root tool catalog");
 assert(
-  seenPerProtocol.length === expectedTools.length,
-  "the per-protocol endpoints do not cover the whole catalog",
+  seenPerProtocol.length === expectedTools.length + safeEndpoint.tool_count,
+  "the per-protocol endpoints do not cover the bundled and standalone catalogs",
 );
 
 console.log(`Ekubo MCP deployment smoke checks passed at ${origin}/mcp`);
