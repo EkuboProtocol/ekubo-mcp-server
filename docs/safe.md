@@ -23,7 +23,25 @@ All numeric inputs are canonical decimal strings, including `operation` (`"0"`
 CALL or `"1"` DELEGATECALL). Transaction signing requires every SafeTx field:
 `to`, `value`, `data`, `operation`, `safeTxGas`, `baseGas`, `gasPrice`, `gasToken`,
 `refundReceiver`, and `nonce`. No fee, refund, or nonce values are guessed.
-Byte input is bounded to 64 KiB. Hex output is lowercase.
+Byte input is bounded to 64 KiB. Hex output is lowercase. Execution requires a
+nonzero sender and at least one complete 65-byte signature entry. A hash-approval
+read requires both `owner` and `transaction_hash`.
+
+### SafeMessage input semantics
+
+`prepare_safe_message_signature` wraps the exact supplied bytes as
+`SafeMessage.message`; it does not hash an application message first.
+For the same signature semantics as Safe Wallet's website:
+
+- For text, pass the EIP-191 `hashMessage(text)` digest.
+- For application typed data, pass its EIP-712 `hashTypedData(...)` digest.
+- For `isValidSignature(bytes32,bytes)`, pass the exact bytes32 digest that the
+  verifier will supply, without hashing it again.
+
+For example, signing the application text `hello` uses
+`message: "0x50b2c43fd39106bafbba0da34fc430e1f91e3c96ea2acee2bc34119f92b37750"`.
+Supplying its raw UTF-8 bytes `0x68656c6c6f` instead signs a different message,
+usable with the legacy `isValidSignature(bytes,bytes)` call over those raw bytes.
 
 ## Wallet handoff
 
@@ -39,7 +57,13 @@ Byte input is bounded to 64 KiB. Hex output is lowercase.
    authorizes the owner signature independently of transaction permissions.
 5. Aggregate signatures using Safe's owner ordering and encoding conventions.
    Supply the resulting complete bundle to `prepare_safe_execution`, then pass
-   its `execution_plan_reference` unchanged to the executing wallet.
+    its `execution_plan_reference` unchanged to the executing wallet.
+
+The execution tool accepts a complete Safe-format bundle and preserves it
+verbatim. Normalize EIP-712 EOA signatures with wallet-returned `v=0/1` to
+`v=27/28` before assembly. Do not apply that conversion to an already assembled
+bundle: Safe uses `v=0` for contract signatures and `v=1` for prevalidated
+signatures. Contract entries also require correctly computed dynamic offsets.
 
 The artifact has exactly `schema_version`, `kind`, `signer`, `typed_data` and
 optional `valid_until`. The signer is the actual owner authorizing the SafeTx,
@@ -54,17 +78,30 @@ SafeMessage has no nonce or expiry. Message signatures require a compatible
 Safe fallback handler and intended ERC-1271 verifier, and one owner signature
 does not itself constitute a threshold Safe signature.
 
-Execution requires current nonce equality: `execTransaction` uses the Safe's
-current nonce rather than taking it as an argument. Verify signature validity
-and require inner `success=true` / `ExecutionSuccess`; an outer successful
-receipt can contain `ExecutionFailure` and consume the nonce. The preparer
-does not claim to have verified supplied signatures or live contract state.
+Execution preparation returns `getTransactionHash` and `checkSignatures` reads
+alongside version, owners, threshold and nonce, with the read bundle's `from`
+set to the executor. This matters for prevalidated signatures that rely on
+`msg.sender`. The signature check receives the complete EIP-712 preimage.
+Require every read to succeed, the onchain hash to equal `signing_digest`, and
+the version to match the requested version.
+
+Execution also requires current nonce equality: `execTransaction` uses the
+Safe's current nonce rather than taking it as an argument. `checkSignatures`
+does not check nonce freshness. `expected_nonce` is a wallet precondition in
+the preparation response, not an enforced execution-plan field. Revalidate
+before execution and require inner `success=true` / `ExecutionSuccess`; an
+outer successful receipt can contain `ExecutionFailure` and consume the nonce.
+The preparer constructs these reads but does not execute them or claim to
+have verified live state.
 
 Owner changes use a zero-value CALL from the Safe to itself, zero gas refund
 fields, and an explicitly supplied nonce. They require the existing threshold.
 Check linked-list predecessors, unique owners and the resulting threshold
 against fresh state. The first owner's predecessor is sentinel address
 `0x0000000000000000000000000000000000000001`.
+Preparation rejects self-ownership, zero or self-referential predecessors,
+and replacements that are already identified as the old owner or predecessor.
+Checks requiring the full current owner list remain wallet-read preconditions.
 
 ## Signature compatibility tests
 
@@ -89,6 +126,8 @@ The contracts themselves verify:
 - Both legacy `isValidSignature(bytes,bytes)` and modern
   `isValidSignature(bytes32,bytes)` through the installed fallback handler.
 - Owner addition and threshold change via a signed Safe self-call.
+- Website-compatible preprocessing of text and application typed-data messages.
+- Prepared execution-validation reads, including executor-dependent prevalidated signatures.
 - Rejection of signatures over the request digest, unadjusted personal-sign
   signatures, non-owner signatures, and substitutions of any SafeTx field,
   chain ID or verifying Safe address.

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { createVM, type VM } from "@ethereumjs/vm";
 import { createAccount, createAddressFromString, bytesToHex, hexToBytes } from "@ethereumjs/util";
-import { AbiCoder, Interface, Signature, TypedDataEncoder, Wallet, concat, keccak256, toUtf8Bytes } from "ethers";
+import { AbiCoder, Interface, Signature, TypedDataEncoder, Wallet, concat, hashMessage, keccak256, toUtf8Bytes } from "ethers";
 import type { Hex } from "viem";
 import safe130 from "@gnosis.pm/safe-contracts/build/artifacts/contracts/GnosisSafe.sol/GnosisSafe.json";
 import proxy130 from "@gnosis.pm/safe-contracts/build/artifacts/contracts/proxies/GnosisSafeProxy.sol/GnosisSafeProxy.json";
@@ -37,9 +37,9 @@ const versions = [
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 type Request = ReturnType<typeof prepareSafeTransaction>["typed_data_signature_request"];
 
-async function call(vm: VM, to: string, data: string) {
+async function call(vm: VM, to: string, data: string, caller = stranger.address) {
   return vm.evm.runCall({
-    caller: createAddressFromString(stranger.address),
+    caller: createAddressFromString(caller),
     to: createAddressFromString(to), data: hexToBytes(data as Hex), gasLimit: 30_000_000n,
   });
 }
@@ -127,6 +127,13 @@ async function executionData(f: Fixture, tx: ReturnType<typeof transaction>, sig
   const prepared = prepare("prepare_safe_execution", { ...f, sender: stranger.address, transaction: tx, signatures });
   const store = fakeArtifactStore();
   const { value } = await referenceWalletArtifacts({ ARTIFACT_STORE: store } as unknown as Env, "https://mcp.ekubo.org", prepared);
+  const readRef = (value as { read_calls_reference: ArtifactReference }).read_calls_reference;
+  const readObject = await store.get(new URL(readRef.url).pathname.slice(1));
+  const reads = JSON.parse(await readObject!.text()) as { from: string; calls: { to: string; data: string }[] };
+  expect(reads.from).toBe(stranger.address.toLowerCase());
+  for (const read of reads.calls) {
+    expect((await call(f.vm, read.to, read.data, reads.from)).execResult.exceptionError).toBeUndefined();
+  }
   const ref = (value as { execution_plan_reference: ArtifactReference }).execution_plan_reference;
   const stored = await store.get(new URL(ref.url).pathname.slice(1));
   const plan = JSON.parse(await stored!.text()) as { ordered_steps: { transaction: { data: string } }[] };
@@ -234,6 +241,42 @@ for (const contracts of versions) {
       expect(abi.decodeFunctionResult("isOwner", membership)[0]).toBe(true);
       const threshold = await checkedCall(f.vm, f.safe, abi.encodeFunctionData("getThreshold"));
       expect(abi.decodeFunctionResult("getThreshold", threshold)[0]).toBe(2n);
+    });
+
+    it("matches Safe Wallet's text and application typed-data message preprocessing", async () => {
+      const f = await fixture(contracts);
+      // Safe Wallet first hashes the application input, then wraps that digest in SafeMessage.
+      const applicationDigests = [
+        hashMessage("hello"),
+        TypedDataEncoder.hash({ name: "Application", chainId: 1 }, { Message: [{ name: "text", type: "string" }] }, { text: "hello" }),
+      ];
+      for (const digest of applicationDigests) {
+        const stored = await artifact(prepare("prepare_safe_message_signature", { ...f, message: digest }));
+        const signed = await signArtifact(stored.reference, stored.body);
+        const websiteDigest = TypedDataEncoder.hash(
+          { chainId: 1, verifyingContract: f.safe },
+          { SafeMessage: [{ name: "message", type: "bytes" }] },
+          { message: digest },
+        );
+        expect(signed.signing_digest).toBe(websiteDigest);
+        const result = await checkedCall(f.vm, f.safe, abi.encodeFunctionData("isValidSignature(bytes32,bytes)", [digest, signed.signature]));
+        expect(abi.decodeFunctionResult("isValidSignature(bytes32,bytes)", result)[0]).toBe("0x1626ba7e");
+      }
+      const raw = await artifact(prepare("prepare_safe_message_signature", { ...f, message: "0x68656c6c6f" }));
+      const rawSigned = await signArtifact(raw.reference, raw.body);
+      expect((await call(f.vm, f.safe, abi.encodeFunctionData("isValidSignature(bytes32,bytes)", [applicationDigests[0], rawSigned.signature]))).execResult.exceptionError).toBeDefined();
+    });
+
+    it("checks prevalidated signatures in the supplied executor's call context", async () => {
+      const f = await fixture(contracts);
+      const signatures = concat([AbiCoder.defaultAbiCoder().encode(["address", "uint256"], [owner.address, 0]), "0x01"]);
+      const prepared = prepare("prepare_safe_execution", { ...f, transaction: transaction(), sender: owner.address, signatures }) as {
+        read_calls: { from: string; calls: { id: string; to: string; data: string }[] };
+      };
+      expect(prepared.read_calls.from).toBe(owner.address.toLowerCase());
+      const check = prepared.read_calls.calls.find((read) => read.id === "check_signatures")!;
+      expect((await call(f.vm, check.to, check.data, prepared.read_calls.from)).execResult.exceptionError).toBeUndefined();
+      expect((await call(f.vm, check.to, check.data, stranger.address)).execResult.exceptionError).toBeDefined();
     });
   });
 }

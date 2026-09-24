@@ -71,6 +71,13 @@ describe("Safe preparation", () => {
     expect(decodeFunctionData({ abi: SAFE_ABI, data: step.data }).args).toEqual([prepareSafeTransaction(input).signing_digest]);
     const execution = run("prepare_safe_execution", { ...input, sender: input.signer, signatures: `0x${"11".repeat(65)}` });
     expect(execution.expected_nonce).toBe("3");
+    expect(execution.signing_digest).toBe(prepareSafeTransaction(input).signing_digest);
+    expect(execution.read_calls.from).toBe(input.signer);
+    const signatureRead = execution.read_calls.calls.find((call: { id: string }) => call.id === "check_signatures");
+    const signatureArgs = decodeFunctionData({ abi: SAFE_ABI, data: signatureRead.data }).args as readonly [`0x${string}`, `0x${string}`, `0x${string}`];
+    expect(signatureArgs[0]).toBe(execution.signing_digest);
+    expect(keccak256(signatureArgs[1])).toBe(execution.signing_digest);
+    expect(signatureArgs[2]).toBe(`0x${"11".repeat(65)}`);
     expect(decodeFunctionData({ abi: SAFE_ABI, data: execution.execution_plan.ordered_steps[0].transaction.data }).functionName).toBe("execTransaction");
   });
 
@@ -88,5 +95,29 @@ describe("Safe preparation", () => {
     }
     expect(() => prepareSafeTransaction({ ...input, transaction: { ...input.transaction, data: "0x1" } })).toThrow();
     expect(() => prepareSafeTransaction({ ...input, valid_until: (2n ** 64n).toString() })).toThrow();
+  });
+
+  it("rejects owner changes that are invalid without needing chain state", () => {
+    const invalid = [
+      { action: "add_owner", owner: input.safe, threshold: "1" },
+      { action: "remove_owner", owner: input.signer, prev_owner: zeroAddress, threshold: "1" },
+      { action: "remove_owner", owner: input.signer, prev_owner: input.signer, threshold: "1" },
+      { action: "remove_owner", owner: input.signer, prev_owner: input.safe, threshold: "1" },
+      { action: "swap_owner", old_owner: input.signer, new_owner: input.safe, prev_owner: input.transaction.to },
+      { action: "swap_owner", old_owner: input.signer, new_owner: input.signer, prev_owner: input.transaction.to },
+      { action: "swap_owner", old_owner: input.signer, new_owner: input.transaction.to, prev_owner: input.transaction.to },
+    ];
+    for (const change of invalid) {
+      expect(() => run("prepare_safe_owner_change", { ...input, nonce: "0", change })).toThrow();
+    }
+    expect(() => run("prepare_safe_owner_change", { ...input, nonce: "0", change: {
+      action: "remove_owner", owner: input.signer, prev_owner: "0x0000000000000000000000000000000000000001", threshold: "1",
+    } })).not.toThrow();
+  });
+
+  it("rejects zero execution senders, truncated signature bundles and incomplete hash reads", () => {
+    expect(() => run("prepare_safe_execution", { ...input, sender: zeroAddress, signatures: `0x${"11".repeat(65)}` })).toThrow();
+    expect(() => run("prepare_safe_execution", { ...input, sender: input.signer, signatures: `0x${"11".repeat(64)}` })).toThrow();
+    expect(() => run("prepare_safe_reads", { ...input, transaction_hash: `0x${"11".repeat(32)}` })).toThrow("owner is required");
   });
 });
