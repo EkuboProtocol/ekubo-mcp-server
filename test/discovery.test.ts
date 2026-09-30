@@ -961,7 +961,7 @@ describe("Worker discovery", () => {
       expect.objectContaining({
         name: "YulRouter",
         abi_resource_uri:
-          "ekubo://contracts/evm/4663/0x7B2aA7Ecc0B5936b7C52E6259A19C3BA557d0748",
+          "ekubo://contracts/evm/4663/0x03c8B90854b90AA22448b11e885F692972DA441C",
       }),
     );
 

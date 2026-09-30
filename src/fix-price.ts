@@ -20,6 +20,7 @@ import {
 import { type Env, getTokens, ServiceError } from "./core.js";
 import { coreDataFetcherContract } from "./contracts.js";
 import { decodePoolConfig, getPool } from "./pools.js";
+import { swapDeadline } from "./swap-deadline.js";
 import {
   assertAssetsTradable,
   type RequestCountry,
@@ -91,6 +92,11 @@ export interface PrepareFixPoolPriceInput {
     blockNumber?: string;
     blockHash?: Hex;
   };
+  /**
+   * Minutes the execute-phase route stays executable. Defaults to the
+   * interface's 30 minutes; see swap-deadline.ts.
+   */
+  swapDeadlineMinutes?: number;
   /**
    * Jurisdiction of the caller. Required rather than optional so a new call
    * site cannot drop the restriction check by omitting it.
@@ -349,11 +355,13 @@ export async function prepareFixPoolPrice(
   }
   const requiredInputAmount = -quotedCalculatedAmount;
   const expectedOutputAmount = -quotedSpecifiedAmount;
+  const deadline = swapDeadline(input.swapDeadlineMinutes);
   const executionRoute = encodeRoute({
     specifiedToken,
     calculatedToken,
     specifiedAmount: TARGET_PRICE_SPECIFIED_AMOUNT,
     calculatedAmountThreshold: quotedCalculatedAmount,
+    deadline,
     hops: [hop],
   });
   const nativeValue =
@@ -396,6 +404,7 @@ export async function prepareFixPoolPrice(
         expected_output_amount: expectedOutputAmount.toString(),
         quote_block_number: input.quoteResult.blockNumber ?? null,
         quote_block_hash: input.quoteResult.blockHash ?? null,
+        deadline_timestamp: deadline,
         partial_fill_stops_at_target: true,
       },
       onchainValidation: {
