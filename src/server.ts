@@ -83,6 +83,10 @@ import {
 } from "./ui-actions.js";
 import { prepareFixPoolPrice } from "./fix-price.js";
 import {
+  DEFAULT_SWAP_DEADLINE_MINUTES,
+  MAX_SWAP_DEADLINE_MINUTES,
+} from "./swap-deadline.js";
+import {
   prepareTwammOrder,
   prepareTwammOrderCollection,
   prepareTwammOrderStop,
@@ -231,6 +235,15 @@ const bytes32 = z
   .regex(/^0x[0-9a-fA-F]{64}$/, "must be exactly 32 bytes")
   .describe("0x-prefixed bytes32");
 const quoteType = z.enum(["exact_input", "exact_output"]);
+const swapDeadlineMinutes = z
+  .number()
+  .int()
+  .min(1)
+  .max(MAX_SWAP_DEADLINE_MINUTES)
+  .optional()
+  .describe(
+    `Minutes an Ekubo router route stays executable after this call; defaults to ${DEFAULT_SWAP_DEADLINE_MINUTES}, the Ekubo interface default, and may only be shortened. The route carries this as an onchain deadline and reverts with DeadlineExpired() once it passes, because the slippage bound limits amounts but not time and continuous-auction pool fees can rise from the next second. Other providers enforce their own quote expiry.`,
+  );
 const quoteSource = z.enum(["ekubo", "0x", "across", "layerzero", "lifi"]);
 const amount = z
   .string()
@@ -417,6 +430,7 @@ export const getQuotesWithPlansSchema = quoteRequestSchema.extend({
     .describe(
       "Slippage tolerance in basis points. Honor an explicit user preference. Otherwise keep the maximum value lost to slippage approximately equal to one estimated transaction gas fee: slippage_bps ~= 10,000 * gas-cost value / swap-notional value, comparing both in the same currency. Do not use a generic 50 bps (0.5%) default, especially on Ethereum mainnet. Required alongside sender, and only meaningful with it, because it is the bound written into the returned calldata. Prefer a fresh quote and newly prepared transaction after a slippage failure over widening this bound; never retry reverted calldata unchanged.",
     ),
+  swap_deadline_minutes: swapDeadlineMinutes,
   include_raw_quotes: z
     .boolean()
     .optional()
@@ -439,6 +453,7 @@ export const prepareSwapSchema = quoteRequestSchema.extend({
     .min(0)
     .max(10_000)
     .describe("User-selected slippage tolerance in basis points"),
+  swap_deadline_minutes: swapDeadlineMinutes,
 });
 
 const stableswapParamsSchema = z.object({
@@ -870,6 +885,7 @@ export const prepareFixPoolPriceSchema = z.object({
       block_hash: bytes32.optional(),
     })
     .optional(),
+  swap_deadline_minutes: swapDeadlineMinutes,
 });
 
 export const prepareTwammOrderSchema = z.object({
@@ -1277,6 +1293,7 @@ export const prepareVe33ReinvestSchema = z
       .max(200)
       .optional(),
     slippage_bps: z.number().int().min(0).max(10_000).default(50),
+    swap_deadline_minutes: swapDeadlineMinutes,
     source: quoteSource.optional(),
     ve_id: uintString.optional(),
     amount: uintString.optional(),
@@ -2834,6 +2851,7 @@ export function createEkuboServer(
         quoteType: input.quote_type,
         amount: input.amount,
         slippageBps: input.slippage_bps,
+        swapDeadlineMinutes: input.swap_deadline_minutes,
         recipient: input.recipient as Address | undefined,
         sender: input.sender as Address | undefined,
         includeRawQuotes: input.include_raw_quotes,
@@ -3039,6 +3057,7 @@ export function createEkuboServer(
               amount: balance.amount,
             })),
             slippageBps: input.slippage_bps,
+            swapDeadlineMinutes: input.swap_deadline_minutes,
             source: input.source as QuoteSource,
             country,
           });
@@ -3502,6 +3521,7 @@ export function createEkuboServer(
               blockNumber: input.quote_result.block_number,
               blockHash: input.quote_result.block_hash as Hex | undefined,
             },
+      swapDeadlineMinutes: input.swap_deadline_minutes,
       country,
     }),
   );

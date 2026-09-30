@@ -15,6 +15,7 @@ import {
   type EvmQuoterQuoteType,
   prepareSwapFromQuote,
 } from "./yul-router.js";
+import { swapDeadline } from "./swap-deadline.js";
 import {
   type PreparedTransaction,
   transactionIdentity,
@@ -72,6 +73,11 @@ export interface SwapPreparationIntent extends QuoteIntent {
   slippageBps: number;
   recipient?: Address;
   sender: Address;
+  /**
+   * Minutes an Ekubo router route stays executable after preparation. Defaults
+   * to the interface's 30 minutes; see swap-deadline.ts.
+   */
+  swapDeadlineMinutes?: number;
 }
 
 export interface PrepareSwapIntent extends SwapPreparationIntent {
@@ -96,6 +102,7 @@ export interface QuoteDiscoveryIntent extends QuoteIntent {
   slippageBps?: number;
   recipient?: Address;
   sender?: Address;
+  swapDeadlineMinutes?: number;
   /**
    * Echo each provider's untouched response back alongside the normalized
    * amounts. Off by default: the raw blobs are the largest thing here and the
@@ -159,6 +166,7 @@ interface PreparedCandidate {
   maximumAmountIn: bigint | null;
   blockNumber: string | null;
   blockHash: Hex | null;
+  quoteExpiryTimestamp: number | null;
   estimatedRouteGas: number | null;
   priceImpact: number | null;
   executionPlan: ReturnType<typeof executionPlan> & { extensions: { "ekubo.jurisdiction": ReturnType<typeof quoteJurisdiction> } };
@@ -777,6 +785,7 @@ function prepareCandidate(
   let estimatedRouteGas = selected.estimatedGas;
   let priceImpact = selected.priceImpact;
   let approvalSpender = selected.approvalSpender;
+  let quoteExpiryTimestamp = selected.quoteExpiryTimestamp;
 
   if (selected.source === "ekubo") {
     const prepared = prepareSwapFromQuote({
@@ -787,6 +796,7 @@ function prepareCandidate(
       amount: intent.amount,
       slippageBps: intent.slippageBps,
       recipient,
+      deadline: swapDeadline(intent.swapDeadlineMinutes),
     });
     mainTransaction = {
       chainId: intent.chainId,
@@ -810,6 +820,9 @@ function prepareCandidate(
     maximumAmountIn = prepared.maximumAmountIn;
     blockNumber = prepared.block.number.toString();
     blockHash = prepared.block.hash;
+    // The router rejects the route after its deadline, so that is when this
+    // quote expires.
+    quoteExpiryTimestamp = prepared.deadline;
     estimatedRouteGas = prepared.estimatedRouteGas;
     priceImpact = prepared.priceImpact;
   } else {
@@ -845,7 +858,7 @@ function prepareCandidate(
     destination_chain_id: intent.destinationChainId ?? intent.chainId,
     block_number: blockNumber,
     block_hash: blockHash,
-    quote_expiry_timestamp: selected.quoteExpiryTimestamp,
+    quote_expiry_timestamp: quoteExpiryTimestamp,
     sender: getAddress(intent.sender),
     recipient,
     approvals: serializedApprovals.map(transactionIdentity),
@@ -864,6 +877,7 @@ function prepareCandidate(
     maximumAmountIn,
     blockNumber,
     blockHash,
+    quoteExpiryTimestamp,
     estimatedRouteGas,
     priceImpact,
     executionPlan: { ...executionPlan({
@@ -917,7 +931,7 @@ function preparedQuote(
     estimated_route_gas: prepared.estimatedRouteGas,
     block_number: prepared.blockNumber,
     block_hash: prepared.blockHash,
-    quote_expiry_timestamp: selected.quoteExpiryTimestamp,
+    quote_expiry_timestamp: prepared.quoteExpiryTimestamp,
     expected_fill_time_seconds: selected.expectedFillTime,
   };
 }

@@ -71,6 +71,11 @@ export interface PrepareSwapFromQuoteParameters {
   amount: string | bigint;
   slippageBps: number | bigint;
   recipient?: Address;
+  /**
+   * Last Unix second, inclusive, at which the route may execute. Required so
+   * no executable route can be prepared without one; see swap-deadline.ts.
+   */
+  deadline: number;
   routerAddress?: Address;
 }
 
@@ -106,6 +111,7 @@ export interface PreparedSwap {
     };
   } | null;
   recipient: Address | null;
+  deadline: number;
   estimatedRouteGas: number;
   priceImpact: number | null;
 }
@@ -150,6 +156,7 @@ export function prepareSwapFromQuote({
   amount,
   slippageBps,
   recipient,
+  deadline,
   routerAddress = YUL_ROUTER_ADDRESS,
 }: PrepareSwapFromQuoteParameters): PreparedSwap {
   if (quoteType !== "exact_input" && quoteType !== "exact_output") {
@@ -230,6 +237,7 @@ export function prepareSwapFromQuote({
     calculatedToken,
     calculatedAmountThreshold,
     recipient,
+    deadline,
     multiHops: quote.splits.map((split) => ({
       specifiedAmount: BigInt(split.amount_specified),
       hops: split.route.map(quoterNodeToHop),
@@ -278,6 +286,7 @@ export function prepareSwapFromQuote({
           },
         },
     recipient: recipient === undefined ? null : getAddress(recipient),
+    deadline,
     estimatedRouteGas: quote.estimated_gas_cost,
     priceImpact: quote.price_impact,
   };

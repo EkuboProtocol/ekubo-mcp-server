@@ -1,6 +1,6 @@
 import { fakeArtifactStore } from "./fake-r2.js";
-import { describe, expect, it } from "bun:test";
-import { numberToHex, type Abi } from "viem";
+import { afterEach, describe, expect, it, setSystemTime } from "bun:test";
+import { hexToNumber, numberToHex, sliceHex, type Abi } from "viem";
 import {
   planStepKinds,
   planTargets,
@@ -48,6 +48,10 @@ const env = {
 } satisfies Env;
 
 const sender = "0x1111111111111111111111111111111111111111";
+
+afterEach(() => {
+  setSystemTime();
+});
 const native = "0x0000000000000000000000000000000000000000";
 const token1 = "0x2222222222222222222222222222222222222222";
 const token2 = "0x3333333333333333333333333333333333333333";
@@ -603,6 +607,7 @@ describe("EVM interface action preparation", () => {
   });
 
   it("supplies every phase of fix-price reads, quote, approval, and execution", async () => {
+    const preparedAt = 1_800_000_000_000;
     const core = "0x00000000000014aA86C5d3c41765bb24e11bd701";
     const key = derivePoolId({
       token0: native,
@@ -644,6 +649,7 @@ describe("EVM interface action preparation", () => {
       targetPrice: "1000000000000",
       country: null,
     };
+    setSystemTime(new Date(preparedAt));
     const read = await prepareFixPoolPrice(env, common, fetcher);
     const quote = await prepareFixPoolPrice(
       env,
@@ -765,5 +771,13 @@ describe("EVM interface action preparation", () => {
     // approval decodes; the plan still states both steps.
     expect(planStepKinds(execute)).toEqual(["approval", "execution"]);
     expect(planTransactions(execute)).toHaveLength(2);
+    // The execution route carries a deadline right after its threshold: flag
+    // bit 1 set, no recipient, and a uint32 30 minutes after preparation.
+    const route = planTransactions(execute)[1];
+    expect(route.to).toBe("0x03c8B90854b90AA22448b11e885F692972DA441C");
+    expect(hexToNumber(sliceHex(route.data, 0, 1))).toBe(2);
+    expect(hexToNumber(sliceHex(route.data, 58, 62))).toBe(
+      Math.floor(preparedAt / 1_000) + 1_800,
+    );
   });
 });
