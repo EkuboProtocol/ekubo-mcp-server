@@ -1,10 +1,8 @@
-import {
-  vaultV2Deposit,
-  vaultV2Redeem,
-  vaultV2Withdraw,
-} from "@morpho-org/morpho-sdk";
+import { vaultV2Deposit } from "@morpho-org/morpho-sdk";
+import { vaultV2Abi } from "@morpho-org/morpho-sdk/abis";
 import { getChainAddresses } from "@morpho-org/morpho-sdk/addresses";
-import { getAddress, type Address, type Hex } from "viem";
+import { encodeFunctionData, getAddress, type Address, type Hex } from "viem";
+import packageJson from "../package.json";
 import { ServiceError } from "./core.js";
 import {
   erc20ApprovalTransaction,
@@ -12,7 +10,12 @@ import {
   preparedUiAction,
 } from "./ui-actions.js";
 
-export const MORPHO_SDK_VERSION = "5.5.0";
+// package.json pins the SDK exactly, so this is the version that is bundled.
+export const MORPHO_SDK_VERSION: string =
+  packageJson.dependencies["@morpho-org/morpho-sdk"];
+
+// Matches the SDK entity default for VaultBundlesV1 operations.
+const DEFAULT_DEPOSIT_DEADLINE_SECONDS = 2n * 60n * 60n;
 
 interface MorphoVaultDefinition {
   chain_id: string;
@@ -106,15 +109,13 @@ export function getMorphoVaults(input: { chainId?: string } = {}) {
     },
     vaults: vaults.map((item) => ({
       ...item,
-      bundler3: getChainAddresses(Number(item.chain_id)).bundler3.bundler3,
-      general_adapter_1:
-        getChainAddresses(Number(item.chain_id)).bundler3.generalAdapter1,
+      vault_bundles_v1: vaultBundlesV1(item.chain_id),
     })),
     limitations: {
       live_state:
         "No API, RPC, balance, allowance, vault accounting, liquidity, APY, allocation, warning, or listing state is queried",
       execution:
-        "Deposits use the official SDK's Bundler3/GeneralAdapter1 maxSharePrice guard; every plan still requires exact wallet simulation",
+        "Deposits use the official SDK's VaultBundlesV1 route, which enforces maxSharePrice onchain and mints shares only to the transaction sender; withdrawals and redemptions are direct vault calls; every plan still requires exact wallet simulation",
     },
   };
 }
@@ -126,23 +127,25 @@ export function prepareMorphoVaultDeposit(input: {
   amount: string;
   maxSharePriceRay: string;
   recipient?: string;
+  deadline?: string;
 }) {
   const definition = resolveVault(input.chainId, input.vault);
   const sender = getAddress(input.sender);
-  const recipient = getAddress(input.recipient ?? sender);
+  const recipient = senderOnlyRecipient(sender, input.recipient);
   const amount = positiveUint(input.amount, "amount");
   const maxSharePrice = positiveUint(
     input.maxSharePriceRay,
     "max_share_price_ray",
   );
-  const addresses = getChainAddresses(Number(input.chainId)).bundler3;
+  const deadline = depositDeadline(input.deadline);
+  const spender = vaultBundlesV1(input.chainId);
   const tx = vaultV2Deposit({
     vault: {
       chainId: Number(input.chainId),
       address: definition.address,
       asset: definition.asset.address,
     },
-    args: { amount, maxSharePrice, recipient },
+    args: { amount, maxSharePrice, userAddress: sender, deadline },
   });
   return preparedUiAction({
     action: "morpho_vault_v2_deposit",
@@ -152,12 +155,13 @@ export function prepareMorphoVaultDeposit(input: {
       amount: amount.toString(),
       max_share_price_ray: maxSharePrice.toString(),
       recipient,
+      deadline: deadline.toString(),
     }),
     approvals: [
       erc20ApprovalTransaction(
         input.chainId,
         definition.asset.address,
-        addresses.generalAdapter1,
+        spender,
         amount,
       ),
     ],
@@ -166,15 +170,16 @@ export function prepareMorphoVaultDeposit(input: {
       erc20ApprovalTransaction(
         input.chainId,
         definition.asset.address,
-        addresses.generalAdapter1,
+        spender,
         0n,
       ),
     ],
     atomicBatchRequired: true,
     details: morphoDetails(definition, {
-      route: "Bundler3 via GeneralAdapter1",
-      bundler3: addresses.bundler3,
-      general_adapter_1: addresses.generalAdapter1,
+      route: "VaultBundlesV1",
+      vault_bundles_v1: spender,
+      shares_minted_to_sender_only: true,
+      deadline: deadline.toString(),
       exact_approval_then_cleanup: true,
       max_share_price_enforced_onchain: true,
       max_share_price_scale: "RAY (1e27)",
@@ -182,6 +187,12 @@ export function prepareMorphoVaultDeposit(input: {
   });
 }
 
+/**
+ * Withdraw and redeem stay direct vault calls. The SDK's v6 builders route
+ * them through VaultBundlesV1, which always burns and pays msg.sender and
+ * needs a new share approval, so they cannot keep an independent recipient
+ * or owner.
+ */
 export function prepareMorphoVaultWithdraw(input: {
   chainId: string;
   sender: string;
@@ -195,15 +206,16 @@ export function prepareMorphoVaultWithdraw(input: {
   const recipient = getAddress(input.recipient ?? sender);
   const owner = getAddress(input.owner ?? sender);
   const amount = positiveUint(input.amount, "amount");
-  const tx = vaultV2Withdraw({
-    vault: { address: definition.address },
-    args: { amount, recipient, onBehalf: owner },
+  const data = encodeFunctionData({
+    abi: vaultV2Abi,
+    functionName: "withdraw",
+    args: [amount, recipient, owner],
   });
   return directVaultAction(
     "morpho_vault_v2_withdraw",
     definition,
     sender,
-    sdkTransaction(input.chainId, tx),
+    preparedTransaction(input.chainId, definition.address, data, 0n),
     { amount: amount.toString(), recipient, owner },
     { burns_shares_for_exact_asset_amount: true, delegated_owner_may_require_share_allowance: owner !== sender },
   );
@@ -222,15 +234,16 @@ export function prepareMorphoVaultRedeem(input: {
   const recipient = getAddress(input.recipient ?? sender);
   const owner = getAddress(input.owner ?? sender);
   const shares = positiveUint(input.shares, "shares");
-  const tx = vaultV2Redeem({
-    vault: { address: definition.address },
-    args: { shares, recipient, onBehalf: owner },
+  const data = encodeFunctionData({
+    abi: vaultV2Abi,
+    functionName: "redeem",
+    args: [shares, recipient, owner],
   });
   return directVaultAction(
     "morpho_vault_v2_redeem",
     definition,
     sender,
-    sdkTransaction(input.chainId, tx),
+    preparedTransaction(input.chainId, definition.address, data, 0n),
     { shares: shares.toString(), recipient, owner },
     { redeems_exact_share_amount: true, recommended_for_full_exit: true, delegated_owner_may_require_share_allowance: owner !== sender },
   );
@@ -288,6 +301,47 @@ function morphoDetails(
     exact_wallet_simulation_required: true,
     ...fields,
   };
+}
+
+function vaultBundlesV1(chainId: string): Address {
+  const address = getChainAddresses(Number(chainId)).bundles?.vaultBundlesV1;
+  if (!address) {
+    throw new ServiceError(
+      "unsupported_morpho_chain",
+      `The Morpho SDK registers no VaultBundlesV1 deployment on chain ${chainId}`,
+    );
+  }
+  return address;
+}
+
+function senderOnlyRecipient(sender: Address, recipient: string | undefined) {
+  const resolved = getAddress(recipient ?? sender);
+  if (resolved !== sender) {
+    throw new ServiceError(
+      "unsupported_morpho_recipient",
+      "Guarded Morpho deposits mint vault shares to the sender only; deposit as the sender, then transfer the shares",
+      { sender, recipient: resolved },
+    );
+  }
+  return resolved;
+}
+
+/**
+ * VaultBundlesV1 reverts once block.timestamp passes the deadline, so a past
+ * one turns the plan into a guaranteed revert.
+ */
+function depositDeadline(value: string | undefined): bigint {
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  if (value === undefined) return now + DEFAULT_DEPOSIT_DEADLINE_SECONDS;
+  const deadline = positiveUint(value, "deadline");
+  if (deadline <= now) {
+    throw new ServiceError(
+      "expired_deadline",
+      "deadline is a unix timestamp in the past, so this transaction would revert on arrival",
+      { supplied_deadline: deadline.toString(), server_time: now.toString() },
+    );
+  }
+  return deadline;
 }
 
 function resolveVault(chainId: string, address: string) {

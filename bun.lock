@@ -8,7 +8,7 @@
         "@ekubo/sdk": "0.0.10",
         "@ekubo/yul-router-sdk": "0.7.1",
         "@modelcontextprotocol/server": "2.0.0",
-        "@morpho-org/morpho-sdk": "5.13.0",
+        "@morpho-org/morpho-sdk": "6.0.0",
         "@uniswap/sdk-core": "7.19.2",
         "@uniswap/v3-sdk": "3.31.5",
         "@uniswap/v4-sdk": "2.3.3",
@@ -359,15 +359,15 @@
 
     "@modelcontextprotocol/server": ["@modelcontextprotocol/server@2.0.0", "", { "dependencies": { "@modelcontextprotocol/core": "2.0.0", "zod": "^4.2.0" } }, "sha512-YhHWdHfpFMQfd0prsEnxKeS3Qz3ytIGmsS0sth4KDjnacIT7hxk6hXHkJ9KysxlkvTM+WZAtQbbcUhdoP4Hvtw=="],
 
-    "@morpho-org/blue-sdk": ["@morpho-org/blue-sdk@6.11.0", "", { "dependencies": { "@noble/hashes": "^2.2.0" }, "peerDependencies": { "@morpho-org/morpho-ts": "^2.10.0" } }, "sha512-qYIWWe6VvgIwbAkxRmgv1yirbM9y8rAxUNyUShY5HIcsmASS98mNUamhdOqA4OupWkXJ4wLuaOIpUy81FW4zeA=="],
+    "@morpho-org/blue-sdk": ["@morpho-org/blue-sdk@7.1.0", "", { "dependencies": { "@noble/hashes": "^2.4.0" }, "peerDependencies": { "@morpho-org/morpho-ts": "^3.0.0" } }, "sha512-+5AIEZQsLkSxOdRaZ/sMa+mXY9sAXg35je4gmdbQv29FOVQeShCoBzYkSSa81t7It4KKURiU1V3EXxiPf51Ucg=="],
 
-    "@morpho-org/blue-sdk-viem": ["@morpho-org/blue-sdk-viem@5.7.0", "", { "peerDependencies": { "@morpho-org/blue-sdk": "^6.8.0", "@morpho-org/morpho-ts": "^2.10.0", "viem": "^2.0.0" } }, "sha512-/BkEDZaDnekNzDYKKjWXKqI5FnN2xt/WlxqStWsLjQt2BOomh5Tb+mnw7FcPyGuhtQfPVK7KJaHsK1oRVWHzaA=="],
+    "@morpho-org/blue-sdk-viem": ["@morpho-org/blue-sdk-viem@6.1.0", "", { "peerDependencies": { "@morpho-org/blue-sdk": "^7.0.0", "@morpho-org/morpho-ts": "^3.0.0", "viem": "^2.0.0" } }, "sha512-GtgDOlZ9L11X7crbwL2go4E30M78xvZUxCI4HFGI2cKV+Pcvxgq+75F9sNp7CrUrsEh+jL2p6w/vRc626+Ap9A=="],
 
-    "@morpho-org/midnight-sdk": ["@morpho-org/midnight-sdk@1.6.0", "", { "peerDependencies": { "@morpho-org/morpho-ts": "^2.8.0", "viem": "^2.0.0" } }, "sha512-fXc4x33AzBi2lGPJHNmzTK4H4gauLXcBqodAoS9pXc+qMwCq2KOLYxBT1yuceh2QYVMTqkdZTfy7GD+MfKYvAA=="],
+    "@morpho-org/midnight-sdk": ["@morpho-org/midnight-sdk@1.8.0", "", { "peerDependencies": { "@morpho-org/morpho-ts": "^2.8.0 || ^3.0.0", "viem": "^2.0.0" } }, "sha512-5JkudW8XWztsyZMn1Y+2XJGQPamDblaraFQYJW6gFk66sEEYhYAMMFzwoW6odG8Bi2MBuZLDkzWB5Ee3pcBvMA=="],
 
-    "@morpho-org/morpho-sdk": ["@morpho-org/morpho-sdk@5.13.0", "", { "dependencies": { "@morpho-org/blue-sdk": "^6.11.0", "@morpho-org/blue-sdk-viem": "^5.7.0", "@morpho-org/midnight-sdk": "^1.6.0", "@morpho-org/morpho-ts": "^2.15.0", "zod": "^4.4.3" }, "peerDependencies": { "viem": "^2.0.0" } }, "sha512-YPHWSg5yiMYUBTcdlaOsrIV3slqjJKHA+cbropBG/oW6HA2DbaGfRQpp/RKuOipmvQPFGuMYPE8ZOq2CCzYRNg=="],
+    "@morpho-org/morpho-sdk": ["@morpho-org/morpho-sdk@6.0.0", "", { "dependencies": { "@morpho-org/blue-sdk": "^7.0.0", "@morpho-org/blue-sdk-viem": "^6.0.0", "@morpho-org/midnight-sdk": "^1.7.0", "@morpho-org/morpho-ts": "^3.0.0", "zod": "^4.4.3" }, "peerDependencies": { "viem": "^2.0.0" } }, "sha512-5gRgjs2SnDu+LnKgU97vQfq+S99CafJr77EWN5NArhXT98hHOzvtBvWe6sJLfi6XkgMOCWgXZTPaA8J0NGmG5w=="],
 
-    "@morpho-org/morpho-ts": ["@morpho-org/morpho-ts@2.15.0", "", {}, "sha512-bLGITX+sa4Fv1M1YQ7mpQhyONMZIDToLf/GpUVPErKJVxEFPfJg+G5BK93/XGMsaN8EYEvDjhZhMQrU658e1GQ=="],
+    "@morpho-org/morpho-ts": ["@morpho-org/morpho-ts@3.1.0", "", {}, "sha512-jwoV7CAML+hibbR0uY4DTYCI6Fgy9aJFdxJjkO7w//B/CP74cwJyHJYQRKV1geeZWPM94ZgYEuJ3B9bJ+EaHtQ=="],
 
     "@napi-rs/wasm-runtime": ["@napi-rs/wasm-runtime@1.2.2", "", { "dependencies": { "@tybys/wasm-util": "^0.10.3" }, "peerDependencies": { "@emnapi/core": "^1.7.1 || ^2.0.0-alpha.3", "@emnapi/runtime": "^1.7.1 || ^2.0.0-alpha.3" } }, "sha512-JfB4kuJQjaoHuCTseIINHtHWeJnvgEcxjwA5t/Y00ZgaOO1Crz3fjT/p8kT28zA/Caz7oiUMn3d6H2yOVCVwuw=="],
 
