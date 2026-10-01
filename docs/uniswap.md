@@ -6,7 +6,7 @@ signs, holds funds or submits transactions.
 
 ## Coverage
 
-Contracts are pinned through `@uniswap/sdk-core@7.19.2` for Ethereum (1),
+Contracts are pinned through `@uniswap/sdk-core@7.19.4` for Ethereum (1),
 Optimism (10), Base (8453), Arbitrum (42161), Unichain (130) and Robinhood (4663).
 
 | Tool | Behavior |
@@ -91,9 +91,9 @@ estimates, not onchain valuations or token endorsements. The pool key is
 cryptographically checked independently of displayed fee/TVL data.
 
 Transaction encoding follows canonical V2 Router02, V3 NonfungiblePositionManager,
-and `@uniswap/v4-sdk@2.3.3` action layouts. The V4 SDK uses CLOSE_CURRENCY on
+and `@uniswap/v4-sdk@2.4.1` action layouts. The V4 SDK uses CLOSE_CURRENCY on
 increases and a zero decrease for fee collection. Integer liquidity math comes
-from `@uniswap/v3-sdk@3.31.3`.
+from `@uniswap/v3-sdk@3.31.5`.
 
 ## Reproducing validation
 
