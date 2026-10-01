@@ -39,5 +39,24 @@ jobs:
                 | "| `\(.p)` | \(.s) | [\(.t)](\(.u)) | `\(.v)` |")
           ' audit.json >> "$GITHUB_STEP_SUMMARY"
 
+      # These advisories are all in the Hardhat toolchain that
+      # @uniswap/v3-sdk > @uniswap/swap-router-contracts > hardhat-watcher pulls in.
+      # None of it is in the Worker bundle and nothing here runs Hardhat; each fix
+      # is a major version of a Hardhat/solc/mocha dependency. Triage: EKU-569.
+      # The summary above still lists them. Remove an ID when
+      # @uniswap/swap-router-contracts drops hardhat-watcher, or when the package
+      # appears anywhere outside that path.
       - name: Fail on high or critical advisories
-        run: bun audit --audit-level=high
+        env:
+          IGNORED: >-
+            GHSA-xcpc-8h2w-3j85
+            GHSA-7q85-xj36-vmfc
+            GHSA-rcw4-f5rp-g42v
+            GHSA-j5f4-cc29-5x44
+            GHSA-8238-w5pm-2374
+            GHSA-vrm6-8vpv-qv8q
+            GHSA-v9p9-hfj2-hcw8
+            GHSA-vxpw-j846-p89q
+            GHSA-ph9p-34f9-6g65
+            GHSA-5c6j-r48x-rmvq
+        run: bun audit --audit-level=high $(printf -- '--ignore=%s ' $IGNORED)
