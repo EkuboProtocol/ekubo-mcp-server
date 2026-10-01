@@ -217,8 +217,9 @@ remains authoritative.
 - `get_morpho_vaults` returns a local, pinned catalog and direct-discovery
   guidance.
 - `prepare_morpho_vault_deposit` uses the official Morpho SDK's guarded
-  Bundler3/GeneralAdapter1 route with a caller-supplied fresh
-  `max_share_price_ray`, exact asset approval, and atomic cleanup.
+  VaultBundlesV1 route with a caller-supplied fresh
+  `max_share_price_ray`, exact asset approval, and atomic cleanup. Shares are
+  minted to the sender only.
 - `prepare_morpho_vault_withdraw` and `prepare_morpho_vault_redeem` construct
   direct fixed-vault exits.
 

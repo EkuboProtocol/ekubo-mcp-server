@@ -1467,7 +1467,16 @@ export const prepareMorphoVaultDepositSchema = morphoVaultActionSchema.extend({
   max_share_price_ray: amount.describe(
     "Maximum acceptable vault share price in RAY (1e27), derived by the agent from fresh Morpho/onchain vault state plus the user's slippage tolerance",
   ),
-  recipient: address.optional().describe("Vault-share recipient; defaults to sender"),
+  recipient: address
+    .optional()
+    .describe(
+      "Vault-share recipient; must equal sender if supplied, because VaultBundlesV1 mints shares only to the transaction sender",
+    ),
+  deadline: amount
+    .optional()
+    .describe(
+      "Unix timestamp after which VaultBundlesV1 rejects the deposit; defaults to two hours after preparation. One already past makes the plan a guaranteed revert.",
+    ),
 });
 
 export const prepareMorphoVaultWithdrawSchema = morphoVaultActionSchema.extend({
@@ -2317,7 +2326,7 @@ export const publicToolCatalog = [
     name: "prepare_morpho_vault_deposit",
     title: "Prepare a guarded Morpho vault deposit",
     description:
-      "Prepare an exact-approval Morpho Vault V2 deposit through the official SDK's Bundler3/GeneralAdapter1 route. The caller supplies a fresh RAY-scaled max share price, which is enforced onchain against ERC-4626 share-price inflation; the server performs no data fetch.",
+      "Prepare an exact-approval Morpho Vault V2 deposit through the official SDK's VaultBundlesV1 route. The caller supplies a fresh RAY-scaled max share price, which is enforced onchain against ERC-4626 share-price inflation; shares are minted to the sender and the server performs no data fetch.",
     inputSchema: z.toJSONSchema(prepareMorphoVaultDepositSchema),
   },
   {
@@ -3873,6 +3882,7 @@ export function createEkuboServer(
         amount: input.amount,
         maxSharePriceRay: input.max_share_price_ray,
         recipient: input.recipient,
+        deadline: input.deadline,
       }),
   );
   registerCatalogTool(
@@ -4561,7 +4571,7 @@ const DIRECT_DISCOVERY_PROTOCOLS = [
     slug: "morpho",
     label: "Morpho",
     intersect: "get_morpho_vaults",
-    gate: "Morpho deposits require a freshly derived RAY-scaled max_share_price_ray and use the official guarded Bundler3 route.",
+    gate: "Morpho deposits require a freshly derived RAY-scaled max_share_price_ray and use the official guarded VaultBundlesV1 route.",
   },
   {
     slug: "sky",

@@ -20,11 +20,11 @@ Discover live state yourself, bind it to the MCP's fixed deployment catalog, and
 
 ## Action choice
 
-- Deposit assets: `prepare_morpho_vault_deposit`. This uses Bundler3 through GeneralAdapter1 and enforces the supplied maximum share price onchain.
+- Deposit assets: `prepare_morpho_vault_deposit`. This uses VaultBundlesV1 and enforces the supplied maximum share price onchain. Shares are minted to the sender only.
 - Withdraw an exact asset amount: `prepare_morpho_vault_withdraw`.
 - Exit by exact shares, especially a full balance: `prepare_morpho_vault_redeem`.
 
-Default `recipient` and `owner` to the connected sender. Use another address only when the user explicitly names it. Never infer an address from local files, environment variables, or browsing history.
+Default `recipient` and `owner` to the connected sender. A deposit cannot name another recipient. For withdraw and redeem, use another address only when the user explicitly names it. Never infer an address from local files, environment variables, or browsing history.
 
 ## Safety gates
 

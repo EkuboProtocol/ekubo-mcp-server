@@ -176,7 +176,7 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
     slug: "morpho",
     title: "Morpho",
     description:
-      "Morpho Vault V2 discovery and signer-neutral deposit, withdraw, and redeem preparation through the guarded Bundler3 route",
+      "Morpho Vault V2 discovery and signer-neutral deposit, withdraw, and redeem preparation through the guarded VaultBundlesV1 route",
     skill: "use-morpho",
     tools: [
       "get_morpho_vaults",
