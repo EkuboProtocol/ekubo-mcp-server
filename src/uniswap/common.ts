@@ -6,6 +6,7 @@ import {
 } from "@uniswap/sdk-core";
 import { getAddress, zeroAddress, type Address, type Hex } from "viem";
 import { z } from "zod";
+import packageJson from "../../package.json";
 import { ServiceError } from "../core.js";
 import {
   erc20ApprovalTransaction,
@@ -77,7 +78,7 @@ export function getUniswapDeployments() {
   return {
     protocol: "uniswap",
     deployments: Object.keys(chainNames).map(deployment),
-    source: "@uniswap/sdk-core@7.19.2",
+    source: `@uniswap/sdk-core@${packageJson.dependencies["@uniswap/sdk-core"]}`,
     interface_source:
       "https://github.com/Uniswap/interface/tree/da6d36f71c4d2fd665b0aae1a052a4ffda917b31",
     native_currency:
