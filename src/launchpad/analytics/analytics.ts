@@ -223,9 +223,10 @@ function earlyWindowFigures(
   }
   const net = acc.bought - acc.sold;
   const end = windowEnd(window);
-  const released = end === null ? null : releasedAt(launch.config, end);
-  const largest = [...acc.per_key.values()].reduce(maxBig, 0n);
   const open = end === null || end > snapshot.as_of.timestamp;
+  // An open window is measured up to as_of, so release is too.
+  const released = releasedAt(launch.config, open ? snapshot.as_of.timestamp : end);
+  const largest = [...acc.per_key.values()].reduce(maxBig, 0n);
   return {
     window:
       window.kind === "blocks"
@@ -247,8 +248,9 @@ function earlyWindowFigures(
     gross_bought: figure(acc.bought, findings),
     sold: figure(acc.sold, findings),
     share_of_total_supply: share(net, launch.config.total_supply),
-    share_of_released_by_window_end: released === null ? null : share(net, released),
-    released_by_window_end: released === null ? null : released.toString(),
+    share_of_released_by_window_end: share(net, released),
+    released_by_window_end: released.toString(),
+    released_measured_at: open ? snapshot.as_of.timestamp : end,
     distinct_buying_lockers: acc.lockers.size,
     distinct_buying_recipients: acc.recipients.size,
     buys_without_recipient: acc.unattributed_buys,

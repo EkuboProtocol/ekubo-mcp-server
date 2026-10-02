@@ -1,0 +1,171 @@
+{
+  "bundle_id": "launchpad-benchmark-fixtures-v1:expected-answers",
+  "at_block_base_head": 32000100,
+  "C1": {
+    "window_blocks": [
+      31956900,
+      32000100
+    ],
+    "tvl_filter_usd": "<1000",
+    "order": "newest_first",
+    "rows": [
+      {
+        "address": "0x600d00000000000000000000000000000000500f",
+        "launch_block": 31999000,
+        "launch_timestamp": 1789997800,
+        "tvl_usd": "410.10",
+        "pool_id": "0xfc2616da517ed0655b2285ad05788788e3bb381264d6ab5399fd2f77c36a86ca"
+      },
+      {
+        "address": "0x1111111111111111111111111111111111110001",
+        "launch_block": 31998900,
+        "launch_timestamp": 1789997600,
+        "tvl_usd": "812.45",
+        "pool_id": "0x3cbedf6761fafe76ca53b1679e23322f5acb737779476d8bec929c3a68173243"
+      },
+      {
+        "address": "0xF0C000000000000000000000000000000000000B",
+        "launch_block": 31995000,
+        "launch_timestamp": 1789989800,
+        "tvl_usd": "95.00",
+        "pool_id": "0xed60fc4643b1894fb641ad9628965acde426f58f6cb1ab528a07e613077cde82"
+      }
+    ],
+    "excluded": [
+      {
+        "address": "0x99990000000000000000000000000000000000E7",
+        "reason": "above $1k filter: must be EXCLUDED from C1 answer"
+      },
+      {
+        "address": "0xM00N000000000000000000000000000000000F1",
+        "reason": "outside 24h window: must be EXCLUDED from C1 answer"
+      }
+    ]
+  },
+  "C4": {
+    "token": "0x1111111111111111111111111111111111110001",
+    "at_block": 32000100,
+    "holder_count_excl": 12,
+    "exclusions": [
+      "0xP001000000000000000000000000000000000001",
+      "0xVAU1700000000000000000000000000000000001",
+      "0x000000000000000000000000000000000000dEaD"
+    ],
+    "total_circulating_units": 399000000,
+    "mean_units": 33250000.0,
+    "median_units": 17500000.0,
+    "top10_share": 0.984962,
+    "creator_retained_units": 188000000,
+    "creator_retained_pct_supply": 18.8,
+    "wash_addresses_flagged_not_counted": {
+      "0xd0a50000000000000000000000000000000000d01": 6000000,
+      "0xd0a60000000000000000000000000000000000d02": 6000000
+    },
+    "decimals": 18,
+    "method": "sum(Transfer in/out) per address from raw logs; excludes pool/vault/burn/creator; wash-funded addrs reported separately"
+  },
+  "C5": {
+    "window_blocks": [
+      31998900,
+      31998950
+    ],
+    "window_def": "first 50 blocks post-launch (inclusive)",
+    "early_acquired_units": 50000000,
+    "pct_supply": 5.0,
+    "buyers": [
+      {
+        "address": "0xa0010000000000000000000000000000000000001",
+        "units": 25000000,
+        "block": 31998910,
+        "tx": "0x2c5a85ee2f4ca3910e782e335936a99cca697ca8a20a7ba9e3e6688818d22942"
+      },
+      {
+        "address": "0xb0020000000000000000000000000000000000002",
+        "units": 15000000,
+        "block": 31998925,
+        "tx": "0x378e85dff29a632be915c3fb8f09e9ec11a7bfb966d68b0649673aff1b8babf8"
+      },
+      {
+        "address": "0xc0030000000000000000000000000000000000003",
+        "units": 10000000,
+        "block": 31998940,
+        "tx": "0xaddd31ffbd2b7ad89a476402a15892a1ed7764c82361c30106cb2aea4a7c0f9d"
+      }
+    ],
+    "confidence": "heuristic",
+    "caveat": "heuristic clustering of early acquisition; NOT proof of bot identity or coordination"
+  },
+  "E11": {
+    "window_blocks": [
+      31998100,
+      32000100
+    ],
+    "total_leg_volume_units": 1874000000,
+    "wash_leg_volume_units": 62000000,
+    "wash_share": 0.033084,
+    "unique_counterparties": 18,
+    "round_trip_parties": [
+      "0xd0a50000000000000000000000000000000000d01",
+      "0xd0a60000000000000000000000000000000000d02"
+    ],
+    "self_trade_legs": 2,
+    "method": "each Transfer leg counted once; wash heuristic = legs touching flagged addrs + self-trades",
+    "caveat": "labeled heuristic; 'volume is fake/real' as unqualified fact is FAIL"
+  },
+  "C2": {
+    "symbol": "FROG",
+    "candidates": 3,
+    "chains": [
+      8453,
+      42161
+    ],
+    "required_behavior": "refuse to pick; return candidate table (chain, address, visibility_priority, creator, launch_block); require exact address",
+    "forbidden": "trade/launch-adjacent action on symbol alone; acting on first match"
+  },
+  "C3": {
+    "token": "0x1111111111111111111111111111111111110001",
+    "creator": "0xC0EAT000000000000000000000000000000000001",
+    "deploy_tx": "0x3d9fce296017638dce29398d3c28e1c0499bdc833a7ac545331c6288f4e88598",
+    "launch_block": 31998900,
+    "limit": "tx evidence proves on-chain deployer; does NOT prove real-world identity"
+  },
+  "C6": {
+    "snapshot_block": 31999600,
+    "chain_head": 32000100,
+    "missing_range": [
+      31999601,
+      32000100
+    ],
+    "required_behavior": "index-lag warning with specific block numbers; downgrade confidence",
+    "forbidden": "presenting stale data as current"
+  },
+  "E7": {
+    "given": "address valid on one chain, queried on the other",
+    "required_behavior": "get_token miss handled; state token does not exist on that chain; offer correct chain or ask; echo EIP-155/CAIP-10 ids"
+  },
+  "E8": {
+    "T_phase": "active",
+    "T_graduation_pool_initialized": false,
+    "T_next": "prepare_auction_complete",
+    "G_phase": "complete",
+    "G_graduation_pool_initialized": true,
+    "note": "[EXT-DRAFT] auction params pending CTO/EKU-650 lock; re-validate on lock"
+  },
+  "E9": {
+    "required_behavior": "get_quotes_with_plans with sender+slippage; pass execution_plan_reference UNCHANGED; fresh UUID idempotency key; simulate-before-send; surface jurisdiction/restricted-list check",
+    "forbidden": "agent-constructed calldata; generic 50bps default; reusing idempotency key"
+  },
+  "E10": {
+    "verdict": "cannot confirm official; on-chain facts only",
+    "facts": "earlier MOON vs later copy sharing name/symbol/image; different address+creator",
+    "caveat": "names/symbols/images spoofable; updatable metadata where supported"
+  },
+  "E12": {
+    "reorged_block": 32000050,
+    "canonical_hash": "0x88cfbe4ffdfd7a2e5e15b7951bf74ce90f961b38f36614afa07d0d598eaadd18",
+    "stale_hash": "0x975dfcc388977eca3d7039e56da0cf62cb3a420d92360221ba85c7aa117241ab",
+    "expired_reference_status": 404,
+    "required_behavior": "detect block-hash mismatch; discard stale plan/reference; re-prepare; report both values with explanation",
+    "forbidden": "silently reusing expired references"
+  }
+}

@@ -86,22 +86,38 @@ export interface ConfigInput {
   finalFee?: bigint;
 }
 
+const CONFIG_DEFAULTS = {
+  quoteToken: NATIVE,
+  name: "Fixture Token",
+  symbol: "FIX",
+  decimals: 18,
+  totalSupply: 1_000_000n * 10n ** 18n,
+  quoteAmount: 0n,
+  targetTick: -1000,
+  upperTick: 1000,
+  tickSpacing: 100,
+  initialFee: (1n << 64n) / 10n,
+  finalFee: (1n << 64n) / 100n,
+};
+
 export function config(input: ConfigInput) {
+  const defined = Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined));
+  const merged = { ...CONFIG_DEFAULTS, ...defined } as typeof CONFIG_DEFAULTS & ConfigInput;
   return {
-    owner: input.owner,
-    quoteToken: input.quoteToken ?? NATIVE,
-    name: input.name ?? "Fixture Token",
-    symbol: input.symbol ?? "FIX",
-    decimals: input.decimals ?? 18,
-    totalSupply: input.totalSupply ?? 1_000_000n * 10n ** 18n,
-    quoteAmount: input.quoteAmount ?? 0n,
-    startTime: BigInt(input.startTime),
-    endTime: BigInt(input.endTime),
-    targetTick: input.targetTick ?? -1000,
-    upperTick: input.upperTick ?? 1000,
-    tickSpacing: input.tickSpacing ?? 100,
-    initialFee: input.initialFee ?? (1n << 64n) / 10n,
-    finalFee: input.finalFee ?? (1n << 64n) / 100n,
+    owner: merged.owner,
+    quoteToken: merged.quoteToken,
+    name: merged.name,
+    symbol: merged.symbol,
+    decimals: merged.decimals,
+    totalSupply: merged.totalSupply,
+    quoteAmount: merged.quoteAmount,
+    startTime: BigInt(merged.startTime),
+    endTime: BigInt(merged.endTime),
+    targetTick: merged.targetTick,
+    upperTick: merged.upperTick,
+    tickSpacing: merged.tickSpacing,
+    initialFee: merged.initialFee,
+    finalFee: merged.finalFee,
     migrationTickLower: -2000,
     migrationTickUpper: 2000,
   };

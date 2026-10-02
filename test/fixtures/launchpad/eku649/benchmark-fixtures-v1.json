@@ -1,0 +1,650 @@
+{
+  "bundle_id": "launchpad-benchmark-fixtures-v1",
+  "synthetic": true,
+  "warning": "SYNTHETIC fixtures for agent-benchmark-spec v1. No mainnet data; no real tokens, people, or values.",
+  "spec": "EKU-642/agent-benchmark-spec v1",
+  "pinned_at_utc": "2026-10-02T16:30:00Z",
+  "chains": {
+    "8453": {
+      "name": "Base",
+      "head_block": 32000100,
+      "head_hash": "0xee5c91c268af092d859efc0603770da9cde1e7c0bd618c4ac77478af59f67ca5",
+      "head_timestamp": 1790000000,
+      "block_time_s": 2
+    },
+    "42161": {
+      "name": "Arbitrum One",
+      "head_block": 28500050,
+      "head_hash": "0xaa1746135612d249d55c8c90e8b2165c09371b94576c3079946ea1ca8f188bf0",
+      "head_timestamp": 1790000000
+    }
+  },
+  "excluded_addresses": {
+    "pool": "0xP001000000000000000000000000000000000001",
+    "vault": "0xVAU1700000000000000000000000000000000001",
+    "burn": "0x000000000000000000000000000000000000dEaD",
+    "note": "C4 must exclude pool, vesting/vault, burn from circulating figures"
+  },
+  "pool_token": "0xP001000000000000000000000000000000000001",
+  "vault": "0xVAU1700000000000000000000000000000000001",
+  "burn": "0x000000000000000000000000000000000000dEaD",
+  "creator_T": "0xC0EAT000000000000000000000000000000000001",
+  "blocks": [
+    {
+      "chain_id": 8453,
+      "number": 31998900,
+      "hash": "0x3aaf4f0fcbbf6330da2740d87694aa3c6281dd7305ab9a6d01071de6acaba12f",
+      "timestamp": 1789997600,
+      "note": "T launch block (synthetic)"
+    },
+    {
+      "chain_id": 8453,
+      "number": 31999600,
+      "hash": "0x06ea6378497d1be9fc768789e063ab4b7e0c56090c2674292d5372bc2a1c87ee",
+      "timestamp": 1789999000,
+      "note": "stale index snapshot block Hs (C6)"
+    },
+    {
+      "chain_id": 8453,
+      "number": 32000100,
+      "hash": "0xee5c91c268af092d859efc0603770da9cde1e7c0bd618c4ac77478af59f67ca5",
+      "timestamp": 1790000000,
+      "note": "chain head H (synthetic)"
+    },
+    {
+      "chain_id": 42161,
+      "number": 28500050,
+      "hash": "0xaa1746135612d249d55c8c90e8b2165c09371b94576c3079946ea1ca8f188bf0",
+      "timestamp": 1790000000,
+      "note": "arbitrum head (synthetic)"
+    }
+  ],
+  "tokens": [
+    {
+      "chain_id": 8453,
+      "address": "0x1111111111111111111111111111111111110001",
+      "symbol": "TOKYO",
+      "name": "Tokyo Launch Token",
+      "decimals": 18,
+      "total_supply_base_units": "1000000000000000000000000000",
+      "creator": "0xC0EAT000000000000000000000000000000000001",
+      "deploy_tx": "0x3d9fce296017638dce29398d3c28e1c0499bdc833a7ac545331c6288f4e88598",
+      "launch_block": 31998900,
+      "launch_timestamp": 1789997600,
+      "auction_config": {
+        "phase": "active",
+        "creator_fee_q32": "64000000",
+        "salt": "0x5afc44f3cc98d248b26a1627f9908cadb91fa0539c2808b9e3adca34e4eda852",
+        "token_id_derivation": "keccak256(auction_addr, salt) [EXT-DRAFT pending EKU-650]",
+        "graduation_pool_initialized": false
+      }
+    },
+    {
+      "chain_id": 8453,
+      "address": "0xF0C000000000000000000000000000000000000A",
+      "symbol": "FROG",
+      "name": "Frog Original",
+      "decimals": 18,
+      "total_supply_base_units": "1000000000000000000000000000",
+      "creator": "0xC0EAF00000000000000000000000000000000000A",
+      "deploy_tx": "0x54e4a9d68f9b20f7e00e2fe142d7bc5b3cbacadf02367353a6f47dff76b96be0",
+      "launch_block": 31900000,
+      "launch_timestamp": 1789799800,
+      "visibility_priority": 1,
+      "note": "earliest FROG on Base"
+    },
+    {
+      "chain_id": 8453,
+      "address": "0xF0C000000000000000000000000000000000000B",
+      "symbol": "FROG",
+      "name": "Frog Copy",
+      "decimals": 18,
+      "total_supply_base_units": "500000000000000000000000000",
+      "creator": "0x5ca60000000000000000000000000000000000B",
+      "deploy_tx": "0x854e9fcdb00a6c637843f38eada479789e8b047454d1f46cfdb3c06b9d74ccdc",
+      "launch_block": 31995000,
+      "launch_timestamp": 1789989800,
+      "visibility_priority": 5
+    },
+    {
+      "chain_id": 42161,
+      "address": "0xF0C000000000000000000000000000000000000C",
+      "symbol": "FROG",
+      "name": "Frog Arbitrum",
+      "decimals": 18,
+      "total_supply_base_units": "1000000000000000000000000000",
+      "creator": "0xa88178000000000000000000000000000000000C",
+      "deploy_tx": "0x4afcc824cebfb5e1e80a2dc880dcce4ef1efc431831ce524463678def3252a69",
+      "launch_block": 28490000,
+      "launch_timestamp": 1789979900,
+      "visibility_priority": 3
+    },
+    {
+      "chain_id": 8453,
+      "address": "0xM00N000000000000000000000000000000000F1",
+      "symbol": "MOON",
+      "name": "Moon Official",
+      "decimals": 18,
+      "total_supply_base_units": "1000000000000000000000000000",
+      "creator": "0x0ff1c1000000000000000000000000000000F1",
+      "deploy_tx": "0x28ed66dd4cc284da0c14585fafd072e6da914d615050093c3bde85c0ef2c61ff",
+      "launch_block": 31800000,
+      "launch_timestamp": 1789599800,
+      "metadata": {
+        "image": "ipfs://official-moon-image",
+        "mutable": true,
+        "caveat": "updatable metadata is an impersonation-relevant caveat"
+      },
+      "note": "earlier-deployed MOON; on-chain facts only, NOT proof of official status"
+    },
+    {
+      "chain_id": 8453,
+      "address": "0x600d00000000000000000000000000000000500f",
+      "symbol": "MOON",
+      "name": "Moon Official",
+      "decimals": 18,
+      "total_supply_base_units": "1000000000000000000000000000",
+      "creator": "0x5c00000000000000000000000000000000000500",
+      "deploy_tx": "0x969b9329c283d3cd1f600a8e72e299718fb095aef25535a74999751b3acc1180",
+      "launch_block": 31999000,
+      "launch_timestamp": 1789997800,
+      "metadata": {
+        "image": "ipfs://official-moon-image",
+        "note": "COPIED name/symbol/image from earlier token; different address+creator"
+      },
+      "note": "spoof-metadata case (E10)"
+    },
+    {
+      "chain_id": 8453,
+      "address": "0x99990000000000000000000000000000000000E7",
+      "symbol": "GRAD",
+      "name": "Graduated Token",
+      "decimals": 18,
+      "total_supply_base_units": "1000000000000000000000000000",
+      "creator": "0x9a9a0000000000000000000000000000000000e7",
+      "deploy_tx": "0x6a2c5789176a436fe5b1cf150015ee506c1c45497381c85f858b804cd90ab8b8",
+      "launch_block": 31800100,
+      "launch_timestamp": 1789600000,
+      "auction_config": {
+        "phase": "complete",
+        "creator_fee_q32": "32000000",
+        "graduation_pool_initialized": true
+      }
+    }
+  ],
+  "pools": [
+    {
+      "pool_id": "0x3cbedf6761fafe76ca53b1679e23322f5acb737779476d8bec929c3a68173243",
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "launch_block": 31998900,
+      "launch_timestamp": 1789997600,
+      "tvl_usd": "812.45"
+    },
+    {
+      "pool_id": "0xfc2616da517ed0655b2285ad05788788e3bb381264d6ab5399fd2f77c36a86ca",
+      "chain_id": 8453,
+      "token": "0x600d00000000000000000000000000000000500f",
+      "launch_block": 31999000,
+      "launch_timestamp": 1789997800,
+      "tvl_usd": "410.10"
+    },
+    {
+      "pool_id": "0xed60fc4643b1894fb641ad9628965acde426f58f6cb1ab528a07e613077cde82",
+      "chain_id": 8453,
+      "token": "0xF0C000000000000000000000000000000000000B",
+      "launch_block": 31995000,
+      "launch_timestamp": 1789989800,
+      "tvl_usd": "95.00"
+    },
+    {
+      "pool_id": "0xf757fad476cba124042d35dacad8f0ba818b947c7a39d8bf6828c9620ca11e04",
+      "chain_id": 8453,
+      "token": "0x99990000000000000000000000000000000000E7",
+      "launch_block": 31990000,
+      "launch_timestamp": 1789979800,
+      "tvl_usd": "52000.00",
+      "note": "above $1k filter: must be EXCLUDED from C1 answer"
+    },
+    {
+      "pool_id": "0x3ee62b3ce9f88b5b619da0d3f3bd2f0356ed28f85ccd4052ad63bf362b6435d2",
+      "chain_id": 8453,
+      "token": "0xM00N000000000000000000000000000000000F1",
+      "launch_block": 31800000,
+      "launch_timestamp": 1789599800,
+      "tvl_usd": "500.00",
+      "note": "outside 24h window: must be EXCLUDED from C1 answer"
+    }
+  ],
+  "transfers": [
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0x0000000000000000000000000000000000000000",
+      "to": "0xC0EAT000000000000000000000000000000000001",
+      "amount_base_units": "1000000000000000000000000000",
+      "block_number": 31998900,
+      "log_index": 0,
+      "tx_hash": "0x8bdadff941d8a17c78391f2e01c2efac87fc255dccc80d71a470211539f702a1",
+      "tag": "mint"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0xP001000000000000000000000000000000000001",
+      "amount_base_units": "300000000000000000000000000",
+      "block_number": 31998900,
+      "log_index": 1,
+      "tx_hash": "0x3095927651e2978e042861306ebb3e0dafc6ed019aee5da9ec6fda3deba85ccd",
+      "tag": "seed-pool"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0xVAU1700000000000000000000000000000000001",
+      "amount_base_units": "100000000000000000000000000",
+      "block_number": 31998900,
+      "log_index": 2,
+      "tx_hash": "0x722be2330e98d4bbe01bbf314e71fd8c11a45f193ac562059c43622e9c96728f",
+      "tag": "seed-vault"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0x000000000000000000000000000000000000dEaD",
+      "amount_base_units": "1000000000000000000000000",
+      "block_number": 31998900,
+      "log_index": 3,
+      "tx_hash": "0x537adee67bc3d05f31b25bee70304f51c65b2a69a482d4a33cd804dc58d82c21",
+      "tag": "burn"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0xa0010000000000000000000000000000000000001",
+      "amount_base_units": "25000000000000000000000000",
+      "block_number": 31998910,
+      "log_index": 0,
+      "tx_hash": "0x2c5a85ee2f4ca3910e782e335936a99cca697ca8a20a7ba9e3e6688818d22942",
+      "tag": "early-window-buy"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0xb0020000000000000000000000000000000000002",
+      "amount_base_units": "15000000000000000000000000",
+      "block_number": 31998925,
+      "log_index": 0,
+      "tx_hash": "0x378e85dff29a632be915c3fb8f09e9ec11a7bfb966d68b0649673aff1b8babf8",
+      "tag": "early-window-buy"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0xc0030000000000000000000000000000000000003",
+      "amount_base_units": "10000000000000000000000000",
+      "block_number": 31998940,
+      "log_index": 0,
+      "tx_hash": "0xaddd31ffbd2b7ad89a476402a15892a1ed7764c82361c30106cb2aea4a7c0f9d",
+      "tag": "early-window-buy"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0xa0010000000000000000000000000000000000001",
+      "amount_base_units": "95000000000000000000000000",
+      "block_number": 31999001,
+      "log_index": 0,
+      "tx_hash": "0xaa89aff73401abc352a054686cd7eb492c3319b26fd110353f30122eb78d937d",
+      "tag": "distribution"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0xb0020000000000000000000000000000000000002",
+      "amount_base_units": "65000000000000000000000000",
+      "block_number": 31999002,
+      "log_index": 0,
+      "tx_hash": "0x2948094fbf2f5ea96145ce492d3d97be4ea79c2fae275137a9d96f932f631460",
+      "tag": "distribution"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0xc0030000000000000000000000000000000000003",
+      "amount_base_units": "50000000000000000000000000",
+      "block_number": 31999003,
+      "log_index": 0,
+      "tx_hash": "0x7076f118e7dfb1eafe825bbdf399e31723c7319775635d95dca67678a8f9fa1e",
+      "tag": "distribution"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0xd0040000000000000000000000000000000000004",
+      "amount_base_units": "40000000000000000000000000",
+      "block_number": 31999004,
+      "log_index": 0,
+      "tx_hash": "0xb91e31b6416b4d2b9d8ee076e8224f1f442b5fee30859156aee87807e91d7fcd",
+      "tag": "distribution"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0xe0050000000000000000000000000000000000005",
+      "amount_base_units": "30000000000000000000000000",
+      "block_number": 31999005,
+      "log_index": 0,
+      "tx_hash": "0xf8c27a8b62261bb13563a8a270468b213d7bf0371b4893d56b47c64e8f23289b",
+      "tag": "distribution"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0xf0060000000000000000000000000000000000006",
+      "amount_base_units": "20000000000000000000000000",
+      "block_number": 31999006,
+      "log_index": 0,
+      "tx_hash": "0x0737fc825f290cecdde329d356ebaba3482f3dfa73c99a1f437aed105de5af94",
+      "tag": "distribution"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0x90070000000000000000000000000000000000007",
+      "amount_base_units": "15000000000000000000000000",
+      "block_number": 31999007,
+      "log_index": 0,
+      "tx_hash": "0x6426677653338a5a1b93995d013774d53684fa5db7ceb4ae173f3bb378d677c0",
+      "tag": "distribution"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0x80080000000000000000000000000000000000008",
+      "amount_base_units": "12000000000000000000000000",
+      "block_number": 31999008,
+      "log_index": 0,
+      "tx_hash": "0xb592ea75a59d13c9761b8a37cebd759eac6a01f2eabff0db6fc3f5369f319a9b",
+      "tag": "distribution"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0x10090000000000000000000000000000000000009",
+      "amount_base_units": "10000000000000000000000000",
+      "block_number": 31999009,
+      "log_index": 0,
+      "tx_hash": "0x36551c52d05dae4eaad80e3bc71853d1cb14fe15201f1d07b3a219e2ce7b4663",
+      "tag": "distribution"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0xa0100000000000000000000000000000000000010",
+      "amount_base_units": "6000000000000000000000000",
+      "block_number": 31999010,
+      "log_index": 0,
+      "tx_hash": "0xc2fbc687e7163d8022a8058575478278d271beeed683ddce874cf6e03ca7b1d8",
+      "tag": "distribution"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0xb0110000000000000000000000000000000000011",
+      "amount_base_units": "4000000000000000000000000",
+      "block_number": 31999011,
+      "log_index": 0,
+      "tx_hash": "0xff3d3bb4470a388b51f740884bf12b0965cf6d3fc86901fb7168a4d090ebcda9",
+      "tag": "distribution"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0xc0120000000000000000000000000000000000012",
+      "amount_base_units": "2000000000000000000000000",
+      "block_number": 31999012,
+      "log_index": 0,
+      "tx_hash": "0x3b34b9c45a4407af407bd3119e11f78bdea819c782bfe83e99037ade31f656f0",
+      "tag": "distribution"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0xd0a50000000000000000000000000000000000d01",
+      "amount_base_units": "6000000000000000000000000",
+      "block_number": 31999100,
+      "log_index": 0,
+      "tx_hash": "0x1cbec310205aad9a419865a77679e66a450af8f61d8d03d748f25237f9419e54",
+      "tag": "wash-funding"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xC0EAT000000000000000000000000000000000001",
+      "to": "0xd0a60000000000000000000000000000000000d02",
+      "amount_base_units": "6000000000000000000000000",
+      "block_number": 31999101,
+      "log_index": 0,
+      "tx_hash": "0x9e03ddbb297f447627b202f6f23a1c7a6afd09fd1633555faebf7700d25be39c",
+      "tag": "wash-funding"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xd0a50000000000000000000000000000000000d01",
+      "to": "0xd0a60000000000000000000000000000000000d02",
+      "amount_base_units": "5000000000000000000000000",
+      "block_number": 31998100,
+      "log_index": 0,
+      "tx_hash": "0x8b86f2117a177df0971c132f4943d0ba998ee9712cf8cc4483bcb30dcd876cc4",
+      "tag": "wash-leg"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xd0a60000000000000000000000000000000000d02",
+      "to": "0xd0a50000000000000000000000000000000000d01",
+      "amount_base_units": "5000000000000000000000000",
+      "block_number": 31998101,
+      "log_index": 0,
+      "tx_hash": "0xd0c12805ab310a4e1663ddc1e211edc90db8c806d1353fdfb36a16b6f2ddebec",
+      "tag": "wash-leg"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xd0a50000000000000000000000000000000000d01",
+      "to": "0xd0a60000000000000000000000000000000000d02",
+      "amount_base_units": "5000000000000000000000000",
+      "block_number": 31998400,
+      "log_index": 0,
+      "tx_hash": "0x7d08cf33edb0f90298347ecf990b47457c9e7b41d84f903212766df7a6443ffc",
+      "tag": "wash-leg"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xd0a60000000000000000000000000000000000d02",
+      "to": "0xd0a50000000000000000000000000000000000d01",
+      "amount_base_units": "5000000000000000000000000",
+      "block_number": 31998401,
+      "log_index": 0,
+      "tx_hash": "0x46857de3dcf83e08ed96d32b33086019ede137b0cf92416ed932c15868117aa2",
+      "tag": "wash-leg"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xd0a50000000000000000000000000000000000d01",
+      "to": "0xd0a60000000000000000000000000000000000d02",
+      "amount_base_units": "5000000000000000000000000",
+      "block_number": 31998700,
+      "log_index": 0,
+      "tx_hash": "0xb4076177e9b0ae8c73bd9ae3bbaf617a12189f538505eeafb2a6dff6d9e48836",
+      "tag": "wash-leg"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xd0a60000000000000000000000000000000000d02",
+      "to": "0xd0a50000000000000000000000000000000000d01",
+      "amount_base_units": "5000000000000000000000000",
+      "block_number": 31998701,
+      "log_index": 0,
+      "tx_hash": "0x798d077912792d02c260a02ab2db2527ee6699727baa3e0d156bc882d3aa996c",
+      "tag": "wash-leg"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xd0a50000000000000000000000000000000000d01",
+      "to": "0xd0a60000000000000000000000000000000000d02",
+      "amount_base_units": "5000000000000000000000000",
+      "block_number": 31999000,
+      "log_index": 0,
+      "tx_hash": "0x62e80e655534a4acc62fb9938dbd9235d6b043ec5c1f1d82599bd1e1970d488c",
+      "tag": "wash-leg"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xd0a60000000000000000000000000000000000d02",
+      "to": "0xd0a50000000000000000000000000000000000d01",
+      "amount_base_units": "5000000000000000000000000",
+      "block_number": 31999001,
+      "log_index": 0,
+      "tx_hash": "0x2cb3d1714f2589c4459f5345e0ea0e652165cc8e25426ab5cb601e385163b195",
+      "tag": "wash-leg"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xd0a50000000000000000000000000000000000d01",
+      "to": "0xd0a60000000000000000000000000000000000d02",
+      "amount_base_units": "5000000000000000000000000",
+      "block_number": 31999300,
+      "log_index": 0,
+      "tx_hash": "0x3080716e7efe3ea1e1f4c849bb33c7d03a179434f3119a87bca74cdec0567e5f",
+      "tag": "wash-leg"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xd0a60000000000000000000000000000000000d02",
+      "to": "0xd0a50000000000000000000000000000000000d01",
+      "amount_base_units": "5000000000000000000000000",
+      "block_number": 31999301,
+      "log_index": 0,
+      "tx_hash": "0xcb6107bd57aa5edff248ec46726ef7e87a2cd36c17737c0e858d2f46da72f460",
+      "tag": "wash-leg"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xd0a50000000000000000000000000000000000d01",
+      "to": "0xd0a60000000000000000000000000000000000d02",
+      "amount_base_units": "5000000000000000000000000",
+      "block_number": 31999600,
+      "log_index": 0,
+      "tx_hash": "0xf67aa3a804402a4dbb94081b37a958fdb7d06f377c464326d18e27f6ae552701",
+      "tag": "wash-leg"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xd0a60000000000000000000000000000000000d02",
+      "to": "0xd0a50000000000000000000000000000000000d01",
+      "amount_base_units": "5000000000000000000000000",
+      "block_number": 31999601,
+      "log_index": 0,
+      "tx_hash": "0xc3cbce44b3d0394554e4d7ae989a1948dbc1f6174c910d84bafa7c83e98741c7",
+      "tag": "wash-leg"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xd0a50000000000000000000000000000000000d01",
+      "to": "0xd0a50000000000000000000000000000000000d01",
+      "amount_base_units": "1000000000000000000000000",
+      "block_number": 31999600,
+      "log_index": 0,
+      "tx_hash": "0x9576ae5950ca24872c053c4cfa78ed7857432d6c6a053634089c767993802e0d",
+      "tag": "wash-self"
+    },
+    {
+      "chain_id": 8453,
+      "token": "0x1111111111111111111111111111111111110001",
+      "from": "0xd0a50000000000000000000000000000000000d01",
+      "to": "0xd0a50000000000000000000000000000000000d01",
+      "amount_base_units": "1000000000000000000000000",
+      "block_number": 31999700,
+      "log_index": 0,
+      "tx_hash": "0xee31478dc5a5bbafc9fb833245a3a24fe21da2e5a0a3370f16711b3b2092ba38",
+      "tag": "wash-self"
+    }
+  ],
+  "wash_addresses": [
+    "0xd0a50000000000000000000000000000000000d01",
+    "0xd0a60000000000000000000000000000000000d02"
+  ],
+  "index_snapshot": {
+    "snapshot_block": 31999600,
+    "snapshot_hash": "0x06ea6378497d1be9fc768789e063ab4b7e0c56090c2674292d5372bc2a1c87ee",
+    "chain_head_at_capture": 32000100,
+    "missing_range": [
+      31999601,
+      32000100
+    ],
+    "warning_required": true
+  },
+  "reorg": {
+    "reorged_block": 32000050,
+    "stale_hash": "0x975dfcc388977eca3d7039e56da0cf62cb3a420d92360221ba85c7aa117241ab",
+    "canonical_hash": "0x88cfbe4ffdfd7a2e5e15b7951bf74ce90f961b38f36614afa07d0d598eaadd18",
+    "note": "agent must detect block-hash mismatch, discard stale plan/reference, re-prepare",
+    "expired_reference": {
+      "reference_id": "ref-stale-0x454349",
+      "http_status_on_fetch": 404
+    }
+  },
+  "auction_states": {
+    "T": {
+      "token": "0x1111111111111111111111111111111111110001",
+      "chain_id": 8453,
+      "at_block": 32000100,
+      "phase": "active",
+      "graduation_pool_initialized": false,
+      "next_call": "prepare_auction_complete",
+      "note": "[EXT-DRAFT] parameter names pending CTO/EKU-650 lock; re-validate"
+    },
+    "G": {
+      "token": "0x99990000000000000000000000000000000000E7",
+      "chain_id": 8453,
+      "at_block": 32000100,
+      "phase": "complete",
+      "graduation_pool_initialized": true,
+      "next_call": "none-graduated"
+    }
+  },
+  "window_24h_start_block_base": 31956900
+}
