@@ -38,7 +38,7 @@
     "ethers": "6.17.0",
     "@cloudflare/workers-types": "5.20260929.1",
     "@types/bun": "1.4.2",
-    "@typescript-eslint/parser": "8.70.1",
+    "@typescript-eslint/parser": "8.71.0",
     "eslint": "10.11.0",
     "typescript": "^5.8.3",
     "wrangler": "4.144.0"
