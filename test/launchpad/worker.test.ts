@@ -3,6 +3,7 @@ import worker from "../../src/index.js";
 import { fakeArtifactStore } from "../fake-r2.js";
 import { E18, TOKEN, fixtureEnv, standardLaunch } from "./helpers.js";
 
+const PREPARE_TOOLS = ["launchpad_prepare_create", "launchpad_prepare_trade", "launchpad_prepare_advance"];
 const LAUNCHPAD_TOOLS = ["launchpad_search", "launchpad_get_launch", "launchpad_get_provenance", "launchpad_get_analytics"];
 
 function env(extra: Record<string, string> = {}) {
@@ -44,12 +45,12 @@ async function rpc(path: string, method: string, params: Record<string, unknown>
 }
 
 describe("launchpad endpoint", () => {
-  it("serves the four analytics tools only at /mcp/launchpad", async () => {
+  it("serves the four analytics tools and three preparation tools only at /mcp/launchpad", async () => {
     const scoped = await rpc("/mcp/launchpad", "tools/list", {}, env());
-    expect(scoped.result.tools.map((t: { name: string }) => t.name).sort()).toEqual([...LAUNCHPAD_TOOLS].sort());
+    expect(scoped.result.tools.map((t: { name: string }) => t.name).sort()).toEqual([...LAUNCHPAD_TOOLS, ...PREPARE_TOOLS].sort());
     const bundled = await rpc("/mcp", "tools/list", {}, env());
     const names = bundled.result.tools.map((t: { name: string }) => t.name);
-    for (const tool of LAUNCHPAD_TOOLS) expect(names).not.toContain(tool);
+    for (const tool of [...LAUNCHPAD_TOOLS, ...PREPARE_TOOLS]) expect(names).not.toContain(tool);
   });
 
   it("answers a tool call from the configured fixture", async () => {
