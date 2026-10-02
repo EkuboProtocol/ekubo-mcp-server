@@ -129,17 +129,17 @@ async function quoteDecimals(source: LaunchpadSource, context: EngineContext, la
 }
 
 export const searchSchema = z.object({
-    chain_id: chainId,
-    text: z.string().min(1).max(200).optional().describe("Matched against name and symbol after NFKC normalization and case folding, or an exact token address or pool id. A search key only, never an identifier."),
-    launched_after: z.number().int().nonnegative().optional().describe("Unix seconds; matches launches whose creation block timestamp is later."),
-    phase: phase.optional(),
-    quote_asset: address.optional(),
-    min_quote_raised: rawAmount.optional().describe("Raw quote units; requires quote_asset."),
-    max_quote_raised: rawAmount.optional().describe("Raw quote units; requires quote_asset."),
-    sort: z.enum(["launch_block_desc", "launch_block_asc", "quote_raised_desc"]).default("launch_block_desc"),
-    page_size: z.number().int().min(1).max(100).default(20),
-    cursor: z.string().max(1000).optional(),
-    finality,
+  chain_id: chainId,
+  text: z.string().min(1).max(200).optional().describe("Matched against name and symbol after NFKC normalization and case folding, or an exact token address or pool id. A search key only, never an identifier."),
+  launched_after: z.number().int().nonnegative().optional().describe("Unix seconds; matches launches whose creation block timestamp is later."),
+  phase: phase.optional(),
+  quote_asset: address.optional(),
+  min_quote_raised: rawAmount.optional().describe("Raw quote units; requires quote_asset."),
+  max_quote_raised: rawAmount.optional().describe("Raw quote units; requires quote_asset."),
+  sort: z.enum(["launch_block_desc", "launch_block_asc", "quote_raised_desc"]).default("launch_block_desc"),
+  page_size: z.number().int().min(1).max(100).default(20),
+  cursor: z.string().max(1000).optional(),
+  finality,
 });
 
 function requireQuoteAssetForRaised(query: { quote_asset?: string; min_quote_raised?: string; max_quote_raised?: string }): void {

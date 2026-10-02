@@ -1,4 +1,12 @@
-import { decodeEventLog, hexToBigInt, toEventSelector, type Abi } from "viem";
+import {
+  decodeEventLog,
+  encodeAbiParameters,
+  encodeEventTopics,
+  hexToBigInt,
+  toEventSelector,
+  type Abi,
+  type AbiEvent,
+} from "viem";
 import {
   CORE_SWAP_LOG_BYTES,
   PROTOCOL_EVENT_ABIS,
@@ -248,6 +256,25 @@ const SHAPERS: Record<string, (args: Args) => Record<string, unknown>> = {
   }),
 };
 
+class NonCanonicalEncoding extends Error {
+  override name = "NonCanonicalEncoding";
+}
+
+/**
+ * Decoding is lenient about trailing data and dirty topic bits, so every
+ * decoded log is re-encoded and must reproduce its topics and data exactly.
+ * A Transfer with 96 bytes of data, for example, is rejected instead of
+ * having its first word read as the amount.
+ */
+function requireCanonical(abi: Abi, log: RawLog, decoded: { eventName: string; args: Args }): void {
+  const event = abi.find((item) => item.type === "event" && item.name === decoded.eventName) as AbiEvent;
+  const body = event.inputs.filter((input) => !input.indexed);
+  const data = encodeAbiParameters(body, body.map((input) => decoded.args[input.name as string]) as never);
+  const topics = encodeEventTopics({ abi: [event], eventName: decoded.eventName, args: decoded.args } as never);
+  const sameTopics = topics.length === log.topics.length && topics.every((t, i) => t === log.topics[i]);
+  if (data.toLowerCase() !== log.data || !sameTopics) throw new NonCanonicalEncoding();
+}
+
 function decodeWith(abi: Abi, log: RawLog): LaunchEvent {
   const decoded = decodeEventLog({
     abi,
@@ -255,9 +282,9 @@ function decodeWith(abi: Abi, log: RawLog): LaunchEvent {
     topics: log.topics as [Hex, ...Hex[]],
     strict: true,
   }) as unknown as { eventName: string; args: Args };
+  requireCanonical(abi, log, decoded);
   const shaped = SHAPERS[decoded.eventName](decoded.args);
-  const extra =
-    decoded.eventName === "Transfer" ? { token: log.address } : {};
+  const extra = decoded.eventName === "Transfer" ? { token: log.address } : {};
   return {
     kind: decoded.eventName,
     ref: logRef(log),

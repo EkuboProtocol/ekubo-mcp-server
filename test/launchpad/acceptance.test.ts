@@ -234,6 +234,19 @@ describe("reorg replay", () => {
     expect(holders).not.toContain(BUYER_B);
   });
 
+  it("uses the reorgs marker when both branches' headers are delivered", async () => {
+    const { main, alt } = branches();
+    const orphaned = main.blocks.filter((b) => b.number >= 107);
+    const reorgs = orphaned.map((b) => ({
+      chain_id: "31337",
+      number: b.number,
+      canonical_hash: alt.blocks.find((a) => a.number === b.number)?.hash as string,
+      reorged_hashes: [b.hash],
+    }));
+    const both = alt.bundle({ blocks: [...alt.blocks, ...orphaned], logs: [...main.logs, ...alt.logs], reorgs });
+    expect(await everyResponse(both)).toEqual(await everyResponse(alt.bundle({ reorgs })));
+  });
+
   it("rolls an incremental store back to the common ancestor", async () => {
     const { main, alt } = branches();
     const store = new CanonicalChain();

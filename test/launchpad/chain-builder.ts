@@ -310,38 +310,60 @@ export class ChainBuilder {
   /** An eth_getLogs-shaped bundle (the EKU-662 v2 format) for this chain. */
   bundle(options: BundleOptions = {}): FixtureBundle {
     const chain = String(this.options.chain_id);
-    const head = options.head ?? this.head.number;
-    const asOfNumber = options.as_of ?? head;
-    const asOf = this.blocks.find((b) => b.number === asOfNumber) ?? this.head;
-    const contracts = { ...MANIFEST.contracts, ...(options.without_twamm ? {} : { twamm: MANIFEST.twamm }) };
+    const contracts = manifestContracts(options);
     return {
       bundle: "chain-builder",
-      retrieved_at: options.retrieved_at === null ? undefined : (options.retrieved_at ?? "2026-10-02T12:00:00.000Z"),
-      manifest: {
-        revision: options.revision ?? MANIFEST.revision,
-        contracts: { [chain]: contracts as unknown as Record<string, unknown> },
-      },
-      index: {
-        [chain]: {
-          indexed_range: { from_block: this.options.first_block, to_block: options.indexed_to ?? head },
-          missing_ranges: options.missing_ranges ?? [],
-          head_block: head,
-        },
-      },
-      as_of: {
-        [chain]: { block_number: asOf.number, block_hash: asOf.hash, block_timestamp: asOf.timestamp, finality: options.finality ?? "latest" },
-      },
+      ...retrievedAt(options),
+      manifest: { revision: options.revision ?? MANIFEST.revision, contracts: { [chain]: contracts } },
+      index: { [chain]: this.indexEntry(options) },
+      as_of: { [chain]: this.asOfEntry(options) },
       reorgs: options.reorgs ?? [],
       pinned_prices: options.prices ?? [],
-      blocks: (options.blocks ?? this.blocks).map((b) => ({ chain_id: chain, ...b })),
-      logs: (options.logs ?? this.logs).map((l) => ({ chain_id: chain, transaction_index: 0, ...l })),
+      ...this.chainData(options, chain),
       transactions: [...this.transactions],
-      code_hashes: {
-        [chain]: options.code_hashes ?? Object.fromEntries(Object.values(contracts).map((c) => [c.address, c.code_hash as string])),
-      },
+      code_hashes: { [chain]: options.code_hashes ?? codeHashes(contracts) },
       token_decimals: {},
     };
   }
+
+  private indexEntry(options: BundleOptions) {
+    const head = options.head ?? this.head.number;
+    return {
+      indexed_range: { from_block: this.options.first_block, to_block: options.indexed_to ?? head },
+      missing_ranges: options.missing_ranges ?? [],
+      head_block: head,
+    };
+  }
+
+  private asOfEntry(options: BundleOptions) {
+    const wanted = options.as_of ?? options.head ?? this.head.number;
+    const asOf = this.blocks.find((b) => b.number === wanted) ?? this.head;
+    return { block_number: asOf.number, block_hash: asOf.hash, block_timestamp: asOf.timestamp, finality: options.finality ?? "latest" };
+  }
+
+  private chainData(options: BundleOptions, chain: string) {
+    return {
+      blocks: (options.blocks ?? this.blocks).map((b) => ({ chain_id: chain, ...b })),
+      logs: (options.logs ?? this.logs).map((l) => ({ chain_id: chain, transaction_index: 0, ...l })),
+    };
+  }
+}
+
+type ContractEntries = Record<string, { address: string; code_hash: string | null }>;
+
+function manifestContracts(options: BundleOptions): ContractEntries {
+  const contracts: ContractEntries = { ...MANIFEST.contracts };
+  if (options.without_twamm !== true && MANIFEST.twamm !== null) contracts.twamm = MANIFEST.twamm;
+  return contracts;
+}
+
+function codeHashes(contracts: ContractEntries): Record<string, string> {
+  return Object.fromEntries(Object.values(contracts).map((c) => [c.address, c.code_hash ?? ""]));
+}
+
+function retrievedAt(options: BundleOptions): { retrieved_at?: string } {
+  if (options.retrieved_at === null) return {};
+  return { retrieved_at: options.retrieved_at ?? "2026-10-02T12:00:00.000Z" };
 }
 
 export interface BundleOptions {
