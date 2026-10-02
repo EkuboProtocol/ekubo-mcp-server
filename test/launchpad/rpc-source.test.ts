@@ -59,6 +59,7 @@ function mockNode(chain: ChainBuilder, options: MockOptions = {}) {
     return { result };
   };
   const methods: Record<string, (params: unknown[]) => unknown> = {
+    eth_chainId: () => ({ result: toHex(chain.options.chain_id) }),
     eth_getBlockByNumber: (p) => ({ result: block(p[0] as string) }),
     eth_getLogs: (p) => logs(p[0] as Filter),
     eth_getTransactionByHash: (p) => ({ result: chain.transactions.find((t) => t.hash === p[0]) ?? null }),
@@ -78,7 +79,6 @@ function mockNode(chain: ChainBuilder, options: MockOptions = {}) {
 
 const manifest = {
   ...MANIFEST,
-  deployment_block: 100,
   contracts: { ...MANIFEST.contracts, scheduled_launch: { address: C.scheduled_launch.address, code_hash: keccak256(CODE) } },
 };
 
@@ -106,6 +106,7 @@ describe("JSON-RPC source", () => {
     expect(node.calls.filter((m) => m === "eth_getLogs").length).toBe(10);
     const fromRpc = prepareEngine(snapshot);
     const fromFixture = prepareEngine({ ...snapshot, kind: "fixture", logs: chain.logs, headers: chain.blocks });
+    expect(snapshot.prices).toEqual([]);
     expect(fromRpc.findings.complete).toBe(true);
     expect([...fromRpc.index.by_token.keys()]).toEqual([TOKEN]);
     expect(fromRpc.index.transfers.get(TOKEN)?.length).toBe(fromFixture.index.transfers.get(TOKEN)?.length);

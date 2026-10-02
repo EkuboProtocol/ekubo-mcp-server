@@ -1,7 +1,8 @@
 import type { EventOf } from "./decode.js";
 import type { Findings } from "./envelope.js";
 import type { LaunchRecord } from "./launches.js";
-import { decimalString, share, sum } from "./numbers.js";
+import { ratio, share, sum, type Ratio } from "./numbers.js";
+import { terminalAccounting } from "./terminal.js";
 import {
   deployed,
   finished,
@@ -62,6 +63,12 @@ export interface Exclusion {
   components?: { category: string; amount: bigint | null; note?: string }[];
 }
 
+export interface CoreInputs {
+  timestamp: number;
+  core_indexed: boolean;
+  liquidity_contract: Address;
+}
+
 export interface HolderRow {
   address: Address;
   balance: bigint;
@@ -73,16 +80,16 @@ export interface Distribution {
   circulating: bigint;
   holders: HolderRow[];
   holder_count: number;
-  mean: string | null;
-  median: string | null;
-  top_n_share: Record<"1" | "5" | "10", string | null>;
+  mean: Ratio | null;
+  median: Ratio | null;
+  top_n_share: Record<"1" | "5" | "10", Ratio | null>;
 }
 
-function median(sorted: readonly bigint[]): string | null {
+function median(sorted: readonly bigint[]): Ratio | null {
   if (sorted.length === 0) return null;
   const middle = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 1) return sorted[middle].toString();
-  return decimalString(sorted[middle - 1] + sorted[middle], 2n);
+  if (sorted.length % 2 === 1) return ratio(sorted[middle], 1n);
+  return ratio(sorted[middle - 1] + sorted[middle], 2n);
 }
 
 /**
@@ -120,7 +127,7 @@ export function distribution(
     circulating,
     holders,
     holder_count: holders.length,
-    mean: holders.length === 0 ? null : decimalString(held, BigInt(holders.length)),
+    mean: holders.length === 0 ? null : ratio(held, BigInt(holders.length)),
     median: median(ascending),
     top_n_share: { "1": top(1), "5": top(5), "10": top(10) },
   };
@@ -142,53 +149,65 @@ export function unclaimedExtensionFees(launch: LaunchRecord): bigint {
   return launchSideFees(launch);
 }
 
-function pendingPrincipalToken(launch: LaunchRecord): bigint | null {
-  if (launch.locks.length > 0) return null;
-  return sum(launch.principal.map((e) => side(launch, e, "token")));
+/** Launch-token creator fees still in either ledger. Exact from events when Core is indexed. */
+export function unclaimedLedgers(launch: LaunchRecord, liquidityContract: Address) {
+  const terminal = terminalAccounting(launch, liquidityContract);
+  return {
+    scheduled_launch: unclaimedExtensionFees(launch),
+    locked_launch_liquidity: side(launch, terminal.creator_ledger, "token"),
+  };
+}
+
+function knownCategories(launch: LaunchRecord, inputs: CoreInputs) {
+  const done = finished(launch);
+  const unreleased = done ? 0n : launch.config.total_supply - releasedAt(launch.config, inputs.timestamp);
+  const reserves = done ? 0n : launch.config.total_supply - deployed(launch);
+  if (!inputs.core_indexed) {
+    return { unreleased, undeployed: reserves - unreleased, launchPool: null, fees: unclaimedExtensionFees(launch), locked: null };
+  }
+  const terminal = terminalAccounting(launch, inputs.liquidity_contract);
+  const ledgers = unclaimedLedgers(launch, inputs.liquidity_contract);
+  return {
+    unreleased,
+    undeployed: reserves - unreleased,
+    launchPool: poolReserve(launch, launch.launch_pool, "token"),
+    fees: ledgers.scheduled_launch + ledgers.locked_launch_liquidity,
+    locked: poolReserve(launch, launch.terminal_pool, "token") + side(launch, terminal.pending_principal, "token"),
+  };
 }
 
 /**
  * Split Core's launch-token balance into the contract's categories. Each
  * known category is exact from events; the remainder is "other Core-held".
+ * Without Core logs the pool categories, and so the remainder, are unknown.
  */
 export function coreComponents(
   launch: LaunchRecord,
   coreBalance: bigint,
-  timestamp: number,
+  inputs: CoreInputs,
   findings: Findings,
 ): NonNullable<Exclusion["components"]> {
-  const done = finished(launch);
-  const unreleased = done ? 0n : launch.config.total_supply - releasedAt(launch.config, timestamp);
-  const reserves = done ? 0n : launch.config.total_supply - deployed(launch);
-  const launchPool = poolReserve(launch, launch.launch_pool, "token");
-  const fees = unclaimedExtensionFees(launch);
-  const terminalPool = poolReserve(launch, launch.terminal_pool, "token");
-  const pending = pendingPrincipalToken(launch);
-  const known = unreleased + launchPool + fees + terminalPool + (pending ?? 0n);
-  const other = coreBalance - known;
-  if (other < 0n) {
+  const c = knownCategories(launch, inputs);
+  const other =
+    c.launchPool === null || c.locked === null ? null : coreBalance - c.unreleased - c.launchPool - c.fees - c.locked;
+  if (other !== null && other < 0n) {
     findings.incompleteBecause(
       "The categorized Core-held amounts exceed Core's launch-token balance from Transfer logs; logs are missing or inconsistent.",
     );
   }
-  if (pending === null) {
-    findings.note(
-      "After migration, undeposited principal and terminal-ledger creator fees are not separable from events in v1; they are included in other_core_held.",
-    );
-  }
   return [
-    { category: "unreleased_inventory", amount: unreleased },
-    { category: "launch_pool_liquidity", amount: launchPool },
-    { category: "unclaimed_creator_fees", amount: fees, note: "launch-token fees in the ScheduledLaunch creator ledger" },
+    { category: "unreleased_inventory", amount: c.unreleased },
+    { category: "launch_pool_liquidity", amount: c.launchPool },
+    { category: "unclaimed_creator_fees", amount: c.fees, note: "launch-token fees in the ScheduledLaunch and LockedLaunchLiquidity creator ledgers" },
     {
       category: "locked_terminal_liquidity",
-      amount: terminalPool + (pending ?? 0n),
+      amount: c.locked,
       note: "terminal-pool reserves (including any third-party positions in that pool) plus principal received but not yet deposited",
     },
     {
       category: "other_core_held",
       amount: other,
-      note: `includes ${reserves - unreleased} raw units of released inventory not yet deployed into the launch pool`,
+      note: `includes ${c.undeployed} raw units of released inventory not yet deployed into the launch pool`,
     },
   ];
 }
@@ -198,17 +217,18 @@ export function exclusionsFor(
   launch: LaunchRecord,
   ledger: Ledger,
   manifest: LaunchpadManifest,
-  timestamp: number,
+  inputs: Omit<CoreInputs, "liquidity_contract">,
   findings: Findings,
 ): Exclusion[] {
   const balance = (address: Address) => ledger.balances.get(address) ?? 0n;
   const core = manifest.contracts.core.address;
+  const coreInputs = { ...inputs, liquidity_contract: manifest.contracts.locked_launch_liquidity.address };
   return [
     {
       address: core,
       category: "core",
       amount: balance(core),
-      components: coreComponents(launch, balance(core), timestamp, findings),
+      components: coreComponents(launch, balance(core), coreInputs, findings),
     },
     { address: ZERO_ADDRESS, category: "zero_address", amount: ledger.burned_to_zero },
     { address: DEAD_ADDRESS, category: "dead_address", amount: balance(DEAD_ADDRESS) },
@@ -223,6 +243,14 @@ export function exclusionsFor(
       amount: balance(manifest.contracts.router.address),
     },
   ];
+}
+
+/** Caller-supplied exclusions (ruling A2), echoed with their balances; duplicates of built-ins are skipped. */
+export function callerExclusions(ledger: Ledger, addresses: readonly Address[], builtIn: readonly Exclusion[]): Exclusion[] {
+  const taken = new Set(builtIn.map((e) => e.address));
+  return [...new Set(addresses)]
+    .filter((address) => !taken.has(address))
+    .map((address) => ({ address, category: "caller_supplied", amount: ledger.balances.get(address) ?? 0n }));
 }
 
 /** Integrity checks that turn a holder result incomplete. */

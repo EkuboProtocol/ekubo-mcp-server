@@ -28,7 +28,7 @@ export const tools = {
     launchpadGetProvenance(fixtureEnv(b), { chain_id: CHAIN, ...args } as never),
   analytics: (b: FixtureBundle, args: Record<string, unknown>): Promise<Json> =>
     launchpadGetAnalytics(fixtureEnv(b), { chain_id: CHAIN, ...args } as never),
-  stats: (b: FixtureBundle): Promise<Json> => launchpadStats(fixtureEnv(b)),
+  stats: (b: FixtureBundle): Promise<Json> => launchpadStats(fixtureEnv(b), CHAIN),
 };
 
 export const SENDER = addr(0x5e, "e");

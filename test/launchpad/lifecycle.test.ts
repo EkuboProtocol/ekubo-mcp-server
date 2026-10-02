@@ -1,11 +1,12 @@
 import { describe, expect, it } from "bun:test";
+import { ratio } from "../../src/launchpad/analytics/numbers.js";
 import { C, addr } from "./chain-builder.js";
 import { BUYER_A, BUYER_B, E18, RECIPIENT_R, TOKEN, standardLaunch, tools } from "./helpers.js";
 
 describe("launch phases", () => {
   it("is scheduled before start_time", async () => {
     const { chain } = standardLaunch();
-    const bundle = chain.bundle({ head_block: 103, indexed_range: { from_block: 100, to_block: 103 } });
+    const bundle = chain.bundle({ as_of: 103, head: 103 });
     expect((await tools.launch(bundle, { token: TOKEN })).launch.phase).toBe("scheduled");
   });
 
@@ -32,13 +33,18 @@ describe("launch phases", () => {
     });
     const pending = await tools.launch(chain.bundle(), { token: TOKEN });
     expect(pending.launch.phase).toBe("migration_pending");
-    expect(pending.launch.pending_principal).toEqual({ launch_token: (950_000n * unit).toString(), quote: E18.toString() });
+    expect(pending.launch.principal).toEqual({
+      received: { launch_token: (950_000n * unit).toString(), quote: E18.toString() },
+      deposited: { launch_token: "0", quote: "0" },
+      pending: { launch_token: (950_000n * unit).toString(), quote: E18.toString() },
+      liquidity_locked: "0",
+    });
 
     chain.block((b) => {
       const tx = b.tx(addr(0x5a, "e"), C.locked_launch_liquidity.address);
       const [r0, r1] = sim.pair(-(10n * unit), E18 / 100n);
       tx.coreSwap(C.locked_launch_liquidity.address, sim.terminalId, r0, r1);
-      const [d0, d1] = sim.pair(900_000n * unit, E18);
+      const [d0, d1] = sim.pair(900_000n * unit, (99n * E18) / 100n);
       tx.positionUpdated(C.locked_launch_liquidity.address, sim.terminalId, 1n, d0, d1);
       tx.locked(sim.poolId, sim.terminalId, 12345n);
     });
@@ -49,13 +55,25 @@ describe("launch phases", () => {
     });
     const migrated = await tools.launch(chain.bundle(), { token: TOKEN });
     expect(migrated.launch.phase).toBe("migrated");
-    expect(migrated.launch.terminal_pool_id).toBe(sim.terminalId);
-    expect(migrated.launch.pending_principal).toBeNull();
+    expect(migrated.launch.migration).toMatchObject({
+      terminal_pool_id: sim.terminalId,
+      bounds: { tick_lower: -2000, tick_upper: 2000 },
+      // The last terminal swap left the pool at tick 0, which is tick 0 in launch orientation too.
+      current_terminal_price: { tick: 0, quote_per_token_raw: "1" },
+      inside_bounds: true,
+    });
+    // Rebalancing paid 0.01 quote for 10 tokens; the deposit took the rest of the quote.
+    expect(migrated.launch.principal).toEqual({
+      received: { launch_token: (950_000n * unit).toString(), quote: E18.toString() },
+      deposited: { launch_token: (900_000n * unit).toString(), quote: ((99n * E18) / 100n).toString() },
+      pending: { launch_token: (50_010n * unit).toString(), quote: "0" },
+      liquidity_locked: "12345",
+    });
 
     const analytics = await tools.analytics(chain.bundle(), { token: TOKEN });
     expect(analytics.volume.user_terminal).toBe((2n * E18).toString());
     expect(analytics.volume.internal.migration_rebalancing).toBe((E18 / 100n).toString());
-    expect(analytics.creator_allocation.unclaimed_launch_token_fees.terminal_ledger).toBeNull();
+    expect(analytics.creator_allocation.unclaimed_launch_token_fees.uncollected_terminal_position_fees).toBeNull();
     expect(analytics.creator_allocation.total_is_lower_bound).toBe(true);
   });
 });
@@ -77,7 +95,7 @@ describe("early acquisition", () => {
       distinct_buying_lockers: 1,
       distinct_buying_recipients: 2,
       buys_without_recipient: 0,
-      largest_single_share_of_total_supply: "0.045",
+      largest_single_share_of_total_supply: ratio(9n, 200n),
       confidence: "exact",
     });
     expect(seconds.window).toMatchObject({ kind: "seconds", seconds: 24 });

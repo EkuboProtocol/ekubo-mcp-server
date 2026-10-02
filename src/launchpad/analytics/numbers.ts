@@ -23,10 +23,34 @@ export function decimalString(
   return negative ? `-${body}` : body;
 }
 
-/** A share in [0, 1] as a decimal string, or null when the base is zero or unknown. */
-export function share(part: bigint, whole: bigint | null): string | null {
+function gcd(a: bigint, b: bigint): bigint {
+  let x = a < 0n ? -a : a;
+  let y = b < 0n ? -b : b;
+  while (y !== 0n) [x, y] = [y, x % y];
+  return x;
+}
+
+/** An exact rational in lowest terms, with a truncated decimal rendering beside it. */
+export interface Ratio {
+  num: string;
+  den: string;
+  decimal: string;
+}
+
+export function ratio(numerator: bigint, denominator: bigint): Ratio {
+  const divisor = gcd(numerator, denominator) || 1n;
+  const sign = denominator < 0n ? -1n : 1n;
+  return {
+    num: ((sign * numerator) / divisor).toString(),
+    den: ((sign * denominator) / divisor).toString(),
+    decimal: decimalString(numerator, denominator),
+  };
+}
+
+/** A share as an exact fraction, or null when the base is zero or unknown. */
+export function share(part: bigint, whole: bigint | null): Ratio | null {
   if (whole === null || whole === 0n) return null;
-  return decimalString(part, whole);
+  return ratio(part, whole);
 }
 
 export function sum(values: Iterable<bigint>): bigint {
@@ -52,8 +76,8 @@ export const FEE_DENOMINATOR = 1n << 64n;
 /** Ekubo fees are a 0.64 fixed-point fraction of the amount. */
 export function feeView(raw: bigint) {
   return {
-    raw: raw.toString(),
-    denominator: FEE_DENOMINATOR.toString(),
-    fraction: decimalString(raw, FEE_DENOMINATOR, 8),
+    q64: raw.toString(),
+    fraction: ratio(raw, FEE_DENOMINATOR),
+    percent: decimalString(raw * 100n, FEE_DENOMINATOR, 8),
   };
 }

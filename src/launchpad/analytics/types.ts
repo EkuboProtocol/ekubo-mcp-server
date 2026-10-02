@@ -1,8 +1,8 @@
 /**
  * Shared shapes for the launchpad analytics engine (EKU-645 interface
- * contract, sections 2 to 5). Addresses and hashes are lowercase hex
- * throughout the engine; amounts stay `bigint` until they are serialised as
- * decimal strings.
+ * contract, sections 2 to 5 and 8 to 9). Addresses and hashes are validated
+ * and lowercased at the source boundary; amounts stay `bigint` until they are
+ * serialised as decimal strings.
  */
 
 export type Hex = `0x${string}`;
@@ -49,27 +49,37 @@ export interface TransactionInfo {
 
 export interface ManifestContract {
   address: Address;
-  code_hash: Hex;
+  /** Runtime code hash pinned by the manifest; null when the manifest pins none. */
+  code_hash: Hex | null;
 }
 
-export const MANIFEST_CONTRACTS = [
+export const REQUIRED_CONTRACTS = [
   "core",
-  "twamm",
   "scheduled_launch",
   "locked_launch_liquidity",
   "launch_router",
   "router",
 ] as const;
 
-export type ManifestContractName = (typeof MANIFEST_CONTRACTS)[number];
+export type RequiredContract = (typeof REQUIRED_CONTRACTS)[number];
 
 export interface LaunchpadManifest {
   chain_id: number;
-  fork_block: number;
-  /** First block that can hold launchpad logs; defaults to `fork_block`. */
-  deployment_block?: number;
-  git_revision: string;
-  contracts: Record<ManifestContractName, ManifestContract>;
+  revision: string;
+  /** First block that can hold launchpad logs. */
+  deployment_block: number;
+  contracts: Record<RequiredContract, ManifestContract>;
+  /** The TWAMM extension of terminal pools; null when the manifest does not name it. */
+  twamm: ManifestContract | null;
+}
+
+export interface PinnedPrice {
+  asset: Address;
+  decimals: number;
+  /** USD per whole unit, as a decimal string. */
+  price_usd: string;
+  as_of: number;
+  source: string;
 }
 
 /**
@@ -83,14 +93,15 @@ export interface Snapshot {
   manifest: LaunchpadManifest;
   finality: Finality;
   as_of: BlockHeader;
-  head: BlockHeader;
+  head: { number: number; timestamp: number | null };
   indexed_range: BlockRange;
   missing_ranges: MissingRange[];
   /** Canonical headers, at least one for every block that carries a log. */
   headers: BlockHeader[];
   logs: RawLog[];
-  /** When the source read the chain (ISO 8601). Fixtures carry their capture time. */
-  retrieved_at: string;
+  /** When the source read the chain (ISO 8601); null when a fixture does not record it. */
+  retrieved_at: string | null;
+  prices: PinnedPrice[];
 }
 
 export interface SnapshotRequest {
@@ -110,6 +121,9 @@ export interface LaunchpadSource {
   ): Promise<BlockHeader | null>;
   transaction(hash: Hex): Promise<TransactionInfo | null>;
   codeHash(address: Address, blockNumber: number): Promise<Hex | null>;
-  /** ERC-20 decimals, 18 for the native asset (zero address), null when unreadable. */
+  /** ERC-20 decimals, 18 for the native asset, null when unreadable. */
   tokenDecimals(address: Address, blockNumber: number): Promise<number | null>;
 }
+
+/** Every chain the configured launchpad covers, keyed by chain id. */
+export type LaunchpadSources = ReadonlyMap<number, LaunchpadSource>;

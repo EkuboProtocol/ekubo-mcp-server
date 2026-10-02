@@ -6,13 +6,7 @@ import {
   erc20Events,
 } from "./abi.js";
 import { logRef } from "./canonical.js";
-import type {
-  Address,
-  Hex,
-  LaunchpadManifest,
-  LogRef,
-  RawLog,
-} from "./types.js";
+import type { Address, Hex, LaunchpadManifest, LogRef, RawLog } from "./types.js";
 
 export interface LaunchConfig {
   owner: Address;
@@ -99,6 +93,7 @@ export type LaunchEvent = Base &
         liquidity_delta: bigint;
         delta0: bigint;
         delta1: bigint;
+        tick: number;
       }
     | {
         kind: "PositionFeesCollected";
@@ -115,9 +110,15 @@ export type EventOf<K extends LaunchEvent["kind"]> = Extract<
   { kind: K }
 >;
 
+export interface Undecoded {
+  log: RawLog;
+  reason: string;
+}
+
 export interface DecodedLogs {
   events: LaunchEvent[];
-  failures: { ref: LogRef; reason: string }[];
+  /** Logs from launchpad contracts with a known topic that failed to decode, kept raw. */
+  undecoded: Undecoded[];
 }
 
 const INT128_SIGN = 1n << 127n;
@@ -230,6 +231,7 @@ const SHAPERS: Record<string, (args: Args) => Record<string, unknown>> = {
       liquidity_delta: a.liquidityDelta,
       delta0,
       delta1,
+      tick: stateTick(hexToBigInt(a.stateAfter as Hex)),
     };
   },
   PositionFeesCollected: (a) => ({
@@ -337,15 +339,15 @@ export function decodeLogs(
   logs: readonly RawLog[],
   manifest: LaunchpadManifest,
 ): DecodedLogs {
-  const result: DecodedLogs = { events: [], failures: [] };
+  const result: DecodedLogs = { events: [], undecoded: [] };
   const created = launchTokens(logs, manifest);
   for (const log of logs) {
     try {
       const event = decodeOne(log, manifest, created);
       if (event !== null) result.events.push(event);
     } catch (error) {
-      result.failures.push({
-        ref: logRef(log),
+      result.undecoded.push({
+        log,
         reason: error instanceof Error ? error.name : "decode_failed",
       });
     }

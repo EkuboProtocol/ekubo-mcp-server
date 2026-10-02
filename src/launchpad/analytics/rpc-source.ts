@@ -2,6 +2,7 @@ import { keccak256, toEventSelector, toHex } from "viem";
 import { ServiceError } from "../../core.js";
 import { TRANSFER_TOPIC, scheduledLaunchEvents } from "./abi.js";
 import { staleCursor } from "./cursor.js";
+import { address, data, hash, quantity } from "./validate.js";
 import type {
   Address,
   BlockHeader,
@@ -51,26 +52,27 @@ interface LogFilter {
 const LAUNCH_CREATED_TOPIC = toEventSelector(scheduledLaunchEvents[0]);
 const DECIMALS_SELECTOR = "0x313ce567";
 const ADDRESS_CHUNK = 100;
+const NATIVE_SENTINEL = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 const HEADER_BATCH = 100;
 
 function header(block: RpcBlock): BlockHeader {
   return {
-    number: Number(block.number),
-    hash: block.hash.toLowerCase() as Hex,
-    parent_hash: block.parentHash.toLowerCase() as Hex,
-    timestamp: Number(block.timestamp),
+    number: quantity(block.number, "block.number"),
+    hash: hash(block.hash, "block.hash"),
+    parent_hash: hash(block.parentHash, "block.parentHash"),
+    timestamp: quantity(block.timestamp, "block.timestamp"),
   };
 }
 
 function rawLog(log: RpcLog): RawLog {
   return {
-    address: log.address.toLowerCase() as Address,
-    topics: log.topics.map((t) => t.toLowerCase() as Hex),
-    data: log.data.toLowerCase() as Hex,
-    block_number: Number(log.blockNumber),
-    block_hash: log.blockHash.toLowerCase() as Hex,
-    transaction_hash: log.transactionHash.toLowerCase() as Hex,
-    log_index: Number(log.logIndex),
+    address: address(log.address, "log.address"),
+    topics: log.topics.map((t) => hash(t, "log.topics")),
+    data: data(log.data, "log.data"),
+    block_number: quantity(log.blockNumber, "log.blockNumber"),
+    block_hash: hash(log.blockHash, "log.blockHash"),
+    transaction_hash: hash(log.transactionHash, "log.transactionHash"),
+    log_index: quantity(log.logIndex, "log.logIndex"),
     removed: log.removed === true,
   };
 }
@@ -79,6 +81,11 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
+}
+
+function failureCode(error: unknown): string | number {
+  if (error instanceof RpcError) return error.code;
+  return error instanceof ServiceError ? "malformed response" : "fetch_failed";
 }
 
 class RpcError extends Error {
@@ -174,8 +181,7 @@ export class RpcSource implements LaunchpadSource {
       try {
         logs.push(...(await this.logsInRange(filter, range)).map(rawLog));
       } catch (error) {
-        const code = error instanceof RpcError ? error.code : "fetch_failed";
-        missing.push({ ...range, reason: `eth_getLogs failed (${code})` });
+        missing.push({ ...range, reason: `eth_getLogs failed (${failureCode(error)})` });
       }
     }
     return { logs, missing };
@@ -188,17 +194,29 @@ export class RpcSource implements LaunchpadSource {
         batch.map((n, i) => ({ jsonrpc: "2.0", id: i, method: "eth_getBlockByNumber", params: [toHex(n), false] })),
       ).catch(() => [])) as { result?: RpcBlock | null }[];
       for (const reply of Array.isArray(replies) ? replies : []) {
-        if (reply.result != null) out.set(Number(reply.result.number), header(reply.result));
+        const parsed = reply.result == null ? null : safeHeader(reply.result);
+        if (parsed !== null) out.set(parsed.number, parsed);
       }
     }
     return out;
   }
 
+  private async checkChain(): Promise<void> {
+    const reported = await this.call<Hex>("eth_chainId", []).catch(() => null);
+    if (reported === null || Number(reported) !== this.manifest.chain_id) {
+      throw new ServiceError(
+        "source_unavailable",
+        `The configured RPC does not report chain ${this.manifest.chain_id}, the manifest's chain.`,
+      );
+    }
+  }
+
   async snapshot(request: SnapshotRequest): Promise<Snapshot> {
+    await this.checkChain();
     const head = await this.required("latest");
     const asOf = await this.target(request);
     const contracts = this.manifest.contracts;
-    const from = this.manifest.deployment_block ?? this.manifest.fork_block;
+    const from = this.manifest.deployment_block;
     const protocol = await this.logs(
       {
         address: [
@@ -226,12 +244,13 @@ export class RpcSource implements LaunchpadSource {
       manifest: this.manifest,
       finality: request.finality,
       as_of: asOf,
-      head,
+      head: { number: head.number, timestamp: head.timestamp },
       indexed_range: { from_block: from, to_block: asOf.number },
       missing_ranges: [...protocol.missing, ...transfers.missing, ...reorgedDuringFetch(logs, headers)],
       headers: [...headers.values()],
       logs,
       retrieved_at: (this.options.now?.() ?? new Date()).toISOString(),
+      prices: [],
     };
   }
 
@@ -253,34 +272,43 @@ export class RpcSource implements LaunchpadSource {
     return found;
   }
 
-  async transaction(hash: Hex): Promise<TransactionInfo | null> {
+  async transaction(txHash: Hex): Promise<TransactionInfo | null> {
     const tx = await this.call<{ hash: Hex; from: Hex; to: Hex | null } | null>(
       "eth_getTransactionByHash",
-      [hash],
+      [txHash],
     ).catch(() => null);
     if (tx === null) return null;
     return {
-      hash: tx.hash.toLowerCase() as Hex,
-      from: tx.from.toLowerCase() as Address,
-      to: tx.to === null ? null : (tx.to.toLowerCase() as Address),
+      hash: hash(tx.hash, "transaction.hash"),
+      from: address(tx.from, "transaction.from"),
+      to: tx.to === null ? null : address(tx.to, "transaction.to"),
     };
   }
 
-  async codeHash(address: Address, blockNumber: number): Promise<Hex | null> {
-    const code = await this.call<Hex>("eth_getCode", [address, toHex(blockNumber)]).catch(() => null);
+  async codeHash(contract: Address, blockNumber: number): Promise<Hex | null> {
+    const code = await this.call<Hex>("eth_getCode", [contract, toHex(blockNumber)]).catch(() => null);
     if (code === null || code === "0x") return null;
     return keccak256(code);
   }
 
-  async tokenDecimals(address: Address, blockNumber: number): Promise<number | null> {
-    if (BigInt(address) === 0n) return 18;
+  async tokenDecimals(token: Address, blockNumber: number): Promise<number | null> {
+    if (BigInt(token) === 0n || token === NATIVE_SENTINEL) return 18;
     const result = await this.call<Hex>("eth_call", [
-      { to: address, data: DECIMALS_SELECTOR },
+      { to: token, data: DECIMALS_SELECTOR },
       toHex(blockNumber),
     ]).catch(() => null);
     if (result === null || result.length !== 66) return null;
     const value = BigInt(result);
     return value <= 255n ? Number(value) : null;
+  }
+}
+
+/** A malformed header is left out, so its block's logs count as unverified. */
+function safeHeader(block: RpcBlock): BlockHeader | null {
+  try {
+    return header(block);
+  } catch {
+    return null;
   }
 }
 

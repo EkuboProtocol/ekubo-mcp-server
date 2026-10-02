@@ -13,12 +13,14 @@ import {
   lockedLaunchLiquidityEvents,
   scheduledLaunchEvents,
 } from "../../src/launchpad/analytics/abi.js";
-import { FIXTURE_FORMAT, type FixtureBundle } from "../../src/launchpad/analytics/fixture-source.js";
+import type { FixtureBundle } from "../../src/launchpad/analytics/fixture-source.js";
 import type {
   Address,
   BlockHeader,
   Hex,
   LaunchpadManifest,
+  MissingRange,
+  PinnedPrice,
   RawLog,
   TransactionInfo,
 } from "../../src/launchpad/analytics/types.js";
@@ -28,17 +30,19 @@ export const addr = (n: number | bigint, prefix = "a"): Address =>
 
 export const MANIFEST: LaunchpadManifest = {
   chain_id: 31337,
-  fork_block: 99,
-  git_revision: "fixture-revision",
+  revision: "fixture-revision",
+  deployment_block: 100,
   contracts: {
     core: { address: addr(1, "c"), code_hash: `0x${"11".repeat(32)}` },
-    twamm: { address: addr(2, "c"), code_hash: `0x${"22".repeat(32)}` },
     scheduled_launch: { address: addr(3, "c"), code_hash: `0x${"33".repeat(32)}` },
     locked_launch_liquidity: { address: addr(4, "c"), code_hash: `0x${"44".repeat(32)}` },
     launch_router: { address: addr(5, "c"), code_hash: `0x${"55".repeat(32)}` },
     router: { address: addr(6, "c"), code_hash: `0x${"66".repeat(32)}` },
   },
+  twamm: { address: addr(2, "c"), code_hash: `0x${"22".repeat(32)}` },
 };
+
+export const TWAMM = addr(2, "c");
 
 export const ZERO = "0x0000000000000000000000000000000000000000" as Address;
 export const NATIVE = ZERO;
@@ -303,22 +307,57 @@ export class ChainBuilder {
     return fork;
   }
 
-  bundle(overrides: Partial<FixtureBundle> = {}): FixtureBundle {
+  /** An eth_getLogs-shaped bundle (the EKU-662 v2 format) for this chain. */
+  bundle(options: BundleOptions = {}): FixtureBundle {
+    const chain = String(this.options.chain_id);
+    const head = options.head ?? this.head.number;
+    const asOfNumber = options.as_of ?? head;
+    const asOf = this.blocks.find((b) => b.number === asOfNumber) ?? this.head;
+    const contracts = { ...MANIFEST.contracts, ...(options.without_twamm ? {} : { twamm: MANIFEST.twamm }) };
     return {
-      format: FIXTURE_FORMAT,
-      chain_id: this.options.chain_id,
-      manifest: MANIFEST,
-      retrieved_at: "2026-10-02T12:00:00.000Z",
-      head_block: this.head.number,
-      indexed_range: { from_block: this.options.first_block, to_block: this.head.number },
-      blocks: [...this.blocks],
-      logs: [...this.logs],
+      bundle: "chain-builder",
+      retrieved_at: options.retrieved_at === null ? undefined : (options.retrieved_at ?? "2026-10-02T12:00:00.000Z"),
+      manifest: {
+        revision: options.revision ?? MANIFEST.revision,
+        contracts: { [chain]: contracts as unknown as Record<string, unknown> },
+      },
+      index: {
+        [chain]: {
+          indexed_range: { from_block: this.options.first_block, to_block: options.indexed_to ?? head },
+          missing_ranges: options.missing_ranges ?? [],
+          head_block: head,
+        },
+      },
+      as_of: {
+        [chain]: { block_number: asOf.number, block_hash: asOf.hash, block_timestamp: asOf.timestamp, finality: options.finality ?? "latest" },
+      },
+      reorgs: options.reorgs ?? [],
+      pinned_prices: options.prices ?? [],
+      blocks: (options.blocks ?? this.blocks).map((b) => ({ chain_id: chain, ...b })),
+      logs: (options.logs ?? this.logs).map((l) => ({ chain_id: chain, transaction_index: 0, ...l })),
       transactions: [...this.transactions],
-      code_hashes: Object.fromEntries(Object.values(MANIFEST.contracts).map((c) => [c.address, c.code_hash])),
+      code_hashes: {
+        [chain]: options.code_hashes ?? Object.fromEntries(Object.values(contracts).map((c) => [c.address, c.code_hash as string])),
+      },
       token_decimals: {},
-      ...overrides,
     };
   }
+}
+
+export interface BundleOptions {
+  head?: number;
+  as_of?: number;
+  indexed_to?: number;
+  missing_ranges?: MissingRange[];
+  logs?: RawLog[];
+  blocks?: BlockHeader[];
+  reorgs?: FixtureBundle["reorgs"];
+  prices?: PinnedPrice[];
+  code_hashes?: Record<string, string>;
+  finality?: "finalized" | "safe" | "latest";
+  revision?: string;
+  retrieved_at?: string | null;
+  without_twamm?: boolean;
 }
 
 export class BlockBuild {

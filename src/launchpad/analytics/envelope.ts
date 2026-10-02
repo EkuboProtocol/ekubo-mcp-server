@@ -1,3 +1,4 @@
+import type { Undecoded } from "./decode.js";
 import type { MissingRange, Snapshot } from "./types.js";
 
 export const ENGINE_VERSION = "ekubo-launchpad-analytics/1.0.0";
@@ -46,6 +47,9 @@ export function snapshotFindings(snapshot: Snapshot): Findings {
       `Stale snapshot: figures are as of block ${snapshot.as_of.number} (${snapshot.as_of.hash}, timestamp ${snapshot.as_of.timestamp}) while the chain head is block ${snapshot.head.number}, ${lag} blocks later. Activity after block ${snapshot.as_of.number} is not included.`,
     );
   }
+  if (snapshot.retrieved_at === null) {
+    findings.note("The fixture does not record when it was captured; source.retrieved_at is null.");
+  }
   if (snapshot.finality !== "finalized") {
     findings.note(
       `Computed on a ${snapshot.finality} block that is not finalized; a reorganization can change these figures.`,
@@ -54,7 +58,20 @@ export function snapshotFindings(snapshot: Snapshot): Findings {
   return findings;
 }
 
-export function envelope(snapshot: Snapshot, findings: Findings) {
+function undecodedView(entries: readonly Undecoded[]) {
+  return entries.map(({ log, reason }) => ({
+    address: log.address,
+    topics: log.topics,
+    data: log.data,
+    block_number: log.block_number,
+    block_hash: log.block_hash,
+    transaction_hash: log.transaction_hash,
+    log_index: log.log_index,
+    reason,
+  }));
+}
+
+export function envelope(snapshot: Snapshot, findings: Findings, undecoded: readonly Undecoded[] = []) {
   const missing = [...findings.missing];
   return {
     as_of: {
@@ -74,8 +91,9 @@ export function envelope(snapshot: Snapshot, findings: Findings) {
       lag_blocks: snapshot.head.number - snapshot.as_of.number,
       retrieved_at: snapshot.retrieved_at,
       engine_version: ENGINE_VERSION,
-      manifest_revision: snapshot.manifest.git_revision,
+      manifest_revision: snapshot.manifest.revision,
     },
     limitations: [...findings.limitations],
+    undecoded: undecodedView(undecoded),
   };
 }

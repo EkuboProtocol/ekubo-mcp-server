@@ -1,8 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { CanonicalChain } from "../../src/launchpad/analytics/canonical.js";
+import { ratio } from "../../src/launchpad/analytics/numbers.js";
 import type { FixtureBundle } from "../../src/launchpad/analytics/fixture-source.js";
 import type { RawLog } from "../../src/launchpad/analytics/types.js";
 import { C, ChainBuilder, LaunchSim, addr } from "./chain-builder.js";
+
+const DEAD = "0x000000000000000000000000000000000000dead" as const;
 import {
   BENEFICIARY,
   BUYER_A,
@@ -125,7 +128,7 @@ describe("pagination and stale cursors", () => {
     expect(first.holders.holders.map((h: Json) => h.address)).toEqual([BUYER_A]);
     const second = await tools.analytics(bundle, { token: TOKEN, holders_page_size: 1, cursor: first.holders.cursor });
     expect(second.holders.holders).toEqual([
-      { rank: 2, address: BUYER_B, balance: (1_900n * unit).toString(), share_of_circulating: expect.any(String) },
+      { rank: 2, address: BUYER_B, balance: (1_900n * unit).toString(), share_of_circulating: expect.any(Object) },
     ]);
     expect(second.holders.cursor).toBeNull();
   });
@@ -136,8 +139,8 @@ describe("decimals other than 18", () => {
     const { chain } = standardLaunch({ decimals: 6 });
     const result = await tools.analytics(chain.bundle(), { token: TOKEN });
     expect(result.holders.decimals).toBe(6);
-    expect(result.holders.total_supply).toBe("1000000000000");
-    expect(result.holders.circulating).toBe("45000000000");
+    expect(result.holders.denominators.total_supply).toBe("1000000000000");
+    expect(result.holders.denominators.circulating).toBe("45000000000");
     expect(result.creator_allocation.unclaimed_launch_token_fees.scheduled_launch_ledger).toBe("5000000000");
     expect(result.early_acquisition.decimals).toBe(6);
     const launch = await tools.launch(chain.bundle(), { token: TOKEN });
@@ -161,7 +164,7 @@ describe("missing ranges", () => {
     expect(analytics.volume.user_terminal).toBeNull();
     expect(analytics.volume.internal.release_sales).toBeNull();
     // Non-zero figures are still shown, flagged by source.complete.
-    expect(analytics.holders.circulating).not.toBeNull();
+    expect(analytics.holders.denominators.circulating).not.toBeNull();
   });
 
   it("reports an unknown holder count as null when the buys themselves are missing", async () => {
@@ -256,23 +259,32 @@ describe("reorg replay", () => {
   });
 });
 
-describe("holdings split across many addresses", () => {
-  it("computes address-level concentration without inferring common control", async () => {
+describe("holdings split across many addresses (B5)", () => {
+  it("raises the address count, publishes both denominators and leaves ownership unknown", async () => {
     const { chain, sim, unit } = standardLaunch();
     chain.block((b) => sim.buy(b, { payer: BUYER_B, quoteIn: E18, tokenOut: 10_100n * unit, fee: 100n * unit }));
     const splits = Array.from({ length: 100 }, (_, i) => addr(0x1000 + i, "f"));
     chain.block((b) => {
       const tx = b.tx(BUYER_A, TOKEN);
-      for (const to of splits) tx.transfer(TOKEN, BUYER_A, to, 450n * unit);
+      for (const to of splits) tx.transfer(TOKEN, BUYER_A, to, 440n * unit);
+      tx.transfer(TOKEN, BUYER_A, DEAD, 1_000n * unit);
     });
     const result = await tools.analytics(chain.bundle(), { token: TOKEN, holders_page_size: 200 });
     const holders = result.holders;
+    // Core holds unreleased inventory, launch liquidity and fees; the dead address holds the burn.
+    const core = holders.excluded.find((e: Json) => e.category === "core");
+    expect(core.components.find((c: Json) => c.category === "unreleased_inventory").amount).not.toBe("0");
+    expect(holders.excluded.find((e: Json) => e.category === "dead_address").amount).toBe((1_000n * unit).toString());
     expect(holders.holder_count).toBe(101);
-    expect(holders.circulating).toBe((55_000n * unit).toString());
+    expect(holders.denominators).toEqual({
+      total_supply: (1_000_000n * unit).toString(),
+      excluded_total: (946_000n * unit).toString(),
+      circulating: (54_000n * unit).toString(),
+    });
     expect(holders.holders[0]).toMatchObject({ address: BUYER_B, balance: (10_000n * unit).toString() });
-    // 10,000 / 55,000 and (10,000 + 4 × 450) / 55,000, truncated.
-    expect(holders.top_n_share["1"]).toBe("0.181818");
-    expect(holders.top_n_share["5"]).toBe("0.214545");
+    expect(holders.top_n_share["1"]).toEqual(ratio(10_000n, 54_000n));
+    expect(holders.top_n_share["5"]).toEqual(ratio(10_000n + 4n * 440n, 54_000n));
+    expect(holders.economic_ownership).toBe("unknown");
     expect(holders.clustering).toBe("not_computed");
     expect(holders.holder_count_unit).toContain("addresses");
     expect(result.address_note).toContain("not counts of people");
@@ -311,7 +323,12 @@ describe("round-trip volume with an arbitrage negative control", () => {
     const volume = result.volume;
     // Buys: 1 + 3 × 2 quote. Sells, fee-inclusive: 1.9 + 0.7.
     expect(volume.user_launch).toBe((7n * E18 + 19n * E18 / 10n + 7n * E18 / 10n).toString());
-    expect(volume.round_trip).toMatchObject({ volume: (2n * E18 + 19n * E18 / 10n).toString(), addresses: 1, threshold_bps: 100 });
+    expect(volume.round_trip).toMatchObject({
+      volume: (2n * E18 + 19n * E18 / 10n).toString(),
+      payers: 1,
+      threshold_bps: 100,
+      confidence: "heuristic",
+    });
     expect(volume.internal.release_sales).toBe((E18 / 2n).toString());
     expect(volume.user_terminal).toBe("0");
     expect(volume.usd).toBeNull();
@@ -330,14 +347,14 @@ describe("stale snapshot", () => {
   it("warns with the snapshot block, the head block and the unindexed range", async () => {
     const { chain } = standardLaunch();
     chain.blocksUntil(120);
-    const bundle = chain.bundle({ indexed_range: { from_block: 100, to_block: 110 } });
+    const bundle = chain.bundle({ indexed_to: 110 });
     const result = await tools.analytics(bundle, { token: TOKEN });
     expect(result.as_of.block_number).toBe(110);
     expect(result.source).toMatchObject({ complete: false, head_block: 120, lag_blocks: 10 });
     expect(result.source.missing_ranges).toContainEqual({
       from_block: 111,
       to_block: 120,
-      reason: "not indexed: the snapshot ends before the requested block",
+      reason: "not indexed: the snapshot ends before the chain head",
     });
     const warning = result.limitations.find((l: string) => l.startsWith("Stale snapshot"));
     expect(warning).toContain("block 110");
