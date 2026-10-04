@@ -27,6 +27,7 @@
       "code_hash": "0x1582a2a511cd250e0e334319fac6543dda3f8fcef2ae3cc455ce4c85afe75084"
     }
   },
-  "fork_block": 26106169,
-  "git_revision": "e3781726c2bc5bb639cc80d5c9de9eac8efaf940"
+  "fork_block": 26120098,
+  "git_revision": "a32c9e9e45526e01436d38a35cc970d3ae872ebe",
+  "twamm_registered": true
 }

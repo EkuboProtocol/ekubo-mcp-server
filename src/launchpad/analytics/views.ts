@@ -94,8 +94,8 @@ function principalView(context: EngineContext, launch: LaunchRecord) {
   };
 }
 
-/** Verified against the code at this revision of evm-contracts (EKU-657 head). */
-export const PRIVILEGES_REVISION = "e3781726c2bc5bb639cc80d5c9de9eac8efaf940";
+/** Verified against the code at this revision of evm-contracts (PR #380 head). */
+export const PRIVILEGES_REVISION = "a32c9e9e45526e01436d38a35cc970d3ae872ebe";
 
 function privilegesView(context: EngineContext, launch: LaunchRecord, observed: Hex | null) {
   const pinned = context.snapshot.manifest.contracts.scheduled_launch.code_hash;

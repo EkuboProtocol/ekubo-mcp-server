@@ -1,4 +1,10 @@
 {
-  "git_revision": "e3781726c2bc5bb639cc80d5c9de9eac8efaf940",
-  "source": "evm-contracts PR #380 (branch eku-657/launch-fixes), launchpad-abis written by script/launchpad-local.sh"
+  "git_revision": "a32c9e9e45526e01436d38a35cc970d3ae872ebe",
+  "source": "evm-contracts PR #380 (branch eku-657/launch-fixes): `jq .abi out/<Contract>.sol/<Contract>.json` after `forge build`, as script/launchpad-local.sh writes launchpad-abis",
+  "abi_sha256": {
+    "LaunchRouter.json": "289ddbf06beab9c9a0a9fdd8daac58f31d1649ab3f5f4a301c34264972538782",
+    "LockedLaunchLiquidity.json": "e409d34b3b8631d728fc706bca5fc49ce56a5d69c1f853664a7c69144f4fed0c",
+    "Router.json": "cd351918e6f0a46b6ef2c5d37edf156382632ef63d4cb7b65f88c04457cc8871",
+    "ScheduledLaunch.json": "703ad58391947238990384cf9f34ee4235cdc6dd0b8a9a1a85c604a5ffd7a22e"
+  }
 }
