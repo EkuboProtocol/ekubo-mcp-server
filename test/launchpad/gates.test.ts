@@ -419,17 +419,20 @@ describe("v2 benchmark bundle (EKU-662), read directly", () => {
     }
   });
 
-  it("loads both chains and answers every tool, flagging the bundle's defects instead of using them", async () => {
-    for (const chain of [1, 8453]) {
+  it("loads both chains, decodes every log and reports only the declared indexer gap", async () => {
+    const expected = [
+      { chain: 1, candidates: 4, complete: false },
+      { chain: 8453, candidates: 2, complete: true },
+    ];
+    for (const { chain, candidates, complete } of expected) {
       const search = (await launchpadSearch(env, { chain_id: chain } as never)) as Json;
-      expect(search.candidate_count).toBeGreaterThan(0);
-      expect(search.source.complete).toBe(false);
+      expect(search.candidate_count).toBe(candidates);
+      expect(search.source.complete).toBe(complete);
+      expect(search.undecoded).toEqual([]);
       for (const candidate of search.candidates) {
         const launch = (await launchpadGetLaunch(env, { chain_id: chain, token: candidate.token } as never)) as Json;
         expect(launch.as_of.chain_id).toBe(chain);
       }
-      const reasons = search.undecoded.map((u: Json) => u.topics[0]);
-      expect(reasons.length).toBeGreaterThan(0);
     }
   });
 });
