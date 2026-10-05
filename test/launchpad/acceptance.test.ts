@@ -177,7 +177,7 @@ describe("missing ranges", () => {
     expect(analytics.source.complete).toBe(false);
     expect(analytics.holders.holder_count).toBeNull();
     expect(analytics.volume.user_launch).toBeNull();
-    expect(analytics.early_acquisition.windows[0].net_acquired).toBeNull();
+    expect(analytics.early_acquisition.windows[0].amount).toBeNull();
   });
 });
 

@@ -79,7 +79,7 @@ describe("launch phases", () => {
 });
 
 describe("early acquisition", () => {
-  it("reports net acquisition in stated block and time windows", async () => {
+  it("reports acquisition in stated block and time windows", async () => {
     const { chain, sim, unit } = standardLaunch();
     chain.block((b) => sim.buy(b, { payer: BUYER_B, recipient: RECIPIENT_R, quoteIn: E18, tokenOut: 2_000n * unit, fee: 200n * unit }));
     chain.block((b) =>
@@ -91,7 +91,7 @@ describe("early acquisition", () => {
     expect(blocks.window).toEqual({ kind: "blocks", blocks: 3, from_block: 105, to_block: 107, end_timestamp: chain.blocks[7].timestamp });
     expect(blocks).toMatchObject({
       window_closed: true,
-      net_acquired: (46_800n * unit).toString(),
+      amount: (46_800n * unit).toString(),
       distinct_buying_lockers: 1,
       distinct_buying_recipients: 2,
       buys_without_recipient: 0,
@@ -99,14 +99,29 @@ describe("early acquisition", () => {
       confidence: "exact",
     });
     expect(seconds.window).toMatchObject({ kind: "seconds", seconds: 24 });
-    expect(seconds.net_acquired).toBe((45_000n * unit).toString());
+    expect(seconds.amount).toBe((45_000n * unit).toString());
 
     const wide = await tools.analytics(chain.bundle(), { token: TOKEN, early_window_blocks: 4 });
     expect(wide.early_acquisition.windows[0]).toMatchObject({
-      net_acquired: (47_800n * unit).toString(),
+      amount: (47_800n * unit).toString(),
       distinct_buying_lockers: 2,
       buys_without_recipient: 1,
     });
     expect(BUYER_A).not.toBe(RECIPIENT_R);
+  });
+
+  it("counts what buys received, net of the creator fee once, and reports sells beside it", async () => {
+    const { chain, sim, unit } = standardLaunch();
+    chain.block((b) => sim.sell(b, { payer: BUYER_A, tokenIn: 10_000n * unit, quoteOut: E18 / 10n, fee: E18 / 100n }));
+    chain.blocksUntil(120);
+    const result = await tools.analytics(chain.bundle(), { token: TOKEN, early_window_blocks: 3 });
+    // BUYER_A's buy moved 45,000 tokens out of Core: 50,000 out of the pool less the 5,000 fee.
+    expect(result.early_acquisition.windows[0]).toMatchObject({
+      amount: (45_000n * unit).toString(),
+      sold: (10_000n * unit).toString(),
+      share_of_total_supply: ratio(45_000n, 1_000_000n),
+      largest_single_share_of_total_supply: ratio(45_000n, 1_000_000n),
+    });
+    expect(result.reconciliation.mismatched).toEqual([]);
   });
 });

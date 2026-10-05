@@ -173,7 +173,7 @@ describe("B6 early acquisition with common funding", () => {
     const plain = await tools.analytics(firstBlockBuys(false).bundle(), { token: TOKEN, early_window_blocks: 1 });
     const window = funded.early_acquisition.windows[0];
     expect(window).toMatchObject({
-      net_acquired: (6_000n * E18).toString(),
+      amount: (6_000n * E18).toString(),
       distinct_buying_recipients: 6,
       largest_single_share_of_total_supply: ratio(1_000n, 1_000_000n),
       confidence: "exact",

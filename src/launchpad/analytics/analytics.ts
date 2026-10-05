@@ -182,6 +182,11 @@ interface Acquisition {
   unattributed_buys: number;
 }
 
+/**
+ * The amount is what buys acquired: `-delta` on the token side, which the
+ * contract already reports net of the creator fee. Sells in the window are
+ * reported beside it and never subtracted, since they are not acquisitions.
+ */
 function tally(
   acc: Acquisition,
   launch: LaunchRecord,
@@ -189,12 +194,12 @@ function tally(
   attribution: SwapAttribution | null,
 ): void {
   const tokenDelta = side(launch, deltas(swap), "token");
-  const key = attribution === null ? `locker:${swap.locker}` : `recipient:${attribution.recipient}`;
-  acc.per_key.set(key, (acc.per_key.get(key) ?? 0n) - tokenDelta);
   if (tokenDelta >= 0n) {
     acc.sold += tokenDelta;
     return;
   }
+  const key = attribution === null ? `locker:${swap.locker}` : `recipient:${attribution.recipient}`;
+  acc.per_key.set(key, (acc.per_key.get(key) ?? 0n) - tokenDelta);
   acc.bought += -tokenDelta;
   acc.lockers.add(swap.locker);
   if (attribution === null) acc.unattributed_buys += 1;
@@ -227,7 +232,6 @@ function earlyWindowFigures(context: EngineContext, launch: LaunchRecord, window
     if (!inEarlyWindow(window, swap.ref, timestamp)) continue;
     tally(acc, launch, swap, attribution.get(logKey(swap.ref)) ?? null);
   }
-  const net = acc.bought - acc.sold;
   const end = windowEnd(window);
   const open = end === null || end > snapshot.as_of.timestamp;
   // An open window is measured up to as_of, so release is too.
@@ -237,11 +241,10 @@ function earlyWindowFigures(context: EngineContext, launch: LaunchRecord, window
   return {
     window: windowView(window, end),
     window_closed: !open,
-    net_acquired: figure(net, findings),
-    gross_bought: figure(acc.bought, findings),
+    amount: figure(acc.bought, findings),
     sold: figure(acc.sold, findings),
-    share_of_total_supply: share(net, launch.config.total_supply),
-    share_of_released_by_window_end: share(net, released),
+    share_of_total_supply: share(acc.bought, launch.config.total_supply),
+    share_of_released_by_window_end: share(acc.bought, released),
     released_by_window_end: released.toString(),
     released_measured_at: measuredAt,
     distinct_buying_lockers: acc.lockers.size,
@@ -261,12 +264,12 @@ export function earlyAcquisition(context: EngineContext, launch: LaunchRecord, w
     );
   }
   return {
-    method: { id: "early_acquisition.launch_swapped_net", version: 2 },
+    method: { id: "early_acquisition.launch_swapped_buys", version: 3 },
     decimals: launch.config.decimals,
     start_time: launch.config.start_time,
     windows: figures,
     attribution:
-      "Lockers are reported as lockers: the contract that forwarded the swap, never the trader. Recipients come only from LaunchRouted in the same transaction. Amounts are net of the creator fee.",
+      "Lockers are reported as lockers: the contract that forwarded the swap, never the trader. Recipients come only from LaunchRouted in the same transaction. The amount is launch tokens received by buys in the window, net of the creator fee; sells in the window are reported as sold and are not subtracted.",
     clustering: "not_computed" as const,
     unknown: [
       "submission timing (when a transaction was signed or broadcast)",
