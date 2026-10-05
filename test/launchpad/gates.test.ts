@@ -435,5 +435,20 @@ describe("v2 benchmark bundle (EKU-662), read directly", () => {
       }
     }
   });
+
+  it("matches the certified C5 and E11 answers for L1", async () => {
+    const result = await tools.analytics(v2 as unknown as FixtureBundle, {
+      chain_id: 1,
+      token: "0xcc66bba06465371b9f675a127fdf2aa32bfe6280",
+      early_window_blocks: 5,
+      early_window_seconds: 300,
+    });
+    expect(result.reconciliation.mismatched).toEqual([]);
+    const [byBlocks, bySeconds] = result.early_acquisition.windows;
+    expect(byBlocks.amount).toBe("288219999999999998349111371");
+    expect(bySeconds.amount).toBe("271399999999999998412597914");
+    expect(result.volume.user_launch).toBe("109471119999999999982");
+    expect(result.volume.round_trip).toMatchObject({ volume: "10471119999999999982", payers: 2 });
+  });
 });
 
