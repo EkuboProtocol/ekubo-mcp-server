@@ -25,7 +25,7 @@
     "@uniswap/sdk-core": "7.19.4",
     "@uniswap/v3-sdk": "3.31.5",
     "@uniswap/v4-sdk": "2.4.1",
-    "agents": "0.24.0",
+    "agents": "0.26.0",
     "jsbi": "3.2.5",
     "viem": "2.57.1",
     "zod": "^4.6.5"
