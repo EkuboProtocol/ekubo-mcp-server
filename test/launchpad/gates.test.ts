@@ -445,8 +445,24 @@ describe("v2 benchmark bundle (EKU-662), read directly", () => {
     });
     expect(result.reconciliation.mismatched).toEqual([]);
     const [byBlocks, bySeconds] = result.early_acquisition.windows;
-    expect(byBlocks.amount).toBe("288219999999999998349111371");
-    expect(bySeconds.amount).toBe("271399999999999998412597914");
+    const supply = 10n ** 27n;
+    const largest = ratio(180399999999999998908945669n, supply);
+    expect(byBlocks).toMatchObject({
+      amount: "288219999999999998349111371",
+      share_of_total_supply: ratio(288219999999999998349111371n, supply),
+      share_of_released_by_window_end: ratio(288219999999999998349111371n, 444444444444444444444444444n),
+      distinct_buying_lockers: 1,
+      distinct_buying_recipients: 4,
+      largest_single_share_of_total_supply: largest,
+    });
+    expect(bySeconds).toMatchObject({
+      amount: "271399999999999998412597914",
+      share_of_total_supply: ratio(271399999999999998412597914n, supply),
+      share_of_released_by_window_end: ratio(271399999999999998412597914n, 333333333333333333333333333n),
+      distinct_buying_lockers: 1,
+      distinct_buying_recipients: 2,
+      largest_single_share_of_total_supply: largest,
+    });
     expect(result.volume.user_launch).toBe("109471119999999999982");
     expect(result.volume.round_trip).toMatchObject({ volume: "10471119999999999982", payers: 2 });
   });
