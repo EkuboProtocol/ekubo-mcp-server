@@ -7,27 +7,27 @@
       "code_hash": "0xc5f90c9d0dbc5037f8f9e248f4bb292e7c1824f584eb6550cb4cad525b38c71a"
     },
     "launch_router": {
-      "address": "0x0923AAAAbFeF6ad9861cfC41591D128123260E86",
-      "code_hash": "0x44e41b4b238c5c75b7403c50e460f379b5e11cfd2df75729f5c789ff47d53372"
+      "address": "0x1174ee50c935dff7382e95F1458F8850bBeBB713",
+      "code_hash": "0x8c9a40ae812b5cee31c79e84d64c07aec8a479f73f8353ef55fa5c6e11670129"
     },
     "locked_launch_liquidity": {
-      "address": "0x709FA58A35a56A3564048cc855B30CAf451460FF",
-      "code_hash": "0x4b0134571c38c1b7c8949c25870081f7ce914630601eab4f6c6f05ca10d78552"
+      "address": "0x2A545983C67C60CF2E778521EF1D9a3BCF4248f4",
+      "code_hash": "0xd80d43132ee1aa91a190b306ee0c91bfe3e562b4cab2b9e960dc48950bf24a77"
     },
     "router": {
       "address": "0x6141515fE8542685a0fb7Bd2d7D33a9135cBb6CA",
       "code_hash": "0x7931d19db56ba8458fcb368d1fd8d5be7f8bc23719710763bf8e2afca6c59351"
     },
     "scheduled_launch": {
-      "address": "0x4155bb6E1b3BcDCb05CC827F73ab2402b0Ba6B72",
-      "code_hash": "0xc88dc9694687004cfb95c5aada9076d902ba9c63d9a9a83ae271069ccf491d4e"
+      "address": "0x51eCB046877c035cBe790B52292680E0a7439066",
+      "code_hash": "0xdaa6ae946e9ba2ded5b88c244b04dab69ad1b3645ba0ae825e9675fe4c5d9020"
     },
     "twamm": {
       "address": "0xd47f1B1eDCfEaBb08F6eBd8FC337c27E636C75BA",
       "code_hash": "0x1582a2a511cd250e0e334319fac6543dda3f8fcef2ae3cc455ce4c85afe75084"
     }
   },
-  "fork_block": 26120098,
-  "git_revision": "a32c9e9e45526e01436d38a35cc970d3ae872ebe",
+  "fork_block": 26123201,
+  "git_revision": "3e4ffad2446c7777c26e74caa809c3f77ee054e1",
   "twamm_registered": true
 }

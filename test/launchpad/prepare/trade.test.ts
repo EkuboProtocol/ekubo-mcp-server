@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { decodeFunctionData, encodeFunctionData, erc20Abi, type Hex, zeroAddress } from "viem";
+import { decodeFunctionData, encodeErrorResult, encodeFunctionData, erc20Abi, type Hex, zeroAddress } from "viem";
 import { launchpadPrepareAdvance } from "../../../src/launchpad/prepare/advance.js";
 import { launchRouterAbi, lockedLaunchLiquidityAbi, routerAbi, scheduledLaunchAbi } from "../../../src/launchpad/prepare/contracts.js";
 import { MAX_TICK, MIN_TICK, poolId, sqrtRatioAtTick } from "../../../src/launchpad/prepare/encoding.js";
@@ -167,6 +167,37 @@ describe("launchpad_prepare_trade in the launch phase", () => {
     const ended = new FakeChain(launchFixture({ endTime: BLOCK.timestamp - 1n }));
     expect((await tradeError(ended)).code).toBe("launch_needs_advance");
     expect((await tradeError(new FakeChain(null))).code).toBe("launch_not_found");
+  });
+
+  it("names a nested routed action and third-party launch-pool liquidity when a quote reverts with them", async () => {
+    const cases = [
+      { abi: launchRouterAbi, errorName: "Reentrant", code: "nested_routed_action", says: "cannot run inside another routed action" },
+      { abi: scheduledLaunchAbi, errorName: "PositionsThroughExtensionOnly", code: "launch_pool_liquidity_rejected", says: "Launch pools take no third-party liquidity" },
+    ];
+    for (const { abi, errorName, code, says } of cases) {
+      const chain = new FakeChain();
+      chain.quoteRevert = encodeErrorResult({ abi, errorName } as never);
+      const error = (await tradeError(chain)) as { code: string; message: string; details: Record<string, unknown> };
+      expect(error.code).toBe(code);
+      expect(error.message).toContain(says);
+      expect(error.details).toMatchObject({ error_name: errorName, revert_data: chain.quoteRevert });
+    }
+  });
+
+  it("reports any other quote revert with its contract error name, or none for unknown bytes", async () => {
+    const chain = new FakeChain();
+    chain.quoteRevert = encodeErrorResult({ abi: scheduledLaunchAbi, errorName: "LaunchEnded" } as never);
+    expect(await tradeError(chain)).toMatchObject({ code: "quote_reverted", details: { error_name: "LaunchEnded" } });
+    chain.quoteRevert = "0xdeadbeef";
+    expect(await tradeError(chain)).toMatchObject({ code: "quote_reverted", details: { error_name: null, revert_data: "0xdeadbeef" } });
+  });
+
+  it("decodes reverts in its plan against every launchpad contract's errors", async () => {
+    const chain = new FakeChain();
+    chain.launchQuote = { update: { delta0: E18, delta1: -5n * E18 }, fee: 0n };
+    const result = await trade(chain);
+    const errors = result.execution_plan.ordered_steps[0].revert_decode.abi.map((item: Json) => item.name);
+    expect(errors).toEqual(expect.arrayContaining(["Reentrant", "PositionsThroughExtensionOnly", "SlippageCheckFailed", "UnknownLaunch"]));
   });
 });
 

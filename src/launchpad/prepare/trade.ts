@@ -3,7 +3,7 @@ import { z } from "zod";
 import { errorResultDecodePlan } from "../../abi-decode.js";
 import { executionPlan, type PreparedTransaction } from "../../execution-plan.js";
 import { type ChainFactory, DEADLINE_SECONDS, type PrepareContext, approval, outputHeader, prepareContext } from "./context.js";
-import { NATIVE_TOKEN, type PrepareEnv, launchRouterAbi, routerAbi, scheduledLaunchAbi } from "./contracts.js";
+import { NATIVE_TOKEN, type PrepareEnv, launchRouterAbi, launchpadErrorsAbi, revertErrorName, routerAbi, scheduledLaunchAbi } from "./contracts.js";
 import { INT128_MAX, type PoolKey, balanceUpdate, feePercent, sqrtRatioAtTick, swapParameters } from "./encoding.js";
 import { launchTradeFees, terminalTradeFees } from "./fees.js";
 import { type ResolvedLaunch, launchStage, resolveLaunch } from "./launch.js";
@@ -95,8 +95,17 @@ function checkFill(quote: Quote, orientation: Orientation, partialAllowed: boole
 
 async function quoteCall(context: PrepareContext, to: Address, data: Hex) {
   const result = await context.chain.call({ from: context.sender, to, data, block: context.block });
-  if (!result.ok) throw prepareError("quote_reverted", { revert_data: result.revert });
+  if (!result.ok) throw revertError(result.revert);
   return result.data;
+}
+
+/** A reverted quote as a tool error, naming the two contract refusals a caller can act on. */
+function revertError(revert: Hex) {
+  const errorName = revertErrorName(revert);
+  const details = { revert_data: revert, error_name: errorName };
+  if (errorName === "Reentrant") return prepareError("nested_routed_action", details);
+  if (errorName === "PositionsThroughExtensionOnly") return prepareError("launch_pool_liquidity_rejected", details);
+  return prepareError("quote_reverted", details);
 }
 
 /** The most the sender can pay: the full exact input, or the slippage-bounded maximum for an exact output. */
@@ -158,7 +167,7 @@ async function launchTrade(context: PrepareContext, launch: ResolvedLaunch, inpu
     deadline: deadline.toString(),
     fees: launchTradeFees({ feeAtBlock: fee, beneficiary: launch.state.owner }),
     warnings: partial ? [warning("partial_fill")] : [],
-    ...planFields(context, orientation, minCalculated, payment, funding, transaction, launchRouterAbi),
+    ...planFields(context, orientation, minCalculated, payment, funding, transaction),
   };
 }
 
@@ -169,7 +178,6 @@ function planFields(
   payment: bigint,
   funding: { approvals: PreparedTransaction[]; cleanup: PreparedTransaction[] },
   transaction: PreparedTransaction,
-  abi: typeof launchRouterAbi,
 ) {
   return {
     threshold: {
@@ -184,7 +192,7 @@ function planFields(
       approvals: funding.approvals,
       transaction,
       postExecutionTransactions: funding.cleanup,
-      revertDecode: errorResultDecodePlan(abi),
+      revertDecode: errorResultDecodePlan(launchpadErrorsAbi),
     }),
   };
 }
@@ -236,7 +244,7 @@ async function terminalTrade(context: PrepareContext, launch: ResolvedLaunch, in
     deadline: null,
     fees: terminalTradeFees({ poolFee, lockedLiquidity: context.manifest.contracts.locked_launch_liquidity, beneficiary: launch.state.owner }),
     warnings: [],
-    ...planFields(context, orientation, minCalculated, payment, funding, terminalTransaction(context, key, params, minCalculated, orientation, funding.value), routerAbi),
+    ...planFields(context, orientation, minCalculated, payment, funding, terminalTransaction(context, key, params, minCalculated, orientation, funding.value)),
   };
 }
 

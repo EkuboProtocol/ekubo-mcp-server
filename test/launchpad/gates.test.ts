@@ -277,7 +277,7 @@ describe("L1 privileges and ranking disclosure", () => {
       upgrade: "none",
       pause: "none",
       initial_beneficiary_allocation: "0",
-      third_party_liquidity: "not_migrated",
+      third_party_liquidity: "rejected",
     });
   });
 

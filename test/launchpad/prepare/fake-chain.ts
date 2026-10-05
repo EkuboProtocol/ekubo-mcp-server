@@ -105,6 +105,8 @@ export class FakeChain implements PrepareChain {
   readonly calls: { to: Address; data: Hex; block: PinnedBlock; from: Address }[] = [];
   launchQuote: { update: Update; fee: bigint } = { update: { delta0: 0n, delta1: 0n }, fee: 0n };
   routerQuote: Update = { delta0: 0n, delta1: 0n };
+  /** Revert bytes both routers' quotes answer with instead, when set. */
+  quoteRevert: Hex | null = null;
   principalReceived: ChainLog[] = [];
   liquidityLocked: ChainLog[] = [];
   quoteDecimals = 6;
@@ -119,6 +121,7 @@ export class FakeChain implements PrepareChain {
     this.calls.push(request);
     const to = getAddress(request.to);
     if (to === C.scheduledLaunch) return this.scheduledLaunch(request.data);
+    if ((to === C.launchRouter || to === C.router) && this.quoteRevert !== null) return { ok: false, revert: this.quoteRevert };
     if (to === C.launchRouter) return this.result(launchRouterAbi, "quote", [packUpdate(this.launchQuote.update), this.launchQuote.fee]);
     if (to === C.router) return this.result(routerAbi, "quote", [packUpdate(this.routerQuote), pad("0x0", { size: 32 })]);
     return this.result(erc20Abi, "decimals", this.quoteDecimals);

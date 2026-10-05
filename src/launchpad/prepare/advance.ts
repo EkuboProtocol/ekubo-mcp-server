@@ -3,7 +3,7 @@ import { z } from "zod";
 import { errorResultDecodePlan } from "../../abi-decode.js";
 import { executionPlan } from "../../execution-plan.js";
 import { type ChainFactory, type PrepareContext, outputHeader, prepareContext } from "./context.js";
-import { type PrepareEnv, lockedLaunchLiquidityAbi, scheduledLaunchAbi } from "./contracts.js";
+import { type PrepareEnv, launchpadErrorsAbi, lockedLaunchLiquidityAbi, scheduledLaunchAbi } from "./contracts.js";
 import { advanceFees } from "./fees.js";
 import { type ResolvedLaunch, launchStage, migrationPending, resolveLaunch } from "./launch.js";
 import { address, chainId, sender, slippageBps } from "./schema.js";
@@ -52,7 +52,7 @@ export async function launchpadPrepareAdvance(env: PrepareEnv, raw: z.input<type
     chainId: chain,
     sender: context.sender,
     transaction: { chain_id: chain, to: context.manifest.contracts[step.to], data: calldata(step, launch), value: "0" },
-    revertDecode: errorResultDecodePlan(step.call === "advance" ? scheduledLaunchAbi : lockedLaunchLiquidityAbi),
+    revertDecode: errorResultDecodePlan(launchpadErrorsAbi),
   });
   return {
     ...outputHeader(context),

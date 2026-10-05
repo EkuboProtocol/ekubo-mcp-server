@@ -434,7 +434,7 @@
       }
     ],
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "pure"
   },
   {
     "type": "function",
@@ -1009,6 +1009,11 @@
   {
     "type": "error",
     "name": "OwnerOnly",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PositionsThroughExtensionOnly",
     "inputs": []
   },
   {

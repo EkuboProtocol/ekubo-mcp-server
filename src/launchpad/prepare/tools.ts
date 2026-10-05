@@ -22,7 +22,7 @@ export const launchpadPrepareTools: PrepareTool[] = [
   {
     name: "launchpad_prepare_create",
     title: "Prepare a launchpad launch",
-    description: `${PROTOTYPE} Validate a LaunchConfig against the hosted caps (initial fee at most 10%, final fee at most 1%, quote asset on the allowlist, start_time in the future, name and symbol at most 31 bytes) and prepare LaunchRouter.create, with an ERC-20 quote approval first when a seed is paid. ${HANDOFF} The output names the fee beneficiary, warns when it is not the sender, and echoes the migration bounds as prices.`,
+    description: `${PROTOTYPE} Validate a LaunchConfig against the hosted caps (initial fee at most 10%, final fee at most 1%, quote asset on the allowlist, start_time in the future, name and symbol at most 31 bytes, migration bounds at most 2,302,585 ticks wide) and prepare LaunchRouter.create, with an ERC-20 quote approval first when a seed is paid. ${HANDOFF} The output names the fee beneficiary, warns when it is not the sender, and echoes the migration bounds as prices.`,
     schema: prepareCreateSchema,
     handler: ((env, input, chainFactory = rpcChain) => launchpadPrepareCreate(env, input, chainFactory)) as PrepareTool["handler"],
   },

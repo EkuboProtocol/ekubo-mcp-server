@@ -24,8 +24,8 @@ export function createArgs(overrides: Record<string, unknown> = {}) {
     tick_spacing: 1000,
     initial_fee: ((1n << 64n) / 20n).toString(),
     final_fee: ((1n << 64n) / 200n).toString(),
-    migration_tick_lower: -30_000_000,
-    migration_tick_upper: -10_000_000,
+    migration_tick_lower: -20_000_000,
+    migration_tick_upper: -18_000_000,
     ...overrides,
   };
 }

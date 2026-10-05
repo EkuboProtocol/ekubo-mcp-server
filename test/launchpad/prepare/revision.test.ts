@@ -8,7 +8,7 @@ import { env, MANIFEST } from "./fake-chain.js";
 import { rejection } from "./helpers.js";
 
 const ABI_DIR = join(import.meta.dir, "../../../src/launchpad/prepare/abis");
-const PINNED = "a32c9e9e45526e01436d38a35cc970d3ae872ebe";
+const PINNED = "3e4ffad2446c7777c26e74caa809c3f77ee054e1";
 
 function refusal(gitRevision: unknown) {
   try {
@@ -21,7 +21,7 @@ function refusal(gitRevision: unknown) {
 }
 
 describe("bundled launchpad ABIs", () => {
-  it("are pinned to evm-contracts a32c9e9", () => {
+  it("are pinned to evm-contracts 3e4ffad", () => {
     expect(ABI_REVISION).toBe(PINNED);
   });
 
@@ -35,17 +35,19 @@ describe("bundled launchpad ABIs", () => {
 });
 
 describe("manifest revision gate", () => {
-  it("accepts the deployment manifest written at a32c9e9", () => {
+  it("accepts the deployment manifest written at 3e4ffad", () => {
     expect(MANIFEST.git_revision).toBe(PINNED);
     expect(prepareManifest(env()).git_revision).toBe(PINNED);
   });
 
-  it("refuses every other revision, including e3781726, prefixes, case changes and dirty builds", () => {
+  it("refuses every other revision, including a32c9e9 and c9bc329, prefixes, case changes and dirty builds", () => {
     for (const revision of [
       "e3781726c2bc5bb639cc80d5c9de9eac8efaf940",
       "87667a26fbe302e0b0b0e3c89dfaab19cb490e25",
+      "a32c9e9e45526e01436d38a35cc970d3ae872ebe",
+      "c9bc329b7abcdb2f326453525b1148b139b1c470",
       "0".repeat(40),
-      "a32c9e9",
+      "3e4ffad",
       `${PINNED}-dirty`,
       PINNED.toUpperCase(),
       ` ${PINNED}`,
@@ -59,7 +61,7 @@ describe("manifest revision gate", () => {
   });
 
   it("refuses a manifest without a string revision", () => {
-    for (const revision of [undefined, null, 0xa32c9e9]) {
+    for (const revision of [undefined, null, 0x3e4ffad]) {
       expect(refusal(revision)).toMatchObject({ code: "abi_revision_mismatch", details: { manifest_revision: "" } });
     }
   });

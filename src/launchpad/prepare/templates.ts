@@ -1,4 +1,5 @@
 import { ServiceError } from "../../core.js";
+import { MAX_MIGRATION_TICK_WIDTH } from "./encoding.js";
 
 /**
  * Every caption, warning and piece of error advice a preparation tool emits.
@@ -110,6 +111,10 @@ const ERRORS = {
     message: "migration_tick_lower must be below migration_tick_upper, both within tick bounds.",
     advice: "Pass ordered migration bounds within tick bounds.",
   },
+  migration_bounds_too_wide: {
+    message: `The migration bounds are wider than the contract's limit of ${MAX_MIGRATION_TICK_WIDTH.toLocaleString("en-US")} ticks, a price ratio just under 10x. ScheduledLaunch rejects wider bounds at creation.`,
+    advice: "Narrow the bounds so migration_tick_upper minus migration_tick_lower is at most details.max_width_ticks.",
+  },
   launch_not_found: {
     message: "No launch for this token exists on the manifest's ScheduledLaunch contract at the stated block.",
     advice: "Resolve the exact token address with launchpad_search, then retry.",
@@ -134,9 +139,17 @@ const ERRORS = {
     message: "The quote returns no output for this trade at the stated block.",
     advice: "Check the phase and liquidity with launchpad_get_launch.",
   },
+  nested_routed_action: {
+    message: "LaunchRouter refused a nested call: create, swap and fund cannot run inside another routed action, for example from a token or recipient callback.",
+    advice: "Send each launchpad action as its own top-level transaction from the sender.",
+  },
+  launch_pool_liquidity_rejected: {
+    message: "Launch pools take no third-party liquidity: only the ScheduledLaunch extension can hold a position in a launch pool.",
+    advice: "Do not add liquidity to a launch pool. Trade the launch with launchpad_prepare_trade.",
+  },
   quote_reverted: {
     message: "The quote call reverted at the stated block.",
-    advice: "Check the phase with launchpad_get_launch; details.revert_data holds the raw revert.",
+    advice: "Check the phase with launchpad_get_launch; details.revert_data holds the raw revert and details.error_name the contract error, when known.",
   },
 } as const;
 

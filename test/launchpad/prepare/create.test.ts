@@ -88,7 +88,7 @@ describe("launchpad_prepare_create plan", () => {
   });
 
   it("echoes migration bounds as ticks matching the calldata, and as prices, with the lock statement", async () => {
-    const result = await create();
+    const result = await create({ migration_tick_lower: -30_000_000, migration_tick_upper: -28_000_000 });
     const [config] = decodeCreate(result.execution_plan.ordered_steps[0].transaction.data);
     expect(result.migration_bounds.tick_lower).toBe(config.migrationTickLower);
     expect(result.migration_bounds.tick_upper).toBe(config.migrationTickUpper);
@@ -161,6 +161,33 @@ describe("launchpad_prepare_create rejections", () => {
     expect((await rejection({ target_tick: -27_631_500 })).code).toBe("invalid_ticks");
     expect((await rejection({ migration_tick_lower: 0, migration_tick_upper: 0 })).code).toBe("invalid_migration_bounds");
     expect((await rejection({ total_supply: "0" })).code).toBe("invalid_supply");
+  });
+
+  it("refuses migration bounds wider than the contract's 2,302,585-tick limit before reading the chain", async () => {
+    const chain = new FakeChain();
+    const wide = createArgs({ migration_tick_lower: -20_000_000, migration_tick_upper: -20_000_000 + 2_302_586 });
+    const error = await launchpadPrepareCreate(env(), wide as never, () => chain).catch((e: unknown) => e as Json);
+    expect(error.code).toBe("migration_bounds_too_wide");
+    expect(error.message).toContain("2,302,585 ticks");
+    expect(error.details).toMatchObject({ width_ticks: 2_302_586, max_width_ticks: 2_302_585 });
+    expect(chain.calls).toEqual([]);
+    for (const [lower, upper] of [
+      [-88_722_835, 88_722_835],
+      [-30_000_000, -10_000_000],
+    ]) {
+      expect((await rejection({ migration_tick_lower: lower, migration_tick_upper: upper })).code).toBe("migration_bounds_too_wide");
+    }
+  });
+
+  it("prepares migration bounds exactly 2,302,585 ticks wide, at either tick extreme", async () => {
+    for (const [lower, upper] of [
+      [-20_000_000, -20_000_000 + 2_302_585],
+      [-88_722_835, -88_722_835 + 2_302_585],
+      [88_722_835 - 2_302_585, 88_722_835],
+    ]) {
+      const result = await create({ migration_tick_lower: lower, migration_tick_upper: upper });
+      expect(result.migration_bounds).toMatchObject({ tick_lower: lower, tick_upper: upper });
+    }
   });
 });
 

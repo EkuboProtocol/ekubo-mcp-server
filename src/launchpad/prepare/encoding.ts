@@ -10,6 +10,8 @@ import { type Address, encodeAbiParameters, type Hex, keccak256, numberToHex } f
 export const MIN_TICK = -88722835;
 export const MAX_TICK = 88722835;
 export const MAX_TICK_SPACING = 698605;
+/** `MAX_MIGRATION_TICK_WIDTH` in ScheduledLaunch.sol: 1.000001^2302585 is just under a 10x price ratio. */
+export const MAX_MIGRATION_TICK_WIDTH = 2_302_585;
 export const INT128_MAX = (1n << 127n) - 1n;
 export const Q64 = 1n << 64n;
 

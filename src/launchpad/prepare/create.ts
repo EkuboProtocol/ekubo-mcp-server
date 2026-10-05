@@ -3,8 +3,8 @@ import { z } from "zod";
 import { errorResultDecodePlan } from "../../abi-decode.js";
 import { executionPlan } from "../../execution-plan.js";
 import { type ChainFactory, DEADLINE_SECONDS, type PrepareContext, approval, outputHeader, prepareContext, quoteDecimals } from "./context.js";
-import { NATIVE_TOKEN, type PrepareEnv, launchRouterAbi } from "./contracts.js";
-import { INT128_MAX, MAX_TICK, MAX_TICK_SPACING, MIN_TICK, Q64, feePercent, priceAtTick, utf8Length } from "./encoding.js";
+import { NATIVE_TOKEN, type PrepareEnv, launchRouterAbi, launchpadErrorsAbi } from "./contracts.js";
+import { INT128_MAX, MAX_MIGRATION_TICK_WIDTH, MAX_TICK, MAX_TICK_SPACING, MIN_TICK, Q64, feePercent, priceAtTick, utf8Length } from "./encoding.js";
 import { creationFees } from "./fees.js";
 import { address, chainId, rawAmount, sender, slippageBps } from "./schema.js";
 import { MIGRATION_LOCK_NOTE, PRICE_NOTE, UNTRUSTED_NOTE, prepareError, warning } from "./templates.js";
@@ -39,7 +39,9 @@ export const prepareCreateSchema = z.object({
   tick_spacing: z.number().int().min(1).max(MAX_TICK_SPACING),
   initial_fee: q64Fee.describe(`Creator fee at start_time, Q0.64 (2^64 = 100%). Hosted cap ${INITIAL_FEE_CAP} (10%).`),
   final_fee: q64Fee.describe(`Creator fee at end_time and the terminal pool fee, Q0.64. Hosted cap ${FINAL_FEE_CAP} (1%).`),
-  migration_tick_lower: tick.describe("Lowest terminal price, as a tick, at which principal may migrate."),
+  migration_tick_lower: tick.describe(
+    `Lowest terminal price, as a tick, at which principal may migrate. The bounds may span at most ${MAX_MIGRATION_TICK_WIDTH} ticks, just under a 10x price ratio.`,
+  ),
   migration_tick_upper: tick.describe("Highest terminal price, as a tick, at which principal may migrate."),
 });
 
@@ -77,6 +79,10 @@ function checkTicks(input: PrepareCreateInput) {
     if (input[field] % spacing !== 0) throw prepareError("invalid_ticks", { field });
   }
   if (input.migration_tick_lower >= input.migration_tick_upper) throw prepareError("invalid_migration_bounds");
+  const width = input.migration_tick_upper - input.migration_tick_lower;
+  if (width > MAX_MIGRATION_TICK_WIDTH) {
+    throw prepareError("migration_bounds_too_wide", { width_ticks: width, max_width_ticks: MAX_MIGRATION_TICK_WIDTH });
+  }
 }
 
 function checkQuoteAsset(context: PrepareContext, quoteToken: Address) {
@@ -180,7 +186,7 @@ export async function launchpadPrepareCreate(env: PrepareEnv, raw: z.input<typeo
       }),
       value: native ? amounts.quoteAmount.toString() : "0",
     },
-    revertDecode: errorResultDecodePlan(launchRouterAbi),
+    revertDecode: errorResultDecodePlan(launchpadErrorsAbi),
   });
   return {
     ...outputHeader(context),

@@ -70,7 +70,7 @@ Lookups on a chain the launchpad does not cover return `launch_not_found`. They 
   - Release sales and migration rebalancing are `internal`.
 - **Round trip.** Only routed swaps are grouped, by router payer. A group counts when it both bought and sold and `|bought − sold| ≤ threshold_bps` of the larger side. It is reported with `confidence: "heuristic"` and never subtracted from gross volume. Unrouted swaps have no payer: the locker is reported as a locker, never as a trader.
 - **Reconciliation (B8).** Each transaction with `LaunchSwapped` must move the launch token in and out of Core by exactly the swap deltas, less any fee withdrawals in it. A mismatch is listed and noted.
-- **Privileges (L1).** The values were read from evm-contracts `a32c9e9`. They are returned only when the observed emitter code hash equals the manifest's.
+- **Privileges (L1).** The values were read from evm-contracts `3e4ffad`. A launch pool rejects every position but the extension's own, so `third_party_liquidity` is `rejected`. They are returned only when the observed emitter code hash equals the manifest's.
 - **Incomplete zeros.** A zero computed while `source.complete` is false is returned as `null`.
 
 Names and symbols are returned verbatim under `metadata` with `trust: "untrusted"`. They appear in no other field and never cause a network request.

@@ -95,7 +95,7 @@ function principalView(context: EngineContext, launch: LaunchRecord) {
 }
 
 /** Verified against the code at this revision of evm-contracts (PR #380 head). */
-export const PRIVILEGES_REVISION = "a32c9e9e45526e01436d38a35cc970d3ae872ebe";
+export const PRIVILEGES_REVISION = "3e4ffad2446c7777c26e74caa809c3f77ee054e1";
 
 function privilegesView(context: EngineContext, launch: LaunchRecord, observed: Hex | null) {
   const pinned = context.snapshot.manifest.contracts.scheduled_launch.code_hash;
@@ -120,7 +120,7 @@ function privilegesView(context: EngineContext, launch: LaunchRecord, observed: 
     upgrade: "none",
     pause: "none",
     initial_beneficiary_allocation: "0",
-    third_party_liquidity: "not_migrated",
+    third_party_liquidity: "rejected",
   };
 }
 

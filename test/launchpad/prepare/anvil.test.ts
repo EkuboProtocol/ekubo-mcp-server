@@ -70,6 +70,8 @@ describe.skipIf(RPC === undefined || MANIFEST_PATH === undefined)("launchpad pre
 
   it("prepares a create and a launch-phase buy that each succeed under eth_call from the sender", async () => {
     await rpc("anvil_setBalance", [SENDER, hex((100n * E18).toString())]);
+    // Anvil stamps new blocks from the wall clock; mine one so start_time is measured from now, not from the deployment.
+    await rpc("evm_mine", []);
     const latest = await rpc("eth_getBlockByNumber", ["latest", false]);
     const now = BigInt(latest.timestamp);
     const start = now + 120n;
@@ -93,8 +95,8 @@ describe.skipIf(RPC === undefined || MANIFEST_PATH === undefined)("launchpad pre
         tick_spacing: 1000,
         initial_fee: ((1n << 64n) / 20n).toString(),
         final_fee: ((1n << 64n) / 200n).toString(),
-        migration_tick_lower: -88_722_000,
-        migration_tick_upper: 88_722_000,
+        migration_tick_lower: -17_000_000,
+        migration_tick_upper: -15_000_000,
       },
       rpcChain,
     );

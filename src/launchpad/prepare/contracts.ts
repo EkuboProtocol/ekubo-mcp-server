@@ -1,4 +1,4 @@
-import { type Abi, type Address, getAddress, isAddress, zeroAddress } from "viem";
+import { type Abi, type Address, decodeErrorResult, getAddress, type Hex, isAddress, zeroAddress } from "viem";
 import launchRouterAbiJson from "./abis/LaunchRouter.json";
 import lockedLaunchLiquidityAbiJson from "./abis/LockedLaunchLiquidity.json";
 import routerAbiJson from "./abis/Router.json";
@@ -16,6 +16,32 @@ export const scheduledLaunchAbi = scheduledLaunchAbiJson as Abi;
 export const lockedLaunchLiquidityAbi = lockedLaunchLiquidityAbiJson as Abi;
 export const routerAbi = routerAbiJson as Abi;
 export const ABI_REVISION: string = abiRevision.git_revision;
+
+type AbiError = Extract<Abi[number], { type: "error" }>;
+
+/**
+ * Every custom error the four contracts declare, once per signature. Errors
+ * bubble up through Core, so a LaunchRouter call can revert with a
+ * ScheduledLaunch error; revert decoding needs all of them.
+ */
+
+export const launchpadErrorsAbi: Abi = [
+  ...new Map(
+    [launchRouterAbi, scheduledLaunchAbi, lockedLaunchLiquidityAbi, routerAbi]
+      .flat()
+      .filter((item): item is AbiError => item.type === "error")
+      .map((item) => [`${item.name}(${item.inputs.map((input) => input.type).join(",")})`, item]),
+  ).values(),
+];
+
+/** The custom error name in revert bytes, or null when they match none of the contracts' errors. */
+export function revertErrorName(revert: Hex): string | null {
+  try {
+    return decodeErrorResult({ abi: launchpadErrorsAbi, data: revert }).errorName;
+  } catch {
+    return null;
+  }
+}
 
 /** `NATIVE_TOKEN_ADDRESS` in the contracts' `math/constants.sol`. */
 export const NATIVE_TOKEN = zeroAddress;
