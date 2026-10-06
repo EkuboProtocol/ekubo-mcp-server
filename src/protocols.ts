@@ -1,5 +1,6 @@
 import { uniswapTools } from "./uniswap/tools.js";
 import { safeTools } from "./safe.js";
+import { launchpadTools } from "./launchpad/prepare/tools.js";
 /**
  * The protocol partition behind the per-protocol MCP endpoints.
  *
@@ -24,6 +25,7 @@ export const PROTOCOL_SLUGS = [
   "sky",
   "uniswap",
   "safe",
+  "launchpad",
 ] as const;
 
 export type ProtocolSlug = (typeof PROTOCOL_SLUGS)[number];
@@ -213,10 +215,20 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
     skill: null,
     tools: safeTools.map((tool) => tool.name),
   },
+  {
+    slug: "launchpad",
+    title: "Ekubo launchpad prototype",
+    description: "Non-production launchpad prototype: launch lists, state, provenance, stats and swaps from the Ekubo data API, and unsigned plans for creating, trading (quoter-service and the Yul router), advancing and claiming creator fees; separate endpoint only, excluded from /mcp",
+    skill: null,
+    tools: launchpadTools.map((tool) => tool.name),
+  },
 ];
 
-/** Bundled protocols served by `/mcp`; Safe is standalone-only. */
-export const ALL_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(PROTOCOL_SLUGS.filter((slug) => slug !== "safe"));
+/** Protocols served only at their own `/mcp/<slug>` endpoint, never bundled into `/mcp`. */
+export const STANDALONE_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(["safe", "launchpad"]);
+
+/** Bundled protocols served by `/mcp`; standalone protocols are excluded. */
+export const ALL_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(PROTOCOL_SLUGS.filter((slug) => !STANDALONE_PROTOCOLS.has(slug)));
 
 const TOOL_PROTOCOLS: ReadonlyMap<string, ProtocolSlug> = new Map(
   PROTOCOLS.flatMap((protocol) =>

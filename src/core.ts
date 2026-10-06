@@ -1131,8 +1131,15 @@ async function quoteEkubo(
     quote.total_calculated,
     "total_calculated",
   );
-  const requested = BigInt(intent.amount);
   const exactOutput = intent.quoteType === "exact_output";
+  // A launch-pool hop with allow_partial may fill less than requested; the
+  // splits then carry the filled amount, which prepareSwapFromQuote validates.
+  const specified = (quote.splits ?? []).reduce(
+    (total, split) => total + parseSignedAmount(split.amount_specified, "amount_specified"),
+    0n,
+  );
+  const requested =
+    specified === 0n ? BigInt(intent.amount) : specified < 0n ? -specified : specified;
   if ((exactOutput && calculated >= 0n) || (!exactOutput && calculated <= 0n)) {
     throw new ServiceError(
       "invalid_upstream_response",

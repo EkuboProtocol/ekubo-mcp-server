@@ -30,6 +30,7 @@ import {
   protocolBySlug,
   protocolMcpPath,
   PROTOCOLS,
+  STANDALONE_PROTOCOLS,
 } from "./protocols.js";
 
 export default {
@@ -456,7 +457,11 @@ function toolsDocument(url: URL) {
   }
   const tools =
     protocol === undefined
-      ? publicToolCatalogWithOutputs.filter((tool) => tool.protocol !== "safe")
+      ? publicToolCatalogWithOutputs.filter(
+          (tool) =>
+            tool.protocol === undefined ||
+            !STANDALONE_PROTOCOLS.has(tool.protocol),
+        )
       : publicToolCatalogWithOutputs.filter(
           (tool) => tool.protocol === protocol.slug,
         );

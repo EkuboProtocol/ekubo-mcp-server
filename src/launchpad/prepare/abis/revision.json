@@ -1,0 +1,10 @@
+{
+  "git_revision": "40e5bb11f7d4a8b40bb40232027fa7888052eacb",
+  "src_tree": "92def4480f59670c427265c116e9f00473a3c963",
+  "source": "evm-contracts PR #380 (branch eku-657/launch-fixes): `jq .abi out/<Contract>.sol/<Contract>.json` after `forge build`. The production Yul router's ABI and encoding come from @ekubo/yul-router-sdk.",
+  "abi_sha256": {
+    "LaunchRouter.json": "868bbc7d9ace035cf017bc0b2647af1b513dd5b208f0153ffd8408b1db4b69d5",
+    "LockedLaunchLiquidity.json": "687c08bc28a16e16a6765d5e1c2607ad584128fca91249a6db6aed7b06c1ea49",
+    "ScheduledLaunch.json": "8a7d3a47ba761f9c5b56349a8bdf718fe95820dd2e21749a1374101c90d8ccc7"
+  }
+}
