@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { quoteJurisdiction } from "../src/token-restrictions.js";
-import { getQuotesWithPlans, type Env } from "../src/core.js";
+import { getQuotesWithPlans, prepareSwap, ServiceError, type Env } from "../src/core.js";
 import { walletExecutionPlanSchema } from "../src/wallet-compatibility.js";
 import fixtures from "./fixtures/quote-jurisdiction.json";
 
@@ -58,5 +58,56 @@ describe("public quote jurisdiction metadata", () => {
     const plan = option.execution!.execution_plan;
     expect(plan.extensions["ekubo.jurisdiction"]).toEqual(result.jurisdiction);
     expect(walletExecutionPlanSchema.safeParse(plan).success).toBe(true);
+  });
+
+  describe("unknown assets on a covered chain (EKU-862 B-1)", () => {
+    const unknown = "0x1111111111111111111111111111111111111111";
+    const usdg = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
+    const env = { EKUBO_QUOTER_URL: "https://quoter.test", ZERO_X_API_KEY: "zx" } as Env;
+    const cases = [
+      { name: "sold, with a plan", tokenIn: unknown, tokenOut: usdg, sender: true },
+      { name: "bought, with a plan", tokenIn: usdg, tokenOut: unknown, sender: true },
+      { name: "bought, indicative", tokenIn: usdg, tokenOut: unknown, sender: false },
+    ] as const;
+    for (const entry of cases) {
+      it(`refuses get_quotes_with_plans before any provider is called: ${entry.name}`, async () => {
+        let calls = 0;
+        const fetcher = (async () => {
+          calls += 1;
+          return Response.json({});
+        }) as unknown as typeof fetch;
+        const error = await getQuotesWithPlans(env, {
+          chainId: "4663", tokenIn: entry.tokenIn, tokenOut: entry.tokenOut,
+          quoteType: "exact_input", amount: "1000",
+          ...(entry.sender ? { sender: usdg as `0x${string}`, slippageBps: 10 } : {}),
+        }, fetcher).then(() => undefined, (thrown: unknown) => thrown);
+        expect(error).toBeInstanceOf(ServiceError);
+        expect((error as ServiceError).code).toBe("unclassified_asset");
+        expect(calls).toBe(0);
+      });
+    }
+
+    it("refuses a bridge whose destination asset on the covered chain is unknown", async () => {
+      let calls = 0;
+      const error = await getQuotesWithPlans(env, {
+        chainId: "1", destinationChainId: "4663",
+        tokenIn: "0x0000000000000000000000000000000000000000", tokenOut: unknown,
+        quoteType: "exact_input", amount: "1000",
+      }, (async () => { calls += 1; return Response.json({}); }) as unknown as typeof fetch)
+        .then(() => undefined, (thrown: unknown) => thrown);
+      expect((error as ServiceError).code).toBe("unclassified_asset");
+      expect(calls).toBe(0);
+    });
+
+    it("refuses prepareSwap before any provider is called", async () => {
+      let calls = 0;
+      const error = await prepareSwap(env, {
+        chainId: "4663", tokenIn: unknown, tokenOut: usdg, quoteType: "exact_input",
+        amount: "1000", source: "ekubo", sender: usdg, slippageBps: 10,
+      } as Parameters<typeof prepareSwap>[1], (async () => { calls += 1; return Response.json({}); }) as unknown as typeof fetch)
+        .then(() => undefined, (thrown: unknown) => thrown);
+      expect((error as ServiceError).code).toBe("unclassified_asset");
+      expect(calls).toBe(0);
+    });
   });
 });

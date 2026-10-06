@@ -7,6 +7,7 @@
     "other_token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
+      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -28,16 +29,41 @@
         "US",
         "VE"
       ],
+      "jurisdiction_names": {
+        "AE": "United Arab Emirates",
+        "BY": "Belarus",
+        "CA": "Canada",
+        "CH": "Switzerland",
+        "CU": "Cuba",
+        "GB": "United Kingdom of Great Britain and Northern Ireland",
+        "IR": "Iran (Islamic Republic of)",
+        "KP": "Korea (Democratic People's Republic of)",
+        "MM": "Myanmar",
+        "RU": "Russian Federation",
+        "SD": "Sudan",
+        "SG": "Singapore",
+        "SS": "South Sudan",
+        "SY": "Syrian Arab Republic",
+        "UA": "Ukraine",
+        "US": "United States of America",
+        "VE": "Venezuela (Bolivarian Republic of)"
+      },
       "assets": [
         {
           "chain_id": "4663",
           "token": "0x0000000000000000000000000000000000000000",
           "side": "sell",
-          "classification": "outside_class",
-          "class_sources": [
-            "native"
+          "classification": "non_class",
+          "provenance": [
+            {
+              "source": "native",
+              "ref": "chain 4663 native currency",
+              "observed_at": "2026-10-06"
+            }
           ],
           "restricted_jurisdictions": [],
+          "offering_exclusions": [],
+          "issuer_prohibited_investor": [],
           "execution_hold": false
         },
         {
@@ -45,10 +71,22 @@
           "token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
           "side": "buy",
           "classification": "rhj_stock_token",
-          "class_sources": [
-            "curated",
-            "ekubo_v1",
-            "issuer_registry"
+          "provenance": [
+            {
+              "source": "curated-tokens",
+              "ref": "EkuboProtocol/default-tokens@0048c81c3f650640100965f4701cf5cd04f9d915:curated-tokens.json sha256:f8d738b37fe92262bd08c766eabf5a5430074ddf11d1ae77bac2a085148e4a86",
+              "observed_at": "2026-10-06T12:10:00Z"
+            },
+            {
+              "source": "issuer-registry",
+              "ref": "https://api.robinhood.com/rhj/assets sha256:ae51218019c2f7533f9a959f5c75d25b8461bfd5c288c277b1aa98277bc979ac",
+              "observed_at": "2026-10-06T12:10:00Z"
+            },
+            {
+              "source": "v1-list",
+              "ref": "EkuboProtocol/ekubo-mcp-server@d71a6d9:src/token-restrictions.ts RHC_STOCK_TOKEN_ADDRESSES",
+              "observed_at": "2026-10-06T12:10:00Z"
+            }
           ],
           "restricted_jurisdictions": [
             "AE",
@@ -67,6 +105,27 @@
             "SY",
             "UA",
             "US",
+            "VE"
+          ],
+          "offering_exclusions": [
+            "AE",
+            "CA",
+            "CH",
+            "GB",
+            "SG",
+            "US"
+          ],
+          "issuer_prohibited_investor": [
+            "BY",
+            "CU",
+            "IR",
+            "KP",
+            "MM",
+            "RU",
+            "SD",
+            "SS",
+            "SY",
+            "UA",
             "VE"
           ],
           "execution_hold": false
@@ -83,6 +142,7 @@
     "other_token": "0x0000000000000000000000000000000000000000",
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
+      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -104,16 +164,47 @@
         "US",
         "VE"
       ],
+      "jurisdiction_names": {
+        "AE": "United Arab Emirates",
+        "BY": "Belarus",
+        "CA": "Canada",
+        "CH": "Switzerland",
+        "CU": "Cuba",
+        "GB": "United Kingdom of Great Britain and Northern Ireland",
+        "IR": "Iran (Islamic Republic of)",
+        "KP": "Korea (Democratic People's Republic of)",
+        "MM": "Myanmar",
+        "RU": "Russian Federation",
+        "SD": "Sudan",
+        "SG": "Singapore",
+        "SS": "South Sudan",
+        "SY": "Syrian Arab Republic",
+        "UA": "Ukraine",
+        "US": "United States of America",
+        "VE": "Venezuela (Bolivarian Republic of)"
+      },
       "assets": [
         {
           "chain_id": "4663",
           "token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
           "side": "sell",
           "classification": "rhj_stock_token",
-          "class_sources": [
-            "curated",
-            "ekubo_v1",
-            "issuer_registry"
+          "provenance": [
+            {
+              "source": "curated-tokens",
+              "ref": "EkuboProtocol/default-tokens@0048c81c3f650640100965f4701cf5cd04f9d915:curated-tokens.json sha256:f8d738b37fe92262bd08c766eabf5a5430074ddf11d1ae77bac2a085148e4a86",
+              "observed_at": "2026-10-06T12:10:00Z"
+            },
+            {
+              "source": "issuer-registry",
+              "ref": "https://api.robinhood.com/rhj/assets sha256:ae51218019c2f7533f9a959f5c75d25b8461bfd5c288c277b1aa98277bc979ac",
+              "observed_at": "2026-10-06T12:10:00Z"
+            },
+            {
+              "source": "v1-list",
+              "ref": "EkuboProtocol/ekubo-mcp-server@d71a6d9:src/token-restrictions.ts RHC_STOCK_TOKEN_ADDRESSES",
+              "observed_at": "2026-10-06T12:10:00Z"
+            }
           ],
           "restricted_jurisdictions": [
             "AE",
@@ -134,17 +225,44 @@
             "US",
             "VE"
           ],
+          "offering_exclusions": [
+            "AE",
+            "CA",
+            "CH",
+            "GB",
+            "SG",
+            "US"
+          ],
+          "issuer_prohibited_investor": [
+            "BY",
+            "CU",
+            "IR",
+            "KP",
+            "MM",
+            "RU",
+            "SD",
+            "SS",
+            "SY",
+            "UA",
+            "VE"
+          ],
           "execution_hold": false
         },
         {
           "chain_id": "4663",
           "token": "0x0000000000000000000000000000000000000000",
           "side": "buy",
-          "classification": "outside_class",
-          "class_sources": [
-            "native"
+          "classification": "non_class",
+          "provenance": [
+            {
+              "source": "native",
+              "ref": "chain 4663 native currency",
+              "observed_at": "2026-10-06"
+            }
           ],
           "restricted_jurisdictions": [],
+          "offering_exclusions": [],
+          "issuer_prohibited_investor": [],
           "execution_hold": false
         }
       ],
@@ -159,6 +277,7 @@
     "other_token": "0x0000000000000000000000000000000000000000",
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
+      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -180,16 +299,41 @@
         "US",
         "VE"
       ],
+      "jurisdiction_names": {
+        "AE": "United Arab Emirates",
+        "BY": "Belarus",
+        "CA": "Canada",
+        "CH": "Switzerland",
+        "CU": "Cuba",
+        "GB": "United Kingdom of Great Britain and Northern Ireland",
+        "IR": "Iran (Islamic Republic of)",
+        "KP": "Korea (Democratic People's Republic of)",
+        "MM": "Myanmar",
+        "RU": "Russian Federation",
+        "SD": "Sudan",
+        "SG": "Singapore",
+        "SS": "South Sudan",
+        "SY": "Syrian Arab Republic",
+        "UA": "Ukraine",
+        "US": "United States of America",
+        "VE": "Venezuela (Bolivarian Republic of)"
+      },
       "assets": [
         {
           "chain_id": "4663",
           "token": "0x0000000000000000000000000000000000000000",
           "side": "sell",
-          "classification": "outside_class",
-          "class_sources": [
-            "native"
+          "classification": "non_class",
+          "provenance": [
+            {
+              "source": "native",
+              "ref": "chain 4663 native currency",
+              "observed_at": "2026-10-06"
+            }
           ],
           "restricted_jurisdictions": [],
+          "offering_exclusions": [],
+          "issuer_prohibited_investor": [],
           "execution_hold": false
         },
         {
@@ -197,10 +341,22 @@
           "token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
           "side": "buy",
           "classification": "rhj_stock_token",
-          "class_sources": [
-            "curated",
-            "ekubo_v1",
-            "issuer_registry"
+          "provenance": [
+            {
+              "source": "curated-tokens",
+              "ref": "EkuboProtocol/default-tokens@0048c81c3f650640100965f4701cf5cd04f9d915:curated-tokens.json sha256:f8d738b37fe92262bd08c766eabf5a5430074ddf11d1ae77bac2a085148e4a86",
+              "observed_at": "2026-10-06T12:10:00Z"
+            },
+            {
+              "source": "issuer-registry",
+              "ref": "https://api.robinhood.com/rhj/assets sha256:ae51218019c2f7533f9a959f5c75d25b8461bfd5c288c277b1aa98277bc979ac",
+              "observed_at": "2026-10-06T12:10:00Z"
+            },
+            {
+              "source": "v1-list",
+              "ref": "EkuboProtocol/ekubo-mcp-server@d71a6d9:src/token-restrictions.ts RHC_STOCK_TOKEN_ADDRESSES",
+              "observed_at": "2026-10-06T12:10:00Z"
+            }
           ],
           "restricted_jurisdictions": [
             "AE",
@@ -219,6 +375,27 @@
             "SY",
             "UA",
             "US",
+            "VE"
+          ],
+          "offering_exclusions": [
+            "AE",
+            "CA",
+            "CH",
+            "GB",
+            "SG",
+            "US"
+          ],
+          "issuer_prohibited_investor": [
+            "BY",
+            "CU",
+            "IR",
+            "KP",
+            "MM",
+            "RU",
+            "SD",
+            "SS",
+            "SY",
+            "UA",
             "VE"
           ],
           "execution_hold": false
@@ -235,6 +412,7 @@
     "other_token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
+      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -256,16 +434,47 @@
         "US",
         "VE"
       ],
+      "jurisdiction_names": {
+        "AE": "United Arab Emirates",
+        "BY": "Belarus",
+        "CA": "Canada",
+        "CH": "Switzerland",
+        "CU": "Cuba",
+        "GB": "United Kingdom of Great Britain and Northern Ireland",
+        "IR": "Iran (Islamic Republic of)",
+        "KP": "Korea (Democratic People's Republic of)",
+        "MM": "Myanmar",
+        "RU": "Russian Federation",
+        "SD": "Sudan",
+        "SG": "Singapore",
+        "SS": "South Sudan",
+        "SY": "Syrian Arab Republic",
+        "UA": "Ukraine",
+        "US": "United States of America",
+        "VE": "Venezuela (Bolivarian Republic of)"
+      },
       "assets": [
         {
           "chain_id": "4663",
           "token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
           "side": "sell",
           "classification": "rhj_stock_token",
-          "class_sources": [
-            "curated",
-            "ekubo_v1",
-            "issuer_registry"
+          "provenance": [
+            {
+              "source": "curated-tokens",
+              "ref": "EkuboProtocol/default-tokens@0048c81c3f650640100965f4701cf5cd04f9d915:curated-tokens.json sha256:f8d738b37fe92262bd08c766eabf5a5430074ddf11d1ae77bac2a085148e4a86",
+              "observed_at": "2026-10-06T12:10:00Z"
+            },
+            {
+              "source": "issuer-registry",
+              "ref": "https://api.robinhood.com/rhj/assets sha256:ae51218019c2f7533f9a959f5c75d25b8461bfd5c288c277b1aa98277bc979ac",
+              "observed_at": "2026-10-06T12:10:00Z"
+            },
+            {
+              "source": "v1-list",
+              "ref": "EkuboProtocol/ekubo-mcp-server@d71a6d9:src/token-restrictions.ts RHC_STOCK_TOKEN_ADDRESSES",
+              "observed_at": "2026-10-06T12:10:00Z"
+            }
           ],
           "restricted_jurisdictions": [
             "AE",
@@ -286,17 +495,44 @@
             "US",
             "VE"
           ],
+          "offering_exclusions": [
+            "AE",
+            "CA",
+            "CH",
+            "GB",
+            "SG",
+            "US"
+          ],
+          "issuer_prohibited_investor": [
+            "BY",
+            "CU",
+            "IR",
+            "KP",
+            "MM",
+            "RU",
+            "SD",
+            "SS",
+            "SY",
+            "UA",
+            "VE"
+          ],
           "execution_hold": false
         },
         {
           "chain_id": "4663",
           "token": "0x0000000000000000000000000000000000000000",
           "side": "buy",
-          "classification": "outside_class",
-          "class_sources": [
-            "native"
+          "classification": "non_class",
+          "provenance": [
+            {
+              "source": "native",
+              "ref": "chain 4663 native currency",
+              "observed_at": "2026-10-06"
+            }
           ],
           "restricted_jurisdictions": [],
+          "offering_exclusions": [],
+          "issuer_prohibited_investor": [],
           "execution_hold": false
         }
       ],
@@ -311,6 +547,7 @@
     "other_token": "0xff080c8ce2e5feadaca0da81314ae59d232d4afd",
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
+      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -332,16 +569,47 @@
         "US",
         "VE"
       ],
+      "jurisdiction_names": {
+        "AE": "United Arab Emirates",
+        "BY": "Belarus",
+        "CA": "Canada",
+        "CH": "Switzerland",
+        "CU": "Cuba",
+        "GB": "United Kingdom of Great Britain and Northern Ireland",
+        "IR": "Iran (Islamic Republic of)",
+        "KP": "Korea (Democratic People's Republic of)",
+        "MM": "Myanmar",
+        "RU": "Russian Federation",
+        "SD": "Sudan",
+        "SG": "Singapore",
+        "SS": "South Sudan",
+        "SY": "Syrian Arab Republic",
+        "UA": "Ukraine",
+        "US": "United States of America",
+        "VE": "Venezuela (Bolivarian Republic of)"
+      },
       "assets": [
         {
           "chain_id": "4663",
           "token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
           "side": "sell",
           "classification": "rhj_stock_token",
-          "class_sources": [
-            "curated",
-            "ekubo_v1",
-            "issuer_registry"
+          "provenance": [
+            {
+              "source": "curated-tokens",
+              "ref": "EkuboProtocol/default-tokens@0048c81c3f650640100965f4701cf5cd04f9d915:curated-tokens.json sha256:f8d738b37fe92262bd08c766eabf5a5430074ddf11d1ae77bac2a085148e4a86",
+              "observed_at": "2026-10-06T12:10:00Z"
+            },
+            {
+              "source": "issuer-registry",
+              "ref": "https://api.robinhood.com/rhj/assets sha256:ae51218019c2f7533f9a959f5c75d25b8461bfd5c288c277b1aa98277bc979ac",
+              "observed_at": "2026-10-06T12:10:00Z"
+            },
+            {
+              "source": "v1-list",
+              "ref": "EkuboProtocol/ekubo-mcp-server@d71a6d9:src/token-restrictions.ts RHC_STOCK_TOKEN_ADDRESSES",
+              "observed_at": "2026-10-06T12:10:00Z"
+            }
           ],
           "restricted_jurisdictions": [
             "AE",
@@ -362,6 +630,27 @@
             "US",
             "VE"
           ],
+          "offering_exclusions": [
+            "AE",
+            "CA",
+            "CH",
+            "GB",
+            "SG",
+            "US"
+          ],
+          "issuer_prohibited_investor": [
+            "BY",
+            "CU",
+            "IR",
+            "KP",
+            "MM",
+            "RU",
+            "SD",
+            "SS",
+            "SY",
+            "UA",
+            "VE"
+          ],
           "execution_hold": false
         },
         {
@@ -369,10 +658,22 @@
           "token": "0xff080c8ce2e5feadaca0da81314ae59d232d4afd",
           "side": "buy",
           "classification": "rhj_stock_token",
-          "class_sources": [
-            "curated",
-            "ekubo_v1",
-            "issuer_registry"
+          "provenance": [
+            {
+              "source": "curated-tokens",
+              "ref": "EkuboProtocol/default-tokens@0048c81c3f650640100965f4701cf5cd04f9d915:curated-tokens.json sha256:f8d738b37fe92262bd08c766eabf5a5430074ddf11d1ae77bac2a085148e4a86",
+              "observed_at": "2026-10-06T12:10:00Z"
+            },
+            {
+              "source": "issuer-registry",
+              "ref": "https://api.robinhood.com/rhj/assets sha256:ae51218019c2f7533f9a959f5c75d25b8461bfd5c288c277b1aa98277bc979ac",
+              "observed_at": "2026-10-06T12:10:00Z"
+            },
+            {
+              "source": "v1-list",
+              "ref": "EkuboProtocol/ekubo-mcp-server@d71a6d9:src/token-restrictions.ts RHC_STOCK_TOKEN_ADDRESSES",
+              "observed_at": "2026-10-06T12:10:00Z"
+            }
           ],
           "restricted_jurisdictions": [
             "AE",
@@ -391,6 +692,27 @@
             "SY",
             "UA",
             "US",
+            "VE"
+          ],
+          "offering_exclusions": [
+            "AE",
+            "CA",
+            "CH",
+            "GB",
+            "SG",
+            "US"
+          ],
+          "issuer_prohibited_investor": [
+            "BY",
+            "CU",
+            "IR",
+            "KP",
+            "MM",
+            "RU",
+            "SD",
+            "SS",
+            "SY",
+            "UA",
             "VE"
           ],
           "execution_hold": false
@@ -407,17 +729,21 @@
     "other_token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
+      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [],
+      "jurisdiction_names": {},
       "assets": [
         {
           "chain_id": "1",
           "token": "0x0000000000000000000000000000000000000000",
           "side": "sell",
           "classification": "out_of_scope",
-          "class_sources": [],
+          "provenance": [],
           "restricted_jurisdictions": [],
+          "offering_exclusions": [],
+          "issuer_prohibited_investor": [],
           "execution_hold": false
         },
         {
@@ -425,8 +751,10 @@
           "token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
           "side": "buy",
           "classification": "out_of_scope",
-          "class_sources": [],
+          "provenance": [],
           "restricted_jurisdictions": [],
+          "offering_exclusions": [],
+          "issuer_prohibited_investor": [],
           "execution_hold": false
         }
       ],
@@ -441,28 +769,38 @@
     "other_token": "0x1111111111111111111111111111111111111111",
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
-      "coverage": "incomplete",
+      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "coverage": "unknown",
       "execution_hold": true,
-      "restricted_jurisdictions": [],
+      "restricted_jurisdictions": null,
+      "jurisdiction_names": {},
       "assets": [
         {
           "chain_id": "4663",
           "token": "0x0000000000000000000000000000000000000000",
           "side": "sell",
-          "classification": "outside_class",
-          "class_sources": [
-            "native"
+          "classification": "non_class",
+          "provenance": [
+            {
+              "source": "native",
+              "ref": "chain 4663 native currency",
+              "observed_at": "2026-10-06"
+            }
           ],
           "restricted_jurisdictions": [],
+          "offering_exclusions": [],
+          "issuer_prohibited_investor": [],
           "execution_hold": false
         },
         {
           "chain_id": "4663",
           "token": "0x1111111111111111111111111111111111111111",
           "side": "buy",
-          "classification": "unclassified",
-          "class_sources": [],
-          "restricted_jurisdictions": [],
+          "classification": "unknown",
+          "provenance": [],
+          "restricted_jurisdictions": null,
+          "offering_exclusions": null,
+          "issuer_prohibited_investor": null,
           "execution_hold": true
         }
       ],
@@ -478,6 +816,7 @@
     "destination_chain_id": null,
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
+      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -499,16 +838,41 @@
         "US",
         "VE"
       ],
+      "jurisdiction_names": {
+        "AE": "United Arab Emirates",
+        "BY": "Belarus",
+        "CA": "Canada",
+        "CH": "Switzerland",
+        "CU": "Cuba",
+        "GB": "United Kingdom of Great Britain and Northern Ireland",
+        "IR": "Iran (Islamic Republic of)",
+        "KP": "Korea (Democratic People's Republic of)",
+        "MM": "Myanmar",
+        "RU": "Russian Federation",
+        "SD": "Sudan",
+        "SG": "Singapore",
+        "SS": "South Sudan",
+        "SY": "Syrian Arab Republic",
+        "UA": "Ukraine",
+        "US": "United States of America",
+        "VE": "Venezuela (Bolivarian Republic of)"
+      },
       "assets": [
         {
           "chain_id": "4663",
           "token": "0x0000000000000000000000000000000000000000",
           "side": "sell",
-          "classification": "outside_class",
-          "class_sources": [
-            "native"
+          "classification": "non_class",
+          "provenance": [
+            {
+              "source": "native",
+              "ref": "chain 4663 native currency",
+              "observed_at": "2026-10-06"
+            }
           ],
           "restricted_jurisdictions": [],
+          "offering_exclusions": [],
+          "issuer_prohibited_investor": [],
           "execution_hold": false
         },
         {
@@ -516,9 +880,17 @@
           "token": "0x05a3d1cd21d0c88145e82600e62e7e496e0f222b",
           "side": "buy",
           "classification": "rhj_stock_token",
-          "class_sources": [
-            "curated",
-            "issuer_registry"
+          "provenance": [
+            {
+              "source": "curated-tokens",
+              "ref": "EkuboProtocol/default-tokens@0048c81c3f650640100965f4701cf5cd04f9d915:curated-tokens.json sha256:f8d738b37fe92262bd08c766eabf5a5430074ddf11d1ae77bac2a085148e4a86",
+              "observed_at": "2026-10-06T12:10:00Z"
+            },
+            {
+              "source": "issuer-registry",
+              "ref": "https://api.robinhood.com/rhj/assets sha256:ae51218019c2f7533f9a959f5c75d25b8461bfd5c288c277b1aa98277bc979ac",
+              "observed_at": "2026-10-06T12:10:00Z"
+            }
           ],
           "restricted_jurisdictions": [
             "AE",
@@ -537,6 +909,27 @@
             "SY",
             "UA",
             "US",
+            "VE"
+          ],
+          "offering_exclusions": [
+            "AE",
+            "CA",
+            "CH",
+            "GB",
+            "SG",
+            "US"
+          ],
+          "issuer_prohibited_investor": [
+            "BY",
+            "CU",
+            "IR",
+            "KP",
+            "MM",
+            "RU",
+            "SD",
+            "SS",
+            "SY",
+            "UA",
             "VE"
           ],
           "execution_hold": false
@@ -554,6 +947,7 @@
     "destination_chain_id": null,
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
+      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -575,14 +969,37 @@
         "US",
         "VE"
       ],
+      "jurisdiction_names": {
+        "AE": "United Arab Emirates",
+        "BY": "Belarus",
+        "CA": "Canada",
+        "CH": "Switzerland",
+        "CU": "Cuba",
+        "GB": "United Kingdom of Great Britain and Northern Ireland",
+        "IR": "Iran (Islamic Republic of)",
+        "KP": "Korea (Democratic People's Republic of)",
+        "MM": "Myanmar",
+        "RU": "Russian Federation",
+        "SD": "Sudan",
+        "SG": "Singapore",
+        "SS": "South Sudan",
+        "SY": "Syrian Arab Republic",
+        "UA": "Ukraine",
+        "US": "United States of America",
+        "VE": "Venezuela (Bolivarian Republic of)"
+      },
       "assets": [
         {
           "chain_id": "4663",
           "token": "0x666716999e75d2652398ff830bbc2e485946e140",
           "side": "sell",
           "classification": "rhj_stock_token",
-          "class_sources": [
-            "ekubo_v1"
+          "provenance": [
+            {
+              "source": "v1-list",
+              "ref": "EkuboProtocol/ekubo-mcp-server@d71a6d9:src/token-restrictions.ts RHC_STOCK_TOKEN_ADDRESSES",
+              "observed_at": "2026-10-06T12:10:00Z"
+            }
           ],
           "restricted_jurisdictions": [
             "AE",
@@ -603,17 +1020,44 @@
             "US",
             "VE"
           ],
+          "offering_exclusions": [
+            "AE",
+            "CA",
+            "CH",
+            "GB",
+            "SG",
+            "US"
+          ],
+          "issuer_prohibited_investor": [
+            "BY",
+            "CU",
+            "IR",
+            "KP",
+            "MM",
+            "RU",
+            "SD",
+            "SS",
+            "SY",
+            "UA",
+            "VE"
+          ],
           "execution_hold": false
         },
         {
           "chain_id": "4663",
           "token": "0x0000000000000000000000000000000000000000",
           "side": "buy",
-          "classification": "outside_class",
-          "class_sources": [
-            "native"
+          "classification": "non_class",
+          "provenance": [
+            {
+              "source": "native",
+              "ref": "chain 4663 native currency",
+              "observed_at": "2026-10-06"
+            }
           ],
           "restricted_jurisdictions": [],
+          "offering_exclusions": [],
+          "issuer_prohibited_investor": [],
           "execution_hold": false
         }
       ],
@@ -629,30 +1073,44 @@
     "destination_chain_id": null,
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
+      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [],
+      "jurisdiction_names": {},
       "assets": [
         {
           "chain_id": "4663",
           "token": "0x0000000000000000000000000000000000000000",
           "side": "sell",
-          "classification": "outside_class",
-          "class_sources": [
-            "native"
+          "classification": "non_class",
+          "provenance": [
+            {
+              "source": "native",
+              "ref": "chain 4663 native currency",
+              "observed_at": "2026-10-06"
+            }
           ],
           "restricted_jurisdictions": [],
+          "offering_exclusions": [],
+          "issuer_prohibited_investor": [],
           "execution_hold": false
         },
         {
           "chain_id": "4663",
           "token": "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
           "side": "buy",
-          "classification": "outside_class",
-          "class_sources": [
-            "issuer_token_contracts_page"
+          "classification": "non_class",
+          "provenance": [
+            {
+              "source": "issuer-token-contracts-page",
+              "ref": "https://docs.robinhood.com/chain/contracts",
+              "observed_at": "2026-10-06"
+            }
           ],
           "restricted_jurisdictions": [],
+          "offering_exclusions": [],
+          "issuer_prohibited_investor": [],
           "execution_hold": false
         }
       ],

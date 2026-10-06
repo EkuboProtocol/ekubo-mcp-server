@@ -199,8 +199,8 @@ describe("jurisdiction restrictions over the MCP endpoint", () => {
     }
   });
 
-  it("holds an unclassified asset on the covered chain for every connection", async () => {
-    for (const country of ["FR", "US", undefined]) {
+  it("holds an unknown asset on the covered chain for every connection", async () => {
+    for (const country of ["FR", "US", "XX", "T1", undefined]) {
       const result = await callTool(
         "prepare_oracle_capacity_expansion",
         { chain_id: ROBINHOOD_CHAIN, sender: SENDER, token: UNKNOWN, min_capacity: 64 },
@@ -209,36 +209,45 @@ describe("jurisdiction restrictions over the MCP endpoint", () => {
       expect(result.isError).toBe(true);
       expect(result.structuredContent).toMatchObject({
         error: {
-          code: "restricted_jurisdiction",
-          details: { restricted_assets: [{ token: UNKNOWN, classification: "unclassified" }] },
+          code: "unclassified_asset",
+          details: { assets: [{ token: UNKNOWN, classification: "unknown" }] },
         },
       });
     }
   });
 
-  it("marks a quote for an unclassified asset as an execution hold", async () => {
-    const mockedFetch = spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL) => {
-      if (!input.toString().startsWith("https://quoter.test/")) return new Response("not found", { status: 404 });
-      return Response.json({
-        block_number: 123, block_hash: "0x01", total_calculated: "900",
-        estimated_gas_cost: 25000, price_impact: 0.001,
-        splits: [{ amount_specified: "1000", amount_calculated: "900", route: [{ swap: {
-          type: "core", pool_key: { token0: "0x0000000000000000000000000000000000000000", token1: UNKNOWN, config: `0x${"00".repeat(32)}` },
-          sqrt_ratio_limit: "0x000000000000000000000000", skip_ahead: 0,
-        } }] }],
-      });
-    }) as typeof fetch);
+  it("fails closed for a restricted asset when the edge reports XX", async () => {
+    const result = await callTool(
+      "prepare_oracle_capacity_expansion",
+      { chain_id: ROBINHOOD_CHAIN, sender: SENDER, token: NVDA, min_capacity: 64 },
+      "XX",
+    );
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      error: { code: "restricted_jurisdiction", details: { country: null } },
+    });
+  });
+
+  it("refuses get_quotes_with_plans for an unknown asset without calling any provider", async () => {
+    let calls = 0;
+    const mockedFetch = spyOn(globalThis, "fetch").mockImplementation((async () => {
+      calls += 1;
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch);
     try {
-      const result = await callTool("get_quotes_with_plans", {
-        chain_id: ROBINHOOD_CHAIN,
-        token_in: "0x0000000000000000000000000000000000000000", token_out: UNKNOWN,
-        quote_type: "exact_input", amount: "1000", sender: SENDER, slippage_bps: 10,
-      }, "FR");
-      expect(result.isError).toBeUndefined();
-      expect(result.structuredContent).toMatchObject({
-        jurisdiction: { coverage: "incomplete", execution_hold: true, restricted_jurisdictions: [] },
-        quotes: [{ execution: { jurisdiction: { execution_hold: true } } }],
-      });
+      for (const country of ["FR", "US", undefined]) {
+        const result = await callTool("get_quotes_with_plans", {
+          chain_id: ROBINHOOD_CHAIN,
+          token_in: "0x0000000000000000000000000000000000000000", token_out: UNKNOWN,
+          quote_type: "exact_input", amount: "1000", sender: SENDER, slippage_bps: 10,
+        }, country);
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({
+          error: { code: "unclassified_asset", details: { assets: [{ token: UNKNOWN, side: "buy", classification: "unknown" }] } },
+        });
+        expect(JSON.stringify(result)).not.toContain("execution_plan_reference");
+      }
+      expect(calls).toBe(0);
     } finally {
       mockedFetch.mockRestore();
     }

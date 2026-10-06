@@ -1,4 +1,4 @@
-import { QUOTE_JURISDICTION_NOTICE } from "./token-restrictions.js";
+import { QUOTE_JURISDICTION_NOTICE_V2 } from "./token-restrictions.js";
 import { uniswapTools, uniswapCatalog } from "./uniswap/tools.js";
 import { safeTools, safeCatalog } from "./safe.js";
 import { informationalOutputSchemas } from "./informational-output-schemas.js";
@@ -1811,16 +1811,21 @@ const exportedTokenListOutputSchema = z.looseObject({
   count: z.number().int(),
   complete: z.boolean(),
 });
+const countryCodeSchema = z.string().regex(/^[A-Z]{2}$/);
 const quoteJurisdictionSchema = z.object({
   policy_version: z.string(),
-  coverage: z.enum(["complete", "incomplete"]),
+  policy_digest: z.string().regex(/^[0-9a-f]{64}$/),
+  coverage: z.enum(["complete", "unknown"]),
   execution_hold: z.boolean(),
-  restricted_jurisdictions: z.array(z.string().regex(/^[A-Z]{2}$/)),
+  restricted_jurisdictions: z.array(countryCodeSchema).nullable(),
+  jurisdiction_names: z.record(z.string(), z.string()),
   assets: z.array(z.object({
     chain_id: z.string(), token: z.string(), side: z.enum(["sell", "buy"]),
-    classification: z.enum(["rhj_stock_token", "outside_class", "unclassified", "out_of_scope"]),
-    class_sources: z.array(z.string()),
-    restricted_jurisdictions: z.array(z.string().regex(/^[A-Z]{2}$/)),
+    classification: z.enum(["rhj_stock_token", "non_class", "unknown", "out_of_scope"]),
+    provenance: z.array(z.object({ source: z.string(), ref: z.string(), observed_at: z.string() })),
+    restricted_jurisdictions: z.array(countryCodeSchema).nullable(),
+    offering_exclusions: z.array(countryCodeSchema).nullable(),
+    issuer_prohibited_investor: z.array(countryCodeSchema).nullable(),
     execution_hold: z.boolean(),
   })),
   execution_notice: z.string().nullable(),
@@ -1979,7 +1984,7 @@ export const publicToolCatalog = [
     name: "get_quotes_with_plans",
     title: "Get swap or bridge quotes with execution plans",
     description:
-      QUOTE_JURISDICTION_NOTICE + " " + "The whole non-browser swap path for onchain swap, trade, exchange, or convert requests on supported EVM chains: one call returns every available Ekubo and 0x quote for a same-chain swap, each already carrying the execution_plan_reference that executes it, without accepting or selecting a source. Choose an option and pass its execution.execution_plan_reference envelope unchanged as the wallet's reference argument; the wallet fetches and verifies the plan body itself; there is no second preparation step, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Do not call this tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the request. Omit sender and slippage_bps for an indicative comparison that fetches no calldata; supply both for plans. Unless the user specifies otherwise, choose a low slippage_bps whose maximum value impact is approximately one estimated gas fee (10,000 * gas-cost value / swap-notional value), not a generic 50 bps/0.5%; prefer re-quoting and retrying with a newly prepared transaction after slippage failure to exposing the trade to a wider bound. Never retry reverted calldata unchanged. Cross-chain requests are quoted by Across, LayerZero's Value Transfer API, and LI.FI where each is configured, and are compared the same way as same-chain options; after executing a LayerZero or LI.FI option, get_value_transfer_status is polled to confirm delivery, with that option's provider_quote_id for LayerZero and with the origin transaction hash for LI.FI. Provider failures are reported separately in unavailable_sources, and an option that could not be made executable reports its own execution_unavailable while the rest stand. Compare options on amount_out together with native_fee: some providers, LayerZero among them, charge a messaging fee in native token on top of the input that amount_out does not reflect, and ranking on amount_out alone can pick an option that costs an order of magnitude more all in. When any option charges one the comparison block names it in native_fee_sources and says whether its basis nets it out. Set include_raw_quotes only to diagnose a provider; the normalized amounts carry every field a choice turns on. Supports EIP-155 token identifiers.",
+      QUOTE_JURISDICTION_NOTICE_V2 + " " + "The whole non-browser swap path for onchain swap, trade, exchange, or convert requests on supported EVM chains: one call returns every available Ekubo and 0x quote for a same-chain swap, each already carrying the execution_plan_reference that executes it, without accepting or selecting a source. Choose an option and pass its execution.execution_plan_reference envelope unchanged as the wallet's reference argument; the wallet fetches and verifies the plan body itself; there is no second preparation step, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Do not call this tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the request. Omit sender and slippage_bps for an indicative comparison that fetches no calldata; supply both for plans. Unless the user specifies otherwise, choose a low slippage_bps whose maximum value impact is approximately one estimated gas fee (10,000 * gas-cost value / swap-notional value), not a generic 50 bps/0.5%; prefer re-quoting and retrying with a newly prepared transaction after slippage failure to exposing the trade to a wider bound. Never retry reverted calldata unchanged. Cross-chain requests are quoted by Across, LayerZero's Value Transfer API, and LI.FI where each is configured, and are compared the same way as same-chain options; after executing a LayerZero or LI.FI option, get_value_transfer_status is polled to confirm delivery, with that option's provider_quote_id for LayerZero and with the origin transaction hash for LI.FI. Provider failures are reported separately in unavailable_sources, and an option that could not be made executable reports its own execution_unavailable while the rest stand. Compare options on amount_out together with native_fee: some providers, LayerZero among them, charge a messaging fee in native token on top of the input that amount_out does not reflect, and ranking on amount_out alone can pick an option that costs an order of magnitude more all in. When any option charges one the comparison block names it in native_fee_sources and says whether its basis nets it out. Set include_raw_quotes only to diagnose a provider; the normalized amounts carry every field a choice turns on. Supports EIP-155 token identifiers.",
     inputSchema: z.toJSONSchema(getQuotesWithPlansSchema),
   },
   {
@@ -4687,7 +4692,7 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
   },
   {
     protocols: null,
-    text: QUOTE_JURISDICTION_NOTICE + ` Swap quotes always return jurisdiction metadata (policy ekubo-token-jurisdictions-v2), independent of the MCP connection country; the prepare_ve33_reinvest phase=swap result and each of its child swaps carry it inline as well, beside each execution_plan_reference. Every asset is listed with its classification, so an empty restricted_jurisdictions list is explicit rather than missing. execution_hold=true (coverage=incomplete) means an asset on a covered chain is unclassified: do not request signatures or approvals for that plan. Robinhood Stock Token restrictions apply to buying and selling alike. Other preparation tools retain their country-based controls, hold unclassified assets, and may fail with restricted_jurisdiction. Explain such a refusal to the user rather than retrying that preparation through another route. Withdrawals, fee and proceeds collection, and transfers remain available.`,
+    text: QUOTE_JURISDICTION_NOTICE_V2 + ` Swap quotes always return jurisdiction metadata (policy ekubo-token-jurisdictions-v2, with its policy_digest), independent of the MCP connection country; the prepare_ve33_reinvest phase=swap result and each of its child swaps carry it inline as well, beside each execution_plan_reference. Every asset is listed with its classification and provenance, so an empty restricted_jurisdictions list is explicit rather than missing. On a covered chain an asset that is neither a Robinhood Stock Token nor verified outside that class is unknown: every tool that would prepare a plan for it, swap quotes included, refuses with unclassified_asset from every country. Robinhood Stock Token restrictions apply to buying and selling alike. Other preparation tools retain their country-based controls and may fail with restricted_jurisdiction. Explain such a refusal to the user rather than retrying that preparation through another route. Withdrawals, fee and proceeds collection, and transfers remain available.`,
   },
   {
     protocols: ["ekubo"],
@@ -4982,19 +4987,21 @@ and the LI.FI API, each included where it is configured. Provider API keys are s
 and are never accepted as tool arguments.
 
 Every quote and its execution envelope include jurisdiction metadata:
-policy_version, coverage, execution_hold, restricted_jurisdictions (ISO alpha-2
-country codes), assets (chain_id, token, side, classification, class_sources,
-restricted_jurisdictions, execution_hold), and execution_notice. Every asset is
-listed: classification is rhj_stock_token (Robinhood Stock Token, restricted on
-both sides), outside_class (exact address verified outside that class),
-unclassified (on a covered chain but not yet classified: execution_hold), or
-out_of_scope (chain not covered by the policy). The union covers the input and
-output assets, including the destination chain for bridges. An empty list for a
-classified asset means no restriction in this policy version, not a general
-eligibility certification; coverage=incomplete means the list is not
-authoritative and the plan must not be executed.
+policy_version, policy_digest, coverage, execution_hold, restricted_jurisdictions
+(ISO alpha-2 country codes) with jurisdiction_names, assets (chain_id, token,
+side, classification, provenance, restricted_jurisdictions, offering_exclusions,
+issuer_prohibited_investor, execution_hold), and execution_notice. Every asset
+is listed: classification is rhj_stock_token (Robinhood Stock Token, restricted
+on both sides), non_class (exact address verified not to be one), unknown (on a
+covered chain but not yet classified), or out_of_scope (chain not covered by the
+policy). The union covers the input and output assets, including the destination
+chain for bridges. An empty list for a classified asset means no restriction in
+this policy version, not a general eligibility certification. A request naming
+an unknown asset is refused with unclassified_asset before any provider is
+quoted, so no plan is ever returned for it; coverage=unknown, with null lists,
+would mean the metadata is not authoritative and nothing may be executed.
 Quotes are available regardless of the connection country and require no proof.
-${QUOTE_JURISDICTION_NOTICE}
+${QUOTE_JURISDICTION_NOTICE_V2}
 The agent must retain this metadata when handing the plan reference to the wallet;
 the plan also carries it in extensions["ekubo.jurisdiction"]. This advisory
 extension does not automatically enforce attestation.

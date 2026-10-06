@@ -1,4 +1,4 @@
-import { quoteJurisdiction } from "./token-restrictions.js";
+import { assertAssetsClassified, quoteJurisdiction } from "./token-restrictions.js";
 import {
   type Address,
   decodeFunctionData,
@@ -652,6 +652,9 @@ export async function getQuotesWithPlans(
   // instead of an indicative price, and Across estimates the real origin
   // transaction for the real depositor.
   const preparation = swapPreparationIntent(intent);
+  // Every option this tool returns can carry a plan, so an unclassified asset
+  // is refused before any provider is asked for a quote (EKU-853).
+  assertAssetsClassified(swapAssets(intent));
   const result = await collectQuotes(
     env,
     { ...intent, source: "all" },
@@ -721,6 +724,7 @@ export async function prepareSwap(
   intent: PrepareSwapIntent,
   fetcher: Fetcher = fetch,
 ) {
+  assertAssetsClassified(swapAssets(intent));
   const quoted = await selectQuote(env, intent, fetcher);
   const selected = quoted.selected;
   const selection = quoteSelection(intent, quoted);
@@ -2086,11 +2090,15 @@ function quoteRequest(intent: QuoteSelectionIntent, source: QuoteSource) {
   };
 }
 
+function swapAssets(intent: QuoteIntent) {
+  return [
+    { chainId: intent.chainId, token: intent.tokenIn, side: "sell" as const },
+    { chainId: intent.destinationChainId ?? intent.chainId, token: intent.tokenOut, side: "buy" as const },
+  ];
+}
+
 function swapJurisdiction(intent: QuoteIntent) {
-  return quoteJurisdiction([
-    { chainId: intent.chainId, token: intent.tokenIn, side: "sell" },
-    { chainId: intent.destinationChainId ?? intent.chainId, token: intent.tokenOut, side: "buy" },
-  ]);
+  return quoteJurisdiction(swapAssets(intent));
 }
 
 function serializeCompleteQuote(

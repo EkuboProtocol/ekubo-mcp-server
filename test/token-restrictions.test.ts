@@ -3,11 +3,15 @@ import { ServiceError } from "../src/core.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
+  assertAssetsClassified,
   assertAssetsTradable,
   classifyAsset,
   isTokenCountryRestricted,
+  JURISDICTION_POLICY_DIGEST,
   JURISDICTION_POLICY_VERSION,
   mergeQuoteJurisdictions,
+  normalizeCountry,
+  QUOTE_JURISDICTION_NOTICE_V2,
   quoteJurisdiction,
   requestCountry,
 } from "../src/token-restrictions.js";
@@ -47,11 +51,21 @@ const V2_COUNTRIES = [
 ];
 
 /**
- * SHA-256 of src/jurisdiction-policy.json. The interface pins the same digest
- * for its copy (src/util/common/jurisdictionPolicy.json); change both together.
+ * SHA-256 of src/jurisdiction-policy.json, generated in EkuboProtocol/default-tokens.
+ * The interface (src/util/common/jurisdictionPolicy.json) and default-tokens pin
+ * the same digest; change all three together.
  */
 const POLICY_SHA256 =
-  "0712ad8b08b487646cb1b574cfa7e2e927596fe2c8d2bec915107934988c8af1";
+  "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a";
+
+/** The CLO EKU-853 §3 notice, copied from the decision, not from the source. */
+const CLO_NOTICE = "A quote, execution plan, simulation or wallet approval is not permission to trade. Robinhood Stock Tokens are tokenised debt securities subject to issuer restrictions and applicable law. Before requesting signatures or submitting approvals or trades, establish the user's relevant jurisdiction and eligibility, including location, residence or entity incorporation, US-person status under Regulation S, any person for whose account or benefit the transaction is made, and issuer Prohibited Investor restrictions. Never infer these facts from an agent or server IP. If required facts or asset-policy coverage are unknown, do not proceed. Only the user or an authorized representative of the actual investor may provide an explicit factual attestation; an agent must not attest on their behalf. A known prohibited fact cannot be overridden by attestation. An attestation is not a license, legal exemption or substitute for required screening. Keep the attestation client-side; do not send it to the quote API or MCP server. No blanket disposal exemption applies.";
+
+/** artifacts/eku-853/v2-class-addresses.txt: the CLO-approved 200-address class. */
+const CLASS_ADDRESSES = readFileSync(
+  new URL("./fixtures/jurisdiction-v2-class-addresses.txt", import.meta.url),
+  "utf8",
+).split("\n").filter(Boolean);
 
 const V1_ADDRESSES = readFileSync(
   new URL("./fixtures/jurisdiction-v1-addresses.txt", import.meta.url),
@@ -84,6 +98,23 @@ describe("request country", () => {
     expect(requestCountry(requestWithCountry("T1"))).toBeNull();
     expect(requestCountry(requestWithCountry("t1"))).toBeNull();
   });
+
+  it("treats Cloudflare's unknown country XX as unresolved", () => {
+    expect(requestCountry(requestWithCountry("XX"))).toBeNull();
+    expect(requestCountry(requestWithCountry("xx"))).toBeNull();
+  });
+
+  it("treats anything that is not a two-letter code as unresolved", () => {
+    for (const country of ["USA", "U", "1A", "U-S", " ", "EU1"]) {
+      expect(requestCountry(requestWithCountry(country))).toBeNull();
+    }
+    expect(requestCountry({ cf: { country: 840 } } as unknown as Request)).toBeNull();
+  });
+
+  it("upper-cases a resolved code", () => {
+    expect(requestCountry(requestWithCountry("us"))).toBe("US");
+    expect(normalizeCountry(" fr ")).toBe("FR");
+  });
 });
 
 describe("jurisdiction policy v2 data", () => {
@@ -92,7 +123,46 @@ describe("jurisdiction policy v2 data", () => {
       new URL("../src/jurisdiction-policy.json", import.meta.url),
     );
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(POLICY_SHA256);
+    expect(JURISDICTION_POLICY_DIGEST).toBe(POLICY_SHA256);
     expect(JURISDICTION_POLICY_VERSION).toBe("ekubo-token-jurisdictions-v2");
+  });
+
+  it("is byte-identical to the interface and default-tokens copies checked out beside this repo", () => {
+    for (const path of [
+      "../../interface/src/util/common/jurisdictionPolicy.json",
+      "../../default-tokens/jurisdiction-policy/ekubo-token-jurisdictions-v2.json",
+    ]) {
+      let text: string;
+      try {
+        text = readFileSync(new URL(path, import.meta.url), "utf8");
+      } catch {
+        continue;
+      }
+      // A sibling checkout on another branch may legitimately lag; only a
+      // checkout that already carries this policy shape must match.
+      if (text.includes('"non_class"')) {
+        expect(createHash("sha256").update(text).digest("hex")).toBe(POLICY_SHA256);
+      }
+    }
+  });
+
+  it("classifies exactly the 200 CLO-approved addresses as Stock Tokens", () => {
+    expect(CLASS_ADDRESSES).toHaveLength(200);
+    const policy = JSON.parse(
+      readFileSync(new URL("../src/jurisdiction-policy.json", import.meta.url), "utf8"),
+    ) as { chains: Record<string, { rhj_stock_token: { address: string }[] }> };
+    expect(policy.chains[ROBINHOOD_CHAIN]!.rhj_stock_token.map((entry) => entry.address))
+      .toEqual([...CLASS_ADDRESSES].sort());
+  });
+
+  it("carries provenance on every class and non-class entry", () => {
+    for (const address of [...CLASS_ADDRESSES, NATIVE, WETH, USDG, STONX]) {
+      const { provenance } = classifyAsset(ROBINHOOD_CHAIN, address);
+      expect(provenance.length).toBeGreaterThan(0);
+      for (const entry of provenance) {
+        expect(Object.keys(entry).sort()).toEqual(["observed_at", "ref", "source"]);
+      }
+    }
   });
 
   it("classifies all 195 curated equities and ETFs as Stock Tokens", () => {
@@ -110,29 +180,33 @@ describe("jurisdiction policy v2 data", () => {
     for (const address of LEGACY_REMOVED) {
       expect(V1_ADDRESSES).toContain(address);
       expect(CURATED_EQUITIES.map((entry) => entry.address)).not.toContain(address);
-      expect(classifyAsset(ROBINHOOD_CHAIN, address).sources).toEqual(["ekubo_v1"]);
+      expect(classifyAsset(ROBINHOOD_CHAIN, address).provenance.map((entry) => entry.source)).toEqual(["v1-list"]);
     }
   });
 
   it("covers AMC, GLD and HIMS from the issuer registry", () => {
     for (const address of [AMC, GLD, HIMS]) {
       expect(V1_ADDRESSES).not.toContain(address);
-      expect(classifyAsset(ROBINHOOD_CHAIN, address)).toEqual({
-        classification: "rhj_stock_token",
-        sources: ["curated", "issuer_registry"],
-      });
+      const { classification, provenance } = classifyAsset(ROBINHOOD_CHAIN, address);
+      expect(classification).toBe("rhj_stock_token");
+      expect(provenance.map((entry) => entry.source)).toEqual(["curated-tokens", "issuer-registry"]);
     }
   });
 
   it("places only the verified exact addresses outside the class", () => {
-    expect(classifyAsset(ROBINHOOD_CHAIN, NATIVE)).toEqual({ classification: "outside_class", sources: ["native"] });
-    expect(classifyAsset(ROBINHOOD_CHAIN, WETH)).toEqual({ classification: "outside_class", sources: ["issuer_token_contracts_page"] });
-    expect(classifyAsset(ROBINHOOD_CHAIN, USDG)).toEqual({ classification: "outside_class", sources: ["issuer_token_contracts_page"] });
-    expect(classifyAsset(ROBINHOOD_CHAIN, STONX)).toEqual({ classification: "outside_class", sources: ["ekubo_issued"] });
+    const sources = (address: string) =>
+      classifyAsset(ROBINHOOD_CHAIN, address).provenance.map((entry) => entry.source);
+    for (const address of [NATIVE, WETH, USDG, STONX]) {
+      expect(classifyAsset(ROBINHOOD_CHAIN, address).classification).toBe("non_class");
+    }
+    expect(sources(NATIVE)).toEqual(["native"]);
+    expect(sources(WETH)).toEqual(["issuer-token-contracts-page", "onchain-verification"]);
+    expect(sources(USDG)).toEqual(["issuer-token-contracts-page"]);
+    expect(sources(STONX)).toEqual(["ekubo-issued"]);
   });
 
   it("holds an unknown or spoofed address on the covered chain", () => {
-    expect(classifyAsset(ROBINHOOD_CHAIN, SPOOF).classification).toBe("unclassified");
+    expect(classifyAsset(ROBINHOOD_CHAIN, SPOOF).classification).toBe("unknown");
   });
 
   it("leaves other chains out of scope, even at a Stock Token's address", () => {
@@ -141,6 +215,20 @@ describe("jurisdiction policy v2 data", () => {
 });
 
 describe("token country restrictions", () => {
+  it("restricts all 200 class addresses in all 17 countries on both sides", () => {
+    for (const token of CLASS_ADDRESSES) {
+      for (const country of V2_COUNTRIES) {
+        expect(isTokenCountryRestricted({ chainId: ROBINHOOD_CHAIN, token, country })).toBe(true);
+        for (const side of ["buy", "sell"] as const) {
+          expect(() => assertAssetsTradable([{ chainId: ROBINHOOD_CHAIN, token, side }], country))
+            .toThrow(expect.objectContaining({ code: "restricted_jurisdiction" }));
+        }
+      }
+      expect(isTokenCountryRestricted({ chainId: ROBINHOOD_CHAIN, token, country: "XX" })).toBe(true);
+      expect(isTokenCountryRestricted({ chainId: ROBINHOOD_CHAIN, token, country: "FR" })).toBe(false);
+    }
+  });
+
   it("restricts a Stock Token in every v2 country", () => {
     for (const country of V2_COUNTRIES) {
       expect(isTokenCountryRestricted({ chainId: ROBINHOOD_CHAIN, token: NVDA, country })).toBe(true);
@@ -171,6 +259,14 @@ describe("token country restrictions", () => {
 
   it("fails closed for a Stock Token when the country is unresolved", () => {
     expect(isTokenCountryRestricted({ chainId: ROBINHOOD_CHAIN, token: NVDA, country: null })).toBe(true);
+  });
+
+  it("treats XX, T1 and malformed codes as unresolved for Stock Tokens only", () => {
+    for (const country of ["XX", "xx", "T1", "USA", ""]) {
+      expect(isTokenCountryRestricted({ chainId: ROBINHOOD_CHAIN, token: NVDA, country })).toBe(true);
+      expect(isTokenCountryRestricted({ chainId: ROBINHOOD_CHAIN, token: USDG, country })).toBe(false);
+      expect(isTokenCountryRestricted({ chainId: "1", token: NVDA, country })).toBe(false);
+    }
   });
 
   it("holds an unclassified token on the covered chain for every country", () => {
@@ -235,6 +331,7 @@ describe("assertAssetsTradable", () => {
     expect(error.message).toContain("US");
     expect(error.details).toEqual({
       policy_version: "ekubo-token-jurisdictions-v2",
+      policy_digest: POLICY_SHA256,
       country: "US",
       restricted_assets: [
         { chain_id: ROBINHOOD_CHAIN, token: NVDA, side: "buy", classification: "rhj_stock_token" },
@@ -287,21 +384,41 @@ describe("assertAssetsTradable", () => {
     expect((error.details as { country: unknown }).country).toBeNull();
   });
 
-  it("holds an unclassified asset even from an unrestricted country", () => {
-    const error = throwsFrom(() =>
-      assertAssetsTradable(
-        [
-          { chainId: ROBINHOOD_CHAIN, token: SPOOF, side: "sell" },
-          { chainId: ROBINHOOD_CHAIN, token: USDG, side: "buy" },
-        ],
-        "FR",
-      ),
-    );
-    expect(error.code).toBe("restricted_jurisdiction");
-    expect(error.message).toContain("no classification");
-    expect((error.details as { restricted_assets: unknown[] }).restricted_assets).toEqual([
-      { chain_id: ROBINHOOD_CHAIN, token: SPOOF, side: "sell", classification: "unclassified" },
-    ]);
+  it("refuses an unknown asset with unclassified_asset in every country and unresolved", () => {
+    for (const country of ["FR", ...V2_COUNTRIES, "XX", null]) {
+      for (const token of [SPOOF, "0x2222222222222222222222222222222222222222"]) {
+        const error = throwsFrom(() =>
+          assertAssetsTradable(
+            [
+              { chainId: ROBINHOOD_CHAIN, token, side: "sell" },
+              { chainId: ROBINHOOD_CHAIN, token: USDG, side: "buy" },
+            ],
+            country,
+          ),
+        );
+        expect(error.code).toBe("unclassified_asset");
+        expect(error.message).toContain("no classification");
+        expect(error.details).toEqual({
+          policy_version: "ekubo-token-jurisdictions-v2",
+          policy_digest: POLICY_SHA256,
+          assets: [{ chain_id: ROBINHOOD_CHAIN, token, side: "sell", classification: "unknown" }],
+        });
+      }
+    }
+  });
+
+  it("refuses an unknown asset without a country at all", () => {
+    expect(throwsFrom(() =>
+      assertAssetsClassified([{ chainId: ROBINHOOD_CHAIN, token: SPOOF, side: "buy" }]),
+    ).code).toBe("unclassified_asset");
+    expect(() =>
+      assertAssetsClassified([
+        { chainId: ROBINHOOD_CHAIN, token: NVDA, side: "buy" },
+        { chainId: ROBINHOOD_CHAIN, token: USDG, side: "sell" },
+        { chainId: "1", token: SPOOF, side: "buy" },
+        { chainId: ROBINHOOD_CHAIN, token: undefined, side: "buy" },
+      ]),
+    ).not.toThrow();
   });
 });
 
@@ -311,8 +428,35 @@ describe("quote jurisdiction metadata", () => {
       const result = quoteJurisdiction([{ chainId: ROBINHOOD_CHAIN, token: HIMS, side }]);
       expect(result.restricted_jurisdictions).toEqual(V2_COUNTRIES);
       expect(result.assets[0]!.restricted_jurisdictions).toEqual(V2_COUNTRIES);
-      expect(result.execution_notice).toContain("No blanket disposal exemption applies.");
+      expect(result.execution_notice).toBe(CLO_NOTICE);
+      expect(result.policy_digest).toBe(POLICY_SHA256);
+      expect(Object.keys(result.jurisdiction_names)).toEqual(V2_COUNTRIES);
+      expect(result.jurisdiction_names.US).toBe("United States of America");
+      expect(result.assets[0]).toMatchObject({
+        offering_exclusions: ["AE", "CA", "CH", "GB", "SG", "US"],
+        issuer_prohibited_investor: ["BY", "CU", "IR", "KP", "MM", "RU", "SD", "SS", "SY", "UA", "VE"],
+      });
     }
+  });
+
+  it("stores the CLO notice byte-for-byte", () => {
+    expect(QUOTE_JURISDICTION_NOTICE_V2).toBe(CLO_NOTICE);
+  });
+
+  it("reports the four non-class tokens with an empty list and no notice", () => {
+    for (const token of [NATIVE, WETH, USDG, STONX]) {
+      const result = quoteJurisdiction([{ chainId: ROBINHOOD_CHAIN, token, side: "buy" }]);
+      expect(result).toMatchObject({
+        coverage: "complete", execution_hold: false, restricted_jurisdictions: [],
+        jurisdiction_names: {}, execution_notice: null,
+      });
+    }
+  });
+
+  it("leaves a token on another chain unchanged: empty list, no notice", () => {
+    const result = quoteJurisdiction([{ chainId: "1", token: NVDA, side: "buy" }]);
+    expect(result).toMatchObject({ coverage: "complete", restricted_jurisdictions: [], execution_notice: null });
+    expect(result.assets[0]).toMatchObject({ classification: "out_of_scope", provenance: [] });
   });
 
   it("reports an explicit empty list for a classified unrestricted asset", () => {
@@ -324,15 +468,17 @@ describe("quote jurisdiction metadata", () => {
       execution_notice: null,
     });
     expect(result.assets).toEqual([{
-      chain_id: ROBINHOOD_CHAIN, token: USDG, side: "buy", classification: "outside_class",
-      class_sources: ["issuer_token_contracts_page"], restricted_jurisdictions: [], execution_hold: false,
+      chain_id: ROBINHOOD_CHAIN, token: USDG, side: "buy", classification: "non_class",
+      provenance: [{ source: "issuer-token-contracts-page", ref: "https://docs.robinhood.com/chain/contracts", observed_at: "2026-10-06" }],
+      restricted_jurisdictions: [], offering_exclusions: [], issuer_prohibited_investor: [],
+      execution_hold: false,
     }]);
   });
 
   it("marks an unclassified asset as a hold rather than an empty list", () => {
     const result = quoteJurisdiction([{ chainId: ROBINHOOD_CHAIN, token: SPOOF, side: "buy" }]);
-    expect(result).toMatchObject({ coverage: "incomplete", execution_hold: true, restricted_jurisdictions: [] });
-    expect(result.assets[0]).toMatchObject({ classification: "unclassified", execution_hold: true });
+    expect(result).toMatchObject({ coverage: "unknown", execution_hold: true, restricted_jurisdictions: null });
+    expect(result.assets[0]).toMatchObject({ classification: "unknown", execution_hold: true, restricted_jurisdictions: null });
     expect(result.execution_notice).toContain("asset-policy coverage are unknown");
   });
 
@@ -358,6 +504,7 @@ describe("quote jurisdiction metadata", () => {
       quoteJurisdiction([{ chainId: ROBINHOOD_CHAIN, token: SPOOF, side: "sell" }]),
     ]);
     expect(held.execution_hold).toBe(true);
-    expect(held.coverage).toBe("incomplete");
+    expect(held.coverage).toBe("unknown");
+    expect(held.restricted_jurisdictions).toBeNull();
   });
 });
