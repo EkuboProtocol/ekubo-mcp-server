@@ -114,7 +114,7 @@ export async function getPosition(
     current_state_query: currentStateQuery,
     interface_parity: {
       current_values:
-        "Pass current_state_query.read_calls_reference unchanged as wallet_batch_eth_call's reference argument. The wallet decodes on the user's device; retain raw return data, require every inner call to succeed, and compare the decoded owner with expected_owner.",
+        "Pass current_state_query.read_calls_reference unchanged as wallet_batch_eth_call's reference argument, as a variable from this result in the same code block (const ref = result.current_state_query.read_calls_reference; reference: ref), never retyping url, bytes or integrity. current_state_query.state_call_id is the join key to results[].id. The wallet decodes on the user's device; retain raw return data, require every inner call to succeed, and compare the decoded owner with expected_owner.",
       usd_values:
         "Divide token amounts by 10^decimals, multiply by the matching token usd_price, and sum token0 plus token1. The interface treats missing or zero prices as unavailable.",
       apr_history:
