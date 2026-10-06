@@ -155,9 +155,9 @@ describe("prepare_ve33_reinvest phase=swap jurisdiction metadata", () => {
       applied: true,
       policy_version: JURISDICTION_POLICY_VERSION,
       country_resolved: true,
-      outcome: "permitted",
     });
     expect(result.producer_country_gate).not.toHaveProperty("country");
+    expect(result.producer_country_gate).not.toHaveProperty("outcome");
   });
 
   it("carries sell-side restrictions inline for a restricted equity sold for the stake token", async () => {
@@ -232,7 +232,6 @@ describe("prepare_ve33_reinvest phase=swap jurisdiction metadata", () => {
       applied: true,
       policy_version: JURISDICTION_POLICY_VERSION,
       country_resolved: false,
-      outcome: "permitted",
     });
     expect(result.exact_input_full_balance_swaps[0]!.jurisdiction).toBeDefined();
   });
@@ -257,7 +256,6 @@ describe("prepare_ve33_reinvest phase=swap jurisdiction metadata", () => {
           applied: true,
           policy_version: JURISDICTION_POLICY_VERSION,
           country_resolved: true,
-          outcome: "permitted",
         },
       }).success,
     ).toBe(false);

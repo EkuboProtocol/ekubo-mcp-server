@@ -461,6 +461,5 @@ export function producerCountryGate(country: RequestCountry) {
     applied: true as const,
     policy_version: JURISDICTION_POLICY_VERSION,
     country_resolved: country !== null,
-    outcome: "permitted" as const,
   };
 }

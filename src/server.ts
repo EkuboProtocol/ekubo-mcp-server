@@ -1849,7 +1849,6 @@ const ve33ReinvestOutputSchema = z
         applied: z.literal(true),
         policy_version: z.string(),
         country_resolved: z.boolean(),
-        outcome: z.literal("permitted"),
       })
       .optional(),
     exact_input_full_balance_swaps: z
