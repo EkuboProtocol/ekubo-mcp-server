@@ -1,10 +1,8 @@
-import { fixedSqrtRatioToFloat, toSqrtRatio } from "@ekubo/sdk";
 import { type Address, encodeAbiParameters, type Hex, keccak256, numberToHex } from "viem";
 
 /**
  * Bit layouts of the contracts' user-defined value types, mirrored from
- * `types/poolConfig.sol`, `types/swapParameters.sol` and
- * `types/poolBalanceUpdate.sol` at the bundled revision.
+ * `types/poolConfig.sol` and `types/poolKey.sol` at the bundled revision.
  */
 
 export const MIN_TICK = -88722835;
@@ -12,10 +10,13 @@ export const MAX_TICK = 88722835;
 export const MAX_TICK_SPACING = 698605;
 /** `MAX_MIGRATION_TICK_WIDTH` in ScheduledLaunch.sol: 1.000001^2302585 is just under a 10x price ratio. */
 export const MAX_MIGRATION_TICK_WIDTH = 2_302_585;
+/**
+ * The hosted limit, narrower than the contract's: 1.000001^693147 is just
+ * under a 2x price ratio. The contract ceiling is not a recommendation.
+ */
+export const HOSTED_MAX_MIGRATION_TICK_WIDTH = 693_147;
 export const INT128_MAX = (1n << 127n) - 1n;
 export const Q64 = 1n << 64n;
-
-const MASK_128 = (1n << 128n) - 1n;
 
 export interface PoolKey {
   token0: Address;
@@ -39,26 +40,6 @@ export function poolId(key: PoolKey): Hex {
       [key.token0, key.token1, key.config],
     ),
   );
-}
-
-/** `createSwapParameters(sqrtRatioLimit, amount, isToken1, 0)`. Positive amount is exact input. */
-export function swapParameters(sqrtRatioLimit: bigint, amount: bigint, isToken1: boolean): Hex {
-  return word((sqrtRatioLimit << 160n) | ((amount & MASK_128) << 32n) | ((isToken1 ? 1n : 0n) << 31n));
-}
-
-function signed128(value: bigint): bigint {
-  return value > INT128_MAX ? value - (1n << 128n) : value;
-}
-
-/** Pool-perspective deltas: positive is paid into the pool, negative is paid out. */
-export function balanceUpdate(update: Hex): { delta0: bigint; delta1: bigint } {
-  const value = BigInt(update);
-  return { delta0: signed128(value >> 128n), delta1: signed128(value & MASK_128) };
-}
-
-/** Compact 96-bit `SqrtRatio` for a tick, rounded down as `tickToSqrtRatio` does. */
-export function sqrtRatioAtTick(tick: number): bigint {
-  return fixedSqrtRatioToFloat(toSqrtRatio(tick, "evm"));
 }
 
 /**

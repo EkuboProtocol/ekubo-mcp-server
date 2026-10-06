@@ -1,33 +1,19 @@
 import {
   type Address,
-  decodeEventLog,
   decodeFunctionResult,
+  encodeAbiParameters,
   encodeFunctionData,
-  getAbiItem,
   getAddress,
   type Hex,
-  pad,
-  toEventSelector,
+  keccak256,
+  numberToHex,
   zeroAddress,
 } from "viem";
-import type { ChainLog } from "./chain.js";
+import type { ApiLaunchDetail, LaunchpadApi } from "./api.js";
 import type { PrepareContext } from "./context.js";
-import { lockedLaunchLiquidityAbi, scheduledLaunchAbi } from "./contracts.js";
+import { scheduledLaunchAbi } from "./contracts.js";
 import { concentratedPoolConfig, type PoolKey, poolId } from "./encoding.js";
 import { prepareError } from "./templates.js";
-
-const LAUNCH_CREATED = toEventSelector(getAbiItem({ abi: scheduledLaunchAbi, name: "LaunchCreated" }) as never);
-const PRINCIPAL_RECEIVED = toEventSelector(getAbiItem({ abi: lockedLaunchLiquidityAbi, name: "PrincipalReceived" }) as never);
-const LIQUIDITY_LOCKED = toEventSelector(getAbiItem({ abi: lockedLaunchLiquidityAbi, name: "LiquidityLocked" }) as never);
-
-interface CreatedConfig {
-  owner: Address;
-  quoteToken: Address;
-  decimals: number;
-  targetTick: number;
-  upperTick: number;
-  tickSpacing: number;
-}
 
 interface LaunchState {
   owner: Address;
@@ -35,6 +21,7 @@ interface LaunchState {
   startTime: bigint;
   endTime: bigint;
   complete: boolean;
+  initialFee: bigint;
   finalFee: bigint;
 }
 
@@ -48,31 +35,18 @@ export interface ResolvedLaunch {
   decimals: number;
   targetTick: number;
   upperTick: number;
+  /** The api's record: identity, config and indexed history. */
+  indexed: ApiLaunchDetail;
+  /** `ScheduledLaunch.getLaunch` at the pinned block. */
   state: LaunchState;
 }
 
 export type LaunchStage = "scheduled" | "launch" | "ended_pending_advance" | "complete";
 
-async function createdLog(context: PrepareContext, token: Address): Promise<ChainLog> {
-  const logs = await context.chain.logs({
-    address: context.manifest.contracts.scheduled_launch,
-    topics: [LAUNCH_CREATED, null, pad(token)],
-    fromBlock: BigInt(context.manifest.from_block),
-    block: context.block,
-  });
-  const log = logs[0];
-  if (log === undefined) throw prepareError("launch_not_found");
-  return log;
-}
-
-function decodeCreated(log: ChainLog): { poolId: Hex; config: CreatedConfig } {
-  const decoded = decodeEventLog({
-    abi: scheduledLaunchAbi,
-    eventName: "LaunchCreated",
-    topics: log.topics as [Hex, ...Hex[]],
-    data: log.data,
-  }) as unknown as { args: { poolId: Hex; config: CreatedConfig } };
-  return decoded.args;
+/** A launch is named by its exact token address or its pool id; never by name or symbol. */
+export interface LaunchSelector {
+  token?: string;
+  pool_id?: string;
 }
 
 async function readLaunch(context: PrepareContext, id: Hex): Promise<LaunchState> {
@@ -86,23 +60,43 @@ async function readLaunch(context: PrepareContext, id: Hex): Promise<LaunchState
   return decodeFunctionResult({ abi: scheduledLaunchAbi, functionName: "getLaunch", data: result.data }) as unknown as LaunchState;
 }
 
+export async function selectedPoolId(api: LaunchpadApi, chainId: number, selector: LaunchSelector): Promise<Hex> {
+  if (selector.pool_id !== undefined) return numberToHex(BigInt(selector.pool_id), { size: 32 });
+  if (selector.token === undefined) throw prepareError("launch_not_found");
+  return api.poolIdForToken(chainId, getAddress(selector.token));
+}
+
 /**
- * Find a launch by its exact token address on the manifest's extension, and
- * check the pool key rebuilt from its creation log against both the logged
- * pool ID and the extension's own state at the pinned block.
+ * The pool key rebuilt on the manifest's extension from the api's record. A
+ * record on any other extension or Core, or whose rebuilt key does not hash
+ * to the api's pool id, is not found.
  */
-export async function resolveLaunch(context: PrepareContext, tokenInput: string): Promise<ResolvedLaunch> {
-  const token = getAddress(tokenInput);
-  const created = decodeCreated(await createdLog(context, token));
-  const quoteToken = getAddress(created.config.quoteToken);
+function indexedKey(context: PrepareContext, indexed: ApiLaunchDetail, id: Hex, selector: LaunchSelector) {
+  const { contracts } = context.manifest;
+  const onManifest = indexed.pool_key.extension === contracts.scheduled_launch && indexed.pool_key.core_address === contracts.core;
+  const token = indexed.launch_token.address;
+  if (!onManifest || (selector.token !== undefined && getAddress(selector.token) !== token)) throw prepareError("launch_not_found");
+  const quoteToken = indexed.quote_token.address;
   const tokenIs0 = BigInt(token) < BigInt(quoteToken);
   const key: PoolKey = {
     token0: tokenIs0 ? token : quoteToken,
     token1: tokenIs0 ? quoteToken : token,
-    config: concentratedPoolConfig(0n, created.config.tickSpacing, context.manifest.contracts.scheduled_launch),
+    config: concentratedPoolConfig(0n, indexed.tick_spacing, contracts.scheduled_launch),
   };
-  const id = poolId(key);
-  if (id !== created.poolId) throw prepareError("launch_not_found");
+  if (poolId(key) !== id || indexed.launch_token_is_token1 === tokenIs0) throw prepareError("launch_not_found");
+  return { token, quoteToken, tokenIs0, key };
+}
+
+/**
+ * Find a launch through the api, rebuild its pool key on the manifest's
+ * extension, and check the result against the api's pool id and against the
+ * extension's own state at the pinned block.
+ */
+export async function resolveLaunch(context: PrepareContext, selector: LaunchSelector): Promise<ResolvedLaunch> {
+  const id = await selectedPoolId(context.api, context.manifest.chain_id, selector);
+  const indexed = await context.api.detail(context.manifest.chain_id, id);
+  if (indexed === null) throw prepareError("launch_not_found");
+  const { token, quoteToken, tokenIs0, key } = indexedKey(context, indexed, id, selector);
   const state = await readLaunch(context, id);
   if (state.owner === zeroAddress || getAddress(state.token) !== token) throw prepareError("launch_not_found");
   return {
@@ -111,35 +105,41 @@ export async function resolveLaunch(context: PrepareContext, tokenInput: string)
     tokenIs0,
     key,
     poolId: id,
-    decimals: created.config.decimals,
-    targetTick: created.config.targetTick,
-    upperTick: created.config.upperTick,
+    decimals: indexed.launch_token.decimals,
+    targetTick: indexed.target_tick,
+    upperTick: indexed.upper_tick,
+    indexed,
     state,
   };
 }
 
+/** Phase at the pinned block, from the extension's state rather than the api's indexed head. */
 export function launchStage(launch: ResolvedLaunch, timestamp: bigint): LaunchStage {
   if (timestamp < launch.state.startTime) return "scheduled";
-  if (timestamp < launch.state.endTime) return "launch";
-  return launch.state.complete ? "complete" : "ended_pending_advance";
+  if (launch.state.complete) return "complete";
+  return timestamp < launch.state.endTime ? "launch" : "ended_pending_advance";
 }
 
-const order = (log: ChainLog) => log.blockNumber * 1_000_000n + BigInt(log.logIndex);
+/**
+ * Core's saved-balance slot for `(owner, token0, token1, salt)`:
+ * `CoreStorageLayout.savedBalancesSlot`, keccak256 over four words.
+ */
+export function savedBalancesSlot(owner: Address, token0: Address, token1: Address, salt: Hex): Hex {
+  return keccak256(
+    encodeAbiParameters(
+      [{ type: "address" }, { type: "address" }, { type: "address" }, { type: "bytes32" }],
+      [owner, token0, token1, salt],
+    ),
+  );
+}
 
 /**
- * Whether locked principal is waiting to be deposited: some principal arrived
- * after the last time liquidity was locked, or liquidity was never locked.
+ * Whether locked principal is waiting to be deposited: LockedLaunchLiquidity
+ * saves undeposited principal in Core under the launch id, and `migrate`
+ * deposits it. One storage read at the pinned block; no log history.
  */
-export async function migrationPending(context: PrepareContext, launch: ResolvedLaunch): Promise<boolean> {
-  const read = (topic: Hex) =>
-    context.chain.logs({
-      address: context.manifest.contracts.locked_launch_liquidity,
-      topics: [topic, launch.poolId],
-      fromBlock: BigInt(context.manifest.from_block),
-      block: context.block,
-    });
-  const [received, locked] = await Promise.all([read(PRINCIPAL_RECEIVED), read(LIQUIDITY_LOCKED)]);
-  const lastReceived = received.map(order).reduce((a, b) => (a > b ? a : b), -1n);
-  const lastLocked = locked.map(order).reduce((a, b) => (a > b ? a : b), -1n);
-  return lastReceived > lastLocked;
+export async function migrationPending(context: PrepareContext, launch: ResolvedLaunch): Promise<{ amount0: bigint; amount1: bigint }> {
+  const slot = savedBalancesSlot(context.manifest.contracts.locked_launch_liquidity, launch.key.token0, launch.key.token1, launch.poolId);
+  const value = BigInt(await context.chain.storage(context.manifest.contracts.core, slot, context.block));
+  return { amount0: value >> 128n, amount1: value & ((1n << 128n) - 1n) };
 }

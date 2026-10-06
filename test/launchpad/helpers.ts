@@ -1,84 +1,36 @@
-import type { FixtureBundle } from "../../src/launchpad/analytics/fixture-source.js";
-import {
-  launchpadGetAnalytics,
-  launchpadGetLaunch,
-  launchpadGetProvenance,
-  launchpadSearch,
-  launchpadStats,
-  type LaunchpadEnv,
-} from "../../src/launchpad/analytics/tools.js";
-import { addr, ChainBuilder, LaunchSim } from "./chain-builder.js";
+import { zeroAddress } from "viem";
+import { launchpadPrepareCreate } from "../../src/launchpad/prepare/create.js";
+import { BLOCK, env, failure, harness, type Json, SENDER } from "./fake.js";
 
-export const E18 = 10n ** 18n;
-export const CHAIN = 31337;
-
-export function fixtureEnv(bundle: FixtureBundle): LaunchpadEnv {
-  return { LAUNCHPAD_SOURCE: "fixture", LAUNCHPAD_FIXTURE: JSON.stringify(bundle) };
+export function createArgs(overrides: Record<string, unknown> = {}) {
+  return {
+    chain_id: 1,
+    sender: SENDER,
+    slippage_bps: 50,
+    quote_token: zeroAddress,
+    name: "Prototype Token",
+    symbol: "PROTO",
+    decimals: 18,
+    total_supply: (10n ** 27n).toString(),
+    start_time: Number(BLOCK.timestamp) + 3600,
+    end_time: Number(BLOCK.timestamp) + 3600 + 86_400,
+    target_tick: -27_631_000,
+    upper_tick: -18_420_000,
+    tick_spacing: 1000,
+    initial_fee: ((1n << 64n) / 20n).toString(),
+    final_fee: ((1n << 64n) / 200n).toString(),
+    migration_tick_lower: -20_000_000,
+    migration_tick_upper: -19_500_000,
+    ...overrides,
+  };
 }
 
-// Responses are plain JSON objects; tests index into them freely.
-export type Json = any;
-
-export const tools = {
-  search: (b: FixtureBundle, args: Record<string, unknown> = {}): Promise<Json> =>
-    launchpadSearch(fixtureEnv(b), { chain_id: CHAIN, ...args } as never),
-  launch: (b: FixtureBundle, args: Record<string, unknown>): Promise<Json> =>
-    launchpadGetLaunch(fixtureEnv(b), { chain_id: CHAIN, ...args } as never),
-  provenance: (b: FixtureBundle, args: Record<string, unknown>): Promise<Json> =>
-    launchpadGetProvenance(fixtureEnv(b), { chain_id: CHAIN, ...args } as never),
-  analytics: (b: FixtureBundle, args: Record<string, unknown>): Promise<Json> =>
-    launchpadGetAnalytics(fixtureEnv(b), { chain_id: CHAIN, ...args } as never),
-  stats: (b: FixtureBundle): Promise<Json> => launchpadStats(fixtureEnv(b), CHAIN),
-};
-
-export const SENDER = addr(0x5e, "e");
-export const PAYER = addr(0x9a, "e");
-export const BENEFICIARY = addr(0xbe, "e");
-export const BUYER_A = addr(0xa1, "b");
-export const BUYER_B = addr(0xb2, "b");
-export const RECIPIENT_R = addr(0x77, "b");
-export const TOKEN = addr(0x70, "d");
-
-/**
- * Block 100 genesis, 101 creation, start_time at block 105, end_time ten
- * blocks later. One routed buy at block 106 deploys 100k and buys 50k with a
- * 5k creator fee.
- */
-export function standardLaunch(options: { decimals?: number; supply?: bigint } = {}) {
-  const chain = new ChainBuilder();
-  chain.block();
-  const start = chain.options.first_timestamp + 5 * chain.options.block_time;
-  const unit = 10n ** BigInt(options.decimals ?? 18);
-  const sim = new LaunchSim(chain, TOKEN, {
-    owner: BENEFICIARY,
-    startTime: start,
-    endTime: start + 120,
-    decimals: options.decimals,
-    totalSupply: options.supply ?? 1_000_000n * unit,
-  });
-  chain.block((b) => sim.create(b, SENDER, PAYER));
-  chain.blocksUntil(105);
-  chain.block((b) =>
-    sim.buy(b, {
-      payer: BUYER_A,
-      quoteIn: 1n * E18,
-      tokenOut: 50_000n * unit,
-      fee: 5_000n * unit,
-      deploy: 100_000n * unit,
-    }),
-  );
-  return { chain, sim, unit, start };
+export async function create(overrides: Record<string, unknown> = {}, manifestExtra: Record<string, unknown> = {}): Promise<Json> {
+  const { deps } = harness();
+  return launchpadPrepareCreate(env(manifestExtra), createArgs(overrides) as never, deps);
 }
 
-/** Every string value in a JSON tree. */
-export function strings(value: unknown, out: string[] = []): string[] {
-  if (typeof value === "string") out.push(value);
-  else if (Array.isArray(value)) for (const item of value) strings(item, out);
-  else if (value !== null && typeof value === "object") for (const item of Object.values(value)) strings(item, out);
-  return out;
+export function createRejection(overrides: Record<string, unknown> = {}, manifestExtra: Record<string, unknown> = {}) {
+  return failure(() => create(overrides, manifestExtra));
 }
 
-export function withoutEnvelope(response: Json): Json {
-  const { as_of: _a, source: _s, limitations: _l, ...rest } = response;
-  return rest;
-}

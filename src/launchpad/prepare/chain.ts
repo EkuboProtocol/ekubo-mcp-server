@@ -1,7 +1,7 @@
 import type { Address, Hex } from "viem";
 import { prepareError } from "./templates.js";
 
-/** The block every read in one preparation call is pinned to, and that the output states. */
+/** The block every read in one call is pinned to, and that the output states. */
 export interface PinnedBlock {
   number: bigint;
   hash: Hex;
@@ -10,21 +10,16 @@ export interface PinnedBlock {
 
 export type CallResult = { ok: true; data: Hex } | { ok: false; revert: Hex };
 
-export interface ChainLog {
-  topics: Hex[];
-  data: Hex;
-  blockNumber: bigint;
-  logIndex: number;
-}
-
 /**
- * The only chain access the preparation tools have: reads at one pinned
- * block, against addresses from the manifest. There is no generic fetch.
+ * The only chain access the launchpad tools have: point reads at one pinned
+ * block, against addresses from the manifest or from a launch the api
+ * returned. There are no log reads: launch history comes from the api.
  */
 export interface PrepareChain {
   latest(): Promise<PinnedBlock>;
   call(request: { from: Address; to: Address; data: Hex; block: PinnedBlock }): Promise<CallResult>;
-  logs(filter: { address: Address; topics: (Hex | null)[]; fromBlock: bigint; block: PinnedBlock }): Promise<ChainLog[]>;
+  code(address: Address, block: PinnedBlock): Promise<Hex>;
+  storage(address: Address, slot: Hex, block: PinnedBlock): Promise<Hex>;
 }
 
 interface RpcError {
@@ -33,16 +28,17 @@ interface RpcError {
   data?: unknown;
 }
 
-const hex = (value: bigint): Hex => `0x${value.toString(16)}`;
-
 /** JSON-RPC reads against the configured launchpad node. */
 export class RpcChain implements PrepareChain {
-  constructor(private readonly url: string) {}
+  constructor(
+    private readonly url: string,
+    private readonly fetcher: typeof fetch = fetch,
+  ) {}
 
   private async request(method: string, params: unknown[]): Promise<{ result?: unknown; error?: RpcError }> {
     let response: Response;
     try {
-      response = await fetch(this.url, {
+      response = await this.fetcher(this.url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
@@ -79,19 +75,12 @@ export class RpcChain implements PrepareChain {
     return { ok: false, revert: data };
   }
 
-  async logs(filter: { address: Address; topics: (Hex | null)[]; fromBlock: bigint; block: PinnedBlock }): Promise<ChainLog[]> {
-    const logs = await this.result<{ topics: Hex[]; data: Hex; blockNumber: Hex; logIndex: Hex; removed?: boolean }[]>(
-      "eth_getLogs",
-      [{ address: filter.address, topics: filter.topics, fromBlock: hex(filter.fromBlock), toBlock: hex(filter.block.number) }],
-    );
-    return logs
-      .filter((log) => log.removed !== true)
-      .map((log) => ({
-        topics: log.topics,
-        data: log.data,
-        blockNumber: BigInt(log.blockNumber),
-        logIndex: Number(BigInt(log.logIndex)),
-      }));
+  code(address: Address, block: PinnedBlock): Promise<Hex> {
+    return this.result<Hex>("eth_getCode", [address, { blockHash: block.hash }]);
+  }
+
+  storage(address: Address, slot: Hex, block: PinnedBlock): Promise<Hex> {
+    return this.result<Hex>("eth_getStorageAt", [address, slot, { blockHash: block.hash }]);
   }
 }
 

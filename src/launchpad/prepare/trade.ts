@@ -1,12 +1,13 @@
-import { type Address, decodeFunctionResult, encodeFunctionData, type Hex } from "viem";
+import { type Address, decodeFunctionResult, encodeFunctionData, getAddress, type Hex } from "viem";
 import { z } from "zod";
 import { errorResultDecodePlan } from "../../abi-decode.js";
 import { executionPlan, type PreparedTransaction } from "../../execution-plan.js";
-import { type ChainFactory, DEADLINE_SECONDS, type PrepareContext, approval, outputHeader, prepareContext } from "./context.js";
-import { NATIVE_TOKEN, type PrepareEnv, launchRouterAbi, launchpadErrorsAbi, revertErrorName, routerAbi, scheduledLaunchAbi } from "./contracts.js";
-import { INT128_MAX, type PoolKey, balanceUpdate, feePercent, sqrtRatioAtTick, swapParameters } from "./encoding.js";
-import { launchTradeFees, terminalTradeFees } from "./fees.js";
-import { type ResolvedLaunch, launchStage, resolveLaunch } from "./launch.js";
+import { buildQuoterQuoteUrl, type EvmQuoterQuote, prepareSwapFromQuote } from "../../yul-router.js";
+import { type Deps, type PrepareContext, outputHeader, prepareContext } from "./context.js";
+import { type PrepareEnv, launchpadErrorsAbi, scheduledLaunchAbi } from "./contracts.js";
+import { INT128_MAX, feePercent, poolId } from "./encoding.js";
+import { tradeFees } from "./fees.js";
+import { type LaunchStage, type ResolvedLaunch, launchStage, resolveLaunch } from "./launch.js";
 import { address, chainId, rawAmount, sender, slippageBps } from "./schema.js";
 import { THRESHOLD_NOTE, prepareError, warning } from "./templates.js";
 
@@ -22,250 +23,213 @@ export const prepareTradeSchema = z.object({
 
 export type PrepareTradeInput = z.output<typeof prepareTradeSchema>;
 
-/** One swap request, oriented on the pool key. */
-interface Orientation {
-  isToken1: boolean;
-  exactInput: boolean;
-  amount: bigint;
-  /** Signed as the contracts expect: positive exact input, negative exact output. */
-  signedAmount: bigint;
-  inputToken: Address;
-  outputToken: Address;
+const ROUTE_NOTE =
+  "quoter-service chose this route over every indexed Ekubo pool. During the launch, a launch pool hop is a forwarded hop to the ScheduledLaunch extension; after completion the route uses the terminal pool or any other pool.";
+
+export function quoterBase(env: PrepareEnv): string {
+  const base = env.LAUNCHPAD_QUOTER_URL || env.EKUBO_QUOTER_URL;
+  if (base === undefined || base === "") throw prepareError("launchpad_not_configured");
+  return base;
 }
 
-function orient(launch: ResolvedLaunch, input: PrepareTradeInput): Orientation {
-  const buy = input.side === "buy";
-  const exactInput = input.amount_kind === "exact_input";
-  const amount = BigInt(input.amount);
-  if (amount === 0n || amount > INT128_MAX) throw prepareError("invalid_amount");
-  const inputToken = buy ? launch.quoteToken : launch.token;
-  const outputToken = buy ? launch.token : launch.quoteToken;
-  const specified = exactInput ? inputToken : outputToken;
-  return {
-    isToken1: specified === launch.key.token1,
-    exactInput,
-    amount,
-    signedAmount: exactInput ? amount : -amount,
-    inputToken,
-    outputToken,
-  };
+async function fetchQuote(context: PrepareContext, url: string): Promise<EvmQuoterQuote> {
+  let response: Response;
+  try {
+    response = await context.fetcher(url, { headers: { accept: "application/json" } });
+  } catch {
+    throw prepareError("quoter_unavailable");
+  }
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw prepareError("quoter_unavailable", { status: response.status });
+  }
+  if (!response.ok) {
+    const error = (body as { error?: unknown } | null)?.error;
+    throw prepareError("no_route", { status: response.status, quoter_error: typeof error === "string" ? error : null });
+  }
+  const quote = body as EvmQuoterQuote;
+  if (!Array.isArray(quote?.splits)) throw prepareError("quoter_invalid_response");
+  return quote;
+}
+
+interface RouteHop {
+  type: "core" | "forwarded" | "wrapper";
+  pool_id: Hex | null;
+  extension: Address | null;
+  launch_pool: boolean;
+  this_launch: boolean;
+  forwardee: Address | null;
+  allow_partial: boolean;
 }
 
 /**
- * The launch-phase price limit: the top of the launch range for a buy, the
- * target for a sell, in pool orientation. Never the default limit, which lets
- * a buy into an empty range push the price to the extreme and stall releases.
+ * Every swap hop through the manifest's ScheduledLaunch must be a forwarded
+ * hop to that extension, and no forwarded hop may name a forwardee other than
+ * its pool's extension. Anything else is refused before a plan is built.
  */
-function launchLimit(launch: ResolvedLaunch, side: "buy" | "sell") {
-  const economicTick = side === "buy" ? launch.upperTick : launch.targetTick;
-  const tick = launch.tokenIs0 ? economicTick : -economicTick;
-  return {
-    sqrt_ratio: sqrtRatioAtTick(tick),
-    pool_tick: tick,
-    position: side === "buy" ? "top_of_launch_range" : "bottom_of_launch_range",
-  };
-}
-
-interface Quote {
-  filledSpecified: bigint;
-  /** From the swapper's side: positive is received, negative is paid. Fee-inclusive. */
-  calculated: bigint;
-}
-
-function readQuote(update: Hex, orientation: Orientation): Quote {
-  const { delta0, delta1 } = balanceUpdate(update);
-  const [specified, calculated] = orientation.isToken1 ? [delta1, delta0] : [delta0, delta1];
-  return { filledSpecified: specified, calculated: -calculated };
-}
-
-function threshold(quote: Quote, orientation: Orientation, slippageBps: number): bigint {
-  const bps = BigInt(slippageBps);
-  if (orientation.exactInput) return (quote.calculated * (10_000n - bps)) / 10_000n;
-  const paid = -quote.calculated;
-  return -((paid * (10_000n + bps) + 9_999n) / 10_000n);
-}
-
-function checkFill(quote: Quote, orientation: Orientation, partialAllowed: boolean) {
-  const partial = quote.filledSpecified !== orientation.signedAmount;
-  const fillable = quote.filledSpecified < 0n ? -quote.filledSpecified : quote.filledSpecified;
-  if (partial && !partialAllowed) throw prepareError("partial_fill_not_allowed", { fillable_amount: fillable.toString() });
-  if (orientation.exactInput && quote.calculated <= 0n) throw prepareError("no_output");
-  return partial;
-}
-
-async function quoteCall(context: PrepareContext, to: Address, data: Hex) {
-  const result = await context.chain.call({ from: context.sender, to, data, block: context.block });
-  if (!result.ok) throw revertError(result.revert);
-  return result.data;
-}
-
-/** A reverted quote as a tool error, naming the two contract refusals a caller can act on. */
-function revertError(revert: Hex) {
-  const errorName = revertErrorName(revert);
-  const details = { revert_data: revert, error_name: errorName };
-  if (errorName === "Reentrant") return prepareError("nested_routed_action", details);
-  if (errorName === "PositionsThroughExtensionOnly") return prepareError("launch_pool_liquidity_rejected", details);
-  return prepareError("quote_reverted", details);
-}
-
-/** The most the sender can pay: the full exact input, or the slippage-bounded maximum for an exact output. */
-function maxPayment(orientation: Orientation, minCalculated: bigint): bigint {
-  return orientation.exactInput ? orientation.amount : -minCalculated;
-}
-
-function fundingSteps(context: PrepareContext, orientation: Orientation, spender: Address, payment: bigint, cleanup: boolean) {
-  if (orientation.inputToken === NATIVE_TOKEN) return { approvals: [], cleanup: [], value: payment };
-  const chain = context.manifest.chain_id;
-  return {
-    approvals: [approval(chain, orientation.inputToken, spender, payment)],
-    // An approval sized above the actual spend would outlive the call.
-    cleanup: cleanup ? [approval(chain, orientation.inputToken, spender, 0n)] : [],
-    value: 0n,
-  };
-}
-
-function quoteView(quote: Quote, orientation: Orientation, contract: Address) {
-  const abs = (value: bigint) => (value < 0n ? -value : value);
-  return {
-    contract,
-    requested_amount: orientation.amount.toString(),
-    filled_specified_amount: abs(quote.filledSpecified).toString(),
-    calculated_amount: abs(quote.calculated).toString(),
-    calculated_side: orientation.exactInput ? "output_received" : "input_paid",
-    fee_inclusive: true,
-  };
-}
-
-async function launchTrade(context: PrepareContext, launch: ResolvedLaunch, input: PrepareTradeInput) {
-  const orientation = orient(launch, input);
-  const router = context.manifest.contracts.launch_router;
-  const limit = launchLimit(launch, input.side);
-  const params = swapParameters(limit.sqrt_ratio, orientation.signedAmount, orientation.isToken1);
-  const raw = await quoteCall(context, router, encodeFunctionData({ abi: launchRouterAbi, functionName: "quote", args: [launch.key, params] }));
-  const [update, fee] = decodeFunctionResult({ abi: launchRouterAbi, functionName: "quote", data: raw }) as readonly [Hex, bigint];
-  const quote = readQuote(update, orientation);
-  // LaunchRouter fills exact inputs partially at the top of the range; exact outputs must fill.
-  const partial = checkFill(quote, orientation, orientation.exactInput);
-  const minCalculated = threshold(quote, orientation, input.slippage_bps);
-  const payment = maxPayment(orientation, minCalculated);
-  const funding = fundingSteps(context, orientation, router, payment, partial || !orientation.exactInput);
-  const deadline = context.block.timestamp + DEADLINE_SECONDS;
-  const transaction: PreparedTransaction = {
-    chain_id: context.manifest.chain_id.toString(),
-    to: router,
-    data: encodeFunctionData({
-      abi: launchRouterAbi,
-      functionName: "swap",
-      args: [launch.key, params, minCalculated, context.sender, deadline],
+function routeHops(context: PrepareContext, launch: ResolvedLaunch, quote: EvmQuoterQuote): RouteHop[][] {
+  const extension = context.manifest.contracts.scheduled_launch;
+  return quote.splits.map((split) =>
+    split.route.map((node) => {
+      if (node.swap === undefined) {
+        return { type: "wrapper", pool_id: null, extension: null, launch_pool: false, this_launch: false, forwardee: null, allow_partial: false };
+      }
+      const key = node.swap.pool_key;
+      const poolExtension = getAddress(`0x${BigInt(key.config).toString(16).padStart(64, "0").slice(0, 40)}`);
+      const forwardee = node.swap.forwardee === undefined ? null : getAddress(node.swap.forwardee);
+      const launchPool = poolExtension === extension;
+      if (launchPool && node.swap.type !== "forwarded") throw prepareError("quoter_invalid_response", { reason: "launch_pool_not_forwarded" });
+      if (forwardee !== null && forwardee !== poolExtension) throw prepareError("quoter_invalid_response", { reason: "unexpected_forwardee" });
+      const id = poolId({ token0: getAddress(key.token0), token1: getAddress(key.token1), config: key.config });
+      return {
+        type: node.swap.type,
+        pool_id: id,
+        extension: poolExtension,
+        launch_pool: launchPool,
+        this_launch: id === launch.poolId,
+        forwardee,
+        allow_partial: node.swap.allow_partial === true,
+      };
     }),
-    value: funding.value.toString(),
-  };
-  return {
-    trading_phase: "launch",
-    quote: { ...quoteView(quote, orientation, router), fee_rate: { q64: fee.toString(), percent: feePercent(fee) } },
-    price_limit: { sqrt_ratio: limit.sqrt_ratio.toString(), pool_tick: limit.pool_tick, position: limit.position },
-    deadline: deadline.toString(),
-    fees: launchTradeFees({ feeAtBlock: fee, beneficiary: launch.state.owner }),
-    warnings: partial ? [warning("partial_fill")] : [],
-    ...planFields(context, orientation, minCalculated, payment, funding, transaction),
-  };
-}
-
-function planFields(
-  context: PrepareContext,
-  orientation: Orientation,
-  minCalculated: bigint,
-  payment: bigint,
-  funding: { approvals: PreparedTransaction[]; cleanup: PreparedTransaction[] },
-  transaction: PreparedTransaction,
-) {
-  return {
-    threshold: {
-      calculated_amount_threshold: minCalculated.toString(),
-      meaning: orientation.exactInput ? "minimum_output" : "maximum_input",
-      note: THRESHOLD_NOTE,
-    },
-    max_payment: { token: orientation.inputToken, amount: payment.toString() },
-    execution_plan: executionPlan({
-      chainId: context.manifest.chain_id.toString(),
-      sender: context.sender,
-      approvals: funding.approvals,
-      transaction,
-      postExecutionTransactions: funding.cleanup,
-      revertDecode: errorResultDecodePlan(launchpadErrorsAbi),
-    }),
-  };
-}
-
-async function terminalKey(context: PrepareContext, launch: ResolvedLaunch): Promise<PoolKey> {
-  const raw = await quoteCall(
-    context,
-    context.manifest.contracts.scheduled_launch,
-    encodeFunctionData({ abi: scheduledLaunchAbi, functionName: "terminalPool", args: [launch.key] }),
   );
-  return decodeFunctionResult({ abi: scheduledLaunchAbi, functionName: "terminalPool", data: raw }) as unknown as PoolKey;
 }
 
-function terminalTransaction(context: PrepareContext, key: PoolKey, params: Hex, minCalculated: bigint, orientation: Orientation, value: bigint): PreparedTransaction {
-  const swap = encodeFunctionData({ abi: routerAbi, functionName: "swap", args: [key, params, minCalculated, context.sender] });
-  // The router refunds unused native input only through refundNativeToken.
-  const refund = value !== 0n && !orientation.exactInput;
-  return {
-    chain_id: context.manifest.chain_id.toString(),
-    to: context.manifest.contracts.router,
-    data: refund
-      ? encodeFunctionData({ abi: routerAbi, functionName: "multicall", args: [[swap, encodeFunctionData({ abi: routerAbi, functionName: "refundNativeToken" })]] })
-      : swap,
-    value: value.toString(),
-  };
+async function feeAtBlock(context: PrepareContext, launch: ResolvedLaunch): Promise<bigint> {
+  const result = await context.chain.call({
+    from: context.sender,
+    to: context.manifest.contracts.scheduled_launch,
+    data: encodeFunctionData({ abi: scheduledLaunchAbi, functionName: "feeAt", args: [launch.poolId] }),
+    block: context.block,
+  });
+  if (!result.ok) throw prepareError("rpc_unavailable");
+  return decodeFunctionResult({ abi: scheduledLaunchAbi, functionName: "feeAt", data: result.data }) as bigint;
 }
 
-async function terminalTrade(context: PrepareContext, launch: ResolvedLaunch, input: PrepareTradeInput) {
-  const orientation = orient(launch, input);
-  const router = context.manifest.contracts.router;
-  const key = await terminalKey(context, launch);
-  const raw = await quoteCall(
-    context,
-    router,
-    encodeFunctionData({ abi: routerAbi, functionName: "quote", args: [key, orientation.isToken1, orientation.signedAmount, 0n, 0n] }),
-  );
-  const [update] = decodeFunctionResult({ abi: routerAbi, functionName: "quote", data: raw }) as readonly [Hex, Hex];
-  const quote = readQuote(update, orientation);
-  checkFill(quote, orientation, false);
-  const minCalculated = threshold(quote, orientation, input.slippage_bps);
-  const payment = maxPayment(orientation, minCalculated);
-  const funding = fundingSteps(context, orientation, router, payment, !orientation.exactInput);
-  const params = swapParameters(0n, orientation.signedAmount, orientation.isToken1);
-  const poolFee = (BigInt(key.config) >> 32n) & ((1n << 64n) - 1n);
-  return {
-    trading_phase: "terminal",
-    quote: quoteView(quote, orientation, router),
-    price_limit: { sqrt_ratio: "0", position: "router_default" },
-    deadline: null,
-    fees: terminalTradeFees({ poolFee, lockedLiquidity: context.manifest.contracts.locked_launch_liquidity, beneficiary: launch.state.owner }),
-    warnings: [],
-    ...planFields(context, orientation, minCalculated, payment, funding, terminalTransaction(context, key, params, minCalculated, orientation, funding.value)),
-  };
-}
+const tx = (chain: string, t: { to: Address; data: Hex; value: bigint }): PreparedTransaction => ({
+  chain_id: chain,
+  to: t.to,
+  data: t.data,
+  value: t.value.toString(),
+});
 
-export async function launchpadPrepareTrade(env: PrepareEnv, raw: z.input<typeof prepareTradeSchema>, chainFactory: ChainFactory) {
-  const input = prepareTradeSchema.parse(raw);
-  const context = await prepareContext(env, input, chainFactory);
-  const launch = await resolveLaunch(context, input.token);
-  const stage = launchStage(launch, context.block.timestamp);
+function checkPhase(stage: LaunchStage, launch: ResolvedLaunch) {
   if (stage === "scheduled") throw prepareError("launch_not_started", { start_time: launch.state.startTime.toString() });
   if (stage === "ended_pending_advance") throw prepareError("launch_needs_advance", { phase: stage });
-  const body = stage === "launch" ? await launchTrade(context, launch, input) : await terminalTrade(context, launch, input);
+}
+
+type Prepared = ReturnType<typeof prepareSwapFromQuote>;
+
+/** quoter-service's route for the trade, encoded for the manifest's Yul router exactly as the swap tools encode it. */
+async function routeTrade(context: PrepareContext, launch: ResolvedLaunch, input: PrepareTradeInput, quoterUrl: string) {
+  const buy = input.side === "buy";
+  const tokenIn = buy ? launch.quoteToken : launch.token;
+  const tokenOut = buy ? launch.token : launch.quoteToken;
+  const amount = BigInt(input.amount);
+  const url = buildQuoterQuoteUrl({ quoterUrl, chainId: context.manifest.chain_id, tokenIn, tokenOut, quoteType: input.amount_kind, amount });
+  const quote = await fetchQuote(context, url);
+  const hops = routeHops(context, launch, quote);
+  try {
+    const prepared = prepareSwapFromQuote({
+      quote,
+      tokenIn,
+      tokenOut,
+      quoteType: input.amount_kind,
+      amount,
+      slippageBps: input.slippage_bps,
+      recipient: context.sender,
+      routerAddress: context.manifest.contracts.router,
+    });
+    return { prepared, hops, tokenIn };
+  } catch (error) {
+    throw prepareError("quoter_invalid_response", { reason: (error as Error).message });
+  }
+}
+
+/** The approval, swap and, for an exact output, the allowance reset, in the swap tools' order. */
+function tradePlan(context: PrepareContext, prepared: Prepared, exactOutput: boolean) {
+  const chain = context.manifest.chain_id.toString();
+  const approval = prepared.approval;
+  const approvals = approval === null ? [] : [tx(chain, approval.transaction)];
+  const cleanup =
+    exactOutput && approval !== null
+      ? [tx(chain, { to: approval.token, data: encodeFunctionData({ abi: ERC20_APPROVE, functionName: "approve", args: [approval.spender, 0n] }), value: 0n })]
+      : [];
+  return executionPlan({
+    chainId: chain,
+    sender: context.sender,
+    approvals,
+    transaction: tx(chain, prepared.transaction),
+    postExecutionTransactions: cleanup,
+    atomicBatchRequired: approvals.length > 0 || cleanup.length > 0,
+    revertDecode: errorResultDecodePlan(launchpadErrorsAbi),
+  });
+}
+
+function quoteView(prepared: Prepared, amount: string) {
+  return {
+    source: "quoter-service",
+    quoter_block_number: prepared.block.number.toString(),
+    quoter_block_hash: prepared.block.hash,
+    requested_amount: amount,
+    filled_amount: prepared.filledAmount.toString(),
+    partial_fill: prepared.partialFill,
+    amount_in: prepared.amountIn.toString(),
+    amount_out: prepared.amountOut.toString(),
+    fee_inclusive: true,
+    estimated_route_gas: prepared.estimatedRouteGas,
+    price_impact: prepared.priceImpact,
+  };
+}
+
+export async function launchpadPrepareTrade(env: PrepareEnv, raw: z.input<typeof prepareTradeSchema>, deps: Partial<Deps> = {}) {
+  const input = prepareTradeSchema.parse(raw);
+  const amount = BigInt(input.amount);
+  if (amount === 0n || amount > INT128_MAX) throw prepareError("invalid_amount");
+  const quoterUrl = quoterBase(env);
+  const context = await prepareContext(env, input, deps);
+  const launch = await resolveLaunch(context, { token: input.token });
+  const stage = launchStage(launch, context.block.timestamp);
+  checkPhase(stage, launch);
+  const { prepared, hops, tokenIn } = await routeTrade(context, launch, input, quoterUrl);
+  const launchHop = hops.flat().some((hop) => hop.this_launch);
+  const fee = launchHop && stage === "launch" ? await feeAtBlock(context, launch) : null;
   return {
     ...outputHeader(context),
     action: "trade",
+    contract: prepared.transaction.to,
     token: launch.token,
     quote_token: launch.quoteToken,
     pool_id: launch.poolId,
+    phase: stage,
     side: input.side,
     amount_kind: input.amount_kind,
     recipient: context.sender,
-    beneficiary: launch.state.owner,
-    ...body,
+    quote: quoteView(prepared, input.amount),
+    route: { splits: hops, note: ROUTE_NOTE },
+    creator_fee_at_block: fee === null ? null : { q64: fee.toString(), percent: feePercent(fee) },
+    threshold: {
+      calculated_amount_threshold: prepared.calculatedAmountThreshold.toString(),
+      meaning: input.amount_kind === "exact_input" ? "minimum_output" : "maximum_input",
+      note: THRESHOLD_NOTE,
+    },
+    max_payment: { token: tokenIn, amount: (prepared.maximumAmountIn ?? prepared.amountIn).toString() },
+    fees: tradeFees({ launchHop, feeAtBlock: fee, claimant: launch.indexed.creator }),
+    warnings: prepared.partialFill ? [warning("partial_fill")] : [],
+    execution_plan: tradePlan(context, prepared, input.amount_kind === "exact_output"),
   };
 }
+
+const ERC20_APPROVE = [
+  {
+    type: "function",
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+] as const;

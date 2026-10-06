@@ -18,8 +18,6 @@ import {
   publicToolCatalogWithOutputs,
 } from "./server.js";
 import { requestCountry } from "./token-restrictions.js";
-import { launchpadChains, launchpadStats, type LaunchpadEnv } from "./launchpad/analytics/tools.js";
-import { ServiceError } from "./core.js";
 import { MCP_SERVER_VERSION, MCP_TOOL_CATALOG_REVISION } from "./version.js";
 import {
   PROTOCOL_SKILLS,
@@ -407,8 +405,6 @@ export default {
         );
       case "/tools":
         return toolsDocument(url);
-      case "/launchpad/stats":
-        return launchpadStatsResponse(request, env);
       case "/openapi.json":
         return json(openapi, 200, cacheHeaders(3600));
       case "/llms.txt":
@@ -635,53 +631,6 @@ function commaSeparatedHostnames(
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0)
     .map((entry) => (parseOrigins ? new URL(entry).hostname : entry));
-}
-
-const LAUNCHPAD_UNAVAILABLE = new Set(["launchpad_not_configured", "source_unavailable", "invalid_source_data"]);
-const LAUNCHPAD_CLIENT_ERRORS: Record<string, number> = { invalid_input: 400, chain_not_covered: 404 };
-
-/**
- * Landing-page figures for the launchpad prototype (interface contract §5).
- * Uncached: the response carries its own as_of block and completeness, and a
- * cached copy would misstate freshness.
- */
-async function launchpadStatsResponse(request: Request, env: Env) {
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    return json({ error: { code: "method_not_allowed", message: "Use GET." } }, 405, { allow: "GET, HEAD" });
-  }
-  const params = new URL(request.url).searchParams;
-  const finality = params.get("finality") ?? "latest";
-  if (!LAUNCHPAD_FINALITIES.has(finality)) {
-    return json({ error: { code: "invalid_input", message: "finality must be latest, safe or finalized." } }, 400);
-  }
-  try {
-    const launchpadEnv = env as Env & LaunchpadEnv;
-    const chain = statsChain(params.get("chain_id"), launchpadChains(launchpadEnv));
-    const body = await launchpadStats(launchpadEnv, chain, finality as "latest");
-    return json(body, 200, { "cache-control": "no-store" });
-  } catch (error) {
-    return launchpadStatsError(error);
-  }
-}
-
-/** The requested chain, or the only covered one. Several covered chains need an explicit chain_id. */
-function statsChain(requested: string | null, covered: number[]): number {
-  if (requested !== null) {
-    if (!/^\d{1,12}$/.test(requested)) throw new ServiceError("invalid_input", "chain_id must be a positive integer.");
-    return Number(requested);
-  }
-  if (covered.length === 1) return covered[0];
-  throw new ServiceError("invalid_input", `Pass chain_id; the launchpad covers chains ${covered.join(", ")}.`);
-}
-
-const LAUNCHPAD_FINALITIES = new Set(["latest", "safe", "finalized"]);
-
-function launchpadStatsError(error: unknown) {
-  const known = error instanceof ServiceError;
-  const code = known ? error.code : "unexpected_error";
-  const message = known ? error.message : "The launchpad stats could not be computed.";
-  const status = LAUNCHPAD_CLIENT_ERRORS[code] ?? (LAUNCHPAD_UNAVAILABLE.has(code) ? 503 : 500);
-  return json({ error: { code, message } }, status, { "cache-control": "no-store" });
 }
 
 function json(

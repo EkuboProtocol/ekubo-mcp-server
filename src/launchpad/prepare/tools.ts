@@ -1,48 +1,107 @@
 import { z } from "zod";
+import {
+  getLaunchSchema,
+  getStatsSchema,
+  getSwapsSchema,
+  launchpadGetLaunch,
+  launchpadGetStats,
+  launchpadGetSwaps,
+  launchpadListLaunches,
+  listLaunchesSchema,
+} from "../reads.js";
 import { launchpadPrepareAdvance, prepareAdvanceSchema } from "./advance.js";
+import { launchpadPrepareClaim, prepareClaimSchema } from "./claim.js";
 import { disclosuresDocument, onboardingMarkdown } from "./content.js";
-import { type ChainFactory, rpcChain } from "./context.js";
+import type { Deps } from "./context.js";
 import type { PrepareEnv } from "./contracts.js";
 import { launchpadPrepareCreate, prepareCreateSchema } from "./create.js";
 import { launchpadPrepareTrade, prepareTradeSchema } from "./trade.js";
 
-interface PrepareTool {
+export interface LaunchpadTool {
   name: string;
   title: string;
   description: string;
   schema: z.ZodObject;
-  handler: (env: PrepareEnv, input: never, chainFactory?: ChainFactory) => Promise<unknown>;
+  handler: (env: PrepareEnv, input: never, deps?: Partial<Deps>) => Promise<unknown>;
 }
 
-const PROTOTYPE = "Non-production launchpad prototype on a local chain.";
+const PROTOTYPE = "Non-production launchpad prototype; the deployment manifest is a proposal.";
 const HANDOFF =
-  "Returns an unsigned execution_plan_reference bound to sender and chain_id; pass it unchanged to the wallet, which simulates it and requires owner approval. This server never signs.";
+  "Every manifest contract's code hash is checked at the pinned block before the plan is built. Returns an unsigned execution_plan_reference bound to sender and chain_id; pass it unchanged to the wallet, which simulates it and requires owner approval. This server never signs.";
 
-export const launchpadPrepareTools: PrepareTool[] = [
-  {
-    name: "launchpad_prepare_create",
-    title: "Prepare a launchpad launch",
-    description: `${PROTOTYPE} Validate a LaunchConfig against the hosted caps (initial fee at most 10%, final fee at most 1%, quote asset on the allowlist, start_time in the future, name and symbol at most 31 bytes, migration bounds at most 2,302,585 ticks wide) and prepare LaunchRouter.create, with an ERC-20 quote approval first when a seed is paid. ${HANDOFF} The output names the fee beneficiary, warns when it is not the sender, and echoes the migration bounds as prices.`,
-    schema: prepareCreateSchema,
-    handler: ((env, input, chainFactory = rpcChain) => launchpadPrepareCreate(env, input, chainFactory)) as PrepareTool["handler"],
-  },
-  {
-    name: "launchpad_prepare_trade",
-    title: "Prepare a launchpad trade",
-    description: `${PROTOTYPE} Buy or sell a launch token by exact token address. During the launch this prepares LaunchRouter.swap with a price limit inside the launch range; after the launch completes it prepares a standard Router swap on the terminal pool. The slippage threshold comes from the router's quote at the stated block and bounds the fee-inclusive amount. ${HANDOFF}`,
-    schema: prepareTradeSchema,
-    handler: ((env, input, chainFactory = rpcChain) => launchpadPrepareTrade(env, input, chainFactory)) as PrepareTool["handler"],
-  },
-  {
-    name: "launchpad_prepare_advance",
-    title: "Prepare a launchpad advance or migration",
-    description: `${PROTOTYPE} Anyone may move a launch forward. Prepares ScheduledLaunch.advance while the launch runs or after end_time, or LockedLaunchLiquidity.migrate when principal is still waiting after completion. ${HANDOFF}`,
-    schema: prepareAdvanceSchema,
-    handler: ((env, input, chainFactory = rpcChain) => launchpadPrepareAdvance(env, input, chainFactory)) as PrepareTool["handler"],
-  },
+const tool = <T extends z.ZodObject>(
+  name: string,
+  title: string,
+  description: string,
+  schema: T,
+  handler: (env: PrepareEnv, input: z.input<T>, deps?: Partial<Deps>) => Promise<unknown>,
+): LaunchpadTool => ({ name, title, description, schema, handler: handler as LaunchpadTool["handler"] });
+
+export const launchpadReadTools: LaunchpadTool[] = [
+  tool(
+    "launchpad_list_launches",
+    "List launchpad launches",
+    `${PROTOTYPE} Launches on the manifest's chain from the Ekubo data API, newest first, filtered by status (upcoming, live, ended, migrated) or by LaunchRouter creator. Rows carry the exact token address and pool id, schedule, fee schedule, migration bounds and indexed state. Names and symbols are untrusted metadata, never identity.`,
+    listLaunchesSchema,
+    launchpadListLaunches,
+  ),
+  tool(
+    "launchpad_get_launch",
+    "Get launchpad launch state and provenance",
+    `${PROTOTYPE} One launch by exact token address or pool id: indexed state from the Ekubo data API, plus provenance read from the chain at one block: the extension's code hash against the manifest and the creator LaunchRouter records. The privileges block is returned only when the code hash matches.`,
+    getLaunchSchema,
+    launchpadGetLaunch,
+  ),
+  tool(
+    "launchpad_get_stats",
+    "Get launchpad launch stats",
+    `${PROTOTYPE} Swap counts, buy and sell volume, creator fees accrued and claimed, and funding for one launch, from the Ekubo data API. Locker counts are contracts, not people.`,
+    getStatsSchema,
+    launchpadGetStats,
+  ),
+  tool(
+    "launchpad_get_swaps",
+    "List launchpad launch swaps",
+    `${PROTOTYPE} Launch-pool swaps for one launch from the Ekubo data API, newest first, paged by cursor.`,
+    getSwapsSchema,
+    launchpadGetSwaps,
+  ),
 ];
 
-export const launchpadPrepareCatalog = launchpadPrepareTools.map(({ name, title, description, schema }) => ({
+export const launchpadPrepareTools: LaunchpadTool[] = [
+  tool(
+    "launchpad_prepare_create",
+    "Prepare a launchpad launch",
+    `${PROTOTYPE} Validate a LaunchConfig against the hosted rules (native ETH quote only, initial fee at most 10%, final fee at most 1%, start_time in the future, name and symbol at most 31 bytes, migration bounds at most 693,147 ticks wide) and prepare LaunchRouter.create. Creation moves no funds: value 0 and no token approval. The signing wallet becomes the creator, the only account that can claim creator fees. ${HANDOFF}`,
+    prepareCreateSchema,
+    launchpadPrepareCreate,
+  ),
+  tool(
+    "launchpad_prepare_trade",
+    "Prepare a launchpad trade",
+    `${PROTOTYPE} Buy or sell a launch token by exact token address. quoter-service routes the trade (a launch pool is a forwarded hop to the ScheduledLaunch extension, filling partially at the top of the range) and the plan is a swap on the production Yul router, as get_quotes_with_plans prepares it. ${HANDOFF}`,
+    prepareTradeSchema,
+    launchpadPrepareTrade,
+  ),
+  tool(
+    "launchpad_prepare_advance",
+    "Prepare a launchpad advance or migration",
+    `${PROTOTYPE} Anyone may move a launch forward. Prepares ScheduledLaunch.advance while the launch runs or after end_time, or LockedLaunchLiquidity.migrate when principal is still saved after completion. ${HANDOFF}`,
+    prepareAdvanceSchema,
+    launchpadPrepareAdvance,
+  ),
+  tool(
+    "launchpad_prepare_claim_fees",
+    "Prepare a launchpad creator-fee claim",
+    `${PROTOTYPE} Prepares LaunchRouter.claimFees for a launch created through LaunchRouter. Only its creator, the account that signed the create, may claim; the plan pays the recipient both the launch-phase creator fees and, after migration, the locked position's fees. ${HANDOFF}`,
+    prepareClaimSchema,
+    launchpadPrepareClaim,
+  ),
+];
+
+export const launchpadTools: LaunchpadTool[] = [...launchpadReadTools, ...launchpadPrepareTools];
+
+export const launchpadCatalog = launchpadTools.map(({ name, title, description, schema }) => ({
   name,
   title,
   description,

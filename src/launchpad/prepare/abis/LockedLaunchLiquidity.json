@@ -30,24 +30,6 @@
   },
   {
     "type": "function",
-    "name": "claimFees",
-    "inputs": [
-      {
-        "name": "launchId",
-        "type": "bytes32",
-        "internalType": "PoolId"
-      },
-      {
-        "name": "recipient",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "createToken",
     "inputs": [
       {
@@ -282,6 +264,12 @@
         "internalType": "PoolId"
       },
       {
+        "name": "from",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "amount0",
         "type": "uint128",
         "indexed": false,
@@ -319,16 +307,6 @@
   {
     "type": "error",
     "name": "ExtensionOnly",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidAction",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidRecipient",
     "inputs": []
   },
   {

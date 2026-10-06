@@ -30,7 +30,7 @@ a data API and the quoter remains a route-data service.
 - `POST/GET /mcp/{ekubo,aave,aerodrome,lido,merkl,morpho,sky,uniswap}` — the same MCP
   contract narrowed to one protocol
 - `POST/GET /mcp/safe` — dedicated Safe signer preparation; see [Safe coverage](docs/safe.md)
-- `POST/GET /mcp/launchpad` and `GET /launchpad/stats` — non-production launchpad prototype analytics; see [Launchpad analytics](docs/launchpad-analytics.md)
+- `POST/GET /mcp/launchpad` — non-production launchpad prototype; see [Launchpad](docs/launchpad.md)
 - `GET /` — service metadata, per-protocol endpoints, and canonical
   documentation links
 - `GET /tools` — deterministic tool catalog for non-MCP discovery, filterable

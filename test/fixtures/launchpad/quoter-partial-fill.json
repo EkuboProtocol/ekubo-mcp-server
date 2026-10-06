@@ -1,0 +1,29 @@
+{
+  "block_number": 1,
+  "block_hash": "0x1",
+  "total_calculated": "90900000000000000000301",
+  "estimated_gas_cost": 335500,
+  "price_impact": null,
+  "splits": [
+    {
+      "amount_specified": "105127107009426447987133",
+      "amount_calculated": "90900000000000000000301",
+      "route": [
+        {
+          "swap": {
+            "type": "forwarded",
+            "pool_key": {
+              "token0": "0x504f4f373EF5529d60838DC1aC106932A33B5848",
+              "token1": "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF",
+              "config": "0x5100000000000000000000000000000000000000000000000000000080000064"
+            },
+            "sqrt_ratio_limit": "0xffff9a5889f795069a41a8a3",
+            "skip_ahead": 0,
+            "forwardee": "0x5100000000000000000000000000000000000000",
+            "allow_partial": true
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -438,41 +438,6 @@
   },
   {
     "type": "function",
-    "name": "claimFees",
-    "inputs": [
-      {
-        "name": "key",
-        "type": "tuple",
-        "internalType": "struct PoolKey",
-        "components": [
-          {
-            "name": "token0",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "token1",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "config",
-            "type": "bytes32",
-            "internalType": "PoolConfig"
-          }
-        ]
-      },
-      {
-        "name": "recipient",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "creatorFeeSalt",
     "inputs": [
       {
@@ -741,6 +706,18 @@
         "internalType": "uint128"
       },
       {
+        "name": "reserve0",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      },
+      {
+        "name": "reserve1",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      },
+      {
         "name": "complete",
         "type": "bool",
         "indexed": false,
@@ -804,11 +781,6 @@
           },
           {
             "name": "totalSupply",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "quoteAmount",
             "type": "uint128",
             "internalType": "uint128"
           },
@@ -947,22 +919,12 @@
   },
   {
     "type": "error",
-    "name": "InvalidAction",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidCenterTick",
     "inputs": []
   },
   {
     "type": "error",
     "name": "InvalidLaunch",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidRecipient",
     "inputs": []
   },
   {

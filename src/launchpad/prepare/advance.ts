@@ -2,7 +2,7 @@ import { encodeFunctionData } from "viem";
 import { z } from "zod";
 import { errorResultDecodePlan } from "../../abi-decode.js";
 import { executionPlan } from "../../execution-plan.js";
-import { type ChainFactory, type PrepareContext, outputHeader, prepareContext } from "./context.js";
+import { type Deps, type PrepareContext, outputHeader, prepareContext } from "./context.js";
 import { type PrepareEnv, launchpadErrorsAbi, lockedLaunchLiquidityAbi, scheduledLaunchAbi } from "./contracts.js";
 import { advanceFees } from "./fees.js";
 import { type ResolvedLaunch, launchStage, migrationPending, resolveLaunch } from "./launch.js";
@@ -19,21 +19,22 @@ export const prepareAdvanceSchema = z.object({
 });
 
 type Step =
-  | { call: "advance"; to: "scheduled_launch" }
-  | { call: "migrate"; to: "locked_launch_liquidity" };
+  | { call: "advance"; to: "scheduled_launch"; pending: null }
+  | { call: "migrate"; to: "locked_launch_liquidity"; pending: { amount0: bigint; amount1: bigint } };
 
 /**
- * Which call, if any, moves this launch forward at the pinned block:
+ * Which direct call, if any, moves this launch forward at the pinned block:
  * `ScheduledLaunch.advance` releases inventory during the launch and finishes
  * it after end_time; `LockedLaunchLiquidity.migrate` deposits principal still
- * waiting after the launch completed.
+ * saved in Core after the launch completed. Both are permissionless.
  */
 async function nextStep(context: PrepareContext, launch: ResolvedLaunch): Promise<Step> {
   const stage = launchStage(launch, context.block.timestamp);
   if (stage === "scheduled") throw prepareError("nothing_to_advance", { phase: "scheduled" });
-  if (stage !== "complete") return { call: "advance", to: "scheduled_launch" };
-  if (!(await migrationPending(context, launch))) throw prepareError("nothing_to_advance", { phase: "migrated" });
-  return { call: "migrate", to: "locked_launch_liquidity" };
+  if (stage !== "complete") return { call: "advance", to: "scheduled_launch", pending: null };
+  const pending = await migrationPending(context, launch);
+  if (pending.amount0 === 0n && pending.amount1 === 0n) throw prepareError("nothing_to_advance", { phase: "migrated" });
+  return { call: "migrate", to: "locked_launch_liquidity", pending };
 }
 
 function calldata(step: Step, launch: ResolvedLaunch) {
@@ -42,10 +43,10 @@ function calldata(step: Step, launch: ResolvedLaunch) {
     : encodeFunctionData({ abi: lockedLaunchLiquidityAbi, functionName: "migrate", args: [launch.poolId] });
 }
 
-export async function launchpadPrepareAdvance(env: PrepareEnv, raw: z.input<typeof prepareAdvanceSchema>, chainFactory: ChainFactory) {
+export async function launchpadPrepareAdvance(env: PrepareEnv, raw: z.input<typeof prepareAdvanceSchema>, deps: Partial<Deps> = {}) {
   const input = prepareAdvanceSchema.parse(raw);
-  const context = await prepareContext(env, input, chainFactory);
-  const launch = await resolveLaunch(context, input.token);
+  const context = await prepareContext(env, input, deps);
+  const launch = await resolveLaunch(context, { token: input.token });
   const step = await nextStep(context, launch);
   const chain = context.manifest.chain_id.toString();
   const plan = executionPlan({
@@ -60,7 +61,9 @@ export async function launchpadPrepareAdvance(env: PrepareEnv, raw: z.input<type
     contract: context.manifest.contracts[step.to],
     token: launch.token,
     pool_id: launch.poolId,
-    beneficiary: launch.state.owner,
+    phase: launchStage(launch, context.block.timestamp),
+    principal_pending:
+      step.pending === null ? null : { amount0: step.pending.amount0.toString(), amount1: step.pending.amount1.toString() },
     fees: advanceFees(),
     warnings: [warning("migration_may_stay_pending")],
     execution_plan: plan,
