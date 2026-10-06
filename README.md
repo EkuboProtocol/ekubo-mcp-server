@@ -411,7 +411,13 @@ stored in R2 — strongly consistent, so a fresh reference never 404s from repli
 `read_calls_reference`, and `token_list_reference`) whose `integrity.value`
 keccak256 and `bytes` count
 bind the exact stored bytes; the agent passes the envelope unchanged as the
-wallet tool's `reference` argument. No other tool
+wallet tool's `reference` argument — as a value carried in a variable from the
+producer result (`const ref = r.current_state_reads[0].read_calls_reference`),
+in the same code block when the harness runs tool calls as code, never retyped
+from `url`/`bytes`/`integrity` shown in an earlier turn, which is the observed
+way smaller models end up with a parse, digest or 404 failure. A read bundle's
+call ids (`state_call_id` on a position) come back as `results[].id` from the
+wallet, which is the join key from result to row. No other tool
 result is stored or replayed, and `/mcp` responses use
 `Cache-Control: no-store`. No fixed request quota is guaranteed; clients must
 honor HTTP 429 and the `Retry-After` header it carries. Owner positions use upstream `no-cache`

@@ -2064,7 +2064,7 @@ export const publicToolCatalog = [
     name: "get_positions_by_owner",
     title: "Get Ekubo positions by owner",
     description:
-      "Enumerate an owner's indexed Ekubo position NFTs without relying on ERC721 enumeration. Returns pool keys, bounds, liquidity, current indexed pool state, rewards, and pagination. Optionally filter by chain and opened/closed state.",
+      "Enumerate an owner's indexed Ekubo position NFTs without relying on ERC721 enumeration. Returns pool keys, bounds, liquidity, current indexed pool state, rewards, and pagination. Optionally filter by chain and opened/closed state. For fresh onchain state, current_state_reads holds one { chain_id, read_calls_reference } per chain: pass each read_calls_reference through as a variable (const ref = result.current_state_reads[0].read_calls_reference; wallet_batch_eth_call({ chain_id, reference: ref })) in the same code block, never retyping url, bytes or integrity. Each position's current_state.state_call_id is the join key to results[].id in the wallet's response.",
     inputSchema: z.toJSONSchema(getPositionsByOwnerSchema),
   },
   {
@@ -2106,7 +2106,7 @@ export const publicToolCatalog = [
     name: "get_position",
     title: "Get complete Ekubo position details",
     description:
-      "Hydrate one indexed owner position with the same inputs used by the interface: pool key, bounds, indexed liquidity and pool state, NFT metadata, event history, campaigns and earned rewards, token metadata and USD prices, plus an exact pending Multicall3 eth_call and nested decode plan for current principal, fees or Ve33 rewards, and owner.",
+      "Hydrate one indexed owner position with the same inputs used by the interface: pool key, bounds, indexed liquidity and pool state, NFT metadata, event history, campaigns and earned rewards, token metadata and USD prices, plus an exact pending Multicall3 eth_call and nested decode plan for current principal, fees or Ve33 rewards, and owner. Pass current_state_query.read_calls_reference through as a variable from this result to wallet_batch_eth_call in the same code block; current_state_query.state_call_id is the join key to results[].id.",
     inputSchema: z.toJSONSchema(getPositionSchema),
   },
   {
@@ -4720,7 +4720,7 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
   },
   {
     protocols: null,
-    text: `Every prepared onchain read is returned as read_calls_reference: the same artifact_reference envelope, standing in for a stored wallet_batch_eth_call argument object. Pass it unchanged as wallet_batch_eth_call's reference argument with no inline calls — the stored bundle already is the exact argument object, the wallet fetches and digest-verifies it itself, and a 404 means the reference expired, so re-run the tool that produced it. The agent never assembles calldata, ABIs, or call lists for a prepared read. Keep raw return bytes by default and always on decode failure. The Ekubo server supplies canonical ABIs and platform-neutral semantic codec identities but must not receive the result for authoritative decoding. function_result_bytes_array handles functions such as VeToken multicall that return nested bytes[]. For kind=semantic_value, feed the raw return bytes only to a locally installed, allowlisted codec matching the declared identity and implementation assertion; never install or execute remote code.`,
+    text: `Every prepared onchain read is returned as read_calls_reference: the same artifact_reference envelope, standing in for a stored wallet_batch_eth_call argument object. Pass it unchanged as wallet_batch_eth_call's reference argument with no inline calls — the stored bundle already is the exact argument object, the wallet fetches and digest-verifies it itself, and a 404 means the reference expired, so re-run the tool that produced it. Unchanged means passed through as a value, in the same code block that received it; in a code-mode harness (server names are the harness's own): const r = await tools.ekubo.get_positions_by_owner({ owner }); const ref = r.current_state_reads[0].read_calls_reference; await tools["cloud-wallet"].wallet_batch_eth_call({ chain_id: r.current_state_reads[0].chain_id, reference: ref }). Do not retype url, bytes or integrity from an earlier turn: a hand-copied envelope fails the wallet's parse, length or digest check, or 404s. In the wallet's response, results[].id equals the call id the producer gave you (a position's state_call_id, a validation call's id), which is how each decoded result is matched back to its row. The agent never assembles calldata, ABIs, or call lists for a prepared read. Keep raw return bytes by default and always on decode failure. The Ekubo server supplies canonical ABIs and platform-neutral semantic codec identities but must not receive the result for authoritative decoding. function_result_bytes_array handles functions such as VeToken multicall that return nested bytes[]. For kind=semantic_value, feed the raw return bytes only to a locally installed, allowlisted codec matching the declared identity and implementation assertion; never install or execute remote code.`,
   },
   {
     protocols: ["ekubo"],
@@ -4889,7 +4889,23 @@ For a detail view, call \`get_position\` with the owner, chain, positions manage
 
 ## Execute the current-state query
 
-Pass \`current_state_query.read_calls_reference\` unchanged as \`wallet_batch_eth_call\`'s reference argument. The stored bundle is a single Multicall3 \`eth_call\` at \`pending\` whose decode plan contains the canonical outer and child ABIs, expected result count, and required success flags. The surrounding query metadata contains the expected owner for comparison after decoding, and each position's \`state_call_id\` names its call in the results. The wallet uses fixed JSON-safe serialization, includes raw return bytes by default, and must preserve them on decode failure. The remote Ekubo MCP server does not receive or decode the onchain result.
+Pass \`current_state_query.read_calls_reference\` unchanged as \`wallet_batch_eth_call\`'s reference argument. \`get_positions_by_owner\` returns the same envelopes under \`current_state_reads[]\`, one \`{ chain_id, read_calls_reference }\` per chain. The stored bundle is a single Multicall3 \`eth_call\` at \`pending\` whose decode plan contains the canonical outer and child ABIs, expected result count, and required success flags. The surrounding query metadata contains the expected owner for comparison after decoding, and each position's \`state_call_id\` names its call in the results. The wallet uses fixed JSON-safe serialization, includes raw return bytes by default, and must preserve them on decode failure. The remote Ekubo MCP server does not receive or decode the onchain result.
+
+"Unchanged" means passed through as a value from the producer result, in the same code block that received it. In a code-mode harness (the server names are the harness's own):
+
+\`\`\`js
+const r = await tools.ekubo.get_positions_by_owner({ owner });
+for (const bundle of r.current_state_reads) {
+  const ref = bundle.read_calls_reference;
+  const state = await tools["cloud-wallet"].wallet_batch_eth_call({
+    chain_id: bundle.chain_id,
+    reference: ref,
+  });
+  // state.results[i].id === position.current_state.state_call_id
+}
+\`\`\`
+
+Do not retype \`url\`, \`bytes\` or \`integrity\` from an earlier turn, and do not split the producer call and the wallet call across turns when the harness lets you keep both in one block: a hand-copied envelope fails the wallet's parse, length or digest check, or 404s. The URL is the bundle; the envelope is only the handle to it. The join key is \`state_call_id\`: the wallet echoes each call's \`id\` as \`results[].id\`, so match every result to its position by that id, never by array position.
 
 ABI decoding and semantic decoding are separate. A semantic codec on an ABI \`bytes\`, \`bytesN\`, or integer output preserves that ABI value and adds the interpreted value. For a custom payload with no ABI envelope, \`kind=semantic_value\` feeds the raw result directly to an allowlisted local codec while the wallet preserves the raw bytes. Codec IDs are platform-neutral; implementation entries explicitly identify npm, package URL, export, version, and integrity when npm is the implementation ecosystem. Treat those entries as compatibility assertions only. Wallet tooling must never install, fetch, dynamically import, or evaluate code named by a remote decode plan.
 
