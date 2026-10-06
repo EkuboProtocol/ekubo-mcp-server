@@ -13,6 +13,7 @@ import {
   preparedTransaction,
   preparedUiAction,
 } from "./ui-actions.js";
+import { nonTradingJurisdiction } from "./token-restrictions.js";
 
 /**
  * Aerodrome is Base-only, so unlike Merkl there is no chain set to verify —
@@ -713,6 +714,7 @@ export function prepareAerodromeLiquidityDeposit(input: {
   ];
 
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "aerodrome_liquidity_deposit",
     chainId: input.chainId,
     sender,
@@ -876,6 +878,7 @@ export function prepareAerodromeLiquidityWithdraw(input: {
 
   const lpToken = getAddress(input.lpToken);
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "aerodrome_liquidity_withdraw",
     chainId: input.chainId,
     sender,
@@ -1035,6 +1038,7 @@ export function prepareAerodromeGaugeDeposit(input: {
 
   const lpToken = getAddress(input.lpToken);
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "aerodrome_gauge_deposit",
     chainId: input.chainId,
     sender,
@@ -1106,6 +1110,7 @@ export function prepareAerodromeGaugeWithdraw(input: {
   const amount = positiveUint256(input.amount, "amount");
 
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "aerodrome_gauge_withdraw",
     chainId: input.chainId,
     sender,
@@ -1163,6 +1168,7 @@ export function prepareAerodromeGaugeClaim(input: {
   const account = getAddress(input.account ?? input.sender);
 
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "aerodrome_gauge_claim",
     chainId: input.chainId,
     sender,
@@ -1324,6 +1330,7 @@ export function prepareAerodromeLock(input: {
   }
 
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: `aerodrome_lock_${input.action}`,
     chainId: input.chainId,
     sender,
@@ -1434,6 +1441,7 @@ export function prepareAerodromeVote(input: {
   }
 
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: isReset ? "aerodrome_vote_reset" : "aerodrome_vote",
     chainId: input.chainId,
     sender,
@@ -1562,6 +1570,7 @@ export function prepareAerodromeIncentiveClaim(input: {
   }
 
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "aerodrome_incentive_claim",
     chainId: input.chainId,
     sender,

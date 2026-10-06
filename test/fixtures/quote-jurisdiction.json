@@ -8,6 +8,7 @@
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
       "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "scope": "trade",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -143,6 +144,7 @@
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
       "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "scope": "trade",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -278,6 +280,7 @@
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
       "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "scope": "trade",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -413,6 +416,7 @@
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
       "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "scope": "trade",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -548,6 +552,7 @@
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
       "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "scope": "trade",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -730,6 +735,7 @@
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
       "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "scope": "trade",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [],
@@ -770,6 +776,7 @@
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
       "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "scope": "trade",
       "coverage": "unknown",
       "execution_hold": true,
       "restricted_jurisdictions": null,
@@ -817,6 +824,7 @@
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
       "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "scope": "trade",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -948,6 +956,7 @@
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
       "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "scope": "trade",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -1074,6 +1083,7 @@
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
       "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "scope": "trade",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [],

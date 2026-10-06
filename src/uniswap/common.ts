@@ -13,6 +13,7 @@ import {
   preparedTransaction,
   preparedUiAction,
 } from "../ui-actions.js";
+import type { PlanJurisdiction } from "../token-restrictions.js";
 
 export const chainNames = {
   "1": "ETHEREUM",
@@ -158,6 +159,7 @@ export function amounts(input: {
 }
 export function plan(
   input: Action,
+  jurisdiction: PlanJurisdiction,
   action: string,
   to: Address,
   data: Hex,
@@ -168,6 +170,7 @@ export function plan(
     (s) => s.amount > 0n && s.token !== zeroAddress,
   );
   return preparedUiAction({
+    jurisdiction,
     action,
     chainId: input.chain_id,
     sender: input.sender,

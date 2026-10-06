@@ -13,6 +13,7 @@ import {
   planTargets,
   planTransactions,
   planValues,
+  expectPlanScope,
 } from "./plan-helpers.js";
 
 const sender = getAddress("0x4F2BF7469Bc38d1aE779b1F4affC588f35E60973");
@@ -176,6 +177,7 @@ describe("prepare_merkl_claim", () => {
 
   it("prepares one execution step calling the pinned Distributor", () => {
     const result = prepareMerklClaim({ chainId: "137", sender, rewards: [reward] });
+    expectPlanScope(result, "non_trading");
     expect(planStepKinds(result)).toEqual(["execution"]);
     expect(planTargets(result)).toEqual([MERKL_DISTRIBUTOR]);
     expect(planValues(result)).toEqual(["0"]);

@@ -168,7 +168,10 @@ import {
 } from "./transfers.js";
 import {
   assertAssetsTradable,
+  jurisdictionMetadataSchema,
+  quoteJurisdiction,
   type RequestCountry,
+  type RestrictableAsset,
 } from "./token-restrictions.js";
 
 export const ROBINHOOD_STONX_CHAIN_ID = "4663";
@@ -1811,25 +1814,7 @@ const exportedTokenListOutputSchema = z.looseObject({
   count: z.number().int(),
   complete: z.boolean(),
 });
-const countryCodeSchema = z.string().regex(/^[A-Z]{2}$/);
-const quoteJurisdictionSchema = z.object({
-  policy_version: z.string(),
-  policy_digest: z.string().regex(/^[0-9a-f]{64}$/),
-  coverage: z.enum(["complete", "unknown"]),
-  execution_hold: z.boolean(),
-  restricted_jurisdictions: z.array(countryCodeSchema).nullable(),
-  jurisdiction_names: z.record(z.string(), z.string()),
-  assets: z.array(z.object({
-    chain_id: z.string(), token: z.string(), side: z.enum(["sell", "buy"]),
-    classification: z.enum(["rhj_stock_token", "non_class", "unknown", "out_of_scope"]),
-    provenance: z.array(z.object({ source: z.string(), ref: z.string(), observed_at: z.string() })),
-    restricted_jurisdictions: z.array(countryCodeSchema).nullable(),
-    offering_exclusions: z.array(countryCodeSchema).nullable(),
-    issuer_prohibited_investor: z.array(countryCodeSchema).nullable(),
-    execution_hold: z.boolean(),
-  })),
-  execution_notice: z.string().nullable(),
-});
+const quoteJurisdictionSchema = jurisdictionMetadataSchema;
 const quotesOutputSchema = z.looseObject({
   jurisdiction: quoteJurisdictionSchema,
   quotes: z
@@ -2690,11 +2675,21 @@ export function createEkuboServer(
       if (result?.isError === true || result?.structuredContent === undefined) {
         return result;
       }
-      const { value, replaced } = await referenceWalletArtifacts(
-        env,
-        origin,
-        result.structuredContent,
-      );
+      let referenced: Awaited<ReturnType<typeof referenceWalletArtifacts>>;
+      try {
+        referenced = await referenceWalletArtifacts(
+          env,
+          origin,
+          result.structuredContent,
+        );
+      } catch (error) {
+        // A body the store refuses (a plan without its jurisdiction extension)
+        // fails the whole call; nothing from the handler's result is returned.
+        return toolResult(() => {
+          throw error;
+        });
+      }
+      const { value, replaced } = referenced;
       if (replaced === 0) return result;
       return {
         ...result,
@@ -3563,14 +3558,13 @@ export function createEkuboServer(
 
   registerCatalogTool("prepare_twamm_order", prepareTwammOrderSchema, (input) => {
     const chainId = canonicalChainId(input.chain_id);
-    assertAssetsTradable(
-      [
-        { chainId, token: input.sell_token, side: "sell" },
-        { chainId, token: input.buy_token, side: "buy" },
-      ],
-      country,
-    );
+    const gatedAssets: RestrictableAsset[] = [
+      { chainId, token: input.sell_token, side: "sell" },
+      { chainId, token: input.buy_token, side: "buy" },
+    ];
+    assertAssetsTradable(gatedAssets, country);
     return prepareTwammOrder({
+      jurisdiction: quoteJurisdiction(gatedAssets),
       chainId,
       sender: input.sender,
       sellToken: input.sell_token,
@@ -3622,14 +3616,13 @@ export function createEkuboServer(
 
   registerCatalogTool("prepare_auction_create", prepareAuctionCreateSchema, (input) => {
     const chainId = canonicalChainId(input.chain_id);
-    assertAssetsTradable(
-      [
-        { chainId, token: input.sell_token, side: "sell" },
-        { chainId, token: input.buy_token, side: "buy" },
-      ],
-      country,
-    );
+    const gatedAssets: RestrictableAsset[] = [
+      { chainId, token: input.sell_token, side: "sell" },
+      { chainId, token: input.buy_token, side: "buy" },
+    ];
+    assertAssetsTradable(gatedAssets, country);
     return prepareAuctionCreate({
+      jurisdiction: quoteJurisdiction(gatedAssets),
       chainId,
       sender: input.sender,
       sellToken: input.sell_token,
@@ -3682,8 +3675,10 @@ export function createEkuboServer(
     const chainId = canonicalChainId(input.chain_id);
     // Extending an oracle's capacity supports holding the asset, so it is
     // checked like an acquisition.
-    assertAssetsTradable([{ chainId, token: input.token, side: "buy" }], country);
+    const gatedAssets: RestrictableAsset[] = [{ chainId, token: input.token, side: "buy" }];
+    assertAssetsTradable(gatedAssets, country);
     return prepareOracleCapacityExpansion({
+      jurisdiction: quoteJurisdiction(gatedAssets),
       chainId,
       sender: input.sender,
       token: input.token,
@@ -4702,7 +4697,7 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
   },
   {
     protocols: null,
-    text: QUOTE_JURISDICTION_NOTICE_V2 + ` Swap quotes always return jurisdiction metadata (policy ekubo-token-jurisdictions-v2, with its policy_digest), independent of the MCP connection country; the prepare_ve33_reinvest phase=swap result and each of its child swaps carry it inline as well, beside each execution_plan_reference. Every asset is listed with its classification and provenance, so an empty restricted_jurisdictions list is explicit rather than missing. On a covered chain an asset that is neither a Robinhood Stock Token nor verified outside that class is unknown: every tool that would prepare a plan for it, swap quotes included, refuses with unclassified_asset from every country. Robinhood Stock Token restrictions apply to buying and selling alike. Other preparation tools retain their country-based controls and may fail with restricted_jurisdiction. Explain such a refusal to the user rather than retrying that preparation through another route. Withdrawals, fee and proceeds collection, and transfers remain available.`,
+    text: QUOTE_JURISDICTION_NOTICE_V2 + ` Swap quotes always return jurisdiction metadata (policy ekubo-token-jurisdictions-v2, with its policy_digest), independent of the MCP connection country; the prepare_ve33_reinvest phase=swap result and each of its child swaps carry it inline as well, beside each execution_plan_reference. Every asset is listed with its classification and provenance, so an empty restricted_jurisdictions list is explicit rather than missing. On a covered chain an asset that is neither a Robinhood Stock Token nor verified outside that class is unknown: every tool that would prepare a plan for it, swap quotes included, refuses with unclassified_asset from every country. Robinhood Stock Token restrictions apply to buying and selling alike. Other preparation tools retain their country-based controls and may fail with restricted_jurisdiction. Explain such a refusal to the user rather than retrying that preparation through another route. Withdrawals, fee and proceeds collection, and transfers remain available. Every Ekubo execution plan carries extensions["ekubo.jurisdiction"]; its scope says whether the plan trades: scope=trade lists the traded assets with their classification and restrictions, and a non_trading plan (claims, withdrawals, transfers, revocations, votes, collection, pool initialization) reports assets: [] with coverage: "complete" because nothing is traded under it.`,
   },
   {
     protocols: ["ekubo"],
@@ -4974,6 +4969,17 @@ Every plan includes simulation_failure_policy. Follow the wallet's returned simu
 
 Execution steps may include a portable revert_decode plan with kind=error_result and the target contract's canonical custom-error ABI. Pass it through unchanged. The wallet owns any batch-wrapper decoding, recursively unwraps its own execution-layer errors, preserves outer and innermost revert bytes, and applies the step error ABI locally. The Ekubo MCP does not know or describe wallet-specific wrappers.
 
+## Jurisdiction metadata: extensions["ekubo.jurisdiction"]
+
+Every plan this server stores carries extensions["ekubo.jurisdiction"], on every chain; on a chain the jurisdiction policy covers (today Robinhood Chain, 4663) the server refuses to store a plan without it. The value has policy_version, policy_digest, scope, coverage, execution_hold, restricted_jurisdictions, jurisdiction_names, assets, and execution_notice.
+
+scope says whether the plan trades, and is decided by the preparation tool, never inferred from calldata:
+
+- scope=trade: the plan acquires, disposes of, deposits, or stakes assets the jurisdiction policy evaluates — swaps and bridges, LP deposits and Uniswap liquidity adds, manual pool boosts, ve33 stake, increase and reinvest swap/stake phases, TWAMM orders, auction creation, oracle capacity expansion, pool price fixes, and wrap/unwrap. assets lists exactly the assets the tool's policy check evaluated, each with side, classification, provenance and restrictions; restricted_jurisdictions is their union.
+- scope=non_trading: every other plan — fee, reward and proceeds claims, LP withdrawals and position transfers, prepare_transfers, approval revocations, TWAMM collection, stop and virtual orders, auction completion, ve33 votes, reallocation, clearing, merges, extensions and withdrawals, pool initialization, Safe approvals and executions, and other protocols' actions. assets is [] with coverage "complete", execution_hold false, restricted_jurisdictions [] and execution_notice null: nothing is acquired or disposed of by trade under the plan, which is an authoritative statement rather than an omission. The tokens such a plan moves are not classified here.
+
+The metadata is advisory: it does not capture or replace the user's own jurisdiction and eligibility facts, and a quote, plan, simulation or approval is not permission to trade. Pass it through with the plan unchanged.
+
 ## Wallet tooling adapter
 
 Treat wallet tooling as a separate trust boundary from this public Ekubo server. When a wallet MCP or wallet API exposes call, simulation, authorization, and submission abstractions, use those directly and pass the exact reference envelope unchanged. Do not translate the plan into Cast or manually issue RPC calls when the wallet already wraps those operations. Do not ask the user for a separate agent-level confirmation; the wallet must simulate the exact plan, present the simulated result, collect authorization or signature, and submit it. Never provide a private key, mnemonic, or wallet credential to either MCP server.
@@ -5013,8 +5019,8 @@ would mean the metadata is not authoritative and nothing may be executed.
 Quotes are available regardless of the connection country and require no proof.
 ${QUOTE_JURISDICTION_NOTICE_V2}
 The agent must retain this metadata when handing the plan reference to the wallet;
-the plan also carries it in extensions["ekubo.jurisdiction"]. This advisory
-extension does not automatically enforce attestation.
+the plan also carries it in extensions["ekubo.jurisdiction"] with scope=trade.
+This advisory extension does not automatically enforce attestation.
 
 Ekubo base URL: https://prod-api-quoter.ekubo.org
 

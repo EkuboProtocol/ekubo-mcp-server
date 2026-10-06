@@ -17,6 +17,8 @@ import {
 } from "./common.js";
 import {
   assertAssetsTradable,
+  nonTradingJurisdiction,
+  quoteJurisdiction,
   type RequestCountry,
 } from "../token-restrictions.js";
 
@@ -84,13 +86,11 @@ export function prepareV3Add(
 ) {
   const input = v3AddSchema.parse(raw);
   pair(input.token0, input.token1);
-  assertAssetsTradable(
-    [
-      { chainId: input.chain_id, token: input.token0, side: "buy" },
-      { chainId: input.chain_id, token: input.token1, side: "buy" },
-    ],
-    country,
-  );
+  const gatedAssets = [
+    { chainId: input.chain_id, token: input.token0, side: "buy" as const },
+    { chainId: input.chain_id, token: input.token1, side: "buy" as const },
+  ];
+  assertAssetsTradable(gatedAssets, country);
   ticks(input);
   const expiry = deadline(input),
     d = deployment(input.chain_id);
@@ -151,6 +151,7 @@ export function prepareV3Add(
   ].filter((s) => !(input.use_native && s.token === d.wrapped_native));
   return plan(
     input,
+    quoteJurisdiction(gatedAssets),
     "uniswap_v3_add_liquidity",
     d.v3_position_manager,
     multicall(calls),
@@ -226,6 +227,7 @@ export function prepareV3Remove(raw: z.input<typeof v3RemoveSchema>) {
     );
   return plan(
     input,
+    nonTradingJurisdiction(),
     "uniswap_v3_remove_liquidity",
     deployment(input.chain_id).v3_position_manager,
     multicall(calls),
@@ -237,6 +239,7 @@ export function prepareV3Collect(raw: z.input<typeof v3CollectSchema>) {
   deadline(input);
   return plan(
     input,
+    nonTradingJurisdiction(),
     "uniswap_v3_collect_fees",
     deployment(input.chain_id).v3_position_manager,
     multicall(collection(input)),

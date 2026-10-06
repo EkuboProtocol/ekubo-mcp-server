@@ -11,6 +11,7 @@ import {
   planFunctions,
   planTransactions,
   VE_TOKEN_ABI,
+  expectPlanScope,
 } from "./plan-helpers.js";
 import {
   getVe33Allocations,
@@ -154,6 +155,7 @@ describe("ve(3,3) call generation", () => {
       saltNonce,
     });
 
+    expectPlanScope(result, "non_trading");
     expect(planFunctions(result, VE_TOKEN_ABI)).toEqual([
       "claimPoolFeesToSelf",
       "splitStake",
@@ -427,6 +429,7 @@ describe("ve(3,3) call generation", () => {
     );
 
     const url = new URL(requestedUrl);
+    expectPlanScope(result, "non_trading");
     expect(url.pathname).toBe(`/ve33/${veToken}/${sender}`);
     expect(url.searchParams.get("chainId")).toBe("4663");
     expect(url.searchParams.get("pageSize")).toBe("100");
@@ -559,6 +562,9 @@ describe("ve(3,3) call generation", () => {
       ),
     ).toBe(true);
     expect(claimed.fee_tokens).toEqual([token0, token1, token2]);
+    // The claim child is non-trading: its fee tokens, including ones the
+    // policy has not classified, are not listed as traded assets.
+    expectPlanScope(claimed.plan, "non_trading");
     expect(claimed.pre_claim_balance_snapshots.snapshots).toHaveLength(3);
     // Native balance is a wallet-balance lookup; both ERC-20 balanceOf reads
     // ship in one stored bundle addressed by call id.
@@ -617,6 +623,9 @@ describe("ve(3,3) call generation", () => {
     );
     expect(staked.phase).toBe("stake_all");
     if (staked.phase !== "stake_all") throw new Error("unexpected phase");
+    expectPlanScope(staked.plan, "trade", [
+      { chainId: "4663", token: stonx, side: "sell" },
+    ]);
     expect(
       staked.plan.allocations.map((allocation) => allocation.increase_amount),
     ).toEqual(["34", "66"]);
@@ -647,6 +656,7 @@ describe("ve(3,3) call generation", () => {
 
     // Interleaved, not two blocks: every clear is preceded by the claim that
     // rescues the fees that clear would otherwise discard.
+    expectPlanScope(result, "non_trading");
     expect(planFunctions(result, VE_TOKEN_ABI)).toEqual([
       "claimPoolFeesToSelf",
       "clearVote",

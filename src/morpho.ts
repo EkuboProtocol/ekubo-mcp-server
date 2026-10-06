@@ -9,6 +9,7 @@ import {
   preparedTransaction,
   preparedUiAction,
 } from "./ui-actions.js";
+import { nonTradingJurisdiction } from "./token-restrictions.js";
 
 // package.json pins the SDK exactly, so this is the version that is bundled.
 export const MORPHO_SDK_VERSION: string =
@@ -148,6 +149,7 @@ export function prepareMorphoVaultDeposit(input: {
     args: { amount, maxSharePrice, userAddress: sender, deadline },
   });
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "morpho_vault_v2_deposit",
     chainId: input.chainId,
     sender,
@@ -258,6 +260,7 @@ function directVaultAction(
   details: Record<string, unknown>,
 ) {
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action,
     chainId: definition.chain_id,
     sender,

@@ -5,6 +5,7 @@ import {
   preparedTransaction,
   preparedUiAction,
 } from "./ui-actions.js";
+import { nonTradingJurisdiction } from "./token-restrictions.js";
 
 export const SKY_SAVINGS_ABI = parseAbi([
   "function deposit(uint256 assets,address receiver) returns (uint256 shares)",
@@ -66,6 +67,7 @@ export function prepareSkySavingsDeposit(input: {
   const receiver = getAddress(input.receiver ?? sender);
   const amount = positiveUint(input.amount, "amount");
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "sky_savings_deposit",
     chainId: input.chainId,
     sender,
@@ -136,6 +138,7 @@ function skyDirectAction(
   },
 ) {
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action,
     chainId,
     sender,

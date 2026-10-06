@@ -10,6 +10,7 @@ import {
 import { ServiceError } from "./core.js";
 import { type ExecutionPlanStepInput } from "./execution-plan.js";
 import { preparedTransaction, preparedUiAction } from "./ui-actions.js";
+import { nonTradingJurisdiction } from "./token-restrictions.js";
 
 export const MAX_TRANSFERS_PER_PLAN = 4_096;
 
@@ -185,6 +186,7 @@ export function prepareTransfers(input: {
 
   const atomicBatchRequired = steps.length > 1;
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "batch_transfers",
     chainId: input.chainId,
     sender,

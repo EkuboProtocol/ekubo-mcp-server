@@ -10,6 +10,7 @@ import {
   preparedTransaction,
   preparedUiAction,
 } from "./ui-actions.js";
+import { nonTradingJurisdiction } from "./token-restrictions.js";
 
 export const AAVE_ADDRESS_BOOK_VERSION = "4.65.5";
 
@@ -238,6 +239,7 @@ export function prepareAaveV3Supply(input: {
     0n,
   );
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "aave_v3_supply",
     chainId: input.chainId,
     sender,
@@ -382,6 +384,7 @@ export function prepareAaveV3Repay(input: {
         ]
       : [];
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "aave_v3_repay",
     chainId: input.chainId,
     sender,
@@ -457,6 +460,7 @@ export function prepareAaveV3EMode(input: {
     0n,
   );
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "aave_v3_set_emode",
     chainId: input.chainId,
     sender,
@@ -486,6 +490,7 @@ function singlePoolAction(input: {
   details: Record<string, unknown>;
 }) {
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: input.action,
     chainId: input.market.chain_id,
     sender: input.sender,

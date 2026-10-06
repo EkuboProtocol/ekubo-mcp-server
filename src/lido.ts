@@ -5,6 +5,7 @@ import {
   preparedTransaction,
   preparedUiAction,
 } from "./ui-actions.js";
+import { nonTradingJurisdiction } from "./token-restrictions.js";
 
 export const LIDO_ABI = parseAbi(["function submit(address referral) payable returns (uint256 shares)"]);
 export const WSTETH_ABI = parseAbi([
@@ -72,6 +73,7 @@ export function prepareLidoStake(input: {
   const amount = positiveUint(input.amount, "amount");
   const referral = getAddress(input.referral ?? "0x0000000000000000000000000000000000000000");
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "lido_stake_eth",
     chainId: input.chainId,
     sender,
@@ -92,6 +94,7 @@ export function prepareLidoWrap(input: { chainId: string; sender: string; amount
   const sender = getAddress(input.sender);
   const amount = positiveUint(input.amount, "amount");
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "lido_wrap_steth",
     chainId: input.chainId,
     sender,
@@ -114,6 +117,7 @@ export function prepareLidoUnwrap(input: { chainId: string; sender: string; amou
   const sender = getAddress(input.sender);
   const amount = positiveUint(input.amount, "amount");
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "lido_unwrap_wsteth",
     chainId: input.chainId,
     sender,
@@ -149,6 +153,7 @@ export function prepareLidoWithdrawalRequest(input: {
   });
   const total = amounts.reduce((sum, amount) => sum + amount, 0n);
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "lido_request_steth_withdrawal",
     chainId: input.chainId,
     sender,
@@ -183,6 +188,7 @@ export function prepareLidoWithdrawalClaim(input: {
   const sender = getAddress(input.sender);
   const requestId = positiveUint(input.requestId, "request_id");
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "lido_claim_withdrawal",
     chainId: input.chainId,
     sender,

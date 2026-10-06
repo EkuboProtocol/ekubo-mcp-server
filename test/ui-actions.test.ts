@@ -10,6 +10,7 @@ import {
   planFunctions,
   planArgs,
   ALL_ABI,
+  expectPlanScope,
 } from "./plan-helpers.js";
 import {
   prepareAuctionComplete,
@@ -33,7 +34,13 @@ import {
   prepareOldGekuboUnwrap,
   prepareOracleCapacityExpansion,
   prepareWrapUnwrap,
+  UI_ACTION_ADDRESSES,
 } from "../src/ui-actions.js";
+import { quoteJurisdiction } from "../src/token-restrictions.js";
+
+// Module-level preparers take the metadata their server gate computed; the
+// gate itself is exercised through the MCP tools.
+const TRADE = quoteJurisdiction([]);
 
 const env = {
   ARTIFACT_STORE: fakeArtifactStore(),
@@ -84,6 +91,15 @@ describe("EVM interface action preparation", () => {
       amount: "100",
     });
 
+    // Wrapping is a trade over both real assets (EKU-873).
+    expectPlanScope(wrap, "trade", [
+      { chainId: "1", token: native, side: "sell" },
+      { chainId: "1", token: UI_ACTION_ADDRESSES.weth_mainnet, side: "buy" },
+    ]);
+    expectPlanScope(unwrap, "trade", [
+      { chainId: "1", token: native, side: "buy" },
+      { chainId: "1", token: UI_ACTION_ADDRESSES.weth_mainnet, side: "sell" },
+    ]);
     expect(planTransactions(wrap)).toHaveLength(1);
     expect(planTransactions(wrap)[0]?.value).toBe("100");
     expect(planTransactions(wrap)[0]?.data).toBe("0xd0e30db0");
@@ -241,6 +257,7 @@ describe("EVM interface action preparation", () => {
       }) as typeof fetch,
     );
 
+    expectPlanScope(result, "non_trading");
     expect(planFunctions(result, ALL_ABI)).toEqual(["safeTransferFrom"]);
     expect(planArgs(result, ALL_ABI)[0]).toEqual([sender, recipient, 42n]);
     expect(result.details).toMatchObject({
@@ -261,6 +278,7 @@ describe("EVM interface action preparation", () => {
       country: "FR",
     });
     const oracle = prepareOracleCapacityExpansion({
+      jurisdiction: TRADE,
       chainId: "1",
       sender,
       token: token1,
@@ -287,6 +305,7 @@ describe("EVM interface action preparation", () => {
 
   it("prepares TWAMM creation and stop multicalls in interface order", () => {
     const create = prepareTwammOrder({
+      jurisdiction: TRADE,
       chainId: "1",
       sender,
       sellToken: token1,
@@ -332,6 +351,7 @@ describe("EVM interface action preparation", () => {
     // is selling, and `mint` must carry none of it.
     const native = "0x0000000000000000000000000000000000000000";
     const create = prepareTwammOrder({
+      jurisdiction: TRADE,
       chainId: "1",
       sender,
       sellToken: native,
@@ -356,6 +376,7 @@ describe("EVM interface action preparation", () => {
 
   it("returns the token id a TWAMM order will actually mint", () => {
     const create = prepareTwammOrder({
+      jurisdiction: TRADE,
       chainId: "1",
       sender,
       sellToken: token1,
@@ -377,6 +398,7 @@ describe("EVM interface action preparation", () => {
     // The same request derives the same id, so a retry is detectable rather
     // than silently minting a second order.
     const again = prepareTwammOrder({
+      jurisdiction: TRADE,
       chainId: "1",
       sender,
       sellToken: token1,
@@ -390,6 +412,7 @@ describe("EVM interface action preparation", () => {
 
     // A different amount is a different order and gets its own id.
     const other = prepareTwammOrder({
+      jurisdiction: TRADE,
       chainId: "1",
       sender,
       sellToken: token1,
@@ -406,6 +429,7 @@ describe("EVM interface action preparation", () => {
     // derived from the config alone would collide here and the mint would
     // revert on an id that already exists.
     const otherPair = prepareTwammOrder({
+      jurisdiction: TRADE,
       chainId: "1",
       sender,
       sellToken: native,
@@ -421,6 +445,7 @@ describe("EVM interface action preparation", () => {
   it("rejects TWAMM times the extension would reject", () => {
     const order = (startTime: string, endTime: string) => () =>
       prepareTwammOrder({
+        jurisdiction: TRADE,
         chainId: "1",
         sender,
         sellToken: token1,
@@ -440,6 +465,7 @@ describe("EVM interface action preparation", () => {
   it("puts the auction sell amount on the payable call, not on mint", () => {
     const native = "0x0000000000000000000000000000000000000000";
     const create = prepareAuctionCreate({
+      jurisdiction: TRADE,
       chainId: "1",
       sender,
       sellToken: native,
@@ -459,6 +485,7 @@ describe("EVM interface action preparation", () => {
   it("prepares auction creation and optional graduation initialization", () => {
     const salt = `0x${"12".repeat(32)}` as const;
     const create = prepareAuctionCreate({
+      jurisdiction: TRADE,
       chainId: "1",
       sender,
       sellToken: token1,
@@ -490,6 +517,7 @@ describe("EVM interface action preparation", () => {
       launchPoolTick: 42,
     });
 
+    expectPlanScope(complete, "non_trading");
     expect(planFunctions(create, ALL_ABI)).toEqual([
       "approve",
       "mint",
@@ -514,6 +542,7 @@ describe("EVM interface action preparation", () => {
         }
       ).auction_key,
     });
+    expectPlanScope(creatorProceeds, "non_trading");
     expect(planFunctions(creatorProceeds, ALL_ABI)[0]).toBe("collectCreatorProceeds");
   });
 
@@ -532,6 +561,8 @@ describe("EVM interface action preparation", () => {
     });
 
     // Step 0 is the approval; the raw byte route is the execution step.
+    expectPlanScope(unwrap, "non_trading");
+    expectPlanScope(buybacks, "non_trading");
     expect(planTransactions(unwrap)[1]?.data).toBe(
       "0x0001005a0300000001000501",
     );
@@ -565,6 +596,7 @@ describe("EVM interface action preparation", () => {
       ],
     });
 
+    expectPlanScope(reward, "non_trading");
     expect(planTransactions(reward)).toHaveLength(1);
     expect(planFunctions(reward, ALL_ABI)[0]).toBe("claim");
   });
@@ -667,6 +699,10 @@ describe("EVM interface action preparation", () => {
       fetcher,
     );
 
+    expectPlanScope(execute, "trade", [
+      { chainId: "1", token: native, side: "buy" },
+      { chainId: "1", token: token1, side: "buy" },
+    ]);
     expect(read).toMatchObject({
       phase: "read_current_price",
       current_price_query: {

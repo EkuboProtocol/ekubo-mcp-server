@@ -4,7 +4,10 @@ import {
   executionPlan,
   executionPlanFromSteps,
 } from "../src/execution-plan.js";
+import { nonTradingJurisdiction } from "../src/token-restrictions.js";
 import { walletExecutionPlanSchema } from "../src/wallet-compatibility.js";
+
+const NON_TRADING = nonTradingJurisdiction();
 
 const sender = "0x2222222222222222222222222222222222222222" as const;
 const token = "0x1111111111111111111111111111111111111111" as const;
@@ -27,6 +30,7 @@ function approvalCalldata(amount: bigint) {
 describe("portable execution plan", () => {
   it("carries no field derivable from transaction", () => {
     const execution = executionPlan({
+      jurisdiction: NON_TRADING,
       chainId: "4663",
       sender,
       transaction: {
@@ -49,6 +53,7 @@ describe("portable execution plan", () => {
 
   it("stays valid against the wallet boundary schema without the removed fields", () => {
     const execution = executionPlan({
+      jurisdiction: NON_TRADING,
       chainId: "4663",
       sender,
       approvals: [
@@ -66,6 +71,7 @@ describe("portable execution plan", () => {
 
   it("orders approvals, execution, and cleanup", () => {
     const execution = executionPlan({
+      jurisdiction: NON_TRADING,
       chainId: "4663",
       sender,
       approvals: [
@@ -113,6 +119,7 @@ describe("portable execution plan", () => {
 
   it("requires no capability when atomic execution is not required", () => {
     const execution = executionPlan({
+      jurisdiction: NON_TRADING,
       chainId: "4663",
       sender,
       transaction: {
@@ -128,6 +135,7 @@ describe("portable execution plan", () => {
   it("rejects a transaction for a different chain", () => {
     expect(() =>
       executionPlan({
+        jurisdiction: NON_TRADING,
         chainId: "1",
         sender,
         transaction: {
@@ -143,6 +151,7 @@ describe("portable execution plan", () => {
   it("rejects transaction quantities that do not fit EVM uint256", () => {
     expect(() =>
       executionPlan({
+        jurisdiction: NON_TRADING,
         chainId: "1",
         sender,
         transaction: {
@@ -164,6 +173,7 @@ describe("portable execution plan", () => {
     };
     const second = { ...first, to: router };
     const result = executionPlanFromSteps({
+      jurisdiction: NON_TRADING,
       chainId: "1",
       sender,
       steps: [
@@ -184,6 +194,7 @@ describe("portable execution plan", () => {
 describe("allowance resets for tokens that reject an overwrite", () => {
   function planApproving(chainId: string, approved: `0x${string}`) {
     return executionPlan({
+      jurisdiction: NON_TRADING,
       chainId,
       sender,
       approvals: [
@@ -279,6 +290,7 @@ describe("allowance resets for tokens that reject an overwrite", () => {
 
   it("does not prefix a revocation with another zero approval", () => {
     const result = executionPlanFromSteps({
+      jurisdiction: NON_TRADING,
       chainId: "1",
       sender,
       steps: [
@@ -309,6 +321,7 @@ describe("allowance resets for tokens that reject an overwrite", () => {
    */
   it("resets a mislabeled approval, because the calldata is the trigger", () => {
     const result = executionPlanFromSteps({
+      jurisdiction: NON_TRADING,
       chainId: "1",
       sender,
       steps: [
@@ -335,6 +348,7 @@ describe("allowance resets for tokens that reject an overwrite", () => {
    */
   it("adds no second reset when the caller already zeroed the allowance", () => {
     const result = executionPlanFromSteps({
+      jurisdiction: NON_TRADING,
       chainId: "1",
       sender,
       steps: [
@@ -377,6 +391,7 @@ describe("allowance resets for tokens that reject an overwrite", () => {
       args: [otherSpender, 0n],
     });
     const result = executionPlanFromSteps({
+      jurisdiction: NON_TRADING,
       chainId: "1",
       sender,
       steps: [

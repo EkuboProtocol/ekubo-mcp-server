@@ -21,6 +21,8 @@ import {
 } from "./common.js";
 import {
   assertAssetsTradable,
+  nonTradingJurisdiction,
+  quoteJurisdiction,
   type RequestCountry,
 } from "../token-restrictions.js";
 export const V2_ABI = parseAbi([
@@ -86,13 +88,11 @@ export function prepareV2Add(
 ) {
   const input = v2AddSchema.parse(raw);
   pair(input.token0, input.token1);
-  assertAssetsTradable(
-    [
-      { chainId: input.chain_id, token: input.token0, side: "buy" },
-      { chainId: input.chain_id, token: input.token1, side: "buy" },
-    ],
-    country,
-  );
+  const gatedAssets = [
+    { chainId: input.chain_id, token: input.token0, side: "buy" as const },
+    { chainId: input.chain_id, token: input.token1, side: "buy" as const },
+  ];
+  assertAssetsTradable(gatedAssets, country);
   const expiry = deadline(input),
     d = deployment(input.chain_id),
     [a0, a1, m0, m1] = amounts(input);
@@ -100,6 +100,7 @@ export function prepareV2Add(
     const n = nativeAmounts(input, a0, a1, m0, m1);
     return plan(
       input,
+      quoteJurisdiction(gatedAssets),
       "uniswap_v2_add_liquidity",
       d.v2_router,
       encodeFunctionData({
@@ -113,6 +114,7 @@ export function prepareV2Add(
   }
   return plan(
     input,
+    quoteJurisdiction(gatedAssets),
     "uniswap_v2_add_liquidity",
     d.v2_router,
     encodeFunctionData({
@@ -145,6 +147,7 @@ export function prepareV2Remove(raw: z.input<typeof v2RemoveSchema>) {
     const n = nativeAmounts(input, 0n, 0n, m0, m1);
     return plan(
       input,
+      nonTradingJurisdiction(),
       "uniswap_v2_remove_liquidity",
       d.v2_router,
       encodeFunctionData({
@@ -158,6 +161,7 @@ export function prepareV2Remove(raw: z.input<typeof v2RemoveSchema>) {
   }
   return plan(
     input,
+    nonTradingJurisdiction(),
     "uniswap_v2_remove_liquidity",
     d.v2_router,
     encodeFunctionData({

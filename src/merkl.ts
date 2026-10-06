@@ -12,6 +12,7 @@ import { errorResultDecodePlan, functionReadCall, readCallsBundle } from "./abi-
 import { ServiceError } from "./core.js";
 import type { ExecutionPlanStepInput } from "./execution-plan.js";
 import { preparedTransaction, preparedUiAction } from "./ui-actions.js";
+import { nonTradingJurisdiction } from "./token-restrictions.js";
 
 /**
  * Merkl's reward Distributor, deployed at the same address on every chain in
@@ -243,6 +244,7 @@ export function prepareMerklClaim(input: {
   ];
 
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "merkl_claim_rewards",
     chainId: input.chainId,
     sender,

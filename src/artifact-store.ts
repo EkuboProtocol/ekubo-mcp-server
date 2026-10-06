@@ -1,6 +1,11 @@
 import { keccak256, stringToHex } from "viem";
 import { z } from "zod";
-import type { Env } from "./core.js";
+import { type Env, ServiceError } from "./core.js";
+import {
+  isPolicyChain,
+  isValidPlanJurisdiction,
+  PLAN_JURISDICTION_EXTENSION,
+} from "./token-restrictions.js";
 import { walletBatchEthCallInputSchema } from "./wallet-compatibility.js";
 
 /**
@@ -66,6 +71,7 @@ interface StorableExecutionPlan {
   chain_id: string;
   sender: string;
   ordered_steps: unknown[];
+  extensions?: Record<string, unknown>;
 }
 
 interface StorableReadCalls {
@@ -121,6 +127,9 @@ export async function storeArtifact(
     | { artifactType: "token_list"; body: StorableTokenList }
     | { artifactType: "typed_data_signature_request"; body: Record<string, unknown> },
 ): Promise<ArtifactReference> {
+  if (artifact.artifactType === "execution_plan") {
+    assertPlanJurisdiction(artifact.body);
+  }
   const body = JSON.stringify(artifact.body);
   const id = crypto.randomUUID();
   await env.ARTIFACT_STORE.put(`artifact/${id}`, body);
@@ -139,6 +148,24 @@ export async function storeArtifact(
     bytes: new TextEncoder().encode(body).length,
     instruction: INSTRUCTIONS[artifact.artifactType],
   };
+}
+
+/**
+ * Fail closed on a plan that would reach a wallet without saying whether it
+ * trades (CTO decision EKU-873). On a chain the jurisdiction policy covers, a
+ * wallet holds an Ekubo plan whose `extensions["ekubo.jurisdiction"]` is
+ * missing, so storing one would only hand the user a plan that cannot run --
+ * and a malformed one would be worse. Every builder takes the extension as a
+ * required argument; this is the backstop for one that slips past the types.
+ * The plan is not stored and the tool call fails.
+ */
+function assertPlanJurisdiction(plan: StorableExecutionPlan): void {
+  if (!isPolicyChain(plan.chain_id)) return;
+  if (isValidPlanJurisdiction(plan.extensions?.[PLAN_JURISDICTION_EXTENSION])) return;
+  throw new ServiceError(
+    "internal_plan_jurisdiction_missing",
+    `Internal error: the execution plan for chain ${plan.chain_id} has no valid extensions["${PLAN_JURISDICTION_EXTENSION}"], so it was not stored. No execution plan was prepared; report this to the server operator.`,
+  );
 }
 
 const INSTRUCTIONS: Record<ArtifactType, string> = {

@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { ServiceError } from "./core.js";
 import policy from "./jurisdiction-policy.json";
 
@@ -349,6 +350,12 @@ function assetLists(classification: AssetClassification) {
   };
 }
 
+/**
+ * Jurisdiction metadata for a plan or quote that trades `assets`: pass exactly
+ * the list given to `assertAssetsTradable` / `assertAssetsClassified` for it.
+ * `scope: "trade"` tells a wallet the plan acquires, disposes of, deposits or
+ * stakes these assets (CTO decision EKU-873).
+ */
 export function quoteJurisdiction(assets: readonly RestrictableAsset[]) {
   const entries = withToken(assets).map((asset): JurisdictionAsset => {
     const { classification, provenance } = classifyAsset(asset.chainId, asset.token);
@@ -374,6 +381,7 @@ function summarize(entries: readonly JurisdictionAsset[]) {
   return {
     policy_version: JURISDICTION_POLICY_VERSION,
     policy_digest: JURISDICTION_POLICY_DIGEST,
+    scope: "trade" as const,
     coverage: hold ? ("unknown" as const) : ("complete" as const),
     execution_hold: hold,
     restricted_jurisdictions: restricted,
@@ -387,6 +395,90 @@ function summarize(entries: readonly JurisdictionAsset[]) {
 }
 
 export type QuoteJurisdiction = ReturnType<typeof quoteJurisdiction>;
+
+/**
+ * Jurisdiction metadata for a plan that trades nothing: claims, withdrawals,
+ * transfers, revocations, votes, merges, collection, pool initialization.
+ *
+ * `assets` lists assets acquired or disposed of by trade under the plan, and a
+ * non-trading plan has none, so `[]` with `coverage: "complete"` is an
+ * authoritative statement rather than an omission. The tokens such a plan
+ * moves are deliberately not classified: non-trading paths stay outside the
+ * class rule (CLO EKU-853), and listing an unclassified withdrawn token would
+ * make a wallet hold an owner's own withdrawal. The producing tool decides the
+ * scope; it is never inferred from calldata (CTO decision EKU-873).
+ */
+export function nonTradingJurisdiction() {
+  return {
+    policy_version: JURISDICTION_POLICY_VERSION,
+    policy_digest: JURISDICTION_POLICY_DIGEST,
+    scope: "non_trading" as const,
+    coverage: "complete" as const,
+    execution_hold: false as const,
+    restricted_jurisdictions: [] as string[],
+    jurisdiction_names: {} as Record<string, string>,
+    assets: [] as JurisdictionAsset[],
+    execution_notice: null,
+  };
+}
+
+/** What every execution plan carries in `extensions["ekubo.jurisdiction"]`. */
+export type PlanJurisdiction =
+  | QuoteJurisdiction
+  | ReturnType<typeof nonTradingJurisdiction>;
+
+export const PLAN_JURISDICTION_EXTENSION = "ekubo.jurisdiction";
+
+const countryCodeSchema = z.string().regex(/^[A-Z]{2}$/);
+
+/**
+ * The metadata shape (EKU-853 contract §4 and §4.1). Used for tool output
+ * schemas and, through `isValidPlanJurisdiction`, by the artifact store's
+ * fail-closed check on every stored execution plan.
+ */
+export const jurisdictionMetadataSchema = z.object({
+  policy_version: z.string(),
+  policy_digest: z.string().regex(/^[0-9a-f]{64}$/),
+  scope: z.enum(["trade", "non_trading"]),
+  coverage: z.enum(["complete", "unknown"]),
+  execution_hold: z.boolean(),
+  restricted_jurisdictions: z.array(countryCodeSchema).nullable(),
+  jurisdiction_names: z.record(z.string(), z.string()),
+  assets: z.array(z.object({
+    chain_id: z.string(), token: z.string(), side: z.enum(["sell", "buy"]),
+    classification: z.enum(["rhj_stock_token", "non_class", "unknown", "out_of_scope"]),
+    provenance: z.array(z.object({ source: z.string(), ref: z.string(), observed_at: z.string() })),
+    restricted_jurisdictions: z.array(countryCodeSchema).nullable(),
+    offering_exclusions: z.array(countryCodeSchema).nullable(),
+    issuer_prohibited_investor: z.array(countryCodeSchema).nullable(),
+    execution_hold: z.boolean(),
+  })),
+  execution_notice: z.string().nullable(),
+});
+
+const planJurisdictionSchema = jurisdictionMetadataSchema.strict().superRefine((value, ctx) => {
+  if (value.policy_version !== JURISDICTION_POLICY_VERSION || value.policy_digest !== JURISDICTION_POLICY_DIGEST) {
+    ctx.addIssue({ code: "custom", message: "metadata names a different policy than the vendored one" });
+  }
+  // A non-trading plan carries exactly the canonical body: no traded assets,
+  // complete coverage, nothing restricted.
+  if (value.scope === "non_trading" && JSON.stringify(value) !== JSON.stringify(nonTradingJurisdiction())) {
+    ctx.addIssue({ code: "custom", message: "a non-trading plan reports no traded assets with complete coverage" });
+  }
+});
+
+/** Whether the policy document covers this chain. */
+export function isPolicyChain(chainId: string | bigint): boolean {
+  try {
+    return CHAIN_POLICIES.has(BigInt(chainId));
+  } catch {
+    return false;
+  }
+}
+
+export function isValidPlanJurisdiction(value: unknown): boolean {
+  return planJurisdictionSchema.safeParse(value).success;
+}
 
 /**
  * One jurisdiction summary for a response that carries several swap plans, so

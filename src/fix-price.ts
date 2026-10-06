@@ -22,6 +22,7 @@ import { coreDataFetcherContract } from "./contracts.js";
 import { decodePoolConfig, getPool } from "./pools.js";
 import {
   assertAssetsTradable,
+  quoteJurisdiction,
   type RequestCountry,
 } from "./token-restrictions.js";
 import {
@@ -121,13 +122,11 @@ export async function prepareFixPoolPrice(
   // a swap does and is gated the same way. Which token it ends up buying falls
   // out of the target price rather than the caller's intent, so both tokens
   // are checked as acquisitions.
-  assertAssetsTradable(
-    [
-      { chainId: input.chainId, token: poolKey.token0, side: "buy" },
-      { chainId: input.chainId, token: poolKey.token1, side: "buy" },
-    ],
-    input.country,
-  );
+  const gatedAssets = [
+    { chainId: input.chainId, token: poolKey.token0, side: "buy" as const },
+    { chainId: input.chainId, token: poolKey.token1, side: "buy" as const },
+  ];
+  assertAssetsTradable(gatedAssets, input.country);
   const baseToken = getAddress(input.baseToken);
   if (baseToken !== poolKey.token0 && baseToken !== poolKey.token1) {
     throw new ServiceError(
@@ -378,6 +377,7 @@ export async function prepareFixPoolPrice(
 
   return {
     ...preparedUiAction({
+      jurisdiction: quoteJurisdiction(gatedAssets),
       action: "ekubo_fix_pool_price",
       chainId: input.chainId,
       sender,

@@ -15,6 +15,10 @@ import { boostedFeesAddresses } from "./contracts.js";
 import { type Env, ServiceError } from "./core.js";
 import {
   assertAssetsTradable,
+  nonTradingJurisdiction,
+  type PlanJurisdiction,
+  type QuoteJurisdiction,
+  quoteJurisdiction,
   type RequestCountry,
 } from "./token-restrictions.js";
 import {
@@ -120,6 +124,12 @@ export interface PreparedUiActionInput {
   atomicBatchRequired?: boolean;
   details?: Record<string, unknown>;
   onchainValidation?: Record<string, unknown>;
+  /**
+   * The plan's `extensions["ekubo.jurisdiction"]`, required with no default
+   * (EKU-873): `quoteJurisdiction` over the gated assets for a trade,
+   * `nonTradingJurisdiction()` otherwise.
+   */
+  jurisdiction: PlanJurisdiction;
 }
 
 export function prepareWrapUnwrap(input: {
@@ -139,6 +149,13 @@ export function prepareWrapUnwrap(input: {
   }
   const sender = getAddress(input.sender);
   const amount = positiveUnsigned(input.amount, 256, "amount");
+  // Wrapping trades the native token for its wrapped form and unwrapping the
+  // reverse, so the plan is a trade over both real assets (EKU-873). Neither
+  // is gated: both are `non_class` on every chain the policy covers.
+  const wrapAssets = [
+    { chainId: input.chainId, token: NATIVE_TOKEN, side: input.direction === "wrap" ? "sell" as const : "buy" as const },
+    { chainId: input.chainId, token: wrapped.address, side: input.direction === "wrap" ? "buy" as const : "sell" as const },
+  ];
   const data =
     input.direction === "wrap"
       ? encodeFunctionData({ abi: WRAPPED_NATIVE_ABI, functionName: "deposit" })
@@ -155,6 +172,7 @@ export function prepareWrapUnwrap(input: {
   );
 
   return preparedUiAction({
+    jurisdiction: quoteJurisdiction(wrapAssets),
     action: `ekubo_${input.direction}_native_token`,
     chainId: input.chainId,
     sender,
@@ -228,6 +246,7 @@ export async function prepareLpPositionTransfer(
   );
 
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "ekubo_transfer_lp_position",
     chainId: owned.chainId,
     sender,
@@ -262,6 +281,8 @@ export function prepareOracleCapacityExpansion(input: {
   sender: string;
   token: string;
   minCapacity: number;
+  /** `quoteJurisdiction` over the assets the caller gated (EKU-873). */
+  jurisdiction: QuoteJurisdiction;
 }) {
   const sender = getAddress(input.sender);
   const token = getAddress(input.token);
@@ -286,6 +307,7 @@ export function prepareOracleCapacityExpansion(input: {
   const transaction = preparedTransaction(input.chainId, ORACLE_V3, data, 0n);
 
   return preparedUiAction({
+    jurisdiction: input.jurisdiction,
     action: "ekubo_expand_oracle_capacity",
     chainId: input.chainId,
     sender,
@@ -317,13 +339,11 @@ export function prepareManualPoolBoost(input: {
   const poolKey = normalizeExactPoolKey(input.poolKey);
   // A boost pays both pool tokens into the booster as incentives for the
   // pair's liquidity, so both sides are gated as assets the caller gives up.
-  assertAssetsTradable(
-    [
-      { chainId: input.chainId, token: poolKey.token0, side: "sell" },
-      { chainId: input.chainId, token: poolKey.token1, side: "sell" },
-    ],
-    input.country,
-  );
+  const gatedAssets = [
+    { chainId: input.chainId, token: poolKey.token0, side: "sell" as const },
+    { chainId: input.chainId, token: poolKey.token1, side: "sell" as const },
+  ];
+  assertAssetsTradable(gatedAssets, input.country);
   // A boost forwards to the pool's own extension (BoostedFeesLib.addIncentives
   // -> core.forward(poolKey.config.extension(), ...)), so a pool with no
   // BoostedFees extension sends the call to an address with no code. That
@@ -400,6 +420,7 @@ export function prepareManualPoolBoost(input: {
   );
 
   return preparedUiAction({
+    jurisdiction: quoteJurisdiction(gatedAssets),
     action: "ekubo_manual_pool_boost",
     chainId: input.chainId,
     sender,
@@ -444,6 +465,7 @@ export function prepareExecuteTwammVirtualOrders(input: {
   const transaction = preparedTransaction(input.chainId, extension, data, 0n);
 
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "ekubo_execute_twamm_virtual_orders",
     chainId: input.chainId,
     sender,
@@ -508,6 +530,7 @@ export function prepareApprovalRevocations(input: {
   }));
 
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "ekubo_revoke_erc20_approvals",
     chainId: input.chainId,
     sender,
@@ -569,6 +592,7 @@ export function prepareOldGekuboUnwrap(input: {
   );
 
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "ekubo_unwrap_old_gekubo",
     chainId: input.chainId,
     sender,
@@ -613,6 +637,7 @@ export function preparedUiAction(input: PreparedUiActionInput) {
         sender: input.sender,
         steps: input.steps,
         atomicBatchRequired: input.atomicBatchRequired,
+        jurisdiction: input.jurisdiction,
       })
     : executionPlan({
         chainId: input.chainId,
@@ -621,6 +646,7 @@ export function preparedUiAction(input: PreparedUiActionInput) {
         transaction: input.transaction as PreparedTransaction,
         postExecutionTransactions,
         atomicBatchRequired: input.atomicBatchRequired,
+        jurisdiction: input.jurisdiction,
       });
   const exactTransactions = plan.ordered_steps.map((step) => step.transaction);
   const identity = {

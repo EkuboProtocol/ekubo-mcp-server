@@ -1,4 +1,10 @@
+import { expect } from "bun:test";
 import { decodeFunctionData, erc20Abi, parseAbi } from "viem";
+import {
+  nonTradingJurisdiction,
+  quoteJurisdiction,
+  type RestrictableAsset,
+} from "../src/token-restrictions.js";
 import {
   POSITIONS_DEPOSIT_ABI,
   POSITIONS_V2_WITHDRAW_ABI,
@@ -156,4 +162,27 @@ export function planArgs(result: Prepared, abi: Prepared): readonly unknown[][] 
     (transaction: Prepared) =>
       decodeFunctionData({ abi, data: transaction.data }).args ?? [],
   );
+}
+
+/**
+ * Assert the plan's `extensions["ekubo.jurisdiction"]` (CTO decision EKU-873):
+ * a non-trading plan carries exactly `nonTradingJurisdiction()`; a trading
+ * plan carries `scope: "trade"` over `tradedAssets` when given. Returns the
+ * metadata for further checks.
+ */
+export function expectPlanScope(
+  result: Prepared,
+  scope: "trade" | "non_trading",
+  tradedAssets?: readonly RestrictableAsset[],
+) {
+  const plan = result?.execution_plan ?? result;
+  const metadata = plan?.extensions?.["ekubo.jurisdiction"];
+  expect(metadata).toBeDefined();
+  expect(metadata.scope).toBe(scope);
+  if (scope === "non_trading") {
+    expect(metadata).toEqual(nonTradingJurisdiction());
+  } else if (tradedAssets !== undefined) {
+    expect(metadata).toEqual(quoteJurisdiction(tradedAssets));
+  }
+  return metadata;
 }

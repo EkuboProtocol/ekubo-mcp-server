@@ -28,6 +28,7 @@ import {
   preparedTransaction,
   preparedUiAction,
 } from "./ui-actions.js";
+import { nonTradingJurisdiction, type QuoteJurisdiction } from "./token-restrictions.js";
 
 const NATIVE_TOKEN = getAddress("0x0000000000000000000000000000000000000000");
 const ORDERS_V2 = getAddress("0xae1430e3e089794beacba260657fcd0f0967c18a");
@@ -114,6 +115,8 @@ export function prepareTwammOrder(input: {
   pendingTimestamp: string;
   deadlineSeconds?: number;
   salt?: Hex;
+  /** `quoteJurisdiction` over the assets the caller gated (EKU-873). */
+  jurisdiction: QuoteJurisdiction;
 }) {
   const sender = getAddress(input.sender);
   const sellToken = getAddress(input.sellToken);
@@ -283,6 +286,7 @@ export function prepareTwammOrder(input: {
         ];
 
   return preparedUiAction({
+    jurisdiction: input.jurisdiction,
     action: "ekubo_create_twamm_order",
     chainId: input.chainId,
     sender,
@@ -440,6 +444,7 @@ function prepareExistingOrderAction(
   });
 
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action:
       input.mode === "collect"
         ? "ekubo_collect_twamm_order_proceeds"

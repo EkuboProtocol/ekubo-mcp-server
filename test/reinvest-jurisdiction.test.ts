@@ -180,6 +180,7 @@ describe("prepare_ve33_reinvest phase=swap jurisdiction metadata", () => {
     const empty = {
       policy_version: "ekubo-token-jurisdictions-v2",
       policy_digest: JURISDICTION_POLICY_DIGEST,
+      scope: "trade",
       coverage: "complete",
       execution_hold: false,
       restricted_jurisdictions: [],
@@ -221,6 +222,7 @@ describe("prepare_ve33_reinvest phase=swap jurisdiction metadata", () => {
     expect(child.jurisdiction).toEqual({
       policy_version: JURISDICTION_POLICY_VERSION,
       policy_digest: JURISDICTION_POLICY_DIGEST,
+      scope: "trade",
       coverage: "complete",
       execution_hold: false,
       restricted_jurisdictions: V2_COUNTRIES,

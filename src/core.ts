@@ -161,7 +161,7 @@ interface PreparedCandidate {
   blockHash: Hex | null;
   estimatedRouteGas: number | null;
   priceImpact: number | null;
-  executionPlan: ReturnType<typeof executionPlan> & { extensions: { "ekubo.jurisdiction": ReturnType<typeof quoteJurisdiction> } };
+  executionPlan: ReturnType<typeof executionPlan>;
 }
 
 interface CandidateFailure {
@@ -871,7 +871,7 @@ function prepareCandidate(
     blockHash,
     estimatedRouteGas,
     priceImpact,
-    executionPlan: { ...executionPlan({
+    executionPlan: executionPlan({
       chainId: intent.chainId,
       sender: intent.sender,
       approvals: serializedApprovals,
@@ -897,7 +897,9 @@ function prepareCandidate(
             "Check that the wallet and network match this plan and that the wallet simulation environment is healthy before requesting new calldata.",
         },
       },
-    }), extensions: { "ekubo.jurisdiction": swapJurisdiction(intent) } },
+      // The same asset list getQuotesWithPlans and prepareSwap gated.
+      jurisdiction: quoteJurisdiction(swapAssets(intent)),
+    }),
   };
 }
 

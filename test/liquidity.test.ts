@@ -8,6 +8,7 @@ import {
   planValues,
   planFunctions,
   ALL_ABI,
+  expectPlanScope,
 } from "./plan-helpers.js";
 import type { Env } from "../src/core.js";
 import {
@@ -59,6 +60,7 @@ describe("LP position preparation", () => {
       initialTick: -20_167_000,
     });
 
+    expectPlanScope(result, "non_trading");
     expect(result).toMatchObject({
       action: "ekubo_initialize_pool",
       execution_plan_ready: true,
@@ -174,6 +176,10 @@ describe("LP position preparation", () => {
       }) as typeof fetch,
     );
 
+    expectPlanScope(result, "trade", [
+      { chainId: "4663", token: native, side: "buy" },
+      { chainId: "4663", token: usdg, side: "buy" },
+    ]);
     expect(result.positions_manager.address).toBe(ve33Positions);
     expect(
       BigInt(result.liquidity_protection.minimum_liquidity),
@@ -413,6 +419,7 @@ describe("LP position preparation", () => {
       }),
     );
 
+    expectPlanScope(result, "non_trading");
     expect(result.action).toBe("ekubo_collect_lp_position_fees");
     expect(result.claim).toMatchObject({
       kind: "collect_fees",
@@ -446,6 +453,7 @@ describe("LP position preparation", () => {
       }),
     );
 
+    expectPlanScope(result, "non_trading");
     expect(result.action).toBe("ekubo_claim_lp_position_rewards");
     expect(result.claim).toMatchObject({
       kind: "claim_rewards",
@@ -516,6 +524,7 @@ describe("LP position preparation", () => {
       }),
     );
 
+    expectPlanScope(result, "non_trading");
     expect(result.action).toBe("ekubo_withdraw_lp_positions");
     expect(result.withdrawals[0].withdrawal).toMatchObject({
       implementation_function: "withdraw",
@@ -632,6 +641,7 @@ describe("LP position preparation", () => {
       fetcher,
     )) as any;
 
+    expectPlanScope(result, "non_trading");
     expect(result.action).toBe("ekubo_withdraw_lp_positions");
     expect(result.withdrawals).toHaveLength(2);
     expect(result.execution_plan.ordered_steps).toHaveLength(2);

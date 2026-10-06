@@ -24,6 +24,8 @@ import {
 import type { ExecutionPlanStepInput } from "../execution-plan.js";
 import {
   assertAssetsTradable,
+  nonTradingJurisdiction,
+  quoteJurisdiction,
   type RequestCountry,
 } from "../token-restrictions.js";
 export const V4_ABI = parseAbi([
@@ -146,13 +148,11 @@ export function prepareV4Add(
   const input = v4AddSchema.parse(raw);
   validatePool(input);
   // currency0 zero is native ETH, which the policy lists outside the class.
-  assertAssetsTradable(
-    [
-      { chainId: input.chain_id, token: input.token0, side: "buy" },
-      { chainId: input.chain_id, token: input.token1, side: "buy" },
-    ],
-    country,
-  );
+  const gatedAssets = [
+    { chainId: input.chain_id, token: input.token0, side: "buy" as const },
+    { chainId: input.chain_id, token: input.token1, side: "buy" as const },
+  ];
+  assertAssetsTradable(gatedAssets, country);
   ticks(input);
   const expiry = deadline(input),
     d = deployment(input.chain_id),
@@ -189,6 +189,7 @@ export function prepareV4Add(
     input.token0 === zeroAddress ? a0 : 0n,
   );
   return preparedUiAction({
+    jurisdiction: quoteJurisdiction(gatedAssets),
     action: "uniswap_v4_add_liquidity",
     chainId: input.chain_id,
     sender: input.sender,
@@ -250,6 +251,7 @@ function withdrawal(
     input.sender,
   ]);
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action,
     chainId: input.chain_id,
     sender: input.sender,

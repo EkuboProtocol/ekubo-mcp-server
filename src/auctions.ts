@@ -14,6 +14,7 @@ import {
   preparedTransaction,
   preparedUiAction,
 } from "./ui-actions.js";
+import { nonTradingJurisdiction, type QuoteJurisdiction } from "./token-restrictions.js";
 
 const NATIVE_TOKEN = getAddress("0x0000000000000000000000000000000000000000");
 const AUCTIONS_V3 = getAddress("0xcB4e1b5Fb7b120dB0815aFA63453C969136C0Ec9");
@@ -41,6 +42,8 @@ export function prepareAuctionCreate(input: {
   startTime: string;
   auctionDuration: number;
   salt: Hex;
+  /** `quoteJurisdiction` over the assets the caller gated (EKU-873). */
+  jurisdiction: QuoteJurisdiction;
 }) {
   const sender = getAddress(input.sender);
   const sellToken = getAddress(input.sellToken);
@@ -130,6 +133,7 @@ export function prepareAuctionCreate(input: {
         ];
 
   return preparedUiAction({
+    jurisdiction: input.jurisdiction,
     action: "ekubo_create_auction",
     chainId: input.chainId,
     sender,
@@ -218,6 +222,7 @@ export function prepareAuctionComplete(input: {
   );
 
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "ekubo_complete_auction",
     chainId: input.chainId,
     sender,
@@ -263,6 +268,7 @@ export function prepareAuctionCreatorProceeds(input: {
   });
 
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "ekubo_collect_auction_creator_proceeds",
     chainId: input.chainId,
     sender,

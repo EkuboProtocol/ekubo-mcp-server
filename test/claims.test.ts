@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { decodeFunctionData, parseAbi, type Hex } from "viem";
 import { fakeArtifactStore } from "./fake-r2.js";
-import { planTransactions } from "./plan-helpers.js";
+import { planTransactions, expectPlanScope } from "./plan-helpers.js";
 import type { Env } from "../src/core.js";
 import { getRewardsClaimsByOwner, prepareRewardsClaim } from "../src/claims.js";
 
@@ -121,6 +121,7 @@ describe("prepareRewardsClaim", () => {
       data: planTransactions(prepared)[0].data,
     });
     const [key, claim] = decoded.args;
+    expectPlanScope(prepared, "non_trading");
     expect(key.owner).toBe(PADDED_OWNER);
     expect(key.token).toBe(PADDED_TOKEN);
     expect(claim.account).toBe(PADDED_OWNER);

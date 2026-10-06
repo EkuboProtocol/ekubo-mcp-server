@@ -26,6 +26,8 @@ import { positionsV3Address } from "./contracts.js";
 import { type Env, getTokens, ServiceError } from "./core.js";
 import {
   assertAssetsTradable,
+  nonTradingJurisdiction,
+  quoteJurisdiction,
   type RequestCountry,
 } from "./token-restrictions.js";
 import {
@@ -391,6 +393,7 @@ export function preparePoolInitialization(input: {
       resource_uri: `ekubo://contracts/evm/${input.chainId}/${positionsAddress}`,
     },
     execution_plan: executionPlan({
+      jurisdiction: nonTradingJurisdiction(),
       chainId: input.chainId,
       sender,
       approvals: [],
@@ -534,13 +537,11 @@ export async function prepareLpPositionDeposit(
   // which takes on exposure to the pair rather than shedding it. Withdrawing
   // is prepared elsewhere and is deliberately not gated at all, so the exit
   // from an existing position was already available.
-  assertAssetsTradable(
-    [
-      { chainId: input.chainId, token: pool.pool_key.token0, side: "buy" },
-      { chainId: input.chainId, token: pool.pool_key.token1, side: "buy" },
-    ],
-    input.country,
-  );
+  const gatedAssets = [
+    { chainId: input.chainId, token: pool.pool_key.token0, side: "buy" as const },
+    { chainId: input.chainId, token: pool.pool_key.token1, side: "buy" as const },
+  ];
+  assertAssetsTradable(gatedAssets, input.country);
   const isInitialized = input.poolInitialized ?? pool.pool_state !== null;
   if (!isInitialized && input.mode !== "mint_new") {
     throw new ServiceError(
@@ -862,6 +863,7 @@ export async function prepareLpPositionDeposit(
       exact_transaction_simulation_required: true,
     },
     execution_plan: executionPlanFromSteps({
+      jurisdiction: quoteJurisdiction(gatedAssets),
       chainId: input.chainId,
       sender,
       steps: [
@@ -1052,6 +1054,7 @@ export async function prepareLpPositionEarningsClaim(
     },
     tokens,
     execution_plan: executionPlan({
+      jurisdiction: nonTradingJurisdiction(),
       chainId: owned.chainId,
       sender,
       transaction,
@@ -1201,6 +1204,7 @@ export async function prepareLpPositionWithdraw(
       onchain_validation: withdrawal.onchain_validation,
     })),
     execution_plan: executionPlanFromSteps({
+      jurisdiction: nonTradingJurisdiction(),
       chainId: input.chainId,
       sender,
       steps: transactions.map((transaction) => ({
@@ -1413,6 +1417,7 @@ async function prepareSingleLpPositionWithdraw(
     },
     tokens,
     execution_plan: executionPlan({
+      jurisdiction: nonTradingJurisdiction(),
       chainId: owned.chainId,
       sender,
       transaction,

@@ -7,7 +7,12 @@ import {
   numberToHex,
   parseAbi,
 } from "viem";
-import { planFunctions, planTransactions, VE_TOKEN_ABI } from "./plan-helpers.js";
+import {
+  planFunctions,
+  planTransactions,
+  VE_TOKEN_ABI,
+  expectPlanScope,
+} from "./plan-helpers.js";
 import { ServiceError } from "../src/core.js";
 import {
   getVe33Allocations,
@@ -385,6 +390,7 @@ describe("safe VeToken allocation workflows", () => {
       now,
     );
 
+    expectPlanScope(plan, "non_trading");
     expect(plan.operation_counts).toEqual({
       fee_claims: 2,
       splits: 1,
@@ -490,6 +496,7 @@ describe("safe VeToken allocation workflows", () => {
       now,
     );
 
+    expectPlanScope(plan, "non_trading");
     expect(plan.schema_version).toBe("3");
     expect(plan.strategy).toBe("compact_max_lock");
     expect(planFunctions(plan, VE_TOKEN_ABI)).toEqual([

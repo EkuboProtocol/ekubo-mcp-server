@@ -11,7 +11,7 @@ import {
   prepareMorphoVaultRedeem,
   prepareMorphoVaultWithdraw,
 } from "../src/morpho.js";
-import { planStepKinds, planTargets, planTransactions } from "./plan-helpers.js";
+import { planStepKinds, planTargets, planTransactions, expectPlanScope } from "./plan-helpers.js";
 
 const sender = "0x1111111111111111111111111111111111111111";
 const recipient = "0x2222222222222222222222222222222222222222";
@@ -74,6 +74,7 @@ describe("Morpho Vault V2 preparations", () => {
           maxSharePriceRay: maxSharePrice.toString(),
           deadline: deadline.toString(),
         });
+        expectPlanScope(result, "non_trading");
         expect(planStepKinds(result)).toEqual(["approval", "execution", "allowance_cleanup"]);
         expect(planTargets(result)).toEqual([vault.asset.address, spender, vault.asset.address]);
         const [approval, execution, cleanup] = planTransactions(result);
@@ -124,6 +125,7 @@ describe("Morpho Vault V2 preparations", () => {
           recipient,
           owner,
         });
+        expectPlanScope(result, "non_trading");
         expect(planStepKinds(result)).toEqual(["execution"]);
         expect(planTargets(result)).toEqual([vault.address]);
         const [execution] = planTransactions(result);
@@ -147,6 +149,7 @@ describe("Morpho Vault V2 preparations", () => {
           recipient,
           owner,
         });
+        expectPlanScope(result, "non_trading");
         expect(planStepKinds(result)).toEqual(["execution"]);
         expect(planTargets(result)).toEqual([vault.address]);
         const [execution] = planTransactions(result);

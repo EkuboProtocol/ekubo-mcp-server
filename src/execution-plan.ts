@@ -10,6 +10,7 @@ import {
   nonzeroApprovalSpender,
   requiresAllowanceReset,
 } from "./allowance-reset.js";
+import type { PlanJurisdiction } from "./token-restrictions.js";
 import { assertWalletExecutionPlan } from "./wallet-compatibility.js";
 
 type RevertDecodePlan = Record<string, unknown>;
@@ -31,6 +32,12 @@ interface ExecutionPlanInput {
   atomicBatchRequired?: boolean;
   simulationFailurePolicy?: SimulationFailurePolicy;
   revertDecode?: RevertDecodePlan;
+  /**
+   * `extensions["ekubo.jurisdiction"]`, required with no default (CTO decision
+   * EKU-873): `quoteJurisdiction(assets)` over the gated assets for a plan that
+   * trades, `nonTradingJurisdiction()` for every other plan.
+   */
+  jurisdiction: PlanJurisdiction;
 }
 
 export interface SimulationFailurePolicy {
@@ -60,6 +67,8 @@ interface ExecutionPlanFromStepsInput {
   steps: ExecutionPlanStepInput[];
   atomicBatchRequired?: boolean;
   simulationFailurePolicy?: SimulationFailurePolicy;
+  /** See `ExecutionPlanInput.jurisdiction`. */
+  jurisdiction: PlanJurisdiction;
 }
 
 /**
@@ -77,6 +86,7 @@ export function executionPlan({
   atomicBatchRequired = false,
   simulationFailurePolicy,
   revertDecode,
+  jurisdiction,
 }: ExecutionPlanInput) {
   return executionPlanFromSteps({
     chainId,
@@ -98,6 +108,7 @@ export function executionPlan({
     ],
     atomicBatchRequired,
     simulationFailurePolicy,
+    jurisdiction,
   });
 }
 
@@ -114,6 +125,7 @@ export function executionPlanFromSteps({
   steps: requestedSteps,
   atomicBatchRequired = false,
   simulationFailurePolicy = defaultSimulationFailurePolicy(),
+  jurisdiction,
 }: ExecutionPlanFromStepsInput) {
   if (requestedSteps.length === 0) {
     throw new Error(
@@ -153,6 +165,9 @@ export function executionPlanFromSteps({
       ? { required_capabilities: ["atomic_batch"] }
       : {}),
     simulation_failure_policy: simulationFailurePolicy,
+    // Every plan says whether it trades and, if so, what (EKU-873). The artifact
+    // store refuses a plan on a policy chain without it.
+    extensions: { "ekubo.jurisdiction": jurisdiction },
   };
   assertWalletExecutionPlan(plan);
   return plan;

@@ -40,7 +40,10 @@ import {
 import {
   assertAssetsTradable,
   mergeQuoteJurisdictions,
+  nonTradingJurisdiction,
+  type PlanJurisdiction,
   producerCountryGate,
+  quoteJurisdiction,
   type RequestCountry,
 } from "./token-restrictions.js";
 
@@ -552,6 +555,7 @@ export function prepareVe33Vote(intent: PrepareVe33VoteIntent) {
   const calls = [...claimCalls, ...splitCalls, ...voteCalls];
 
   return ve33Plan({
+    jurisdiction: nonTradingJurisdiction(),
     action: "ve33_change_votes",
     chainId: intent.chainId,
     veToken: intent.veToken,
@@ -621,6 +625,7 @@ export function prepareVe33Extend(intent: PrepareVe33ExtendIntent) {
     });
   }
   return ve33Plan({
+    jurisdiction: nonTradingJurisdiction(),
     action: "ve33_extend",
     chainId: intent.chainId,
     veToken: intent.veToken,
@@ -672,6 +677,7 @@ export function prepareVe33Withdraw(intent: PrepareVe33WithdrawIntent) {
   });
 
   return ve33Plan({
+    jurisdiction: nonTradingJurisdiction(),
     action: "ve33_withdraw_expired_stake",
     chainId: intent.chainId,
     veToken,
@@ -745,6 +751,7 @@ export function prepareVe33Split(intent: PrepareVe33SplitIntent) {
     args: [veId, amount, intent.salt],
   });
   return ve33Plan({
+    jurisdiction: nonTradingJurisdiction(),
     action: "ve33_split",
     chainId: intent.chainId,
     veToken: intent.veToken,
@@ -768,10 +775,10 @@ export function prepareVe33Split(intent: PrepareVe33SplitIntent) {
 }
 
 export function prepareVe33Stake(intent: PrepareVe33StakeIntent) {
-  assertAssetsTradable(
-    [{ chainId: intent.chainId, token: intent.stakeToken, side: "sell" }],
-    intent.country,
-  );
+  const gatedAssets = [
+    { chainId: intent.chainId, token: intent.stakeToken, side: "sell" as const },
+  ];
+  assertAssetsTradable(gatedAssets, intent.country);
   const amount = unsigned(intent.amount, 128, "amount");
   if (amount === 0n) throw invalid("amount must be positive");
   if (intent.maxDuration === (intent.durationSeconds !== undefined)) {
@@ -808,6 +815,7 @@ export function prepareVe33Stake(intent: PrepareVe33StakeIntent) {
         args: [amount, intent.durationSeconds as number, intent.salt],
       });
   return ve33Plan({
+    jurisdiction: quoteJurisdiction(gatedAssets),
     action: "ve33_stake",
     chainId: intent.chainId,
     veToken,
@@ -848,10 +856,10 @@ export function prepareVe33Stake(intent: PrepareVe33StakeIntent) {
 export function prepareVe33IncreaseStake(
   intent: PrepareVe33IncreaseStakeIntent,
 ) {
-  assertAssetsTradable(
-    [{ chainId: intent.chainId, token: intent.stakeToken, side: "sell" }],
-    intent.country,
-  );
+  const gatedAssets = [
+    { chainId: intent.chainId, token: intent.stakeToken, side: "sell" as const },
+  ];
+  assertAssetsTradable(gatedAssets, intent.country);
   const veId = unsigned(intent.veId, 192, "ve_id");
   const amount = unsigned(intent.amount, 128, "amount");
   if (amount === 0n) throw invalid("amount must be positive");
@@ -868,6 +876,7 @@ export function prepareVe33IncreaseStake(
     args: [veId, amount],
   });
   return ve33Plan({
+    jurisdiction: quoteJurisdiction(gatedAssets),
     action: "ve33_increase_stake",
     chainId: intent.chainId,
     veToken,
@@ -1009,6 +1018,7 @@ export function prepareVe33Merge(intent: PrepareVe33MergeIntent) {
   }));
 
   return ve33Plan({
+    jurisdiction: nonTradingJurisdiction(),
     action: "ve33_merge_stakes",
     chainId: intent.chainId,
     veToken,
@@ -1069,6 +1079,7 @@ export function prepareVe33Claim(intent: PrepareVe33ClaimIntent) {
     };
   });
   return ve33Plan({
+    jurisdiction: nonTradingJurisdiction(),
     action: "ve33_claim_fees",
     chainId: intent.chainId,
     veToken: intent.veToken,
@@ -1142,6 +1153,7 @@ export function prepareVe33ClearVote(intent: PrepareVe33ClearVoteIntent) {
   ]);
 
   return ve33Plan({
+    jurisdiction: nonTradingJurisdiction(),
     action: "ve33_clear_vote",
     chainId: intent.chainId,
     veToken,
@@ -1681,6 +1693,7 @@ export async function prepareVe33Reallocation(
   });
 
   return ve33Plan({
+    jurisdiction: nonTradingJurisdiction(),
     schemaVersion: "2",
     action: "ve33_reallocate_votes",
     chainId: intent.chainId,
@@ -1915,6 +1928,7 @@ function compactMaxLockReallocationPlan({
   });
 
   return ve33Plan({
+    jurisdiction: nonTradingJurisdiction(),
     schemaVersion: "3",
     action: "ve33_reallocate_votes",
     chainId: intent.chainId,
@@ -2268,10 +2282,10 @@ export async function prepareVe33Reinvest(
   }
 
   if (intent.phase === "stake_all") {
-    assertAssetsTradable(
-      [{ chainId: intent.chainId, token: intent.stakeToken, side: "sell" }],
-      intent.country,
-    );
+    const gatedAssets = [
+      { chainId: intent.chainId, token: intent.stakeToken, side: "sell" as const },
+    ];
+    assertAssetsTradable(gatedAssets, intent.country);
     const amount = unsigned(intent.amount, 128, "amount");
     if (amount === 0n) throw invalid("amount must be positive");
     const portfolio = await loadVe33Portfolio(
@@ -2342,6 +2356,7 @@ export async function prepareVe33Reinvest(
       }),
     }));
     const plan = ve33Plan({
+      jurisdiction: quoteJurisdiction(gatedAssets),
       schemaVersion: "2",
       action: "ve33_reinvest_stake_all",
       chainId: intent.chainId,
@@ -2380,10 +2395,10 @@ export async function prepareVe33Reinvest(
     return { phase: "stake_all" as const, plan, next_phase: null };
   }
 
-  assertAssetsTradable(
-    [{ chainId: intent.chainId, token: intent.stakeToken, side: "sell" }],
-    intent.country,
-  );
+  const gatedAssets = [
+    { chainId: intent.chainId, token: intent.stakeToken, side: "sell" as const },
+  ];
+  assertAssetsTradable(gatedAssets, intent.country);
   const veId = unsigned(intent.veId, 192, "ve_id");
   const amount = unsigned(intent.amount, 128, "amount");
   if (amount === 0n) throw invalid("amount must be positive");
@@ -2399,6 +2414,7 @@ export async function prepareVe33Reinvest(
     args: [veId, amount],
   });
   const plan = ve33Plan({
+    jurisdiction: quoteJurisdiction(gatedAssets),
     action: "ve33_reinvest_stake",
     chainId: intent.chainId,
     veToken,
@@ -3362,6 +3378,7 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
   calls,
   details,
   value = 0n,
+  jurisdiction,
 }: {
   schemaVersion?: string;
   action: string;
@@ -3372,6 +3389,8 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
   calls: Ve33Call[];
   details: TDetails;
   value?: bigint;
+  /** `extensions["ekubo.jurisdiction"]`, required with no default (EKU-873). */
+  jurisdiction: PlanJurisdiction;
 }) {
   // Not a value any more, but still the guard: this throws if a plan would
   // call a VeToken function that is not on the allowlist.
@@ -3426,6 +3445,7 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
             ],
             atomicBatchRequired:
               approvals.length + transactions.length > 1,
+            jurisdiction,
           }),
     ...details,
     client_execution: {

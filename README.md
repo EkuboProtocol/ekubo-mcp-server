@@ -799,6 +799,32 @@ country. Metadata accompanies plan references and is preserved in the fetched
 plan as `extensions["ekubo.jurisdiction"]`, so this is agent/client policy, not
 automatic wallet or on-chain enforcement.
 
+### Plan scope
+
+Every execution plan this server stores carries
+`extensions["ekubo.jurisdiction"]`, on every chain, with a required `scope`
+(CTO decision EKU-873, contract §4.1):
+
+- `scope: "trade"` — exactly the gated paths listed under *Preparation gate*
+  below plus `prepare_wrap_unwrap`. The body is `quoteJurisdiction(assets)` over
+  the same asset list the gate evaluated.
+- `scope: "non_trading"` — every other plan: claims, withdrawals, position
+  transfers, `prepare_transfers`, approval revocations, TWAMM collection and
+  stops, auction completion, ve33 votes/merges/extensions/withdrawals, pool
+  initialization, Safe approvals and executions, and the satellite protocols.
+  The body is `nonTradingJurisdiction()`: `assets: []`, `coverage:
+  "complete"`, `execution_hold: false`, empty restrictions, no notice. The
+  tokens such a plan moves are not classified.
+
+The scope is chosen by the tool, never inferred from calldata. Every plan
+builder (`executionPlan`, `executionPlanFromSteps`, `preparedUiAction`,
+`ve33Plan`, the Uniswap `plan` helper, Safe `execution`) takes the metadata as a
+required argument with no default, and `storeArtifact` refuses an execution plan
+on a policy chain whose extension is missing or malformed, so the tool call
+fails instead of returning a plan a wallet would hold.
+`test/jurisdiction-gate-sites.test.ts` snapshots the trade sites and
+`test/plan-jurisdiction-scope.test.ts` classifies every catalog tool.
+
 ### Preparation gate
 
 Some assets may not be traded from some countries. The Ekubo interface disables

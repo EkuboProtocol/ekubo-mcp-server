@@ -23,7 +23,7 @@ import {
   LP_SUGAR_ALL_RESPONSE,
   VE_SUGAR_BY_ID_RESPONSE,
 } from "./aerodrome-fixtures.js";
-import { planStepKinds, planTargets, planTransactions } from "./plan-helpers.js";
+import { planStepKinds, planTargets, planTransactions, expectPlanScope } from "./plan-helpers.js";
 
 const sender = getAddress("0x4F2BF7469Bc38d1aE779b1F4affC588f35E60973");
 const aero = AERODROME_DEPLOYMENT.aero;
@@ -275,6 +275,7 @@ describe("liquidity", () => {
 
   it("approves both sides, deposits, then zeroes both allowances", () => {
     const result = deposit();
+    expectPlanScope(result, "non_trading");
     expect(planStepKinds(result)).toEqual([
       "approval",
       "approval",
@@ -423,6 +424,7 @@ describe("liquidity", () => {
       deadline: farFuture,
       lpToken,
     });
+    expectPlanScope(result, "non_trading");
     expect(planStepKinds(result)).toEqual([
       "approval",
       "execution",
@@ -491,6 +493,7 @@ describe("gauges", () => {
       amount: "1000",
       lpToken,
     });
+    expectPlanScope(result, "non_trading");
     expect(planStepKinds(result)).toEqual([
       "approval",
       "execution",
@@ -520,6 +523,7 @@ describe("gauges", () => {
       gauge,
       amount: "1000",
     });
+    expectPlanScope(result, "non_trading");
     expect(
       decodeFunctionData({ abi: AERODROME_GAUGE_ABI, data: planTransactions(result)[0].data })
         .functionName,
@@ -543,6 +547,7 @@ describe("gauges", () => {
       abi: AERODROME_GAUGE_ABI,
       data: planTransactions(result)[0].data,
     });
+    expectPlanScope(result, "non_trading");
     expect(call.functionName).toBe("getReward");
     expect(call.args?.[0]).toBe(other);
     expect(details(result).pays_the_account_not_the_sender).toContain("pays that address");
@@ -561,6 +566,7 @@ describe("locks", () => {
       amount: "1000000000000000000",
       lockDuration: String(126_144_000),
     });
+    expectPlanScope(result, "non_trading");
     expect(planStepKinds(result)).toEqual(["approval", "execution", "allowance_cleanup"]);
     expect(planTargets(result)).toEqual([
       aero,
@@ -651,6 +657,7 @@ describe("voting", () => {
       abi: AERODROME_VOTER_ABI,
       data: planTransactions(result)[0].data,
     });
+    expectPlanScope(result, "non_trading");
     expect(call.functionName).toBe("vote");
     expect(call.args?.[0]).toBe(42n);
     expect(call.args?.[1]).toEqual([usdc, aero]);
@@ -753,6 +760,7 @@ describe("incentive claims", () => {
       claimRebase: true,
     });
 
+    expectPlanScope(result, "non_trading");
     expect(planTargets(result)).toEqual([
       AERODROME_DEPLOYMENT.voter,
       AERODROME_DEPLOYMENT.voter,

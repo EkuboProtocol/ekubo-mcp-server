@@ -10,6 +10,7 @@ import {
 import { functionReadCall, readCallsBundle } from "./abi-decode.js";
 import { type Env, ServiceError } from "./core.js";
 import { preparedTransaction, preparedUiAction } from "./ui-actions.js";
+import { nonTradingJurisdiction } from "./token-restrictions.js";
 
 const MULTICALL3 = getAddress("0xcA11bde05977b3631167028862bE2a173976CA11");
 const REVENUE_BUYBACKS = getAddress(
@@ -258,6 +259,7 @@ export function prepareRewardsClaim(input: {
   const transaction = preparedTransaction(input.chainId, target, data, 0n);
 
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "ekubo_claim_incentive_rewards",
     chainId: input.chainId,
     sender,
@@ -349,6 +351,7 @@ export function prepareRevenueBuybacks(input: {
   );
 
   return preparedUiAction({
+    jurisdiction: nonTradingJurisdiction(),
     action: "ekubo_process_revenue_buybacks",
     chainId: input.chainId,
     sender,

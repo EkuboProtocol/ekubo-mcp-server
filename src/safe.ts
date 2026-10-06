@@ -1,6 +1,7 @@
 import { concatHex, encodeFunctionData, hashDomain, hashStruct, hashTypedData, keccak256, parseAbi, stringToHex, zeroAddress, type Address, type Hex, type Abi } from "viem";
 import { z } from "zod";
 import { readCallsBundle, functionResultDecodePlan } from "./abi-decode.js";
+import { nonTradingJurisdiction, type PlanJurisdiction } from "./token-restrictions.js";
 
 const uint = z.string().max(78).regex(/^(0|[1-9][0-9]*)$/).refine((v) => BigInt(v) < 2n ** 256n, "must fit uint256");
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((v) => v.toLowerCase() as Address);
@@ -98,17 +99,20 @@ function prepareSafeMessage(raw: z.input<typeof messageSigning>) {
     validation: "Input bytes are wrapped exactly, without application-message hashing. Match Safe Wallet by supplying hashMessage(text) or the application EIP-712 digest; for isValidSignature(bytes32,bytes), supply that digest. Verify Safe version and owner. SafeMessage has no nonce or expiration; confirm the intended ERC-1271 verifier and fallback handler. This is an owner signature for Safe aggregation, not itself a Safe contract signature.",
   };
 }
-function execution(input: Base, sender: Address, data: Hex) {
+// Approving or executing a Safe transaction is not itself a trade by this
+// server's tools, so these plans are `non_trading` (CTO decision EKU-873).
+function execution(input: Base, sender: Address, data: Hex, jurisdiction: PlanJurisdiction) {
   return { protocol: "safe", execution_plan: {
     schema_version: "1", chain_id: input.chain_id, caip2_chain_id: `eip155:${input.chain_id}`, sender,
     ordered_steps: [{ step: 1, kind: "execution", transaction: { chain_id: input.chain_id, from: sender, to: input.safe, data, value: "0" } }],
+    extensions: { "ekubo.jurisdiction": jurisdiction },
   } };
 }
 const approve = base.extend({ sender: nonzeroAddress, transaction: safeTransactionSchema });
 function prepareApprove(raw: z.input<typeof approve>) {
   const input = approve.parse(raw);
   const prepared = prepareSafeTransaction({ ...input, signer: input.sender });
-  return { ...execution(input, input.sender, encodeFunctionData({ abi: SAFE_ABI, functionName: "approveHash", args: [prepared.signing_digest] })),
+  return { ...execution(input, input.sender, encodeFunctionData({ abi: SAFE_ABI, functionName: "approveHash", args: [prepared.signing_digest] }), nonTradingJurisdiction()),
     signing_digest: prepared.signing_digest, read_calls: prepared.read_calls,
     validation: "Require signer ownership and matching onchain transaction hash before approval. approveHash persists; it is not a revocable offchain confirmation.",
   };
@@ -135,7 +139,7 @@ function transactionValidation(input: z.output<typeof execute>) {
 }
 function prepareExecute(raw: z.input<typeof execute>) {
   const input = execute.parse(raw);
-  return { ...execution(input, input.sender, encodeFunctionData({ abi: SAFE_ABI, functionName: "execTransaction", args: [...transactionArgs(input.transaction), input.signatures] })),
+  return { ...execution(input, input.sender, encodeFunctionData({ abi: SAFE_ABI, functionName: "execTransaction", args: [...transactionArgs(input.transaction), input.signatures] }), nonTradingJurisdiction()),
     ...transactionValidation(input),
     expected_nonce: input.transaction.nonce,
     validation: "Execute all validation reads from the supplied sender; require VERSION to match safe_version, transaction_hash to equal signing_digest, check_signatures to succeed, and the current nonce to equal expected_nonce. checkSignatures alone does not check nonce freshness. These are wallet preconditions, not constraints embedded in the execution plan. The complete Safe-format signature bundle is preserved verbatim. Simulate and require execTransaction success=true; a mined outer receipt alone is insufficient (ExecutionFailure can consume the nonce). The preparer has not executed these reads or verified live state.",

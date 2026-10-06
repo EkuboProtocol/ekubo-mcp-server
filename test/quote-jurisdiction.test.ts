@@ -57,6 +57,7 @@ describe("public quote jurisdiction metadata", () => {
     expect(option.execution!.jurisdiction).toEqual(result.jurisdiction);
     const plan = option.execution!.execution_plan;
     expect(plan.extensions["ekubo.jurisdiction"]).toEqual(result.jurisdiction);
+    expect(plan.extensions["ekubo.jurisdiction"].scope).toBe("trade");
     expect(walletExecutionPlanSchema.safeParse(plan).success).toBe(true);
   });
 
