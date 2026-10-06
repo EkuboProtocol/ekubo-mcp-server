@@ -20,9 +20,14 @@ Service requests and never signs or broadcasts.
 | `prepare_safe_owner_change` | Safe self-call signing request to add/remove/swap owners or change threshold |
 
 On Robinhood Chain (4663), which the jurisdiction policy covers,
+`prepare_safe_transaction_signature`, `prepare_safe_message_signature`,
 `prepare_safe_approve_hash` and `prepare_safe_execution` refuse with
-`uninspected_calldata`: the inner transaction is caller-supplied and not
-decoded, so the server cannot state that the plan trades nothing.
+`uninspected_calldata`: the inner transaction or signed bytes are
+caller-supplied and not decoded, so the server cannot state that they trade
+nothing. A signature authorizes them offline just as an onchain approval does.
+`prepare_safe_owner_change` is allowed: its inner call is a decoded Safe
+self-call that moves no asset, and its result carries `jurisdiction` with
+scope `non_trading`.
 
 All numeric inputs are canonical decimal strings, including `operation` (`"0"`
 CALL or `"1"` DELEGATECALL). Transaction signing requires every SafeTx field:

@@ -309,18 +309,20 @@ export function assertAssetsTradable(
 }
 
 /**
- * Refuse a plan whose effect depends on calldata this server never decodes
- * (a Safe `approveHash` or `execTransaction` over a caller-supplied inner
- * CALL or DELEGATECALL) on a chain the policy covers. Such a plan could sell
- * or transfer a Stock Token to another address, so it can be stamped neither
- * `non_trading` nor `trade` over known assets (CSO EKU-876 B-2). Refused from
- * every country; chains outside the policy are unaffected.
+ * Refuse a plan or signature request whose effect depends on calldata or
+ * message bytes this server never decodes (a Safe `approveHash`,
+ * `execTransaction` or SafeTx signature over a caller-supplied inner CALL or
+ * DELEGATECALL, or a SafeMessage signature over arbitrary bytes) on a chain
+ * the policy covers. Such an authorization could sell or transfer a Stock
+ * Token to another address, so it can be stamped neither `non_trading` nor
+ * `trade` over known assets (CSO EKU-876 B-2, EKU-882 N-2). Refused from every
+ * country; chains outside the policy are unaffected.
  */
 export function assertCalldataInspectable(chainId: string | bigint, tool: string): void {
   if (!isPolicyChain(chainId)) return;
   throw new ServiceError(
     "uninspected_calldata",
-    `${tool} executes a caller-supplied inner transaction that this server does not decode, so on chain ${BigInt(chainId).toString()} it cannot tell whether the plan trades an asset ${JURISDICTION_POLICY_VERSION} restricts.${REFUSAL_SUFFIX}`,
+    `${tool} authorizes a caller-supplied transaction or message that this server does not decode, so on chain ${BigInt(chainId).toString()} it cannot tell whether the plan trades an asset ${JURISDICTION_POLICY_VERSION} restricts.${REFUSAL_SUFFIX}`,
     {
       policy_version: JURISDICTION_POLICY_VERSION,
       policy_digest: JURISDICTION_POLICY_DIGEST,

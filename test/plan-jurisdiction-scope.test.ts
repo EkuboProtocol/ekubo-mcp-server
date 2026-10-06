@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
-import { numberToHex, zeroAddress } from "viem";
+import { getAddress, numberToHex, zeroAddress } from "viem";
 import worker from "../src/index.js";
 import { storeArtifact, loadArtifact } from "../src/artifact-store.js";
 import { PROTOCOLS } from "../src/protocols.js";
@@ -192,6 +192,12 @@ const USDG = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
 const STONX = "0x570c5aa79c798e7a418412cc8399ae5bcce570c5";
 /** Not classified by the policy: a non-trading plan must not hold on it. */
 const UNKNOWN = "0x3333333333333333333333333333333333333333";
+/** Lettered, so lowercase and EIP-55 forms differ (CSO EKU-882 R-1). */
+const LETTERED_SENDER = "0xabcdef0123456789abcdef0123456789abcdef01";
+const LETTERED_SENDER_CHECKSUM = getAddress(LETTERED_SENDER);
+/** Ekubo v3 Positions and the ve33 VeToken on 4663, per the deployment catalog. */
+const POSITIONS_4663 = "0x02d9876a21af7545f8632c3af76ec90b5ad4b66d";
+const VE_TOKEN_4663 = "0x9d7008e169d040b6c0140eb92e7ca82b12643497";
 const BOOSTED_FEES = "0x948b9C2C99718034954110cB61a6e08e107745f9";
 const CORE = "0x00000000000014aA86C5d3c41765bb24e11bd701";
 const deadline = String(Math.floor(Date.now() / 1000) + 3600);
@@ -678,8 +684,11 @@ describe("prepare_transfers: a Stock Token sent to another address is a gated di
   });
 
   it("leaves a Stock Token sent to the sender itself non-trading, checksum-insensitively", async () => {
+    // A lettered address, lowercase as sender and EIP-55 as recipient, so a
+    // case-sensitive comparison fails this test (CSO EKU-882 R-1).
+    expect(LETTERED_SENDER_CHECKSUM).not.toBe(LETTERED_SENDER);
     for (const country of ["US", "XX"]) {
-      const result = await call([transfer(NVDA, SENDER.toUpperCase().replace("0X", "0x"))], country);
+      const result = await call([transfer(NVDA, LETTERED_SENDER_CHECKSUM)], country, LETTERED_SENDER);
       const [plan] = await storedPlans(result);
       expect(plan!.extensions["ekubo.jurisdiction"]).toEqual(nonTradingJurisdiction());
     }
@@ -702,17 +711,93 @@ describe("prepare_transfers: a Stock Token sent to another address is a gated di
     }
   });
 
-  it("keeps a USDG-only batch, and NFTs, non-trading from a listed country", async () => {
+  it("keeps a USDG-only batch, and Ekubo NFTs, non-trading from a listed country", async () => {
     const result = await call(
       [
         transfer(USDG, RECIPIENT),
-        { kind: "erc721", token: UNKNOWN, recipient: RECIPIENT, token_id: "1" },
+        { kind: "erc721", token: POSITIONS_4663, recipient: RECIPIENT, token_id: "1" },
+        { kind: "erc721", token: VE_TOKEN_4663, recipient: RECIPIENT, token_id: "2", safe: false },
         { kind: "native", recipient: RECIPIENT, amount: "1" },
       ],
       "US",
     );
     const [plan] = await storedPlans(result);
     expect(plan!.extensions["ekubo.jurisdiction"]).toEqual(nonTradingJurisdiction());
+  });
+
+  describe("an unclassified contract is gated whatever its declared kind (CSO EKU-882 N-1)", () => {
+    // ERC-721 transferFrom(address,address,uint256) is ERC-20 transferFrom:
+    // against an unregistered Stock Token it moves token_id units of it.
+    const nft = (token: string, recipient: string, extra: Record<string, unknown> = {}) => ({
+      kind: "erc721", token, recipient, token_id: "5", ...extra,
+    });
+    const entries = {
+      "erc721 safe=false": nft(UNKNOWN, RECIPIENT, { safe: false }),
+      "erc721 safe=true": nft(UNKNOWN, RECIPIENT, { safe: true }),
+      "erc721 default safe": nft(UNKNOWN, RECIPIENT),
+      erc1155: { kind: "erc1155", token: UNKNOWN, recipient: RECIPIENT, token_id: "5", amount: "1" },
+      // A known Ekubo NFT manager is only exempt as an erc721 entry.
+      "Positions as erc20": transfer(POSITIONS_4663, RECIPIENT),
+    };
+
+    for (const [label, entry] of Object.entries(entries)) {
+      it(`refuses ${label} to another address with unclassified_asset from every country`, async () => {
+        const before = env.ARTIFACT_STORE.entries.size;
+        for (const country of ["FR", "US", undefined]) {
+          const result = await call([entry], country, LETTERED_SENDER);
+          expect(result.isError).toBe(true);
+          expect(result.structuredContent).toMatchObject({
+            error: {
+              code: "unclassified_asset",
+              details: { assets: [{ token: (entry as { token: string }).token, classification: "unknown" }] },
+            },
+          });
+          expect(JSON.stringify(result)).not.toContain("/artifact/");
+        }
+        expect(env.ARTIFACT_STORE.entries.size).toBe(before);
+      });
+    }
+
+    it("refuses the whole batch when an unclassified erc721 rides with a permitted Stock Token sale", async () => {
+      const result = await call(
+        [transfer(USDG, RECIPIENT), transfer(NVDA, RECIPIENT), nft(UNKNOWN, RECIPIENT, { safe: false })],
+        "FR",
+        LETTERED_SENDER,
+      );
+      expect(result.structuredContent).toMatchObject({
+        error: { code: "unclassified_asset", details: { assets: [{ token: UNKNOWN, classification: "unknown" }] } },
+      });
+    });
+
+    it("makes a mixed Stock Token + Ekubo NFT + USDG batch a trade listing only the Stock Token", async () => {
+      const result = await call(
+        [transfer(USDG, RECIPIENT), nft(POSITIONS_4663, RECIPIENT, { safe: false }), transfer(NVDA, RECIPIENT)],
+        "FR",
+        LETTERED_SENDER,
+      );
+      const [plan] = await storedPlans(result);
+      const metadata = plan!.extensions["ekubo.jurisdiction"]!;
+      expect(metadata.scope).toBe("trade");
+      expect(metadata.assets).toEqual(quoteJurisdiction([{ chainId: "4663", token: NVDA, side: "sell" }]).assets);
+    });
+
+    it("leaves an unclassified erc721 sent to the sender itself non-trading, checksum-insensitively", async () => {
+      for (const country of ["US", "XX"]) {
+        const result = await call([nft(UNKNOWN, LETTERED_SENDER_CHECKSUM, { safe: false })], country, LETTERED_SENDER);
+        const [plan] = await storedPlans(result);
+        expect(plan!.extensions["ekubo.jurisdiction"]).toEqual(nonTradingJurisdiction());
+      }
+    });
+
+    it("does not vouch for an Ekubo NFT address on a chain the catalog does not list it on", async () => {
+      const { isEkuboNftContract } = await import("../src/contracts.js");
+      expect(isEkuboNftContract("4663", POSITIONS_4663)).toBe(true);
+      expect(isEkuboNftContract("4663", VE_TOKEN_4663)).toBe(true);
+      expect(isEkuboNftContract("4663", UNKNOWN)).toBe(false);
+      // Core is an Ekubo deployment on 4663 but not an NFT contract.
+      expect(isEkuboNftContract("4663", "0x00000000000014aa86c5d3c41765bb24e11bd701")).toBe(false);
+      expect(isEkuboNftContract("999999", POSITIONS_4663)).toBe(false);
+    });
   });
 
   it("leaves chains outside the policy non-trading", async () => {
@@ -773,4 +858,55 @@ describe("Safe approve_hash and execution refuse on a policy chain (CSO EKU-876 
       expect(plan!.extensions["ekubo.jurisdiction"]).toEqual(nonTradingJurisdiction());
     });
   }
+});
+
+describe("Safe signature requests over undecoded calldata refuse on a policy chain (CSO EKU-882 N-2)", () => {
+  const { sender: _sender, ...safeBase } = SAFE_TX;
+  /** NVDA, a Robinhood Stock Token. */
+  const NVDA = "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec";
+  const transferData = `0xa9059cbb${RECIPIENT.slice(2).padStart(64, "0")}${"5".padStart(64, "0")}`;
+  const cases: [string, Record<string, unknown>][] = [
+    ["prepare_safe_transaction_signature", { ...safeBase, signer: SENDER, transaction: { ...SAFE_TX.transaction, to: NVDA, data: transferData } }],
+    ["prepare_safe_transaction_signature", { ...safeBase, signer: SENDER, transaction: { ...SAFE_TX.transaction, operation: "1" } }],
+    ["prepare_safe_message_signature", { ...safeBase, signer: SENDER, message: `0x${"ab".repeat(32)}` }],
+  ];
+
+  for (const [tool, args] of cases) {
+    it(`${tool} on 4663 returns uninspected_calldata from every country and stores nothing`, async () => {
+      const before = env.ARTIFACT_STORE.entries.size;
+      for (const country of ["FR", "US", "XX"]) {
+        const result = await callTool(tool, { ...args, chain_id: "4663" }, "/mcp/safe", country);
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({
+          error: {
+            code: "uninspected_calldata",
+            details: { policy_digest: JURISDICTION_POLICY_DIGEST, chain_id: "4663", tool },
+          },
+        });
+        expect(JSON.stringify(result)).not.toContain("/artifact/");
+        expect(JSON.stringify(result)).not.toContain("typed_data_signature_request");
+      }
+      expect(env.ARTIFACT_STORE.entries.size).toBe(before);
+    });
+
+    it(`${tool} off the policy chains still returns a signature request`, async () => {
+      const result = await callTool(tool, args, "/mcp/safe", "US");
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toHaveProperty("signing_digest");
+    });
+  }
+
+  it("prepare_safe_owner_change on 4663 stays available and is stamped non_trading", async () => {
+    for (const country of ["FR", "US", "XX"]) {
+      const result = await callTool(
+        "prepare_safe_owner_change",
+        { ...safeBase, chain_id: "4663", signer: SENDER, nonce: "3", change: { action: "change_threshold", threshold: "2" } },
+        "/mcp/safe",
+        country,
+      );
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toHaveProperty("signing_digest");
+      expect(result.structuredContent.jurisdiction).toEqual(nonTradingJurisdiction());
+    }
+  });
 });

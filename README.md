@@ -822,6 +822,10 @@ Every execution plan this server stores carries
 - No plan: `prepare_safe_approve_hash` and `prepare_safe_execution` run a
   caller-supplied inner transaction the server does not decode, so on a policy
   chain (4663) they refuse with `uninspected_calldata` (CSO EKU-876 B-2).
+  `prepare_safe_transaction_signature` and `prepare_safe_message_signature`
+  authorize the same undecoded calldata or bytes offline and refuse there too
+  (CSO EKU-882 N-2); `prepare_safe_owner_change` is allowed and returns
+  `jurisdiction` = `nonTradingJurisdiction()` (EKU-883).
 
 The scope is chosen by the tool, never inferred from calldata. Every plan
 builder (`executionPlan`, `executionPlanFromSteps`, `preparedUiAction`,
@@ -847,9 +851,12 @@ preparation tools refuse to produce an execution plan:
 `stake_token`, which is not compared with the VeToken's own stake token.
 `prepare_transfers` gates each entry that sends a Robinhood Stock Token to an
 address other than the sender, as a `sell` with no own-contract exemption (CLO
-ruling EKU-878); an unclassified ERC-20 on a covered chain sent to another
-address is refused with `unclassified_asset`. Transfers to the sender itself and
-of non-class assets are not gated. Withdrawing liquidity, collecting fees or
+ruling EKU-878); an unclassified contract on a covered chain sent to another
+address is refused with `unclassified_asset` whatever its declared kind, since
+ERC-721 `transferFrom` shares the ERC-20 selector (CSO EKU-882 N-1). The only
+exemption is an `erc721` entry against an Ekubo position, order or VeToken
+manager the deployment catalog lists on that chain. Transfers to the sender
+itself and of non-class assets are not gated. Withdrawing liquidity, collecting fees or
 proceeds, transferring a position, and revoking approvals are not gated by this
 trade policy. Discovery is also
 untouched: restricted assets remain listed and priced by `list_tokens`,

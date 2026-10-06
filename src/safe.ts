@@ -92,8 +92,18 @@ export function prepareSafeTransaction(raw: z.input<typeof transactionSigning>) 
     validation: "Require VERSION to match safe_version, signer to be an owner, and getTransactionHash to equal signing_digest. Check nonce and review every transaction field, including delegatecall and gas refunds. A future nonce queues authority; a consumed nonce is stale. Simulate the Safe transaction before signing. valid_until only limits wallet release, not use of an existing signature.",
   };
 }
+// A SafeTx or SafeMessage owner signature authorizes undecoded calldata or
+// bytes offline: once enough owners sign, any relayer can execute the inner
+// call or present the ERC-1271 signature, so on a policy chain both are
+// refused like approveHash/execTransaction (CSO EKU-882 N-2, EKU-883).
+function prepareTransactionSignature(raw: z.input<typeof transactionSigning>) {
+  const input = transactionSigning.parse(raw);
+  assertCalldataInspectable(input.chain_id, "prepare_safe_transaction_signature");
+  return prepareSafeTransaction(input);
+}
 function prepareSafeMessage(raw: z.input<typeof messageSigning>) {
   const input = messageSigning.parse(raw);
+  assertCalldataInspectable(input.chain_id, "prepare_safe_message_signature");
   return { ...signatureRequest(input, "SafeMessage", [{ name: "message", type: "bytes" }], { message: input.message }),
     read_calls: readCallsBundle({ chainId: input.chain_id, calls: stateReads(input, input.signer) }),
     validation: "Input bytes are wrapped exactly, without application-message hashing. Match Safe Wallet by supplying hashMessage(text) or the application EIP-712 digest; for isValidSignature(bytes32,bytes), supply that digest. Verify Safe version and owner. SafeMessage has no nonce or expiration; confirm the intended ERC-1271 verifier and fallback handler. This is an owner signature for Safe aggregation, not itself a Safe contract signature.",
@@ -188,6 +198,9 @@ function prepareOwner(raw: z.input<typeof ownerSigning>) {
   return { ...prepareSafeTransaction({ ...input, transaction: {
     to: input.safe, value: "0", data: ownerCall(input.change), operation: "0", safeTxGas: "0", baseGas: "0", gasPrice: "0", gasToken: zeroAddress, refundReceiver: zeroAddress, nonce: input.nonce,
   } }), change: input.change,
+    // The inner call is a decoded Safe self-call that moves no asset (EKU-883
+    // decision), so the request is non_trading on every chain.
+    jurisdiction: nonTradingJurisdiction(),
     owner_validation: "Owner management is a Safe self-call authorized by its existing threshold. Verify the linked-list predecessor from getOwners (first predecessor is 0x0000000000000000000000000000000000000001), owner uniqueness, and threshold against the resulting owner count. Reject the Safe itself as a new owner. Simulate before signing.",
   };
 }
@@ -204,10 +217,10 @@ function tool<S extends z.ZodObject>(name: string, description: string, schema: 
 }
 export const safeTools = [
   tool("prepare_safe_reads", "Prepare wallet reads of Safe version, owners, threshold, nonce and optional onchain hash approval.", reads, prepareReads),
-  tool("prepare_safe_transaction_signature", "Prepare an ERC-8410 EIP-712 SafeTx owner signature request and onchain hash validation reads. All transaction and refund fields are explicit.", transactionSigning, prepareSafeTransaction),
-  tool("prepare_safe_message_signature", "Prepare an ERC-8410 EIP-712 SafeMessage owner signature request for exact bytes, for Safe ERC-1271 signature aggregation.", messageSigning, prepareSafeMessage),
+  tool("prepare_safe_transaction_signature", "Prepare an ERC-8410 EIP-712 SafeTx owner signature request and onchain hash validation reads. All transaction and refund fields are explicit. Refused with uninspected_calldata on Robinhood Chain (4663), where the server cannot tell whether the undecoded inner transaction trades a restricted asset.", transactionSigning, prepareTransactionSignature),
+  tool("prepare_safe_message_signature", "Prepare an ERC-8410 EIP-712 SafeMessage owner signature request for exact bytes, for Safe ERC-1271 signature aggregation. Refused with uninspected_calldata on Robinhood Chain (4663), where the server cannot tell whether the signed bytes authorize a restricted-asset trade.", messageSigning, prepareSafeMessage),
   tool("prepare_safe_approve_hash", "Prepare an owner approveHash onchain transaction for an exact Safe transaction, with matching hash and ownership reads. Refused with uninspected_calldata on Robinhood Chain (4663), where the server cannot tell whether the undecoded inner transaction trades a restricted asset.", approve, prepareApprove),
   tool("prepare_safe_execution", "Prepare execTransaction using a complete Safe-format signature bundle. Verify nonce, signatures and inner success through the wallet. Refused with uninspected_calldata on Robinhood Chain (4663), where the server cannot tell whether the undecoded inner transaction trades a restricted asset.", execute, prepareExecute),
-  tool("prepare_safe_owner_change", "Prepare a SafeTx typed-data owner signature request to add, remove or replace an owner, or change threshold, through a Safe self-call.", ownerSigning, prepareOwner),
+  tool("prepare_safe_owner_change", "Prepare a SafeTx typed-data owner signature request to add, remove or replace an owner, or change threshold, through a Safe self-call. The result carries jurisdiction scope non_trading: the self-call moves no asset.", ownerSigning, prepareOwner),
 ];
 export const safeCatalog = safeTools.map(({ name, title, description, schema }) => ({ name, title, description, inputSchema: z.toJSONSchema(schema, { io: "input" }) }));

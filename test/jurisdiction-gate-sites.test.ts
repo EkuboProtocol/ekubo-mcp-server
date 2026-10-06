@@ -127,7 +127,18 @@ describe("jurisdiction gate call sites", () => {
       .filter(({ line }) => /\bassertCalldataInspectable\(/.test(line) && !line.includes("import"))
       .map(({ file, scope }) => `${file} ${scope}`)
       .sort();
-    expect(sites).toEqual(["safe.ts prepareApprove", "safe.ts prepareExecute"]);
+    expect(sites).toEqual([
+      "safe.ts prepareApprove",
+      "safe.ts prepareExecute",
+      "safe.ts prepareSafeMessage",
+      "safe.ts prepareTransactionSignature",
+    ]);
+    // The signature tools are registered through the checked wrappers, never
+    // the unchecked prepareSafeTransaction (CSO EKU-882 N-2).
+    const safeSource = readFileSync(new URL("../src/safe.ts", import.meta.url), "utf8");
+    expect(safeSource).toMatch(/tool\("prepare_safe_transaction_signature",[^\n]*, transactionSigning, prepareTransactionSignature\)/);
+    expect(safeSource).toMatch(/tool\("prepare_safe_message_signature",[^\n]*, messageSigning, prepareSafeMessage\)/);
+    expect(safeSource).not.toMatch(/tool\([^\n]*, prepareSafeTransaction\)/);
     // Every Safe execution plan is built by one of those two scopes.
     const builders = sourceLines()
       .filter(({ file, line }) => file === "safe.ts" && /\bexecution\(input,/.test(line))

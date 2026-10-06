@@ -7,6 +7,7 @@ import {
   type Address,
   type Hex,
 } from "viem";
+import { isEkuboNftContract } from "./contracts.js";
 import { ServiceError } from "./core.js";
 import { type ExecutionPlanStepInput } from "./execution-plan.js";
 import { preparedTransaction, preparedUiAction } from "./ui-actions.js";
@@ -63,9 +64,16 @@ export type TransferInput =
  * the sender controls. An unclassified ERC-20 on a covered chain is included
  * too, so the gate refuses it rather than guessing that it is not a Stock
  * Token. A transfer to the sender itself, and every non-class or out-of-scope
- * asset, is not a disposal. NFT entries are only included when their contract
- * is itself a classified Stock Token: the class is fungible, and an
- * unclassified NFT contract (an LP position, a VeToken) is not held.
+ * asset, is not a disposal.
+ *
+ * The declared `kind` is not trusted to rule a contract out (CSO EKU-882
+ * N-1): ERC-721 `transferFrom(address,address,uint256)` has the same selector
+ * as ERC-20 `transferFrom`, so an "erc721" entry against an unregistered Stock
+ * Token moves `token_id` units of it. An unclassified contract is therefore
+ * gated whatever its kind, which refuses it with `unclassified_asset`. The one
+ * exception is an ERC-721 entry against a contract the deployment catalog
+ * records as an Ekubo NFT manager on that chain (positions, orders, VeToken):
+ * that is positively an NFT, not a member of the fungible class.
  */
 export function transferDisposals(input: {
   chainId: string;
@@ -79,7 +87,8 @@ export function transferDisposals(input: {
     const { classification } = classifyAsset(input.chainId, transfer.token);
     const gated =
       classification === "rhj_stock_token" ||
-      (classification === "unknown" && transfer.kind === "erc20");
+      (classification === "unknown" &&
+        !(transfer.kind === "erc721" && isEkuboNftContract(input.chainId, transfer.token)));
     return gated ? [{ chainId: input.chainId, token: transfer.token, side: "sell" }] : [];
   });
 }

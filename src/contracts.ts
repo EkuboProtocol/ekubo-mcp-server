@@ -128,6 +128,38 @@ export function isOrdersV3Address(address: Address): boolean {
   return ORDERS_V3_ADDRESSES.includes(address as never);
 }
 
+// The Ekubo deployments that are ERC-721 contracts: the position and order
+// managers and the ve33 VeToken. Anything else, including any other Ekubo
+// deployment, is not an NFT contract this server can vouch for.
+const ERC721_DEPLOYMENT_NAMES = new Set([
+  "Positions",
+  "Orders",
+  "Ve33Positions",
+  "VeToken",
+]);
+
+/**
+ * Whether the generated catalog records `address` on `chainId` as one of the
+ * Ekubo ERC-721 managers. Chain-aware on purpose: an address is only vouched
+ * for on a chain where that exact contract is deployed.
+ */
+export function isEkuboNftContract(chainId: string, address: string): boolean {
+  const deployed = catalog.chains[chainId];
+  if (deployed === undefined) return false;
+  let checksummed: Address;
+  try {
+    checksummed = getAddress(address);
+  } catch {
+    return false;
+  }
+  const deployment = Object.hasOwn(deployed, checksummed)
+    ? deployed[checksummed]
+    : undefined;
+  return (
+    deployment !== undefined && ERC721_DEPLOYMENT_NAMES.has(deployment.name)
+  );
+}
+
 export const CONTRACT_DIRECTORY_URI = "ekubo://contracts/evm";
 export const CONTRACT_CHAIN_TEMPLATE = "ekubo://contracts/evm/{chain_id}";
 export const CONTRACT_ADDRESS_TEMPLATE =
