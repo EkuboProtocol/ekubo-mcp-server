@@ -309,6 +309,28 @@ export function assertAssetsTradable(
 }
 
 /**
+ * Refuse a plan whose effect depends on calldata this server never decodes
+ * (a Safe `approveHash` or `execTransaction` over a caller-supplied inner
+ * CALL or DELEGATECALL) on a chain the policy covers. Such a plan could sell
+ * or transfer a Stock Token to another address, so it can be stamped neither
+ * `non_trading` nor `trade` over known assets (CSO EKU-876 B-2). Refused from
+ * every country; chains outside the policy are unaffected.
+ */
+export function assertCalldataInspectable(chainId: string | bigint, tool: string): void {
+  if (!isPolicyChain(chainId)) return;
+  throw new ServiceError(
+    "uninspected_calldata",
+    `${tool} executes a caller-supplied inner transaction that this server does not decode, so on chain ${BigInt(chainId).toString()} it cannot tell whether the plan trades an asset ${JURISDICTION_POLICY_VERSION} restricts.${REFUSAL_SUFFIX}`,
+    {
+      policy_version: JURISDICTION_POLICY_VERSION,
+      policy_digest: JURISDICTION_POLICY_DIGEST,
+      chain_id: BigInt(chainId).toString(),
+      tool,
+    },
+  );
+}
+
+/**
  * Public policy notice (EKU-853 §3, verbatim), independent of the caller's
  * location or domicile.
  */

@@ -19,6 +19,11 @@ Service requests and never signs or broadcasts.
 | `prepare_safe_execution` | `execTransaction` execution plan with a complete Safe-format signature bundle |
 | `prepare_safe_owner_change` | Safe self-call signing request to add/remove/swap owners or change threshold |
 
+On Robinhood Chain (4663), which the jurisdiction policy covers,
+`prepare_safe_approve_hash` and `prepare_safe_execution` refuse with
+`uninspected_calldata`: the inner transaction is caller-supplied and not
+decoded, so the server cannot state that the plan trades nothing.
+
 All numeric inputs are canonical decimal strings, including `operation` (`"0"`
 CALL or `"1"` DELEGATECALL). Transaction signing requires every SafeTx field:
 `to`, `value`, `data`, `operation`, `safeTxGas`, `baseGas`, `gasPrice`, `gasToken`,

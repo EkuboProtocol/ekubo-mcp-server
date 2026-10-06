@@ -216,8 +216,9 @@ const encodedKey = {
 type Case = { tool: string; args: Record<string, unknown>; label?: string; path?: string };
 
 const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+/** Off the policy chains a Safe approval or execution is non-trading. */
 const SAFE_TX = {
-  chain_id: "4663", safe: "0x4444444444444444444444444444444444444444", safe_version: "1.4.1", sender: SENDER,
+  chain_id: "1", safe: "0x4444444444444444444444444444444444444444", safe_version: "1.4.1", sender: SENDER,
   transaction: {
     to: UNKNOWN, value: "0", data: "0x1234", operation: "0", safeTxGas: "0", baseGas: "0", gasPrice: "0",
     gasToken: zeroAddress, refundReceiver: zeroAddress, nonce: "3",
@@ -724,4 +725,52 @@ describe("prepare_transfers: a Stock Token sent to another address is a gated di
     const [plan] = await storedPlans(result);
     expect(plan!.extensions["ekubo.jurisdiction"]).toEqual(nonTradingJurisdiction());
   });
+});
+
+describe("Safe approve_hash and execution refuse on a policy chain (CSO EKU-876 B-2)", () => {
+  const SIGNATURES = `0x${"11".repeat(65)}`;
+  /** NVDA, a Robinhood Stock Token. */
+  const NVDA = "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec";
+  // ERC-20 transfer(RECIPIENT, 5) of a Stock Token: a disposal the server never sees.
+  const transferData = `0xa9059cbb${RECIPIENT.slice(2).padStart(64, "0")}${"5".padStart(64, "0")}`;
+  const inner = [
+    { to: UNKNOWN, data: "0x1234", operation: "0" },
+    { to: NVDA, data: transferData, operation: "0" },
+    { to: USDG, data: "0x", operation: "0" },
+    { to: UNKNOWN, data: "0x1234", operation: "1" },
+  ];
+
+  for (const tool of ["prepare_safe_approve_hash", "prepare_safe_execution"]) {
+    it(`${tool} on 4663 returns uninspected_calldata from every country and stores nothing`, async () => {
+      const before = env.ARTIFACT_STORE.entries.size;
+      for (const transaction of inner) {
+        for (const country of ["FR", "US", "XX"]) {
+          const args = {
+            ...SAFE_TX,
+            chain_id: "4663",
+            transaction: { ...SAFE_TX.transaction, ...transaction },
+            ...(tool === "prepare_safe_execution" ? { signatures: SIGNATURES } : {}),
+          };
+          const result = await callTool(tool, args, "/mcp/safe", country);
+          expect(result.isError).toBe(true);
+          expect(result.structuredContent).toMatchObject({
+            error: {
+              code: "uninspected_calldata",
+              details: { policy_digest: JURISDICTION_POLICY_DIGEST, chain_id: "4663", tool },
+            },
+          });
+          expect(JSON.stringify(result)).not.toContain("/artifact/");
+          expect(JSON.stringify(result)).not.toContain("non_trading");
+        }
+      }
+      expect(env.ARTIFACT_STORE.entries.size).toBe(before);
+    });
+
+    it(`${tool} off the policy chains still prepares a non-trading plan`, async () => {
+      const args = tool === "prepare_safe_execution" ? { ...SAFE_TX, signatures: SIGNATURES } : SAFE_TX;
+      const [plan] = await storedPlans(await callTool(tool, args, "/mcp/safe"));
+      expect(plan!.chain_id).toBe("1");
+      expect(plan!.extensions["ekubo.jurisdiction"]).toEqual(nonTradingJurisdiction());
+    });
+  }
 });

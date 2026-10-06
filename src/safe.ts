@@ -1,7 +1,7 @@
 import { concatHex, encodeFunctionData, hashDomain, hashStruct, hashTypedData, keccak256, parseAbi, stringToHex, zeroAddress, type Address, type Hex, type Abi } from "viem";
 import { z } from "zod";
 import { readCallsBundle, functionResultDecodePlan } from "./abi-decode.js";
-import { nonTradingJurisdiction, type PlanJurisdiction } from "./token-restrictions.js";
+import { assertCalldataInspectable, nonTradingJurisdiction, type PlanJurisdiction } from "./token-restrictions.js";
 
 const uint = z.string().max(78).regex(/^(0|[1-9][0-9]*)$/).refine((v) => BigInt(v) < 2n ** 256n, "must fit uint256");
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((v) => v.toLowerCase() as Address);
@@ -99,8 +99,10 @@ function prepareSafeMessage(raw: z.input<typeof messageSigning>) {
     validation: "Input bytes are wrapped exactly, without application-message hashing. Match Safe Wallet by supplying hashMessage(text) or the application EIP-712 digest; for isValidSignature(bytes32,bytes), supply that digest. Verify Safe version and owner. SafeMessage has no nonce or expiration; confirm the intended ERC-1271 verifier and fallback handler. This is an owner signature for Safe aggregation, not itself a Safe contract signature.",
   };
 }
-// Approving or executing a Safe transaction is not itself a trade by this
-// server's tools, so these plans are `non_trading` (CTO decision EKU-873).
+// Approving or executing a Safe transaction runs an inner call this server
+// never decodes. Off the policy chains these plans are `non_trading` (CTO
+// decision EKU-873); on a policy chain both tools refuse with
+// uninspected_calldata before building anything (CSO EKU-876 B-2).
 function execution(input: Base, sender: Address, data: Hex, jurisdiction: PlanJurisdiction) {
   return { protocol: "safe", execution_plan: {
     schema_version: "1", chain_id: input.chain_id, caip2_chain_id: `eip155:${input.chain_id}`, sender,
@@ -111,6 +113,7 @@ function execution(input: Base, sender: Address, data: Hex, jurisdiction: PlanJu
 const approve = base.extend({ sender: nonzeroAddress, transaction: safeTransactionSchema });
 function prepareApprove(raw: z.input<typeof approve>) {
   const input = approve.parse(raw);
+  assertCalldataInspectable(input.chain_id, "prepare_safe_approve_hash");
   const prepared = prepareSafeTransaction({ ...input, signer: input.sender });
   return { ...execution(input, input.sender, encodeFunctionData({ abi: SAFE_ABI, functionName: "approveHash", args: [prepared.signing_digest] }), nonTradingJurisdiction()),
     signing_digest: prepared.signing_digest, read_calls: prepared.read_calls,
@@ -139,6 +142,7 @@ function transactionValidation(input: z.output<typeof execute>) {
 }
 function prepareExecute(raw: z.input<typeof execute>) {
   const input = execute.parse(raw);
+  assertCalldataInspectable(input.chain_id, "prepare_safe_execution");
   return { ...execution(input, input.sender, encodeFunctionData({ abi: SAFE_ABI, functionName: "execTransaction", args: [...transactionArgs(input.transaction), input.signatures] }), nonTradingJurisdiction()),
     ...transactionValidation(input),
     expected_nonce: input.transaction.nonce,
@@ -202,8 +206,8 @@ export const safeTools = [
   tool("prepare_safe_reads", "Prepare wallet reads of Safe version, owners, threshold, nonce and optional onchain hash approval.", reads, prepareReads),
   tool("prepare_safe_transaction_signature", "Prepare an ERC-8410 EIP-712 SafeTx owner signature request and onchain hash validation reads. All transaction and refund fields are explicit.", transactionSigning, prepareSafeTransaction),
   tool("prepare_safe_message_signature", "Prepare an ERC-8410 EIP-712 SafeMessage owner signature request for exact bytes, for Safe ERC-1271 signature aggregation.", messageSigning, prepareSafeMessage),
-  tool("prepare_safe_approve_hash", "Prepare an owner approveHash onchain transaction for an exact Safe transaction, with matching hash and ownership reads.", approve, prepareApprove),
-  tool("prepare_safe_execution", "Prepare execTransaction using a complete Safe-format signature bundle. Verify nonce, signatures and inner success through the wallet.", execute, prepareExecute),
+  tool("prepare_safe_approve_hash", "Prepare an owner approveHash onchain transaction for an exact Safe transaction, with matching hash and ownership reads. Refused with uninspected_calldata on Robinhood Chain (4663), where the server cannot tell whether the undecoded inner transaction trades a restricted asset.", approve, prepareApprove),
+  tool("prepare_safe_execution", "Prepare execTransaction using a complete Safe-format signature bundle. Verify nonce, signatures and inner success through the wallet. Refused with uninspected_calldata on Robinhood Chain (4663), where the server cannot tell whether the undecoded inner transaction trades a restricted asset.", execute, prepareExecute),
   tool("prepare_safe_owner_change", "Prepare a SafeTx typed-data owner signature request to add, remove or replace an owner, or change threshold, through a Safe self-call.", ownerSigning, prepareOwner),
 ];
 export const safeCatalog = safeTools.map(({ name, title, description, schema }) => ({ name, title, description, inputSchema: z.toJSONSchema(schema, { io: "input" }) }));

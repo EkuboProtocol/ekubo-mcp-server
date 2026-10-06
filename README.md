@@ -814,10 +814,14 @@ Every execution plan this server stores carries
 - `scope: "non_trading"` — every other plan: claims, withdrawals, position
   transfers, `prepare_transfers` batches with no such disposal, approval revocations, TWAMM collection and
   stops, auction completion, ve33 votes/merges/extensions/withdrawals, pool
-  initialization, Safe approvals and executions, and the satellite protocols.
+  initialization, Safe approvals and executions off the policy chains, and the
+  satellite protocols.
   The body is `nonTradingJurisdiction()`: `assets: []`, `coverage:
   "complete"`, `execution_hold: false`, empty restrictions, no notice. The
   tokens such a plan moves are not classified.
+- No plan: `prepare_safe_approve_hash` and `prepare_safe_execution` run a
+  caller-supplied inner transaction the server does not decode, so on a policy
+  chain (4663) they refuse with `uninspected_calldata` (CSO EKU-876 B-2).
 
 The scope is chosen by the tool, never inferred from calldata. Every plan
 builder (`executionPlan`, `executionPlanFromSteps`, `preparedUiAction`,

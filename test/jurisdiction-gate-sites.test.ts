@@ -122,6 +122,20 @@ function gateSites(): string[] {
 }
 
 describe("jurisdiction gate call sites", () => {
+  it("refuses every plan built over undecoded calldata on a policy chain (CSO EKU-876 B-2)", () => {
+    const sites = sourceLines()
+      .filter(({ line }) => /\bassertCalldataInspectable\(/.test(line) && !line.includes("import"))
+      .map(({ file, scope }) => `${file} ${scope}`)
+      .sort();
+    expect(sites).toEqual(["safe.ts prepareApprove", "safe.ts prepareExecute"]);
+    // Every Safe execution plan is built by one of those two scopes.
+    const builders = sourceLines()
+      .filter(({ file, line }) => file === "safe.ts" && /\bexecution\(input,/.test(line))
+      .map(({ scope }) => scope)
+      .sort();
+    expect(builders).toEqual(["prepareApprove", "prepareExecute"]);
+  });
+
   it("gates exactly the reviewed plan-producing paths", () => {
     expect(gateSites()).toEqual(GATED);
   });
