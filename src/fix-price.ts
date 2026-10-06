@@ -20,10 +20,7 @@ import {
 import { type Env, getTokens, ServiceError } from "./core.js";
 import { coreDataFetcherContract } from "./contracts.js";
 import { decodePoolConfig, getPool } from "./pools.js";
-import {
-  assertAssetsTradable,
-  type RequestCountry,
-} from "./token-restrictions.js";
+import { quoteJurisdiction } from "./token-restrictions.js";
 import {
   erc20ApprovalTransaction,
   preparedTransaction,
@@ -91,11 +88,6 @@ export interface PrepareFixPoolPriceInput {
     blockNumber?: string;
     blockHash?: Hex;
   };
-  /**
-   * Jurisdiction of the caller. Required rather than optional so a new call
-   * site cannot drop the restriction check by omitting it.
-   */
-  country: RequestCountry;
 }
 
 export async function prepareFixPoolPrice(
@@ -117,17 +109,13 @@ export async function prepareFixPoolPrice(
     fetcher,
   );
   const poolKey = pool.pool_key;
-  // This action swaps the pool to a target price, so it trades the pair just as
-  // a swap does and is gated the same way. Which token it ends up buying falls
-  // out of the target price rather than the caller's intent, and moving a pool
-  // to a price is not an exit from a position, so neither side is a disposal.
-  assertAssetsTradable(
-    [
-      { chainId: input.chainId, token: poolKey.token0, side: "buy" },
-      { chainId: input.chainId, token: poolKey.token1, side: "buy" },
-    ],
-    input.country,
-  );
+  // This action swaps the pool to a target price, so it trades the pair. Which
+  // token it ends up buying falls out of the target price rather than the
+  // caller's intent, so both are labeled as acquisitions.
+  const jurisdiction = quoteJurisdiction([
+    { chainId: input.chainId, token: poolKey.token0, side: "buy" },
+    { chainId: input.chainId, token: poolKey.token1, side: "buy" },
+  ]);
   const baseToken = getAddress(input.baseToken);
   if (baseToken !== poolKey.token0 && baseToken !== poolKey.token1) {
     throw new ServiceError(
@@ -190,6 +178,7 @@ export async function prepareFixPoolPrice(
 
   const shared = {
     schema_version: "1",
+    jurisdiction,
     action: "ekubo_fix_pool_price",
     agent_confirmation_required: false,
     wallet_validation_required: true,
@@ -405,6 +394,7 @@ export async function prepareFixPoolPrice(
           "Immediately before signing, rerun both supplied pending reads through their read_calls_reference envelopes, verify the current price remains on the same side of the target, verify the quote tuple still matches, and simulate the exact execution plan.",
       },
     }),
+    jurisdiction,
     phase: "execute",
     next_phase: null,
   };

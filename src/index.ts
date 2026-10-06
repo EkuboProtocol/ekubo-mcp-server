@@ -17,7 +17,6 @@ import {
   publicToolCatalog,
   publicToolCatalogWithOutputs,
 } from "./server.js";
-import { requestCountry } from "./token-restrictions.js";
 import { MCP_SERVER_VERSION, MCP_TOOL_CATALOG_REVISION } from "./version.js";
 import {
   PROTOCOL_SKILLS,
@@ -56,11 +55,8 @@ export default {
       const mcpRequest = admitted.request;
 
       const requestOrigin = mcpRequest.headers.get("origin");
-      // Read from the original request: `admitMcpRequest` rebuilds a POST to
-      // replay its body, and the rebuilt Request has no `cf`.
-      const country = requestCountry(request);
       const handler = createMcpHandler(
-        () => createEkuboServer(env, url.origin, country, mcpRoute.protocols),
+        () => createEkuboServer(env, url.origin, mcpRoute.protocols),
         {
           route: mcpRoute.route,
           allowedHostnames:
