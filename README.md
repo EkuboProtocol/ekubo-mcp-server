@@ -630,11 +630,10 @@ the exact balance-snapshot requests. After the claim confirms, pass only the
 claimed deltas to the swap phase; it constructs one exact-input plan per
 non-stake token. Each child swap carries the same inline `jurisdiction`
 object as a `get_quotes_with_plans` option (byte-identical to the plan body's
-`extensions["ekubo.jurisdiction"]`), and the phase result carries their union
-plus `producer_country_gate`, which records that the MCP connection-country
-check ran and whether the country was resolved. Neither is permission to
-trade: a nonempty `restricted_jurisdictions` list requires following its
-`execution_notice` before any signature. After all receipts confirm, refresh the allocation state and
+`extensions["ekubo.jurisdiction"]`), and the phase result carries their union.
+It is not permission to trade: a nonempty `restricted_jurisdictions` list requires following its
+`execution_notice` before any signature, and `execution_hold: true` on the
+result or any child means the batch must not be signed. After all receipts confirm, refresh the allocation state and
 pass its `state_id` plus the complete measured STONX output to `stake_all`.
 That phase apportions the exact amount across every existing active allocation
 using only `increaseStakeAmount`, preserving votes and fee accounting. Never
@@ -731,99 +730,89 @@ non-browser MCP clients normally omit `Origin`.
 
 ## Jurisdiction restrictions
 
-Swap quotes (`get_quotes_with_plans`) are always available regardless of the
-MCP connection country. Each quote and execution envelope returns `jurisdiction`
-metadata: a policy version, the union of restricted ISO alpha-2 jurisdictions,
-and per-asset restrictions for selling the input and buying the output. This
-applies to every quote provider, including cross-chain outputs. An empty list
-means this policy lists no restriction, not that the API certified eligibility.
+Policy `ekubo-token-jurisdictions-v2` implements the CLO decision of 2026-10-06
+(EKU-853). It is an internal conservative product policy, not a legal opinion.
+
+### Policy data
+
+`src/jurisdiction-policy.json` is vendored byte-for-byte from
+`EkuboProtocol/default-tokens` (`jurisdiction-policy/ekubo-token-jurisdictions-v2.json`),
+where `scripts/jurisdiction-policy.ts` generates it and a daily workflow checks
+it against the issuer registry. The interface vendors the same file as
+`src/util/common/jurisdictionPolicy.json`. All three repositories pin its
+SHA-256 in a test (`test/token-restrictions.test.ts` here), and metadata
+reports it as `policy_digest`, so a change has to land everywhere with the same
+digest. The country lists are a minimum product-policy floor, not a legal
+determination.
+
+The rule is a class rule, scoped by chain ID and exact contract address — never
+by ticker, name, or mere presence on the chain:
+
+- **`rhj_stock_token`** — Robinhood Assets (Jersey) Limited Stock Tokens
+  (tokenised debt securities tracking equities and ETFs) on Robinhood chain
+  (`4663`). Members come from the issuer's on-chain asset registry
+  (`https://api.robinhood.com/rhj/assets`), the curated token list, and the v1
+  list; each entry records its `provenance` (`source`, `ref`, `observed_at`).
+  Membership is monotone: regeneration never drops an address because a source
+  stopped listing it.
+- **`non_class`** — exact addresses verified not to be Stock Tokens: native
+  ETH, WETH (issuer token-contracts page and on-chain verification) and USDG
+  (issuer token-contracts page), and STONX (Ekubo-issued). Being outside this
+  class is not being outside all law.
+- **`unknown`** — any other token on a covered chain. It is labeled, not
+  refused: quotes and plans are still returned, with `coverage: "unknown"`,
+  `execution_hold: true`, and `null` restriction lists, so a new issuer listing
+  is never presented as an authoritative empty list.
+- **`out_of_scope`** — a chain the policy does not cover.
+
+A Stock Token is restricted on **both** sides — acquisition and sale — for
+`AE`, `CA`, `CH`, `GB`, `SG`, `US` (offering exclusions) and `BY`, `CU`,
+`IR`, `KP`, `MM`, `RU`, `SD`, `SS`, `SY`, `UA`, `VE` (issuer Prohibited
+Investor jurisdictions). v2 has no disposal exemption.
+
+### Quote metadata
+
+Swap quotes (`get_quotes_with_plans`) are never refused on this metadata. Each quote and execution envelope
+returns `jurisdiction` metadata: `policy_version`, `policy_digest`, `coverage`
+(`complete` or `unknown`), `execution_hold`, the union of restricted ISO
+alpha-2 jurisdictions with their ISO short names (`jurisdiction_names`), and
+one entry per asset with its `side`, `classification`, `provenance`,
+`restricted_jurisdictions`, `offering_exclusions`, `issuer_prohibited_investor`
+and `execution_hold`. Every asset is listed, so an empty list is explicit
+rather than missing. This applies to every quote provider, including
+cross-chain outputs. An empty list means this policy lists no restriction, not
+that the API certified eligibility. `coverage: "unknown"` (with `null` lists)
+means the metadata is not authoritative for that asset and it must not be
+executed until classified.
 
 The agent/wallet must read `execution_notice` before signing or submitting any
-approval or swap. A restricted or unknown user connection jurisdiction requires
-an explicit user attestation of domicile outside the listed jurisdictions; an
-agent/server IP is not evidence of the user's domicile. The API/MCP does not receive, verify, store, or publish proofs
-or the user's declared country. Metadata accompanies plan references and is preserved in the fetched plan as
-`extensions["ekubo.jurisdiction"]`, so this is agent/client policy, not automatic wallet
-or on-chain enforcement. No shared signature package or privacy-policy change
-is introduced by this metadata-only change.
+approval or swap. It requires establishing the actual investor's relevant
+jurisdiction and eligibility facts (location, residence or entity
+incorporation, Regulation S US-person status, account/benefit, issuer
+Prohibited Investor status); an agent/server IP is not evidence of any of
+them, and an agent must not attest on the user's behalf. The API/MCP does not
+receive, verify, store, or publish attestations or the user's declared
+country. Metadata accompanies plan references and is preserved in the fetched
+plan as `extensions["ekubo.jurisdiction"]`, so this is agent/client policy, not
+automatic wallet or on-chain enforcement.
 
-The following controls continue to apply to **other preparation tools**:
+### This server only informs
 
-Some assets may not be traded from some countries. The Ekubo interface disables
-its action buttons for them; this server has no UI to disable, so other preparation tools refuse to
-produce an execution plan. The restriction data and its semantics mirror
-`interface/src/util/common/tokenRestrictions.ts` — currently the tokenized
-equities on Robinhood chain (`4663`), which are restricted in `US`, `GB`, `CA`,
-`SG`, `AE`, `CH`, `IR`, `KP`, `SY`, `CU`, and `UA`. `src/token-restrictions.ts`
-holds both.
+Board direction (EKU-862, EKU-873, 2026-10-06): the server does not know,
+infer or check the user's jurisdiction, never reads the connection's country,
+and never refuses a request on jurisdiction grounds; the cloud wallet does not
+check it either. The agent must know the user's jurisdiction before preparing
+or executing anything that touches an asset with a nonempty or unknown
+`restricted_jurisdictions` list, ask the user if it is not already known, never
+infer it from an IP address, the environment or the wallet, and not proceed for
+a user in a listed jurisdiction.
 
-The country comes from `request.cf.country`, which Cloudflare derives from the
-connecting IP and a client cannot supply, matching the Ekubo API's `/country`
-route that the interface reads. It must be taken from the *original* request:
-`admitMcpRequest` replays a POST through `new Request(url, init)` to re-serve
-the body it already priced, and the replayed request carries the headers over
-but drops `cf`.
-
-A refusal is an ordinary tool error with code `restricted_jurisdiction`, listing
-the offending assets in `details`. It is raised before any upstream quote is
-fetched, so a restricted request never spends 0x, Across, LayerZero, or LI.FI
-credit.
-
-What is gated is the *acquisition* of a restricted asset:
-`prepare_twamm_order`, `prepare_lp_position_deposit`,
-`prepare_auction_create`, `prepare_oracle_capacity_expansion`,
-`prepare_fix_pool_price`, and the swap phase of `prepare_ve33_reinvest`. Exits
-are deliberately never gated — withdrawing liquidity, collecting fees or
-proceeds, transferring a position, and revoking approvals stay available to
-everyone, as they do in the interface. Discovery is also untouched: restricted
-assets remain listed and priced by `list_tokens`, `get_token`, and the
-opportunity tools, exactly as the interface still displays them.
-
-### Disposals are exempt where the restriction is offering-based
-
-Selling a restricted asset for an unrestricted one is prepared even from a
-country that restricts it, provided that country appears in
-`DISPOSAL_EXEMPT_COUNTRIES` — currently `US`, `GB`, `CA`, `SG`, `AE`, and `CH`,
-the countries whose restriction exists because the offering is not registered
-for their residents. Blocking the sale there leaves a holder no way to stop
-holding, which is the opposite of what the restriction is for.
-
-The exemption is narrow, and three limits are load-bearing:
-
-- **It does not extend to the sanctions countries** — `IR`, `KP`, `SY`, `CU`,
-  `UA`. A disposal is still a transaction facilitated for a sanctioned
-  jurisdiction, so those stay blocked in both directions.
-- **It does not extend to an unresolved country.** The exemption is a claim
-  about one jurisdiction's rules, and an unresolved origin has not been shown
-  to be in one.
-- **Only the asset being given up is exempt.** Selling one restricted equity
-  for another is still refused, on the acquisition side, without needing a
-  rule of its own.
-
-Every call site declares which way its asset moves, via the required `side`
-field on `RestrictableAsset`. There is no default, so a new gated tool has to
-state its direction rather than inherit an exemption by omission. This is the
-one place where this server deliberately diverges from the interface, which
-blocks both directions and therefore still offers its users no exit; the
-interface needs the same carve-out before the two agree.
-
-Two further behaviours are worth stating explicitly, because both are
-deliberate:
-
-- **An unresolved country fails closed, but only for assets that are actually
-  restricted.** A chain-wide restriction entry that names no countries restricts
-  nobody and must not drag every token on that chain into the check. An empty
-  `Set` is truthy, so this was previously inverted in the interface; both
-  implementations now treat an empty entry as no restriction.
-- **A request arriving over Tor (`cf.country === "T1"`) is treated as an
-  unresolved country** rather than as an ISO code that can never match, so a
-  restricted asset fails closed. The interface applies the same rule in
-  `resolvedCountryCode`.
-
-The gate applies when a plan is issued. An already-issued
-`execution_plan_reference` stays fetchable from `/artifact/<id>` for
-`ARTIFACT_TTL_SECONDS` regardless of where it is fetched from, because that
-route serves wallets and carries no tool identity.
+The same `jurisdiction` object is attached to the results of
+`prepare_twamm_order`, `prepare_auction_create`, `prepare_lp_position_deposit`,
+`prepare_fix_pool_price`, `prepare_oracle_capacity_expansion`, and
+`prepare_transfers` when it sends a Stock Token (labeled `sell`) or an
+unclassified ERC-20. Discovery is untouched: `list_tokens`, `get_token`, and
+the opportunity tools list and price every asset.
 
 ## Abuse protection
 

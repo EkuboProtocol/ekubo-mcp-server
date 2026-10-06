@@ -37,12 +37,7 @@ import {
   transactionIdentity,
   executionPlanFromSteps,
 } from "./execution-plan.js";
-import {
-  assertAssetsTradable,
-  mergeQuoteJurisdictions,
-  producerCountryGate,
-  type RequestCountry,
-} from "./token-restrictions.js";
+import { mergeQuoteJurisdictions } from "./token-restrictions.js";
 
 const VE_TOKEN_ABI = parseAbi([
   "function multicall(bytes[] data) payable returns (bytes[] results)",
@@ -325,12 +320,6 @@ export type PrepareVe33ReinvestIntent =
       feeBalances: { token: Address; amount: string }[];
       slippageBps: number;
       source: QuoteSource;
-      /**
-       * Jurisdiction of the caller. This phase sells claimed fee tokens, which
-       * on the production Ve33 deployment are the restricted STONX equities, so
-       * it is gated like any other swap.
-       */
-      country: RequestCountry;
     }
   | {
       phase: "stake";
@@ -2198,21 +2187,6 @@ export async function prepareVe33Reinvest(
     const swapBalances = [...balancesByToken]
       .filter(([token, amount]) => token !== stakeToken && amount > 0n)
       .map(([token, amount]) => ({ token, amount: amount.toString() }));
-    // Claimed fees are swapped away, so each is a disposal; the stake token is
-    // what the reinvestment acquires. A restricted fee token can therefore be
-    // swapped out even from a region that restricts it, which is what keeps a
-    // reinvest loop from stalling on fees it is not allowed to keep holding.
-    assertAssetsTradable(
-      [
-        ...swapBalances.map(({ token }) => ({
-          chainId: intent.chainId,
-          token,
-          side: "sell" as const,
-        })),
-        { chainId: intent.chainId, token: stakeToken, side: "buy" as const },
-      ],
-      intent.country,
-    );
     const swapPlans = await Promise.all(
       swapBalances.map(({ token, amount }) =>
         prepareSwap(
@@ -2238,7 +2212,6 @@ export async function prepareVe33Reinvest(
       jurisdiction: mergeQuoteJurisdictions(
         swapPlans.map((plan) => plan.jurisdiction),
       ),
-      producer_country_gate: producerCountryGate(intent.country),
       exact_input_full_balance_swaps: swapPlans,
       stake_token_amount_already_claimed: directStakeAmount.toString(),
       next_phase:

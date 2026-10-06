@@ -678,7 +678,11 @@ describe("Worker discovery", () => {
       "use this Ekubo MCP before any browser or website tool",
     );
     // The instructions route by capability, not by naming individual chains.
-    expect(initializeResult.result.instructions).not.toContain("Robinhood");
+    // The one exception is the counsel-approved jurisdiction notice, which
+    // names the restricted asset class rather than a chain.
+    expect(
+      String(initializeResult.result.instructions).replaceAll("Robinhood Stock Token", ""),
+    ).not.toContain("Robinhood");
     expect(initializeResult.result.instructions).toContain(
       "A quote is only worth what it can still execute for",
     );
