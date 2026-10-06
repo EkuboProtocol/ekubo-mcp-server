@@ -1,5 +1,7 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import worker from "../src/index.js";
+import { derivePoolId } from "../src/pools.js";
+import { quoteJurisdiction } from "../src/token-restrictions.js";
 import { fakeArtifactStore } from "./fake-r2.js";
 
 const env = {
@@ -322,4 +324,208 @@ describe("jurisdiction metadata over the MCP endpoint (inform only, board EKU-87
       error: { code: "restricted_jurisdiction" },
     });
   });
+});
+
+/**
+ * CSO EKU-896 R-1: prepare_twamm_order, prepare_auction_create and
+ * prepare_fix_pool_price were covered only by the static attach-site snapshot,
+ * so a refusal reinserted under a new name passed. These drive each tool over
+ * the endpoint for a Stock Token and an unclassified ERC-20 and require a
+ * prepared plan with metadata byte-identical for every connection.
+ */
+describe("jurisdiction metadata on TWAMM, auction and fix-price (inform only, CSO EKU-896 R-1)", () => {
+  const NATIVE = "0x0000000000000000000000000000000000000000";
+  const V3_CORE = "0x00000000000014aA86C5d3c41765bb24e11bd701";
+  const CONNECTIONS = ["US", "IR", "FR", undefined];
+  type Side = "buy" | "sell";
+
+  function expected(entries: { token: string; side: Side }[]) {
+    return quoteJurisdiction(
+      entries.map((entry) => ({ chainId: String(ROBINHOOD_CHAIN), ...entry })),
+    );
+  }
+
+  function expectStockToken(jurisdiction: unknown, token: string, side: Side) {
+    expect(jurisdiction).toMatchObject({
+      policy_version: "ekubo-token-jurisdictions-v2",
+      coverage: "complete",
+      execution_hold: false,
+      restricted_jurisdictions: V2_COUNTRIES,
+    });
+    const asset = (jurisdiction as { assets: Record<string, unknown>[] }).assets
+      .find((entry) => entry.token === token && entry.side === side);
+    expect(asset).toMatchObject({
+      classification: "rhj_stock_token",
+      restricted_jurisdictions: V2_COUNTRIES,
+      execution_hold: false,
+    });
+  }
+
+  function expectUnknown(jurisdiction: unknown, token: string, side: Side) {
+    expect(jurisdiction).toMatchObject({
+      policy_version: "ekubo-token-jurisdictions-v2",
+      coverage: "unknown",
+      execution_hold: true,
+      restricted_jurisdictions: null,
+    });
+    const asset = (jurisdiction as { assets: Record<string, unknown>[] }).assets
+      .find((entry) => entry.token === token && entry.side === side);
+    expect(asset).toMatchObject({
+      classification: "unknown",
+      execution_hold: true,
+      restricted_jurisdictions: null,
+      offering_exclusions: null,
+      issuer_prohibited_investor: null,
+    });
+  }
+
+  /** Calls the tool once per connection; returns the single jurisdiction seen. */
+  async function preparedForEveryConnection(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    const seen = new Set<string>();
+    for (const country of CONNECTIONS) {
+      const result = await callTool(name, args, country);
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent).not.toHaveProperty("error");
+      expect(result.structuredContent).toHaveProperty("execution_plan_reference");
+      const text = JSON.stringify(result.structuredContent.jurisdiction);
+      expect(text).not.toContain("country");
+      seen.add(text);
+    }
+    expect(seen.size).toBe(1);
+    return JSON.parse([...seen][0]!);
+  }
+
+  const twamm = (sell: string, buy: string) => ({
+    chain_id: ROBINHOOD_CHAIN,
+    sender: SENDER,
+    sell_token: sell,
+    buy_token: buy,
+    pending_timestamp: "1000",
+    orders: [{ fee: "1", start_time: "1024", end_time: "2048", amount: "10000" }],
+    salt: `0x${"34".repeat(32)}`,
+  });
+
+  const auction = (sell: string, buy: string) => ({
+    chain_id: ROBINHOOD_CHAIN,
+    sender: SENDER,
+    sell_token: sell,
+    buy_token: buy,
+    sell_amount: "1000",
+    creator_fee_q32: "100",
+    min_boost_duration: 3600,
+    graduation_pool_fee_q64: "1000",
+    graduation_pool_tick_spacing: 4,
+    start_time: "1000",
+    auction_duration: 7200,
+    salt: `0x${"56".repeat(32)}`,
+  });
+
+  for (const [label, sell, buy, token, side] of [
+    ["selling a Stock Token", NVDA, USDG, NVDA, "sell"],
+    ["buying a Stock Token", USDG, NVDA, NVDA, "buy"],
+  ] as const) {
+    it(`prepare_twamm_order plans ${label} for every connection`, async () => {
+      const jurisdiction = await preparedForEveryConnection("prepare_twamm_order", twamm(sell, buy));
+      expectStockToken(jurisdiction, token, side);
+      expect(jurisdiction).toEqual(expected([{ token: sell, side: "sell" }, { token: buy, side: "buy" }]));
+    });
+
+    it(`prepare_auction_create plans ${label} for every connection`, async () => {
+      const jurisdiction = await preparedForEveryConnection("prepare_auction_create", auction(sell, buy));
+      expectStockToken(jurisdiction, token, side);
+      expect(jurisdiction).toEqual(expected([{ token: sell, side: "sell" }, { token: buy, side: "buy" }]));
+    });
+  }
+
+  for (const [label, sell, buy, side] of [
+    ["selling an unclassified ERC-20", UNKNOWN, USDG, "sell"],
+    ["buying an unclassified ERC-20", USDG, UNKNOWN, "buy"],
+  ] as const) {
+    it(`prepare_twamm_order plans ${label}, labeled coverage=unknown`, async () => {
+      const jurisdiction = await preparedForEveryConnection("prepare_twamm_order", twamm(sell, buy));
+      expectUnknown(jurisdiction, UNKNOWN, side);
+      expect(jurisdiction).toEqual(expected([{ token: sell, side: "sell" }, { token: buy, side: "buy" }]));
+    });
+
+    it(`prepare_auction_create plans ${label}, labeled coverage=unknown`, async () => {
+      const jurisdiction = await preparedForEveryConnection("prepare_auction_create", auction(sell, buy));
+      expectUnknown(jurisdiction, UNKNOWN, side);
+      expect(jurisdiction).toEqual(expected([{ token: sell, side: "sell" }, { token: buy, side: "buy" }]));
+    });
+  }
+
+  for (const [label, token, check] of [
+    ["a Stock Token", NVDA, expectStockToken],
+    ["an unclassified ERC-20", UNKNOWN, expectUnknown],
+  ] as const) {
+    it(`prepare_fix_pool_price plans every phase for a pool with ${label}`, async () => {
+      const poolKey = { token0: NATIVE, token1: token, fee: "1", tickSpacing: 4, extension: NATIVE };
+      const { pool_id } = derivePoolId(poolKey);
+      let poolFetches = 0;
+      const mockedFetch = spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.startsWith("https://api.test/") && url.includes("/poolKeys/")) {
+          poolFetches += 1;
+          return Response.json({
+            pool_id,
+            pool_key: {
+              token0: NATIVE, token1: token, fee: "1", tick_spacing: "4",
+              extension: NATIVE, stableswap_params: null,
+            },
+            state: null,
+          });
+        }
+        if (url.startsWith("https://api.test/") && url.includes("/tokens/batch?")) {
+          return Response.json([
+            { chain_id: String(ROBINHOOD_CHAIN), address: NATIVE, symbol: "ETH", decimals: 18 },
+            { chain_id: String(ROBINHOOD_CHAIN), address: token, symbol: "TKN", decimals: 18 },
+          ]);
+        }
+        return new Response("not found", { status: 404 });
+      }) as typeof fetch);
+      try {
+        const common = {
+          chain_id: ROBINHOOD_CHAIN, sender: SENDER, core_address: V3_CORE,
+          pool_id, base_token: NATIVE, target_price: "1000",
+        };
+        const phases: unknown[] = [];
+        for (const args of [
+          common,
+          { ...common, pending_current_sqrt_ratio: "1" },
+        ]) {
+          const seen = new Set<string>();
+          for (const country of CONNECTIONS) {
+            const result = await callTool("prepare_fix_pool_price", args, country);
+            expect(result.isError).toBeUndefined();
+            expect(result.structuredContent).not.toHaveProperty("error");
+            const text = JSON.stringify(result.structuredContent.jurisdiction);
+            expect(text).not.toContain("country");
+            seen.add(text);
+          }
+          expect(seen.size).toBe(1);
+          phases.push(JSON.parse([...seen][0]!));
+        }
+        const executed = await preparedForEveryConnection("prepare_fix_pool_price", {
+          ...common,
+          pending_current_sqrt_ratio: "1",
+          quote_result: {
+            specified_token: NATIVE, calculated_token: token,
+            specified_amount: "-1", calculated_amount: "-1000",
+          },
+        });
+        phases.push(executed);
+        const want = expected([{ token: NATIVE, side: "buy" }, { token, side: "buy" }]);
+        for (const jurisdiction of phases) {
+          check(jurisdiction, token, "buy");
+          expect(jurisdiction).toEqual(want);
+        }
+        expect(poolFetches).toBeGreaterThan(0);
+      } finally {
+        mockedFetch.mockRestore();
+      }
+    });
+  }
 });
