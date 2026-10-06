@@ -1836,6 +1836,39 @@ const quotesOutputSchema = z.looseObject({
     )
     .optional(),
 });
+// The swap phase is the one reinvest phase that carries swap plans, so it is
+// the one that must say inline which jurisdictions restrict them: once the
+// plan bodies are replaced by references, the inline copy is the only one an
+// agent reads.
+const ve33ReinvestOutputSchema = z
+  .looseObject({
+    phase: z.enum(["claim", "swap", "stake_all", "stake"]).optional(),
+    jurisdiction: quoteJurisdictionSchema.optional(),
+    producer_country_gate: z
+      .object({
+        applied: z.literal(true),
+        policy_version: z.string(),
+        country_resolved: z.boolean(),
+        outcome: z.literal("permitted"),
+      })
+      .optional(),
+    exact_input_full_balance_swaps: z
+      .array(
+        z.looseObject({
+          jurisdiction: quoteJurisdictionSchema,
+          execution_plan_reference: artifactReferenceSchema.optional(),
+        }),
+      )
+      .optional(),
+  })
+  .refine(
+    (result) =>
+      result.phase !== "swap" ||
+      (result.jurisdiction !== undefined &&
+        result.producer_country_gate !== undefined &&
+        result.exact_input_full_balance_swaps !== undefined),
+    "phase=swap must carry jurisdiction, producer_country_gate, and exact_input_full_balance_swaps",
+  );
 const currentStateQueryOutputSchema = z.looseObject({
   current_state_query: z
     .looseObject({
@@ -1860,6 +1893,7 @@ function preparerOutputSchema(name: string) {
   if (name === "prepare_uniswap_reads") {
     return z.looseObject({ read_calls_reference: artifactReferenceSchema });
   }
+  if (name === "prepare_ve33_reinvest") return ve33ReinvestOutputSchema;
   return preparedPlanOutputSchema;
 }
 
@@ -1990,7 +2024,7 @@ export const publicToolCatalog = [
     name: "prepare_ve33_reinvest",
     title: "Prepare ve-token fee reinvestment",
     description:
-      "Build the safe phased workflow for 'reinvest my fees': automatically claim all active voter fees, prepare one exact-input swap per claimed non-stake token, then increase one VeToken or every existing active allocation without changing ownership or replacing votes.",
+      "Build the safe phased workflow for 'reinvest my fees': automatically claim all active voter fees, prepare one exact-input swap per claimed non-stake token, then increase one VeToken or every existing active allocation without changing ownership or replacing votes. phase=swap returns jurisdiction metadata inline on the result and on every child swap, plus producer_country_gate recording that the MCP connection-country check ran; neither is permission to trade. For a nonempty restricted_jurisdictions list, follow its execution_notice before requesting any signature.",
     inputSchema: z.toJSONSchema(prepareVe33ReinvestSchema),
   },
   {
@@ -4649,7 +4683,7 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
   },
   {
     protocols: null,
-    text: QUOTE_JURISDICTION_NOTICE + ` Swap quotes always return jurisdiction metadata, independent of the MCP connection country. Other preparation tools retain their existing country-based controls and may fail with restricted_jurisdiction. Explain such a refusal to the user rather than retrying that preparation through another route. Withdrawals, fee and proceeds collection, and transfers remain available.`,
+    text: QUOTE_JURISDICTION_NOTICE + ` Swap quotes always return jurisdiction metadata, independent of the MCP connection country; the prepare_ve33_reinvest phase=swap result and each of its child swaps carry it inline as well, beside each execution_plan_reference. Other preparation tools retain their existing country-based controls and may fail with restricted_jurisdiction. Explain such a refusal to the user rather than retrying that preparation through another route. Withdrawals, fee and proceeds collection, and transfers remain available.`,
   },
   {
     protocols: ["ekubo"],
@@ -4743,7 +4777,7 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
   },
   {
     protocols: ["ekubo"],
-    text: `For "reinvest my fees", call prepare_ve33_reinvest with phase=claim and omit claims so it discovers and claims every active allocation. Take the supplied pre-claim balance snapshots, then use phase=swap with only the exact claimed deltas so it prepares one exact-input swap per non-stake token. After receipts confirm, refresh allocations and use phase=stake_all with its exact state_id and the measured STONX output. Never swap a wallet's pre-existing balance.`,
+    text: `For "reinvest my fees", call prepare_ve33_reinvest with phase=claim and omit claims so it discovers and claims every active allocation. Take the supplied pre-claim balance snapshots, then use phase=swap with only the exact claimed deltas so it prepares one exact-input swap per non-stake token; read the jurisdiction metadata that phase returns inline on the result and on every child before requesting any signature, since it is not permission to trade. After receipts confirm, refresh allocations and use phase=stake_all with its exact state_id and the measured STONX output. Never swap a wallet's pre-existing balance.`,
   },
   {
     protocols: ["ekubo"],
@@ -5043,7 +5077,7 @@ const VE33_WORKFLOW = `# Ekubo ve(3,3) call workflow
 - compact_max_lock selects one surviving active NFT, claims its fees and extends it to the maximum four-year duration, then fee-safely claims and merges every other active NFT into it, splits once per additional target, and applies exactly one NFT vote per target. Never detach or reorder those calls.
 - Compound merges burn their source NFT IDs after moving the stake. Pass every burned ID, the survivor, the lock extension, final NFT count, decoded calls, and complete plan to the wallet. Unvoted NFTs remain outside the reallocation scope; withdrawals and direct burn calldata remain forbidden.
 - Raw VeToken vote, clearVote, extendStake*, and full-source mergeStakes calls can discard pending voter fees. Prefer the fee-preserving tools or compound claim methods. To remove a vote without moving it elsewhere, use prepare_ve33_clear_vote: it claims each stake's current pool immediately before clearing it, and its required current_pool_key makes a stale key revert the batch instead of silently discarding fees. The stake, its lock end, and its ownership survive a clear; the pool does not keep the weight, and a pool with no remaining vote weight charges a zero extension fee. Never call burn on a stake-bearing NFT; it can orphan the underlying stake. Withdraw only an expired stake, claim its active-pool fees first, and verify the recipient.
-- Reinvestment takes three sequential wallet phases: snapshot balances and automatically claim all active allocations, swap each complete post-claim delta exact-input into the stake token, then refresh portfolio state and use stake_all to apportion the complete output across every existing active allocation without replacing its vote. Each executable phase is passed to the wallet, which owns simulation and authorization.
+- Reinvestment takes three sequential wallet phases: snapshot balances and automatically claim all active allocations, swap each complete post-claim delta exact-input into the stake token (the swap phase result and each child swap carry jurisdiction metadata inline, with producer_country_gate recording the MCP connection-country check; neither is permission to trade), then refresh portfolio state and use stake_all to apportion the complete output across every existing active allocation without replacing its vote. Each executable phase is passed to the wallet, which owns simulation and authorization.
 - New stakes default to stakeMaxDuration and affect no existing NFT. Existing lock extension is intentionally explicit because it clears the vote; the extension tool uses a compound fee claim before either max-duration or custom-duration extension.
 - transferOwnership, ownership handover, ERC721 transfer/approval, safe transfer, and burn are forbidden in every first-class workflow.
 - Re-read ownership, stake amount, active vote, fee balances, allowances, and contract code before signing every plan.

@@ -628,7 +628,13 @@ exact output of an exact-input swap and therefore cannot safely call
 claim phase can omit `claims` to discover every active allocation and returns
 the exact balance-snapshot requests. After the claim confirms, pass only the
 claimed deltas to the swap phase; it constructs one exact-input plan per
-non-stake token. After all receipts confirm, refresh the allocation state and
+non-stake token. Each child swap carries the same inline `jurisdiction`
+object as a `get_quotes_with_plans` option (byte-identical to the plan body's
+`extensions["ekubo.jurisdiction"]`), and the phase result carries their union
+plus `producer_country_gate`, which records that the MCP connection-country
+check ran and whether the country was resolved. Neither is permission to
+trade: a nonempty `restricted_jurisdictions` list requires following its
+`execution_notice` before any signature. After all receipts confirm, refresh the allocation state and
 pass its `state_id` plus the complete measured STONX output to `stake_all`.
 That phase apportions the exact amount across every existing active allocation
 using only `increaseStakeAmount`, preserving votes and fee accounting. Never
