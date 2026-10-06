@@ -6,6 +6,7 @@ import { publicToolCatalog, toolOutputSchema } from "../src/server.js";
 import {
   JURISDICTION_POLICY_VERSION,
   JURISDICTION_POLICY_DIGEST,
+  LEGACY_GATE_POLICY_VERSION,
   QUOTE_JURISDICTION_NOTICE_V2,
   quoteJurisdiction,
   type RequestCountry,
@@ -196,20 +197,27 @@ describe("prepare_ve33_reinvest phase=swap jurisdiction metadata", () => {
     expect(walletExecutionPlanSchema.safeParse(plan).success).toBe(true);
     expect(result.producer_country_gate).toEqual({
       applied: true,
-      policy_version: JURISDICTION_POLICY_VERSION,
+      policy_version: LEGACY_GATE_POLICY_VERSION,
       country_resolved: true,
     });
     expect(result.producer_country_gate).not.toHaveProperty("country");
     expect(result.producer_country_gate).not.toHaveProperty("outcome");
   });
 
-  it("refuses to sell a Stock Token from any v2 country: no disposal exemption", async () => {
-    for (const country of V2_COUNTRIES) {
+  it("keeps the pre-existing v1 gate unchanged: disposal exemption, v1 countries only", async () => {
+    // Board EKU-862: v2 adds no server-side refusal. The sell side follows the
+    // 0.44.1 gate: offering countries may dispose, v1 sanctioned ones may not,
+    // and countries only v2 names are not refused at all.
+    for (const country of ["US", "GB", "CA", "SG", "AE", "CH", "RU", "BY", "MM", "SD", "SS", "VE"]) {
+      const result = await referenced(env(), [NVDA], country);
+      expect(result.jurisdiction.restricted_jurisdictions).toEqual(V2_COUNTRIES);
+    }
+    for (const country of ["CU", "IR", "KP", "SY", "UA"]) {
       const error = await refusal(swapPhase(env(), [NVDA], country));
       expect(error.code).toBe("restricted_jurisdiction");
-      expect(error.details).toMatchObject({
+      expect(error.details).toEqual({
         country,
-        restricted_assets: [{ token: NVDA, side: "sell", classification: "rhj_stock_token" }],
+        restricted_assets: [{ chain_id: CHAIN, token: NVDA, side: "sell" }],
       });
     }
   });
@@ -269,13 +277,18 @@ describe("prepare_ve33_reinvest phase=swap jurisdiction metadata", () => {
     expect(error.details).toMatchObject({ country: null });
   });
 
-  it("holds the whole phase when any fee token is unknown, from any country", async () => {
+  it("labels an unknown fee token instead of refusing, from any country", async () => {
     for (const country of ["FR", "US", "XX", null]) {
-      const error = await refusal(swapPhase(env(), [USDG, UNKNOWN], country));
-      expect(error.code).toBe("unclassified_asset");
-      expect(error.details).toMatchObject({
-        assets: [{ token: UNKNOWN, side: "sell", classification: "unknown" }],
+      const result = await referenced(env(), [USDG, UNKNOWN], country);
+      expect(result.exact_input_full_balance_swaps).toHaveLength(2);
+      expect(result.jurisdiction).toMatchObject({
+        coverage: "unknown", execution_hold: true, restricted_jurisdictions: null,
       });
+      const held = result.exact_input_full_balance_swaps.find((child) =>
+        (child.jurisdiction.assets as { token: string }[]).some((asset) => asset.token === UNKNOWN))!;
+      expect(held.jurisdiction).toMatchObject({ coverage: "unknown", execution_hold: true, restricted_jurisdictions: null });
+      const other = result.exact_input_full_balance_swaps.find((child) => child !== held)!;
+      expect(other.jurisdiction).toMatchObject({ coverage: "complete", restricted_jurisdictions: [] });
     }
   });
 
@@ -283,7 +296,7 @@ describe("prepare_ve33_reinvest phase=swap jurisdiction metadata", () => {
     const result = await referenced(env(), [USDG], null);
     expect(result.producer_country_gate).toEqual({
       applied: true,
-      policy_version: JURISDICTION_POLICY_VERSION,
+      policy_version: LEGACY_GATE_POLICY_VERSION,
       country_resolved: false,
     });
     expect(result.exact_input_full_balance_swaps[0]!.jurisdiction).toBeDefined();

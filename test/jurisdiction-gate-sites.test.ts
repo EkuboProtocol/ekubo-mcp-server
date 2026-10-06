@@ -2,14 +2,14 @@ import { describe, expect, it } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 
 /**
- * Snapshot of every place that applies the jurisdiction gate (EKU-853 contract
- * §1, §7.10). Policy v2 changed what the gate decides, not where it applies:
- * withdrawals, fee and proceeds collection, claims and transfers stay ungated.
- * Adding or removing a gated path must update this list in review.
+ * Snapshot of every place that applies a jurisdiction refusal. Board direction
+ * on EKU-862 (2026-10-06): policy v2 is metadata only and adds no server-side
+ * refusal, so this is exactly the pre-existing v1 connection-country gate as
+ * shipped in 0.44.1, and nothing else. Withdrawals, fee and proceeds
+ * collection, claims and transfers stay ungated. Adding or removing a gated
+ * path must update this list in review.
  */
 const GATED = [
-  "core.ts getQuotesWithPlans assertAssetsClassified",
-  "core.ts prepareSwap assertAssetsClassified",
   "fix-price.ts prepareFixPoolPrice assertAssetsTradable",
   "liquidity.ts prepareLpPositionDeposit assertAssetsTradable",
   "server.ts prepare_auction_create assertAssetsTradable",
@@ -37,7 +37,31 @@ function gateSites(): string[] {
     .sort();
 }
 
+function srcFiles(): { file: string; text: string }[] {
+  const root = new URL("../src/", import.meta.url);
+  return readdirSync(root, { recursive: true })
+    .map(String)
+    .filter((file) => file.endsWith(".ts"))
+    .map((file) => ({ file, text: readFileSync(new URL(file, root), "utf8") }));
+}
+
 describe("jurisdiction gate call sites", () => {
+  it("adds no refusal site beyond the 0.44.1 v1 gate (zero v2 refusal sites)", () => {
+    expect(gateSites()).toHaveLength(6);
+    for (const { file, text } of srcFiles()) {
+      expect(`${file}: ${/unclassified_asset/.test(text)}`).toBe(`${file}: false`);
+      expect(`${file}: ${/assertAssetsClassified|normalizeCountry/.test(text)}`).toBe(`${file}: false`);
+    }
+  });
+
+  it("reads the connection country only at the request edge", () => {
+    const readers = srcFiles()
+      .filter(({ text }) => /\brequestCountry\(|\.cf\b|\bcf\?\./.test(text))
+      .map(({ file }) => file)
+      .sort();
+    expect(readers).toEqual(["index.ts", "token-restrictions.ts"]);
+  });
+
   it("gates exactly the reviewed plan-producing paths", () => {
     expect(gateSites()).toEqual(GATED);
   });

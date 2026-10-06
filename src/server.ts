@@ -3676,8 +3676,8 @@ export function createEkuboServer(
 
   registerCatalogTool("prepare_oracle_capacity_expansion", prepareOracleCapacityExpansionSchema, (input) => {
     const chainId = canonicalChainId(input.chain_id);
-    // Extending an oracle's capacity supports holding the asset, so it is
-    // checked like an acquisition.
+    // Not a disposal: extending an oracle's capacity is an action taken to keep
+    // holding the asset, so it stays blocked wherever the asset is restricted.
     assertAssetsTradable([{ chainId, token: input.token, side: "buy" }], country);
     return prepareOracleCapacityExpansion({
       chainId,
@@ -4692,7 +4692,7 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
   },
   {
     protocols: null,
-    text: QUOTE_JURISDICTION_NOTICE_V2 + ` Swap quotes always return jurisdiction metadata (policy ekubo-token-jurisdictions-v2, with its policy_digest), independent of the MCP connection country; the prepare_ve33_reinvest phase=swap result and each of its child swaps carry it inline as well, beside each execution_plan_reference. Every asset is listed with its classification and provenance, so an empty restricted_jurisdictions list is explicit rather than missing. On a covered chain an asset that is neither a Robinhood Stock Token nor verified outside that class is unknown: every tool that would prepare a plan for it, swap quotes included, refuses with unclassified_asset from every country. Robinhood Stock Token restrictions apply to buying and selling alike. Other preparation tools retain their country-based controls and may fail with restricted_jurisdiction. Explain such a refusal to the user rather than retrying that preparation through another route. Withdrawals, fee and proceeds collection, and transfers remain available.`,
+    text: QUOTE_JURISDICTION_NOTICE_V2 + ` Swap quotes always return jurisdiction metadata (policy ekubo-token-jurisdictions-v2, with its policy_digest), independent of the MCP connection country; the prepare_ve33_reinvest phase=swap result and each of its child swaps carry it inline as well, beside each execution_plan_reference. Every asset is listed with its classification and provenance, so an empty restricted_jurisdictions list is explicit rather than missing. On a covered chain an asset that is neither a Robinhood Stock Token nor verified outside that class is classification=unknown: the quote or plan is still returned, labeled coverage=unknown and execution_hold=true with null restriction lists, which means the metadata is not authoritative for that asset and it must not be executed until it is classified. Robinhood Stock Token restrictions apply to buying and selling alike. This metadata is not enforced by this server and says nothing about the user: the agent, harness or wallet enforces the returned restricted_jurisdictions against the user's own attestation. Separately, the TWAMM order, auction creation, pool price correction, oracle capacity, LP deposit and reinvest swap preparation tools still apply the pre-existing v1 connection-country control and may fail with restricted_jurisdiction; explain such a refusal to the user rather than retrying that preparation through another route. Withdrawals, fee and proceeds collection, and transfers remain available.`,
   },
   {
     protocols: ["ekubo"],
@@ -4996,11 +4996,13 @@ on both sides), non_class (exact address verified not to be one), unknown (on a
 covered chain but not yet classified), or out_of_scope (chain not covered by the
 policy). The union covers the input and output assets, including the destination
 chain for bridges. An empty list for a classified asset means no restriction in
-this policy version, not a general eligibility certification. A request naming
-an unknown asset is refused with unclassified_asset before any provider is
-quoted, so no plan is ever returned for it; coverage=unknown, with null lists,
-would mean the metadata is not authoritative and nothing may be executed.
-Quotes are available regardless of the connection country and require no proof.
+this policy version, not a general eligibility certification. An unknown asset
+is quoted and planned like any other but labeled coverage=unknown and
+execution_hold=true with null lists: the metadata is not authoritative for it and
+it must not be executed until classified. Quotes are available regardless of the
+connection country, require no proof, and are never refused on this metadata;
+the agent, harness or wallet enforces restricted_jurisdictions against the
+user's own attestation.
 ${QUOTE_JURISDICTION_NOTICE_V2}
 The agent must retain this metadata when handing the plan reference to the wallet;
 the plan also carries it in extensions["ekubo.jurisdiction"]. This advisory

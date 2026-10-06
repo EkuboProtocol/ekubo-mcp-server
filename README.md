@@ -761,10 +761,10 @@ by ticker, name, or mere presence on the chain:
   ETH, WETH (issuer token-contracts page and on-chain verification) and USDG
   (issuer token-contracts page), and STONX (Ekubo-issued). Being outside this
   class is not being outside all law.
-- **`unknown`** — any other token on a covered chain. It is *held*: every tool
-  that would prepare a plan for it, `get_quotes_with_plans` included, refuses
-  with `unclassified_asset` from every country, before any provider is quoted.
-  A new issuer listing therefore fails closed until it is classified.
+- **`unknown`** — any other token on a covered chain. It is labeled, not
+  refused: quotes and plans are still returned, with `coverage: "unknown"`,
+  `execution_hold: true`, and `null` restriction lists, so a new issuer listing
+  is never presented as an authoritative empty list.
 - **`out_of_scope`** — a chain the policy does not cover.
 
 A Stock Token is restricted on **both** sides — acquisition and sale — for
@@ -774,8 +774,8 @@ Investor jurisdictions). v2 has no disposal exemption.
 
 ### Quote metadata
 
-Swap quotes (`get_quotes_with_plans`) for classified assets are available
-regardless of the MCP connection country. Each quote and execution envelope
+Swap quotes (`get_quotes_with_plans`) are available regardless of the MCP
+connection country and are never refused on this metadata. Each quote and execution envelope
 returns `jurisdiction` metadata: `policy_version`, `policy_digest`, `coverage`
 (`complete` or `unknown`), `execution_hold`, the union of restricted ISO
 alpha-2 jurisdictions with their ISO short names (`jurisdiction_names`), and
@@ -785,8 +785,8 @@ and `execution_hold`. Every asset is listed, so an empty list is explicit
 rather than missing. This applies to every quote provider, including
 cross-chain outputs. An empty list means this policy lists no restriction, not
 that the API certified eligibility. `coverage: "unknown"` (with `null` lists)
-means the metadata is not authoritative; plan-producing tools never return it,
-because they refuse unknown assets instead.
+means the metadata is not authoritative for that asset and it must not be
+executed until classified.
 
 The agent/wallet must read `execution_notice` before signing or submitting any
 approval or swap. It requires establishing the actual investor's relevant
@@ -799,43 +799,85 @@ country. Metadata accompanies plan references and is preserved in the fetched
 plan as `extensions["ekubo.jurisdiction"]`, so this is agent/client policy, not
 automatic wallet or on-chain enforcement.
 
-### Preparation gate
+Policy v2 is **metadata only** (board direction, EKU-862, 2026-10-06). The
+server makes no refusal and no claim about the user from it, and the
+connection country plays no part in it: the agent, harness or wallet enforces
+the returned `restricted_jurisdictions` against the user's own attestation.
+
+### Preparation gate (v1, unchanged)
+
+The pre-existing v1 connection-country gate is kept exactly as shipped in
+0.44.1; nothing from policy v2 feeds into it.
 
 Some assets may not be traded from some countries. The Ekubo interface disables
-its action buttons for them; this server has no UI to disable, so other
-preparation tools refuse to produce an execution plan:
-`prepare_twamm_order`, `prepare_lp_position_deposit`,
-`prepare_auction_create`, `prepare_oracle_capacity_expansion`,
-`prepare_fix_pool_price`, and the swap phase of `prepare_ve33_reinvest`.
-Withdrawing liquidity, collecting fees or proceeds, transferring a position,
-and revoking approvals are not gated by this trade policy. Discovery is also
-untouched: restricted assets remain listed and priced by `list_tokens`,
-`get_token`, and the opportunity tools.
+its action buttons for them; this server has no UI to disable, so other preparation tools refuse to
+produce an execution plan. The restriction data and its semantics mirror
+`interface/src/util/common/tokenRestrictions.ts` — currently the tokenized
+equities on Robinhood chain (`4663`), which are restricted in `US`, `GB`, `CA`,
+`SG`, `AE`, `CH`, `IR`, `KP`, `SY`, `CU`, and `UA`. `src/token-restrictions.ts`
+holds both.
 
 The country comes from `request.cf.country`, which Cloudflare derives from the
 connecting IP and a client cannot supply, matching the Ekubo API's `/country`
 route that the interface reads. It must be taken from the *original* request:
 `admitMcpRequest` replays a POST through `new Request(url, init)` to re-serve
 the body it already priced, and the replayed request carries the headers over
-but drops `cf`. It is a signal about the connection only.
+but drops `cf`.
 
-A refusal is an ordinary tool error with code `unclassified_asset` (an unknown
-asset, any country) or `restricted_jurisdiction` (a Stock Token and a
-restricted or unresolved country), listing the offending assets and their
-classification in `details`. It is raised before any upstream quote is fetched, so a restricted request never spends 0x,
-Across, LayerZero, or LI.FI credit.
+A refusal is an ordinary tool error with code `restricted_jurisdiction`, listing
+the offending assets in `details`. It is raised before any upstream quote is
+fetched, so a restricted request never spends 0x, Across, LayerZero, or LI.FI
+credit.
+
+What is gated is the *acquisition* of a restricted asset:
+`prepare_twamm_order`, `prepare_lp_position_deposit`,
+`prepare_auction_create`, `prepare_oracle_capacity_expansion`,
+`prepare_fix_pool_price`, and the swap phase of `prepare_ve33_reinvest`. Exits
+are deliberately never gated — withdrawing liquidity, collecting fees or
+proceeds, transferring a position, and revoking approvals stay available to
+everyone, as they do in the interface. Discovery is also untouched: restricted
+assets remain listed and priced by `list_tokens`, `get_token`, and the
+opportunity tools, exactly as the interface still displays them.
+
+### Disposals are exempt where the restriction is offering-based
+
+Selling a restricted asset for an unrestricted one is prepared even from a
+country that restricts it, provided that country appears in
+`DISPOSAL_EXEMPT_COUNTRIES` — currently `US`, `GB`, `CA`, `SG`, `AE`, and `CH`,
+the countries whose restriction exists because the offering is not registered
+for their residents. Blocking the sale there leaves a holder no way to stop
+holding, which is the opposite of what the restriction is for.
+
+The exemption is narrow, and three limits are load-bearing:
+
+- **It does not extend to the sanctions countries** — `IR`, `KP`, `SY`, `CU`,
+  `UA`. A disposal is still a transaction facilitated for a sanctioned
+  jurisdiction, so those stay blocked in both directions.
+- **It does not extend to an unresolved country.** The exemption is a claim
+  about one jurisdiction's rules, and an unresolved origin has not been shown
+  to be in one.
+- **Only the asset being given up is exempt.** Selling one restricted equity
+  for another is still refused, on the acquisition side, without needing a
+  rule of its own.
 
 Every call site declares which way its asset moves, via the required `side`
-field on `RestrictableAsset`. v2 decides both sides identically; the side is
-reported in metadata.
+field on `RestrictableAsset`. There is no default, so a new gated tool has to
+state its direction rather than inherit an exemption by omission. This is the
+one place where this server deliberately diverges from the interface, which
+blocks both directions and therefore still offers its users no exit; the
+interface needs the same carve-out before the two agree.
 
-Two further behaviours are deliberate:
+Two further behaviours are worth stating explicitly, because both are
+deliberate:
 
-- **An unresolved country fails closed, but only for Stock Tokens.** A verified non-class asset such as USDG stays
-  available.
-- **Tor (`T1`), Cloudflare's unknown country (`XX`), and any value that is not
-  two letters are treated as an unresolved country** rather than as a code
-  that can never match, so a restricted asset fails closed. The interface applies the same rule in
+- **An unresolved country fails closed, but only for assets that are actually
+  restricted.** A chain-wide restriction entry that names no countries restricts
+  nobody and must not drag every token on that chain into the check. An empty
+  `Set` is truthy, so this was previously inverted in the interface; both
+  implementations now treat an empty entry as no restriction.
+- **A request arriving over Tor (`cf.country === "T1"`) is treated as an
+  unresolved country** rather than as an ISO code that can never match, so a
+  restricted asset fails closed. The interface applies the same rule in
   `resolvedCountryCode`.
 
 The gate applies when a plan is issued. An already-issued
