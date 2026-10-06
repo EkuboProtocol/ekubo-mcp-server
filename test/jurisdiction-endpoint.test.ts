@@ -90,78 +90,93 @@ async function callTool(
   return parsed.result;
 }
 
-describe("jurisdiction restrictions over the MCP endpoint", () => {
-  it("refuses to prepare a restricted asset for a restricted country", async () => {
+describe("jurisdiction metadata over the MCP endpoint (inform only, board EKU-873)", () => {
+  const COUNTRIES = ["US", "IR", "FR", "XX", "T1", undefined];
+
+  it("prepares a Stock Token for every connection and attaches identical metadata", async () => {
+    const seen = new Set<string>();
+    for (const country of COUNTRIES) {
+      const result = await callTool(
+        "prepare_oracle_capacity_expansion",
+        { chain_id: ROBINHOOD_CHAIN, sender: SENDER, token: NVDA, min_capacity: 64 },
+        country,
+      );
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent).toHaveProperty("execution_plan_reference");
+      expect(result.structuredContent).toMatchObject({
+        jurisdiction: {
+          coverage: "complete", restricted_jurisdictions: V2_COUNTRIES,
+          assets: [{ token: NVDA, side: "buy", classification: "rhj_stock_token" }],
+        },
+      });
+      const text = JSON.stringify(result.structuredContent.jurisdiction);
+      expect(text).not.toContain("country");
+      seen.add(text);
+    }
+    expect(seen.size).toBe(1);
+  });
+
+  it("labels an unclassified asset coverage=unknown instead of refusing", async () => {
+    for (const country of COUNTRIES) {
+      const result = await callTool(
+        "prepare_oracle_capacity_expansion",
+        { chain_id: ROBINHOOD_CHAIN, sender: SENDER, token: UNKNOWN, min_capacity: 64 },
+        country,
+      );
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent).toHaveProperty("execution_plan_reference");
+      expect(result.structuredContent).toMatchObject({
+        jurisdiction: { coverage: "unknown", execution_hold: true, restricted_jurisdictions: null },
+      });
+    }
+  });
+
+  it("reports an explicit empty list for a verified non-class asset", async () => {
     const result = await callTool(
       "prepare_oracle_capacity_expansion",
-      {
-        chain_id: ROBINHOOD_CHAIN,
-        sender: SENDER,
-        token: NVDA,
-        min_capacity: 64,
-      },
-      "US",
-    );
-    expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({
-      error: { code: "restricted_jurisdiction" },
-    });
-  });
-
-  it("prepares the same asset for an unrestricted country", async () => {
-    const result = await callTool(
-      "prepare_oracle_capacity_expansion",
-      {
-        chain_id: ROBINHOOD_CHAIN,
-        sender: SENDER,
-        token: NVDA,
-        min_capacity: 64,
-      },
-      "FR",
-    );
-    expect(result.isError).toBeUndefined();
-    expect(result.structuredContent).toHaveProperty("execution_plan_reference");
-  });
-
-  it("fails closed for a restricted asset when the edge resolved no country", async () => {
-    const result = await callTool("prepare_oracle_capacity_expansion", {
-      chain_id: ROBINHOOD_CHAIN,
-      sender: SENDER,
-      token: NVDA,
-      min_capacity: 64,
-    });
-    expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({
-      error: { code: "restricted_jurisdiction" },
-    });
-  });
-
-  // The regression that matters: an unresolved country must restrict the
-  // restricted assets only, never every asset on the chain.
-  it("still prepares an unrestricted asset when the edge resolved no country", async () => {
-    const result = await callTool("prepare_oracle_capacity_expansion", {
-      chain_id: ROBINHOOD_CHAIN,
-      sender: SENDER,
-      token: USDG,
-      min_capacity: 64,
-    });
-    expect(result.isError).toBeUndefined();
-    expect(result.structuredContent).toHaveProperty("execution_plan_reference");
-  });
-
-  it("does not restrict an unrestricted asset for a restricted country", async () => {
-    const result = await callTool(
-      "prepare_oracle_capacity_expansion",
-      {
-        chain_id: ROBINHOOD_CHAIN,
-        sender: SENDER,
-        token: USDG,
-        min_capacity: 64,
-      },
+      { chain_id: ROBINHOOD_CHAIN, sender: SENDER, token: USDG, min_capacity: 64 },
       "US",
     );
     expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toMatchObject({
+      jurisdiction: { coverage: "complete", restricted_jurisdictions: [], execution_notice: null },
+    });
+  });
+
+  it("labels a Stock Token or unclassified ERC-20 sent with prepare_transfers as a sale", async () => {
+    const result = await callTool("prepare_transfers", {
+      chain_id: ROBINHOOD_CHAIN, sender: SENDER,
+      transfers: [
+        { kind: "native", recipient: USDG, amount: "1" },
+        { kind: "erc20", token: NVDA, recipient: USDG, amount: "5" },
+        { kind: "erc20", token: NVDA, recipient: UNKNOWN, amount: "6" },
+        { kind: "erc20", token: USDG, recipient: UNKNOWN, amount: "7" },
+        { kind: "erc20", token: UNKNOWN, recipient: USDG, amount: "8" },
+      ],
+    }, "US");
+    expect(result.isError).toBeUndefined();
     expect(result.structuredContent).toHaveProperty("execution_plan_reference");
+    expect(result.structuredContent).toMatchObject({
+      jurisdiction: {
+        coverage: "unknown",
+        assets: [
+          { token: NVDA, side: "sell", classification: "rhj_stock_token", restricted_jurisdictions: V2_COUNTRIES },
+          { token: UNKNOWN, side: "sell", classification: "unknown", restricted_jurisdictions: null },
+        ],
+      },
+    });
+  });
+
+  it("attaches nothing to a transfer of only unrestricted assets", async () => {
+    const result = await callTool("prepare_transfers", {
+      chain_id: ROBINHOOD_CHAIN, sender: SENDER,
+      transfers: [
+        { kind: "native", recipient: USDG, amount: "1" },
+        { kind: "erc20", token: USDG, recipient: UNKNOWN, amount: "7" },
+      ],
+    });
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).not.toHaveProperty("jurisdiction");
   });
 
   it("returns the same restriction metadata for restricted, allowed and unknown connections", async () => {
@@ -201,41 +216,6 @@ describe("jurisdiction restrictions over the MCP endpoint", () => {
 
   // Board direction EKU-862: policy v2 is metadata only. None of these may
   // produce a jurisdiction refusal that the 0.44.1 v1 gate would not have.
-  it("does not refuse an unclassified asset on the covered chain from any connection", async () => {
-    for (const country of ["FR", "US", "IR", "XX", "T1", undefined]) {
-      const result = await callTool(
-        "prepare_oracle_capacity_expansion",
-        { chain_id: ROBINHOOD_CHAIN, sender: SENDER, token: UNKNOWN, min_capacity: 64 },
-        country,
-      );
-      expect(result.isError).toBeUndefined();
-      expect(result.structuredContent).toHaveProperty("execution_plan_reference");
-      expect(JSON.stringify(result)).not.toContain("unclassified_asset");
-    }
-  });
-
-  it("does not treat the edge's XX as an unresolved connection", async () => {
-    const result = await callTool(
-      "prepare_oracle_capacity_expansion",
-      { chain_id: ROBINHOOD_CHAIN, sender: SENDER, token: NVDA, min_capacity: 64 },
-      "XX",
-    );
-    expect(result.isError).toBeUndefined();
-    expect(result.structuredContent).toHaveProperty("execution_plan_reference");
-  });
-
-  it("does not refuse a Stock Token only v2 classifies, or a country only v2 names", async () => {
-    const AMC = "0x05a3d1cd21d0c88145e82600e62e7e496e0f222b";
-    for (const [token, country] of [[AMC, "US"], [AMC, undefined], [NVDA, "RU"], [NVDA, "VE"]] as const) {
-      const result = await callTool(
-        "prepare_oracle_capacity_expansion",
-        { chain_id: ROBINHOOD_CHAIN, sender: SENDER, token, min_capacity: 64 },
-        country,
-      );
-      expect(result.isError).toBeUndefined();
-    }
-  });
-
   it("quotes and plans an unclassified asset, labeled coverage=unknown, identically for every connection", async () => {
     let calls = 0;
     const mockedFetch = spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL) => {

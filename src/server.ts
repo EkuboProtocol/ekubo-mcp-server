@@ -166,10 +166,7 @@ import {
   MAX_TRANSFERS_PER_PLAN,
   prepareTransfers,
 } from "./transfers.js";
-import {
-  assertAssetsTradable,
-  type RequestCountry,
-} from "./token-restrictions.js";
+import { classifyAsset, withJurisdiction } from "./token-restrictions.js";
 
 export const ROBINHOOD_STONX_CHAIN_ID = "4663";
 export const ROBINHOOD_STONX_VE_TOKEN = getAddress(
@@ -1854,13 +1851,6 @@ const ve33ReinvestOutputSchema = z
   .looseObject({
     phase: z.enum(["claim", "swap", "stake_all", "stake"]).optional(),
     jurisdiction: quoteJurisdictionSchema.optional(),
-    producer_country_gate: z
-      .object({
-        applied: z.literal(true),
-        policy_version: z.string(),
-        country_resolved: z.boolean(),
-      })
-      .optional(),
     exact_input_full_balance_swaps: z
       .array(
         z.looseObject({
@@ -1874,9 +1864,8 @@ const ve33ReinvestOutputSchema = z
     (result) =>
       result.phase !== "swap" ||
       (result.jurisdiction !== undefined &&
-        result.producer_country_gate !== undefined &&
         result.exact_input_full_balance_swaps !== undefined),
-    "phase=swap must carry jurisdiction, producer_country_gate, and exact_input_full_balance_swaps",
+    "phase=swap must carry jurisdiction and exact_input_full_balance_swaps",
   );
 const currentStateQueryOutputSchema = z.looseObject({
   current_state_query: z
@@ -2033,7 +2022,7 @@ export const publicToolCatalog = [
     name: "prepare_ve33_reinvest",
     title: "Prepare ve-token fee reinvestment",
     description:
-      "Build the safe phased workflow for 'reinvest my fees': automatically claim all active voter fees, prepare one exact-input swap per claimed non-stake token, then increase one VeToken or every existing active allocation without changing ownership or replacing votes. phase=swap returns jurisdiction metadata inline on the result and on every child swap, plus producer_country_gate recording that the MCP connection-country check ran; neither is permission to trade. For a nonempty restricted_jurisdictions list, follow its execution_notice before requesting any signature.",
+      "Build the safe phased workflow for 'reinvest my fees': automatically claim all active voter fees, prepare one exact-input swap per claimed non-stake token, then increase one VeToken or every existing active allocation without changing ownership or replacing votes. phase=swap returns jurisdiction metadata inline on the result and on every child swap; it is not permission to trade. For a nonempty restricted_jurisdictions list, follow its execution_notice before requesting any signature.",
     inputSchema: z.toJSONSchema(prepareVe33ReinvestSchema),
   },
   {
@@ -2622,7 +2611,6 @@ function resourceEnabled(
 export function createEkuboServer(
   env: Env,
   origin = "https://mcp.ekubo.org",
-  country: RequestCountry = null,
   protocols: ReadonlySet<ProtocolSlug> = ALL_PROTOCOLS,
 ) {
   // A single-protocol endpoint identifies itself as that protocol so a harness
@@ -3092,7 +3080,6 @@ export function createEkuboServer(
             })),
             slippageBps: input.slippage_bps,
             source: input.source as QuoteSource,
-            country,
           });
         }
         if (input.phase === "stake_all") {
@@ -3427,7 +3414,6 @@ export function createEkuboServer(
           maxAmount0: input.max_amount0,
           maxAmount1: input.max_amount1,
           slippageBps: input.slippage_bps,
-          country,
         }),
       ),
   );
@@ -3490,9 +3476,10 @@ export function createEkuboServer(
     }),
   );
 
-  registerCatalogTool("prepare_transfers", prepareTransfersSchema, (input) =>
-    prepareTransfers({
-      chainId: canonicalChainId(input.chain_id),
+  registerCatalogTool("prepare_transfers", prepareTransfersSchema, (input) => {
+    const chainId = canonicalChainId(input.chain_id);
+    const plan = prepareTransfers({
+      chainId,
       sender: input.sender,
       transfers: input.transfers.map((transfer) => {
         switch (transfer.kind) {
@@ -3521,8 +3508,22 @@ export function createEkuboServer(
             };
         }
       }),
-    }),
-  );
+    });
+    // Sending a Stock Token away is labeled like a sale. An unclassified
+    // ERC-20 on a covered chain is labeled too, so a newly listed Stock Token
+    // is reported as coverage=unknown rather than omitted.
+    const labeled = [...new Set(input.transfers.flatMap((transfer) => {
+      if (transfer.kind === "native") return [];
+      const { classification } = classifyAsset(chainId, transfer.token);
+      return classification === "rhj_stock_token" ||
+        (classification === "unknown" && transfer.kind === "erc20")
+        ? [transfer.token.toLowerCase()]
+        : [];
+    }))];
+    return labeled.length === 0
+      ? plan
+      : withJurisdiction(plan, labeled.map((token) => ({ chainId, token, side: "sell" as const })));
+  });
 
   registerCatalogTool("prepare_lp_position_transfer", prepareLpPositionTransferSchema, (input) =>
     prepareLpPositionTransfer(env, {
@@ -3554,20 +3555,12 @@ export function createEkuboServer(
               blockNumber: input.quote_result.block_number,
               blockHash: input.quote_result.block_hash as Hex | undefined,
             },
-      country,
     }),
   );
 
   registerCatalogTool("prepare_twamm_order", prepareTwammOrderSchema, (input) => {
     const chainId = canonicalChainId(input.chain_id);
-    assertAssetsTradable(
-      [
-        { chainId, token: input.sell_token, side: "sell" },
-        { chainId, token: input.buy_token, side: "buy" },
-      ],
-      country,
-    );
-    return prepareTwammOrder({
+    return withJurisdiction(prepareTwammOrder({
       chainId,
       sender: input.sender,
       sellToken: input.sell_token,
@@ -3581,7 +3574,10 @@ export function createEkuboServer(
       pendingTimestamp: input.pending_timestamp,
       deadlineSeconds: input.deadline_seconds,
       salt: input.salt as Hex | undefined,
-    });
+    }), [
+      { chainId, token: input.sell_token, side: "sell" },
+      { chainId, token: input.buy_token, side: "buy" },
+    ]);
   });
 
   registerCatalogTool("prepare_twamm_order_collection", prepareTwammOrderCollectionSchema, (input) =>
@@ -3619,14 +3615,7 @@ export function createEkuboServer(
 
   registerCatalogTool("prepare_auction_create", prepareAuctionCreateSchema, (input) => {
     const chainId = canonicalChainId(input.chain_id);
-    assertAssetsTradable(
-      [
-        { chainId, token: input.sell_token, side: "sell" },
-        { chainId, token: input.buy_token, side: "buy" },
-      ],
-      country,
-    );
-    return prepareAuctionCreate({
+    return withJurisdiction(prepareAuctionCreate({
       chainId,
       sender: input.sender,
       sellToken: input.sell_token,
@@ -3639,7 +3628,10 @@ export function createEkuboServer(
       startTime: input.start_time,
       auctionDuration: input.auction_duration,
       salt: input.salt as Hex,
-    });
+    }), [
+      { chainId, token: input.sell_token, side: "sell" },
+      { chainId, token: input.buy_token, side: "buy" },
+    ]);
   });
 
   registerCatalogTool("prepare_auction_complete", prepareAuctionCompleteSchema, (input) =>
@@ -3676,15 +3668,13 @@ export function createEkuboServer(
 
   registerCatalogTool("prepare_oracle_capacity_expansion", prepareOracleCapacityExpansionSchema, (input) => {
     const chainId = canonicalChainId(input.chain_id);
-    // Not a disposal: extending an oracle's capacity is an action taken to keep
-    // holding the asset, so it stays blocked wherever the asset is restricted.
-    assertAssetsTradable([{ chainId, token: input.token, side: "buy" }], country);
-    return prepareOracleCapacityExpansion({
+    // Extending an oracle's capacity supports holding the asset: labeled buy.
+    return withJurisdiction(prepareOracleCapacityExpansion({
       chainId,
       sender: input.sender,
       token: input.token,
       minCapacity: input.min_capacity,
-    });
+    }), [{ chainId, token: input.token, side: "buy" }]);
   });
 
   registerCatalogTool("prepare_approval_revocations", prepareApprovalRevocationsSchema, (input) =>
@@ -4692,7 +4682,7 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
   },
   {
     protocols: null,
-    text: QUOTE_JURISDICTION_NOTICE_V2 + ` Swap quotes always return jurisdiction metadata (policy ekubo-token-jurisdictions-v2, with its policy_digest), independent of the MCP connection country; the prepare_ve33_reinvest phase=swap result and each of its child swaps carry it inline as well, beside each execution_plan_reference. Every asset is listed with its classification and provenance, so an empty restricted_jurisdictions list is explicit rather than missing. On a covered chain an asset that is neither a Robinhood Stock Token nor verified outside that class is classification=unknown: the quote or plan is still returned, labeled coverage=unknown and execution_hold=true with null restriction lists, which means the metadata is not authoritative for that asset and it must not be executed until it is classified. Robinhood Stock Token restrictions apply to buying and selling alike. This metadata is not enforced by this server and says nothing about the user: the agent, harness or wallet enforces the returned restricted_jurisdictions against the user's own attestation. Separately, the TWAMM order, auction creation, pool price correction, oracle capacity, LP deposit and reinvest swap preparation tools still apply the pre-existing v1 connection-country control and may fail with restricted_jurisdiction; explain such a refusal to the user rather than retrying that preparation through another route. Withdrawals, fee and proceeds collection, and transfers remain available.`,
+    text: QUOTE_JURISDICTION_NOTICE_V2 + ` Jurisdiction metadata (policy ekubo-token-jurisdictions-v2, with its policy_digest) is returned as jurisdiction on swap quotes and their plans, inline on the prepare_ve33_reinvest phase=swap result and each child swap, and on the results of prepare_twamm_order, prepare_auction_create, prepare_lp_position_deposit, prepare_fix_pool_price, prepare_oracle_capacity_expansion, and prepare_transfers when it sends a Robinhood Stock Token or an unclassified ERC-20. Every asset is listed with its classification and provenance, so an empty restricted_jurisdictions list is explicit rather than missing. On a covered chain an asset that is neither a Robinhood Stock Token nor verified outside that class is classification=unknown, labeled coverage=unknown and execution_hold=true with null restriction lists: the metadata is not authoritative for it, so do not proceed with it until it is classified. Robinhood Stock Token restrictions apply to buying and selling alike. This server only informs: it does not know, infer or check the user's jurisdiction and never refuses on it, and the cloud wallet does not check it either. Before preparing or executing anything that touches an asset with a nonempty or unknown restricted_jurisdictions list, the agent must know the user's jurisdiction, ask the user if it is not already known, never infer it from an IP address, the environment or the wallet, and must not proceed for a user in a listed jurisdiction.`,
   },
   {
     protocols: ["ekubo"],
@@ -4999,10 +4989,11 @@ chain for bridges. An empty list for a classified asset means no restriction in
 this policy version, not a general eligibility certification. An unknown asset
 is quoted and planned like any other but labeled coverage=unknown and
 execution_hold=true with null lists: the metadata is not authoritative for it and
-it must not be executed until classified. Quotes are available regardless of the
-connection country, require no proof, and are never refused on this metadata;
-the agent, harness or wallet enforces restricted_jurisdictions against the
-user's own attestation.
+it must not be executed until classified. Quotes require no proof and are never
+refused on this metadata. The server does not know or check the user's
+jurisdiction: the agent must establish it (asking the user if not already known,
+never inferring it from IP, environment or wallet) and must not proceed for a
+user in a listed jurisdiction.
 ${QUOTE_JURISDICTION_NOTICE_V2}
 The agent must retain this metadata when handing the plan reference to the wallet;
 the plan also carries it in extensions["ekubo.jurisdiction"]. This advisory
@@ -5096,7 +5087,7 @@ const VE33_WORKFLOW = `# Ekubo ve(3,3) call workflow
 - compact_max_lock selects one surviving active NFT, claims its fees and extends it to the maximum four-year duration, then fee-safely claims and merges every other active NFT into it, splits once per additional target, and applies exactly one NFT vote per target. Never detach or reorder those calls.
 - Compound merges burn their source NFT IDs after moving the stake. Pass every burned ID, the survivor, the lock extension, final NFT count, decoded calls, and complete plan to the wallet. Unvoted NFTs remain outside the reallocation scope; withdrawals and direct burn calldata remain forbidden.
 - Raw VeToken vote, clearVote, extendStake*, and full-source mergeStakes calls can discard pending voter fees. Prefer the fee-preserving tools or compound claim methods. To remove a vote without moving it elsewhere, use prepare_ve33_clear_vote: it claims each stake's current pool immediately before clearing it, and its required current_pool_key makes a stale key revert the batch instead of silently discarding fees. The stake, its lock end, and its ownership survive a clear; the pool does not keep the weight, and a pool with no remaining vote weight charges a zero extension fee. Never call burn on a stake-bearing NFT; it can orphan the underlying stake. Withdraw only an expired stake, claim its active-pool fees first, and verify the recipient.
-- Reinvestment takes three sequential wallet phases: snapshot balances and automatically claim all active allocations, swap each complete post-claim delta exact-input into the stake token (the swap phase result and each child swap carry jurisdiction metadata inline, with producer_country_gate recording the MCP connection-country check; neither is permission to trade), then refresh portfolio state and use stake_all to apportion the complete output across every existing active allocation without replacing its vote. Each executable phase is passed to the wallet, which owns simulation and authorization.
+- Reinvestment takes three sequential wallet phases: snapshot balances and automatically claim all active allocations, swap each complete post-claim delta exact-input into the stake token (the swap phase result and each child swap carry jurisdiction metadata inline; it is not permission to trade), then refresh portfolio state and use stake_all to apportion the complete output across every existing active allocation without replacing its vote. Each executable phase is passed to the wallet, which owns simulation and authorization.
 - New stakes default to stakeMaxDuration and affect no existing NFT. Existing lock extension is intentionally explicit because it clears the vote; the extension tool uses a compound fee claim before either max-duration or custom-duration extension.
 - transferOwnership, ownership handover, ERC721 transfer/approval, safe transfer, and burn are forbidden in every first-class workflow.
 - Re-read ownership, stake amount, active vote, fee balances, allowances, and contract code before signing every plan.
