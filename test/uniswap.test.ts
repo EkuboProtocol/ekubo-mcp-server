@@ -113,12 +113,29 @@ describe("Uniswap liquidity plans", () => {
       v2PairAddress(chain_id, input.token0, input.token1).toLowerCase(),
     ).toBe("0x8803c117ccae7b5146297876c2a25df135141c4d");
     for (const [result, target] of [
-      [prepareV2Add({ ...input, use_native: true }), contracts.v2_router],
+      [prepareV2Add({ ...input, use_native: true }, "FR"), contracts.v2_router],
       [
-        prepareV3Add({ ...input, use_native: true }),
+        prepareV3Add({ ...input, use_native: true }, "FR"),
         contracts.v3_position_manager,
       ],
-      [prepareV4Add({ ...v4(), chain_id }), contracts.v4_position_manager],
+      [
+        prepareV4Add(
+          {
+            ...v4(),
+            chain_id,
+            token1: input.token1,
+            pool_id: v4PoolId({
+              token0: zeroAddress,
+              token1: input.token1,
+              fee: 3000,
+              tick_spacing: 60,
+              hooks: zeroAddress,
+            }),
+          },
+          "FR",
+        ),
+        contracts.v4_position_manager,
+      ],
     ] as const) {
       expect(
         planTransactions(result).some(
@@ -137,7 +154,7 @@ describe("Uniswap liquidity plans", () => {
     ).toBe("0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc");
   });
   it("funds V2 native deposits and cleans up only the ERC20 approval", () => {
-    const result = prepareV2Add({ ...deposit(), use_native: true });
+    const result = prepareV2Add({ ...deposit(), use_native: true }, "FR");
     expect(planStepKinds(result)).toEqual([
       "approval",
       "execution",
@@ -172,7 +189,7 @@ describe("Uniswap liquidity plans", () => {
     );
   });
   it("mints V3 with an ETH refund and exact token approval", () => {
-    const result = prepareV3Add({ ...deposit(), use_native: true });
+    const result = prepareV3Add({ ...deposit(), use_native: true }, "FR");
     const tx = planTransactions(result)[1];
     const call = decodeFunctionData({ abi: V3_ABI, data: tx.data });
     expect(call.functionName).toBe("multicall");
@@ -216,7 +233,7 @@ describe("Uniswap liquidity plans", () => {
     ).toBe("collect");
   });
   it("settles V4 mints, refunds native and revokes both approval layers", () => {
-    const result = prepareV4Add(v4()),
+    const result = prepareV4Add(v4(), "FR"),
       txs = planTransactions(result);
     expect(planStepKinds(result)).toEqual([
       "approval",
@@ -236,7 +253,7 @@ describe("Uniswap liquidity plans", () => {
     expect(cleanup.args[2]).toBe(0n);
   });
   it("closes both signs of accrued fee deltas when increasing V4", () => {
-    const result = prepareV4Add({ ...v4(), token_id: "42" });
+    const result = prepareV4Add({ ...v4(), token_id: "42" }, "FR");
     expect(v4Actions(planTransactions(result)[2].data, true)[0]).toBe(
       "0x00121214",
     );
@@ -281,7 +298,7 @@ describe("Uniswap liquidity plans", () => {
     ).toEqual([42n, 123n, 10n, 20n, "0x"]);
   });
   it("rejects stale plans, unordered currencies, invalid ticks and overflow", () => {
-    expect(() => prepareV3Add({ ...deposit(), deadline: "1" })).toThrow(
+    expect(() => prepareV3Add({ ...deposit(), deadline: "1" }, "FR")).toThrow(
       "Deadline",
     );
     expect(() =>
@@ -289,18 +306,18 @@ describe("Uniswap liquidity plans", () => {
         ...deposit(),
         token0: base().token1,
         token1: base().token0,
-      }),
+      }, "FR"),
     ).toThrow("token0");
-    expect(() => prepareV3Add({ ...deposit(), tick_lower: -119 })).toThrow(
+    expect(() => prepareV3Add({ ...deposit(), tick_lower: -119 }, "FR")).toThrow(
       "Ticks",
     );
     expect(() =>
-      prepareV3Add({ ...deposit(), amount0_min: "999999999" }),
+      prepareV3Add({ ...deposit(), amount0_min: "999999999" }, "FR"),
     ).toThrow("minima");
     expect(() =>
-      prepareV4Add({ ...v4(), amount0_max: String(1n << 128n) }),
+      prepareV4Add({ ...v4(), amount0_max: String(1n << 128n) }, "FR"),
     ).toThrow("uint128");
-    expect(() => prepareV4Add({ ...v4(), fee: 8388608 })).toThrow("pool_id");
+    expect(() => prepareV4Add({ ...v4(), fee: 8388608 }, "FR")).toThrow("pool_id");
   });
   it("builds decoded wallet reads with ownership and canonical factory checks", () => {
     const result = prepareUniswapReads({

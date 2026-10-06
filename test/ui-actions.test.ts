@@ -191,6 +191,7 @@ describe("EVM interface action preparation", () => {
         endTime: "1100",
         amount0: "100",
         amount1: "200",
+        country: "FR",
       }),
     ).toThrow(/not a BoostedFees deployment/);
   });
@@ -257,6 +258,7 @@ describe("EVM interface action preparation", () => {
       endTime: "1100",
       amount0: "100",
       amount1: "200",
+      country: "FR",
     });
     const oracle = prepareOracleCapacityExpansion({
       chainId: "1",

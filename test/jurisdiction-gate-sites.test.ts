@@ -1,11 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 /**
  * Snapshot of every place that applies the jurisdiction gate (EKU-853 contract
  * §1, §7.10). Policy v2 changed what the gate decides, not where it applies:
  * withdrawals, fee and proceeds collection, claims and transfers stay ungated.
- * Adding or removing a gated path must update this list in review.
+ * Adding or removing a gated path must update this list in review. Every file
+ * under src/ is scanned, subdirectories included (EKU-864: src/uniswap/ was
+ * outside the original top-level scan).
  */
 const GATED = [
   "core.ts getQuotesWithPlans assertAssetsClassified",
@@ -15,12 +18,22 @@ const GATED = [
   "server.ts prepare_auction_create assertAssetsTradable",
   "server.ts prepare_oracle_capacity_expansion assertAssetsTradable",
   "server.ts prepare_twamm_order assertAssetsTradable",
+  "ui-actions.ts prepareManualPoolBoost assertAssetsTradable",
+  "uniswap/v2.ts prepareV2Add assertAssetsTradable",
+  "uniswap/v3.ts prepareV3Add assertAssetsTradable",
+  "uniswap/v4.ts prepareV4Add assertAssetsTradable",
+  "ve33.ts prepareVe33IncreaseStake assertAssetsTradable",
+  // phase=swap, phase=stake_all and phase=stake, in source order.
   "ve33.ts prepareVe33Reinvest assertAssetsTradable",
+  "ve33.ts prepareVe33Reinvest assertAssetsTradable",
+  "ve33.ts prepareVe33Reinvest assertAssetsTradable",
+  "ve33.ts prepareVe33Stake assertAssetsTradable",
 ];
 
 function gateSites(): string[] {
   const root = new URL("../src/", import.meta.url);
-  return readdirSync(root)
+  return (readdirSync(fileURLToPath(root), { recursive: true }) as string[])
+    .map((file) => file.split("\\").join("/"))
     .filter((file) => file.endsWith(".ts") && file !== "token-restrictions.ts")
     .flatMap((file) => {
       const lines = readFileSync(new URL(file, root), "utf8").split("\n");

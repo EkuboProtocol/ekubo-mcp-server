@@ -806,7 +806,12 @@ its action buttons for them; this server has no UI to disable, so other
 preparation tools refuse to produce an execution plan:
 `prepare_twamm_order`, `prepare_lp_position_deposit`,
 `prepare_auction_create`, `prepare_oracle_capacity_expansion`,
-`prepare_fix_pool_price`, and the swap phase of `prepare_ve33_reinvest`.
+`prepare_fix_pool_price`, `prepare_manual_pool_boost`,
+`prepare_uniswap_v2_add_liquidity`, `prepare_uniswap_v3_add_liquidity`,
+`prepare_uniswap_v4_add_liquidity`, `prepare_ve33_stake`,
+`prepare_ve33_increase_stake`, and the swap, stake and stake_all phases of
+`prepare_ve33_reinvest`. The stake tools check the caller-supplied
+`stake_token`, which is not compared with the VeToken's own stake token.
 Withdrawing liquidity, collecting fees or proceeds, transferring a position,
 and revoking approvals are not gated by this trade policy. Discovery is also
 untouched: restricted assets remain listed and priced by `list_tokens`,

@@ -14,6 +14,10 @@ import {
 import { boostedFeesAddresses } from "./contracts.js";
 import { type Env, ServiceError } from "./core.js";
 import {
+  assertAssetsTradable,
+  type RequestCountry,
+} from "./token-restrictions.js";
+import {
   executionPlan,
   executionPlanFromSteps,
   type ExecutionPlanStepInput,
@@ -307,9 +311,19 @@ export function prepareManualPoolBoost(input: {
   endTime: string;
   amount0: string;
   amount1: string;
+  country: RequestCountry;
 }) {
   const sender = getAddress(input.sender);
   const poolKey = normalizeExactPoolKey(input.poolKey);
+  // A boost pays both pool tokens into the booster as incentives for the
+  // pair's liquidity, so both sides are gated as assets the caller gives up.
+  assertAssetsTradable(
+    [
+      { chainId: input.chainId, token: poolKey.token0, side: "sell" },
+      { chainId: input.chainId, token: poolKey.token1, side: "sell" },
+    ],
+    input.country,
+  );
   // A boost forwards to the pool's own extension (BoostedFeesLib.addIncentives
   // -> core.forward(poolKey.config.extension(), ...)), so a pool with no
   // BoostedFees extension sends the call to an address with no code. That

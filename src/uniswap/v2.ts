@@ -19,6 +19,10 @@ import {
   uint,
   plan,
 } from "./common.js";
+import {
+  assertAssetsTradable,
+  type RequestCountry,
+} from "../token-restrictions.js";
 export const V2_ABI = parseAbi([
   "function addLiquidity(address tokenA,address tokenB,uint256 amountADesired,uint256 amountBDesired,uint256 amountAMin,uint256 amountBMin,address to,uint256 deadline) returns (uint256 amountA,uint256 amountB,uint256 liquidity)",
   "function addLiquidityETH(address token,uint256 amountTokenDesired,uint256 amountTokenMin,uint256 amountETHMin,address to,uint256 deadline) payable returns (uint256 amountToken,uint256 amountETH,uint256 liquidity)",
@@ -76,9 +80,19 @@ function nativeAmounts(
     };
   throw new Error("Native operation requires wrapped native in the pair");
 }
-export function prepareV2Add(raw: z.input<typeof v2AddSchema>) {
+export function prepareV2Add(
+  raw: z.input<typeof v2AddSchema>,
+  country: RequestCountry,
+) {
   const input = v2AddSchema.parse(raw);
   pair(input.token0, input.token1);
+  assertAssetsTradable(
+    [
+      { chainId: input.chain_id, token: input.token0, side: "buy" },
+      { chainId: input.chain_id, token: input.token1, side: "buy" },
+    ],
+    country,
+  );
   const expiry = deadline(input),
     d = deployment(input.chain_id),
     [a0, a1, m0, m1] = amounts(input);

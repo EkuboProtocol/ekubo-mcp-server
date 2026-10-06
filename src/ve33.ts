@@ -188,6 +188,12 @@ export interface PrepareVe33IncreaseStakeIntent {
   stakeToken: Address;
   veId: string;
   amount: string;
+  /**
+   * Jurisdiction of the caller. The stake token is caller-chosen and is not
+   * checked against the VeToken's own stake token, so it is gated like any
+   * other asset the plan would move.
+   */
+  country: RequestCountry;
 }
 
 export interface PrepareVe33MergeIntent {
@@ -218,6 +224,12 @@ export interface PrepareVe33StakeIntent {
   salt: Hex;
   durationSeconds?: number;
   maxDuration: boolean;
+  /**
+   * Jurisdiction of the caller. The stake token is caller-chosen and is not
+   * checked against the VeToken's own stake token, so it is gated like any
+   * other asset the plan would move.
+   */
+  country: RequestCountry;
 }
 
 export interface PrepareVe33ClaimIntent {
@@ -340,6 +352,7 @@ export type PrepareVe33ReinvestIntent =
       stakeToken: Address;
       veId: string;
       amount: string;
+      country: RequestCountry;
     }
   | {
       phase: "stake_all";
@@ -349,6 +362,7 @@ export type PrepareVe33ReinvestIntent =
       stakeToken: Address;
       currentStateId: Hex;
       amount: string;
+      country: RequestCountry;
     };
 
 export function prepareVe33Vote(intent: PrepareVe33VoteIntent) {
@@ -754,6 +768,10 @@ export function prepareVe33Split(intent: PrepareVe33SplitIntent) {
 }
 
 export function prepareVe33Stake(intent: PrepareVe33StakeIntent) {
+  assertAssetsTradable(
+    [{ chainId: intent.chainId, token: intent.stakeToken, side: "sell" }],
+    intent.country,
+  );
   const amount = unsigned(intent.amount, 128, "amount");
   if (amount === 0n) throw invalid("amount must be positive");
   if (intent.maxDuration === (intent.durationSeconds !== undefined)) {
@@ -830,6 +848,10 @@ export function prepareVe33Stake(intent: PrepareVe33StakeIntent) {
 export function prepareVe33IncreaseStake(
   intent: PrepareVe33IncreaseStakeIntent,
 ) {
+  assertAssetsTradable(
+    [{ chainId: intent.chainId, token: intent.stakeToken, side: "sell" }],
+    intent.country,
+  );
   const veId = unsigned(intent.veId, 192, "ve_id");
   const amount = unsigned(intent.amount, 128, "amount");
   if (amount === 0n) throw invalid("amount must be positive");
@@ -2246,6 +2268,10 @@ export async function prepareVe33Reinvest(
   }
 
   if (intent.phase === "stake_all") {
+    assertAssetsTradable(
+      [{ chainId: intent.chainId, token: intent.stakeToken, side: "sell" }],
+      intent.country,
+    );
     const amount = unsigned(intent.amount, 128, "amount");
     if (amount === 0n) throw invalid("amount must be positive");
     const portfolio = await loadVe33Portfolio(
@@ -2354,6 +2380,10 @@ export async function prepareVe33Reinvest(
     return { phase: "stake_all" as const, plan, next_phase: null };
   }
 
+  assertAssetsTradable(
+    [{ chainId: intent.chainId, token: intent.stakeToken, side: "sell" }],
+    intent.country,
+  );
   const veId = unsigned(intent.veId, 192, "ve_id");
   const amount = unsigned(intent.amount, 128, "amount");
   if (amount === 0n) throw invalid("amount must be positive");

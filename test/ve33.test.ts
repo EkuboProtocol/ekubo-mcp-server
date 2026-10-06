@@ -33,6 +33,8 @@ const veToken = "0x9d7008E169D040B6c0140eb92E7cA82B12643497" as const;
 const sender = "0x1111111111111111111111111111111111111111" as const;
 const token0 = "0x0000000000000000000000000000000000000000" as const;
 const token1 = "0x2222222222222222222222222222222222222222" as const;
+/** STONX, the production stake token, which policy v2 lists outside the Stock Token class. */
+const stonx = "0x570c5aa79c798e7a418412cc8399ae5bcce570c5" as const;
 const token2 = "0x3333333333333333333333333333333333333333" as const;
 const extension = "0x4444444444444444444444444444444444444444" as const;
 const salt = `0x${"12".repeat(32)}` as const;
@@ -236,9 +238,10 @@ describe("ve(3,3) call generation", () => {
       chainId: "4663",
       veToken,
       sender,
-      stakeToken: token1,
+      stakeToken: stonx,
       veId: "10",
       amount: "100",
+      country: "FR",
     });
     const merge = prepareVe33Merge({
       chainId: "4663",
@@ -281,10 +284,11 @@ describe("ve(3,3) call generation", () => {
       chainId: "4663",
       veToken,
       sender,
-      stakeToken: token1,
+      stakeToken: stonx,
       amount,
       salt,
       maxDuration: true,
+      country: "FR",
     });
     expect(result.max_duration).toBe(true);
     expect(result.safety).toMatchObject({
@@ -463,9 +467,10 @@ describe("ve(3,3) call generation", () => {
         chainId: "4663",
         veToken,
         sender,
-        stakeToken: token1,
+        stakeToken: stonx,
         veId: "123",
         amount,
+        country: "FR",
       },
     );
     expect(result.phase).toBe("stake");
@@ -602,9 +607,10 @@ describe("ve(3,3) call generation", () => {
         chainId: "4663",
         veToken,
         sender,
-        stakeToken: token1,
+        stakeToken: stonx,
         currentStateId: current.state_id,
         amount: "100",
+        country: "FR",
       },
       fetcher,
       now,

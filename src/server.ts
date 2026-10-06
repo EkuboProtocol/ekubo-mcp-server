@@ -2999,6 +2999,7 @@ export function createEkuboServer(
           durationSeconds: input.duration_seconds,
           maxDuration:
             input.max_duration ?? input.duration_seconds === undefined,
+          country,
         }),
       ),
   );
@@ -3102,6 +3103,7 @@ export function createEkuboServer(
             stakeToken: input.stake_token as Address,
             currentStateId: input.current_state_id as `0x${string}`,
             amount: input.amount as string,
+            country,
           });
         }
         return prepareVe33Reinvest(env, {
@@ -3110,6 +3112,7 @@ export function createEkuboServer(
           stakeToken: input.stake_token as Address,
           veId: input.ve_id as string,
           amount: input.amount as string,
+          country,
         });
       }),
   );
@@ -3671,6 +3674,7 @@ export function createEkuboServer(
       endTime: input.end_time,
       amount0: input.amount0,
       amount1: input.amount1,
+      country,
     }),
   );
 
@@ -3746,6 +3750,7 @@ export function createEkuboServer(
       stakeToken: input.stake_token as Address,
       veId: input.ve_id,
       amount: input.amount,
+      country,
     }),
   );
 
@@ -4138,7 +4143,12 @@ export function createEkuboServer(
       }),
   );
 
-  for (const tool of [...uniswapTools, ...safeTools]) {
+  for (const tool of uniswapTools) {
+    registerCatalogTool(tool.name, tool.schema, (input) =>
+      tool.handler(input, country),
+    );
+  }
+  for (const tool of safeTools) {
     registerCatalogTool(tool.name, tool.schema, tool.handler);
   }
 

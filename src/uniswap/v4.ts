@@ -22,6 +22,10 @@ import {
   preparedUiAction,
 } from "../ui-actions.js";
 import type { ExecutionPlanStepInput } from "../execution-plan.js";
+import {
+  assertAssetsTradable,
+  type RequestCountry,
+} from "../token-restrictions.js";
 export const V4_ABI = parseAbi([
   "function modifyLiquidities(bytes unlockData,uint256 deadline) payable",
   "function initializePool((address currency0,address currency1,uint24 fee,int24 tickSpacing,address hooks) key,uint160 sqrtPriceX96) payable returns (int24 tick)",
@@ -135,9 +139,20 @@ function modify(planner: V4Planner, expiry: bigint) {
     args: [planner.finalize() as Hex, expiry],
   });
 }
-export function prepareV4Add(raw: z.input<typeof v4AddSchema>) {
+export function prepareV4Add(
+  raw: z.input<typeof v4AddSchema>,
+  country: RequestCountry,
+) {
   const input = v4AddSchema.parse(raw);
   validatePool(input);
+  // currency0 zero is native ETH, which the policy lists outside the class.
+  assertAssetsTradable(
+    [
+      { chainId: input.chain_id, token: input.token0, side: "buy" },
+      { chainId: input.chain_id, token: input.token1, side: "buy" },
+    ],
+    country,
+  );
   ticks(input);
   const expiry = deadline(input),
     d = deployment(input.chain_id),
