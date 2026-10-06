@@ -398,7 +398,8 @@ export type QuoteJurisdiction = ReturnType<typeof quoteJurisdiction>;
 
 /**
  * Jurisdiction metadata for a plan that trades nothing: claims, withdrawals,
- * transfers, revocations, votes, merges, collection, pool initialization.
+ * transfers that dispose of no gated asset, revocations, votes, merges,
+ * collection, pool initialization.
  *
  * `assets` lists assets acquired or disposed of by trade under the plan, and a
  * non-trading plan has none, so `[]` with `coverage: "complete"` is an

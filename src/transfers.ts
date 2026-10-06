@@ -10,7 +10,11 @@ import {
 import { ServiceError } from "./core.js";
 import { type ExecutionPlanStepInput } from "./execution-plan.js";
 import { preparedTransaction, preparedUiAction } from "./ui-actions.js";
-import { nonTradingJurisdiction } from "./token-restrictions.js";
+import {
+  classifyAsset,
+  type PlanJurisdiction,
+  type RestrictableAsset,
+} from "./token-restrictions.js";
 
 export const MAX_TRANSFERS_PER_PLAN = 4_096;
 
@@ -52,10 +56,43 @@ export type TransferInput =
   | Erc721TransferInput
   | Erc1155TransferInput;
 
+/**
+ * The entries of a transfer batch that dispose of a gated asset (CLO ruling
+ * EKU-878): delivering a Robinhood Stock Token to any address other than the
+ * sender is a disposal, gated like a sale, with no exemption for a contract
+ * the sender controls. An unclassified ERC-20 on a covered chain is included
+ * too, so the gate refuses it rather than guessing that it is not a Stock
+ * Token. A transfer to the sender itself, and every non-class or out-of-scope
+ * asset, is not a disposal. NFT entries are only included when their contract
+ * is itself a classified Stock Token: the class is fungible, and an
+ * unclassified NFT contract (an LP position, a VeToken) is not held.
+ */
+export function transferDisposals(input: {
+  chainId: string;
+  sender: string;
+  transfers: readonly { kind: TransferInput["kind"]; recipient: string; token?: string }[];
+}): RestrictableAsset[] {
+  const sender = input.sender.toLowerCase();
+  return input.transfers.flatMap((transfer): RestrictableAsset[] => {
+    if (transfer.kind === "native" || transfer.token === undefined) return [];
+    if (transfer.recipient.toLowerCase() === sender) return [];
+    const { classification } = classifyAsset(input.chainId, transfer.token);
+    const gated =
+      classification === "rhj_stock_token" ||
+      (classification === "unknown" && transfer.kind === "erc20");
+    return gated ? [{ chainId: input.chainId, token: transfer.token, side: "sell" }] : [];
+  });
+}
+
 export function prepareTransfers(input: {
   chainId: string;
   sender: string;
   transfers: TransferInput[];
+  /**
+   * `quoteJurisdiction` over `transferDisposals` when the caller's gate found
+   * any, `nonTradingJurisdiction()` otherwise (EKU-873, EKU-878).
+   */
+  jurisdiction: PlanJurisdiction;
 }) {
   if (input.transfers.length === 0) {
     throw new ServiceError(
@@ -186,7 +223,7 @@ export function prepareTransfers(input: {
 
   const atomicBatchRequired = steps.length > 1;
   return preparedUiAction({
-    jurisdiction: nonTradingJurisdiction(),
+    jurisdiction: input.jurisdiction,
     action: "batch_transfers",
     chainId: input.chainId,
     sender,

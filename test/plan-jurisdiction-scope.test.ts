@@ -26,9 +26,10 @@ type Scope = "trade" | "non_trading";
  * Every tool in the catalog: the scope of the plans it produces, or null for a
  * tool that produces no execution plan (reads, quotes without plans, typed-data
  * signature requests). `prepare_ve33_reinvest` produces a non-trading claim
- * phase and trading swap/stake phases.
+ * phase and trading swap/stake phases. `prepare_transfers` is a trade only
+ * when it sends a Stock Token to another address (CLO ruling EKU-878).
  */
-export const TOOL_PLAN_SCOPE: Record<string, Scope | "by_phase" | null> = {
+export const TOOL_PLAN_SCOPE: Record<string, Scope | "by_phase" | "by_recipient" | null> = {
   // Ekubo
   list_tokens: null,
   export_tokens: null,
@@ -59,7 +60,7 @@ export const TOOL_PLAN_SCOPE: Record<string, Scope | "by_phase" | null> = {
   prepare_lp_position_earnings_claim: "non_trading",
   prepare_lp_position_withdraw: "non_trading",
   prepare_wrap_unwrap: "trade",
-  prepare_transfers: "non_trading",
+  prepare_transfers: "by_recipient",
   prepare_lp_position_transfer: "non_trading",
   prepare_fix_pool_price: "trade",
   prepare_twamm_order: "trade",
@@ -158,6 +159,7 @@ export const TRADE_TOOLS = [
   "prepare_lp_position_deposit",
   "prepare_manual_pool_boost",
   "prepare_oracle_capacity_expansion",
+  "prepare_transfers",
   "prepare_twamm_order",
   "prepare_uniswap_v2_add_liquidity",
   "prepare_uniswap_v3_add_liquidity",
@@ -238,7 +240,9 @@ const RUNTIME_CASES: Case[] = [
       sender: SENDER,
       transfers: [
         { kind: "native", recipient: RECIPIENT, amount: "1" },
-        { kind: "erc20", token: UNKNOWN, recipient: RECIPIENT, amount: "5" },
+        { kind: "erc20", token: USDG, recipient: RECIPIENT, amount: "5" },
+        // Sending an unclassified token to oneself is not a disposal.
+        { kind: "erc20", token: UNKNOWN, recipient: SENDER, amount: "5" },
       ],
     },
   },
@@ -513,7 +517,7 @@ describe("plan jurisdiction scope catalog", () => {
 
   it("marks exactly the gated tools plus wrap/unwrap as trading", () => {
     const trading = Object.entries(TOOL_PLAN_SCOPE)
-      .filter(([, scope]) => scope === "trade" || scope === "by_phase")
+      .filter(([, scope]) => scope === "trade" || scope === "by_phase" || scope === "by_recipient")
       .map(([tool]) => tool)
       .sort();
     expect(trading).toEqual([...TRADE_TOOLS].sort());
@@ -535,7 +539,10 @@ describe("every stored plan carries extensions[\"ekubo.jurisdiction\"] with its 
       expect(result.structuredContent).not.toHaveProperty("error");
       const plans = await storedPlans(result);
       expect(plans.length).toBeGreaterThan(0);
-      const expected = TOOL_PLAN_SCOPE[tool] === "by_phase" ? "trade" : TOOL_PLAN_SCOPE[tool];
+      const expected = {
+        by_phase: "trade",
+        by_recipient: "non_trading",
+      }[TOOL_PLAN_SCOPE[tool] as string] ?? TOOL_PLAN_SCOPE[tool];
       for (const plan of plans) {
         expect(walletExecutionPlanSchema.safeParse(plan).success).toBe(true);
         const metadata = plan.extensions["ekubo.jurisdiction"]!;
@@ -629,5 +636,92 @@ describe("a refused plan fails the MCP tool call", () => {
     } finally {
       refuse.mockRestore();
     }
+  });
+});
+
+describe("prepare_transfers: a Stock Token sent to another address is a gated disposal (CLO EKU-878)", () => {
+  /** NVDA, a Robinhood Stock Token. */
+  const NVDA = "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec";
+  const transfer = (token: string, recipient: string) => ({ kind: "erc20", token, recipient, amount: "5" });
+  const call = (transfers: unknown[], country: string | undefined, sender = SENDER) =>
+    callTool("prepare_transfers", { chain_id: "4663", sender, transfers }, "/mcp", country as string);
+
+  it("refuses a Stock Token sent to a third party from a listed or unresolved country", async () => {
+    const before = env.ARTIFACT_STORE.entries.size;
+    for (const [country, code] of [["US", "US"], ["SG", "SG"], ["XX", null]] as const) {
+      const result = await call([transfer(NVDA, RECIPIENT)], country);
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        error: {
+          code: "restricted_jurisdiction",
+          details: { country: code, restricted_assets: [{ chain_id: "4663", token: NVDA, side: "sell", classification: "rhj_stock_token" }] },
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain("/artifact/");
+    }
+    expect(env.ARTIFACT_STORE.entries.size).toBe(before);
+  });
+
+  it("refuses with no own-contract exemption: any address other than the sender is gated", async () => {
+    const result = await call([transfer(NVDA, "0x4444444444444444444444444444444444444444")], "US");
+    expect(result.structuredContent).toMatchObject({ error: { code: "restricted_jurisdiction" } });
+  });
+
+  it("prepares a trade plan with the entry as a sell from a permitted country", async () => {
+    const result = await call([transfer(NVDA, RECIPIENT)], "FR");
+    const [plan] = await storedPlans(result);
+    const metadata = plan!.extensions["ekubo.jurisdiction"]!;
+    expect(metadata).toEqual(quoteJurisdiction([{ chainId: "4663", token: NVDA, side: "sell" }]));
+    expect(metadata.scope).toBe("trade");
+    expect(metadata.restricted_jurisdictions).toContain("US");
+  });
+
+  it("leaves a Stock Token sent to the sender itself non-trading, checksum-insensitively", async () => {
+    for (const country of ["US", "XX"]) {
+      const result = await call([transfer(NVDA, SENDER.toUpperCase().replace("0X", "0x"))], country);
+      const [plan] = await storedPlans(result);
+      expect(plan!.extensions["ekubo.jurisdiction"]).toEqual(nonTradingJurisdiction());
+    }
+  });
+
+  it("makes a mixed USDG + Stock Token batch a trade listing only the disposal", async () => {
+    const result = await call([transfer(USDG, RECIPIENT), transfer(NVDA, RECIPIENT)], "FR");
+    const [plan] = await storedPlans(result);
+    const metadata = plan!.extensions["ekubo.jurisdiction"]!;
+    expect(metadata.scope).toBe("trade");
+    expect(metadata.assets).toEqual(quoteJurisdiction([{ chainId: "4663", token: NVDA, side: "sell" }]).assets);
+  });
+
+  it("refuses an unclassified 4663 token sent to another address from every country", async () => {
+    for (const country of ["FR", "US", undefined]) {
+      const result = await call([transfer(USDG, RECIPIENT), transfer(UNKNOWN, RECIPIENT)], country as string);
+      expect(result.structuredContent).toMatchObject({
+        error: { code: "unclassified_asset", details: { assets: [{ token: UNKNOWN, classification: "unknown" }] } },
+      });
+    }
+  });
+
+  it("keeps a USDG-only batch, and NFTs, non-trading from a listed country", async () => {
+    const result = await call(
+      [
+        transfer(USDG, RECIPIENT),
+        { kind: "erc721", token: UNKNOWN, recipient: RECIPIENT, token_id: "1" },
+        { kind: "native", recipient: RECIPIENT, amount: "1" },
+      ],
+      "US",
+    );
+    const [plan] = await storedPlans(result);
+    expect(plan!.extensions["ekubo.jurisdiction"]).toEqual(nonTradingJurisdiction());
+  });
+
+  it("leaves chains outside the policy non-trading", async () => {
+    const result = await callTool(
+      "prepare_transfers",
+      { chain_id: "1", sender: SENDER, transfers: [transfer(NVDA, RECIPIENT), transfer(UNKNOWN, RECIPIENT)] },
+      "/mcp",
+      "US",
+    );
+    const [plan] = await storedPlans(result);
+    expect(plan!.extensions["ekubo.jurisdiction"]).toEqual(nonTradingJurisdiction());
   });
 });

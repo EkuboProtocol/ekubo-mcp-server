@@ -165,10 +165,12 @@ import {
 import {
   MAX_TRANSFERS_PER_PLAN,
   prepareTransfers,
+  transferDisposals,
 } from "./transfers.js";
 import {
   assertAssetsTradable,
   jurisdictionMetadataSchema,
+  nonTradingJurisdiction,
   quoteJurisdiction,
   type RequestCountry,
   type RestrictableAsset,
@@ -2144,7 +2146,7 @@ export const publicToolCatalog = [
     name: "prepare_transfers",
     title: "Prepare a batch of token transfers",
     description:
-      "Prepare one atomic-capable execution plan containing 1 to 4,096 ordered transfers on one EVM chain. Native, ERC-20, ERC-721, and ERC-1155 entries may be mixed freely. Every amount must be a positive decimal base-unit integer. ERC-721 safe defaults to true and may be set false to use transferFrom; safe ERC-721 and ERC-1155 entries accept optional receiver callback data. ERC-1155 defines no unsafe transfer method. Returns only a compact summary plus the execution_plan_reference, so even a large batch does not re-enter agent context.",
+      "Prepare one atomic-capable execution plan containing 1 to 4,096 ordered transfers on one EVM chain. Native, ERC-20, ERC-721, and ERC-1155 entries may be mixed freely. Every amount must be a positive decimal base-unit integer. ERC-721 safe defaults to true and may be set false to use transferFrom; safe ERC-721 and ERC-1155 entries accept optional receiver callback data. ERC-1155 defines no unsafe transfer method. Returns only a compact summary plus the execution_plan_reference, so even a large batch does not re-enter agent context. On Robinhood Chain an entry that sends a Robinhood Stock Token to any address other than the sender is a disposal gated like a sale (restricted_jurisdiction from a restricted or unresolved connection country; an unclassified ERC-20 sent to another address is refused with unclassified_asset), and the plan is then scope=trade.",
     inputSchema: z.toJSONSchema(prepareTransfersSchema),
   },
   {
@@ -3488,9 +3490,19 @@ export function createEkuboServer(
     }),
   );
 
-  registerCatalogTool("prepare_transfers", prepareTransfersSchema, (input) =>
-    prepareTransfers({
-      chainId: canonicalChainId(input.chain_id),
+  registerCatalogTool("prepare_transfers", prepareTransfersSchema, (input) => {
+    const chainId = canonicalChainId(input.chain_id);
+    // CLO ruling EKU-878: a Robinhood Stock Token sent to another address is a
+    // disposal, gated like a sale; the whole batch is then a trade.
+    const gatedAssets = transferDisposals({ chainId, sender: input.sender, transfers: input.transfers });
+    assertAssetsTradable(gatedAssets, country);
+    const jurisdiction =
+      gatedAssets.length === 0
+        ? nonTradingJurisdiction()
+        : quoteJurisdiction(gatedAssets);
+    return prepareTransfers({
+      jurisdiction,
+      chainId,
       sender: input.sender,
       transfers: input.transfers.map((transfer) => {
         switch (transfer.kind) {
@@ -3519,8 +3531,8 @@ export function createEkuboServer(
             };
         }
       }),
-    }),
-  );
+    });
+  });
 
   registerCatalogTool("prepare_lp_position_transfer", prepareLpPositionTransferSchema, (input) =>
     prepareLpPositionTransfer(env, {
@@ -4697,7 +4709,7 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
   },
   {
     protocols: null,
-    text: QUOTE_JURISDICTION_NOTICE_V2 + ` Swap quotes always return jurisdiction metadata (policy ekubo-token-jurisdictions-v2, with its policy_digest), independent of the MCP connection country; the prepare_ve33_reinvest phase=swap result and each of its child swaps carry it inline as well, beside each execution_plan_reference. Every asset is listed with its classification and provenance, so an empty restricted_jurisdictions list is explicit rather than missing. On a covered chain an asset that is neither a Robinhood Stock Token nor verified outside that class is unknown: every tool that would prepare a plan for it, swap quotes included, refuses with unclassified_asset from every country. Robinhood Stock Token restrictions apply to buying and selling alike. Other preparation tools retain their country-based controls and may fail with restricted_jurisdiction. Explain such a refusal to the user rather than retrying that preparation through another route. Withdrawals, fee and proceeds collection, and transfers remain available. Every Ekubo execution plan carries extensions["ekubo.jurisdiction"]; its scope says whether the plan trades: scope=trade lists the traded assets with their classification and restrictions, and a non_trading plan (claims, withdrawals, transfers, revocations, votes, collection, pool initialization) reports assets: [] with coverage: "complete" because nothing is traded under it.`,
+    text: QUOTE_JURISDICTION_NOTICE_V2 + ` Swap quotes always return jurisdiction metadata (policy ekubo-token-jurisdictions-v2, with its policy_digest), independent of the MCP connection country; the prepare_ve33_reinvest phase=swap result and each of its child swaps carry it inline as well, beside each execution_plan_reference. Every asset is listed with its classification and provenance, so an empty restricted_jurisdictions list is explicit rather than missing. On a covered chain an asset that is neither a Robinhood Stock Token nor verified outside that class is unknown: every tool that would prepare a plan for it, swap quotes included, refuses with unclassified_asset from every country. Robinhood Stock Token restrictions apply to buying and selling alike. Other preparation tools retain their country-based controls and may fail with restricted_jurisdiction. Explain such a refusal to the user rather than retrying that preparation through another route. Transfers of Robinhood Stock Tokens to another address are gated like other disposals; other transfers, withdrawals and fee/proceeds collection remain available. Every Ekubo execution plan carries extensions["ekubo.jurisdiction"]; its scope says whether the plan trades: scope=trade lists the traded assets with their classification and restrictions, and a non_trading plan (claims, withdrawals, transfers to oneself or of non-class assets, revocations, votes, collection, pool initialization) reports assets: [] with coverage: "complete" because nothing is traded under it.`,
   },
   {
     protocols: ["ekubo"],
@@ -4975,8 +4987,8 @@ Every plan this server stores carries extensions["ekubo.jurisdiction"], on every
 
 scope says whether the plan trades, and is decided by the preparation tool, never inferred from calldata:
 
-- scope=trade: the plan acquires, disposes of, deposits, or stakes assets the jurisdiction policy evaluates — swaps and bridges, LP deposits and Uniswap liquidity adds, manual pool boosts, ve33 stake, increase and reinvest swap/stake phases, TWAMM orders, auction creation, oracle capacity expansion, pool price fixes, and wrap/unwrap. assets lists exactly the assets the tool's policy check evaluated, each with side, classification, provenance and restrictions; restricted_jurisdictions is their union.
-- scope=non_trading: every other plan — fee, reward and proceeds claims, LP withdrawals and position transfers, prepare_transfers, approval revocations, TWAMM collection, stop and virtual orders, auction completion, ve33 votes, reallocation, clearing, merges, extensions and withdrawals, pool initialization, Safe approvals and executions, and other protocols' actions. assets is [] with coverage "complete", execution_hold false, restricted_jurisdictions [] and execution_notice null: nothing is acquired or disposed of by trade under the plan, which is an authoritative statement rather than an omission. The tokens such a plan moves are not classified here.
+- scope=trade: the plan acquires, disposes of, deposits, or stakes assets the jurisdiction policy evaluates — swaps and bridges, LP deposits and Uniswap liquidity adds, manual pool boosts, ve33 stake, increase and reinvest swap/stake phases, TWAMM orders, auction creation, oracle capacity expansion, pool price fixes, wrap/unwrap, and a prepare_transfers batch that sends a Robinhood Stock Token to any address other than the sender (a disposal; the whole batch is then a trade and assets lists each such entry as a sell). assets lists exactly the assets the tool's policy check evaluated, each with side, classification, provenance and restrictions; restricted_jurisdictions is their union.
+- scope=non_trading: every other plan — fee, reward and proceeds claims, LP withdrawals and position transfers, prepare_transfers batches with no such disposal, approval revocations, TWAMM collection, stop and virtual orders, auction completion, ve33 votes, reallocation, clearing, merges, extensions and withdrawals, pool initialization, Safe approvals and executions, and other protocols' actions. assets is [] with coverage "complete", execution_hold false, restricted_jurisdictions [] and execution_notice null: nothing is acquired or disposed of by trade under the plan, which is an authoritative statement rather than an omission. The tokens such a plan moves are not classified here.
 
 The metadata is advisory: it does not capture or replace the user's own jurisdiction and eligibility facts, and a quote, plan, simulation or approval is not permission to trade. Pass it through with the plan unchanged.
 

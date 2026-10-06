@@ -807,9 +807,12 @@ Every execution plan this server stores carries
 
 - `scope: "trade"` — exactly the gated paths listed under *Preparation gate*
   below plus `prepare_wrap_unwrap`. The body is `quoteJurisdiction(assets)` over
-  the same asset list the gate evaluated.
+  the same asset list the gate evaluated. A `prepare_transfers` batch is a trade
+  only when it sends a Robinhood Stock Token (or an unclassified ERC-20 on a
+  covered chain, which is refused) to an address other than the sender (CLO
+  ruling EKU-878); each such entry is listed as a `sell`.
 - `scope: "non_trading"` — every other plan: claims, withdrawals, position
-  transfers, `prepare_transfers`, approval revocations, TWAMM collection and
+  transfers, `prepare_transfers` batches with no such disposal, approval revocations, TWAMM collection and
   stops, auction completion, ve33 votes/merges/extensions/withdrawals, pool
   initialization, Safe approvals and executions, and the satellite protocols.
   The body is `nonTradingJurisdiction()`: `assets: []`, `coverage:
@@ -838,8 +841,13 @@ preparation tools refuse to produce an execution plan:
 `prepare_ve33_increase_stake`, and the swap, stake and stake_all phases of
 `prepare_ve33_reinvest`. The stake tools check the caller-supplied
 `stake_token`, which is not compared with the VeToken's own stake token.
-Withdrawing liquidity, collecting fees or proceeds, transferring a position,
-and revoking approvals are not gated by this trade policy. Discovery is also
+`prepare_transfers` gates each entry that sends a Robinhood Stock Token to an
+address other than the sender, as a `sell` with no own-contract exemption (CLO
+ruling EKU-878); an unclassified ERC-20 on a covered chain sent to another
+address is refused with `unclassified_asset`. Transfers to the sender itself and
+of non-class assets are not gated. Withdrawing liquidity, collecting fees or
+proceeds, transferring a position, and revoking approvals are not gated by this
+trade policy. Discovery is also
 untouched: restricted assets remain listed and priced by `list_tokens`,
 `get_token`, and the opportunity tools.
 

@@ -17,6 +17,9 @@ import {
   planTransactions,
   planValues,
 } from "./plan-helpers.js";
+import { nonTradingJurisdiction } from "../src/token-restrictions.js";
+
+const NON_TRADING = nonTradingJurisdiction();
 
 const SENDER = "0x1111111111111111111111111111111111111111";
 const RECIPIENT = "0x2222222222222222222222222222222222222222";
@@ -28,6 +31,7 @@ const ERC1155 = "0x6666666666666666666666666666666666666666";
 describe("prepare transfers", () => {
   it("prepares an atomic ordered plan with mixed transfer kinds", () => {
     const result = prepareTransfers({
+      jurisdiction: NON_TRADING,
       chainId: "8453",
       sender: SENDER,
       transfers: [
@@ -157,6 +161,7 @@ describe("prepare transfers", () => {
     ).toBe(false);
     expect(() =>
       prepareTransfers({
+        jurisdiction: NON_TRADING,
         chainId: "1",
         sender: SENDER,
         transfers: [
@@ -232,10 +237,11 @@ describe("prepare transfers", () => {
       }).success,
     ).toBe(false);
     expect(() =>
-      prepareTransfers({ chainId: "1", sender: SENDER, transfers: [] }),
+      prepareTransfers({ jurisdiction: NON_TRADING, chainId: "1", sender: SENDER, transfers: [] }),
     ).toThrow("At least one transfer");
     expect(() =>
       prepareTransfers({
+        jurisdiction: NON_TRADING,
         chainId: "1",
         sender: SENDER,
         transfers: [
@@ -247,6 +253,7 @@ describe("prepare transfers", () => {
 
   it("supports the full 4,096-step wallet plan limit", () => {
     const result = prepareTransfers({
+      jurisdiction: NON_TRADING,
       chainId: "1",
       sender: SENDER,
       transfers: Array.from({ length: MAX_TRANSFERS_PER_PLAN }, () => ({
@@ -296,6 +303,7 @@ describe("prepare transfers", () => {
 
   it("does not mark a single transfer as requiring an atomic batch", () => {
     const result = prepareTransfers({
+      jurisdiction: NON_TRADING,
       chainId: "1",
       sender: SENDER,
       transfers: [{ kind: "native", recipient: RECIPIENT, amount: "1" }],

@@ -17,6 +17,7 @@ const GATED = [
   "liquidity.ts prepareLpPositionDeposit assertAssetsTradable",
   "server.ts prepare_auction_create assertAssetsTradable",
   "server.ts prepare_oracle_capacity_expansion assertAssetsTradable",
+  "server.ts prepare_transfers assertAssetsTradable",
   "server.ts prepare_twamm_order assertAssetsTradable",
   "ui-actions.ts prepareManualPoolBoost assertAssetsTradable",
   "uniswap/v2.ts prepareV2Add assertAssetsTradable",
@@ -35,9 +36,10 @@ const GATED = [
  * built as a trade (CTO decision EKU-873, contract §4.1). Each is a GATED path
  * above carrying `quoteJurisdiction` over the asset list its gate checked, or
  * wrap/unwrap. Swap plans are built in `prepareCandidate` for both
- * `getQuotesWithPlans` and `prepareSwap`; the TWAMM order, auction and oracle
- * preparers receive the metadata their `server.ts` gate computed. Every other
- * plan site passes `nonTradingJurisdiction()`.
+ * `getQuotesWithPlans` and `prepareSwap`; the TWAMM order, auction, oracle
+ * and transfer preparers receive the metadata their `server.ts` gate computed
+ * (a transfer batch is a trade only when it disposes of a gated asset, CLO
+ * EKU-878). Every other plan site passes `nonTradingJurisdiction()`.
  */
 const TRADE_PLAN_SITES = [
   "core.ts prepareCandidate quoteJurisdiction(swapAssets(intent))",
@@ -45,6 +47,7 @@ const TRADE_PLAN_SITES = [
   "liquidity.ts prepareLpPositionDeposit quoteJurisdiction(gatedAssets)",
   "server.ts prepare_auction_create quoteJurisdiction(gatedAssets)",
   "server.ts prepare_oracle_capacity_expansion quoteJurisdiction(gatedAssets)",
+  "server.ts prepare_transfers quoteJurisdiction(gatedAssets)",
   "server.ts prepare_twamm_order quoteJurisdiction(gatedAssets)",
   "ui-actions.ts prepareManualPoolBoost quoteJurisdiction(gatedAssets)",
   "ui-actions.ts prepareWrapUnwrap quoteJurisdiction(wrapAssets)",
@@ -124,7 +127,11 @@ describe("jurisdiction gate call sites", () => {
   });
 
   it("leaves withdrawals, claims, collection and transfers ungated", () => {
-    const sites = gateSites().join("\n");
+    // The one transfer gate: a Stock Token sent to another address is a
+    // disposal (CLO ruling EKU-878). It is the only site allowed to name one.
+    const sites = gateSites()
+      .filter((site) => site !== "server.ts prepare_transfers assertAssetsTradable")
+      .join("\n");
     for (const name of ["withdraw", "claim", "collect", "transfer", "stop", "revoke", "complete"]) {
       expect(sites.toLowerCase()).not.toContain(name);
     }
@@ -152,6 +159,7 @@ describe("plan jurisdiction scope sites (EKU-873)", () => {
     expect(planJurisdictionSites().filter((site) => site.endsWith(" input.jurisdiction"))).toEqual([
       "auctions.ts prepareAuctionCreate input.jurisdiction",
       "orders.ts prepareTwammOrder input.jurisdiction",
+      "transfers.ts prepareTransfers input.jurisdiction",
       "ui-actions.ts prepareOracleCapacityExpansion input.jurisdiction",
       "ui-actions.ts preparedUiAction input.jurisdiction",
       "ui-actions.ts preparedUiAction input.jurisdiction",
