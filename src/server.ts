@@ -1813,10 +1813,15 @@ const exportedTokenListOutputSchema = z.looseObject({
 });
 const quoteJurisdictionSchema = z.object({
   policy_version: z.string(),
+  coverage: z.enum(["complete", "incomplete"]),
+  execution_hold: z.boolean(),
   restricted_jurisdictions: z.array(z.string().regex(/^[A-Z]{2}$/)),
   assets: z.array(z.object({
     chain_id: z.string(), token: z.string(), side: z.enum(["sell", "buy"]),
+    classification: z.enum(["rhj_stock_token", "outside_class", "unclassified", "out_of_scope"]),
+    class_sources: z.array(z.string()),
     restricted_jurisdictions: z.array(z.string().regex(/^[A-Z]{2}$/)),
+    execution_hold: z.boolean(),
   })),
   execution_notice: z.string().nullable(),
 });
@@ -3666,8 +3671,8 @@ export function createEkuboServer(
 
   registerCatalogTool("prepare_oracle_capacity_expansion", prepareOracleCapacityExpansionSchema, (input) => {
     const chainId = canonicalChainId(input.chain_id);
-    // Not a disposal: extending an oracle's capacity is an action taken to keep
-    // holding the asset, so it stays blocked wherever the asset is restricted.
+    // Extending an oracle's capacity supports holding the asset, so it is
+    // checked like an acquisition.
     assertAssetsTradable([{ chainId, token: input.token, side: "buy" }], country);
     return prepareOracleCapacityExpansion({
       chainId,
@@ -4682,7 +4687,7 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
   },
   {
     protocols: null,
-    text: QUOTE_JURISDICTION_NOTICE + ` Swap quotes always return jurisdiction metadata, independent of the MCP connection country; the prepare_ve33_reinvest phase=swap result and each of its child swaps carry it inline as well, beside each execution_plan_reference. Other preparation tools retain their existing country-based controls and may fail with restricted_jurisdiction. Explain such a refusal to the user rather than retrying that preparation through another route. Withdrawals, fee and proceeds collection, and transfers remain available.`,
+    text: QUOTE_JURISDICTION_NOTICE + ` Swap quotes always return jurisdiction metadata (policy ekubo-token-jurisdictions-v2), independent of the MCP connection country; the prepare_ve33_reinvest phase=swap result and each of its child swaps carry it inline as well, beside each execution_plan_reference. Every asset is listed with its classification, so an empty restricted_jurisdictions list is explicit rather than missing. execution_hold=true (coverage=incomplete) means an asset on a covered chain is unclassified: do not request signatures or approvals for that plan. Robinhood Stock Token restrictions apply to buying and selling alike. Other preparation tools retain their country-based controls, hold unclassified assets, and may fail with restricted_jurisdiction. Explain such a refusal to the user rather than retrying that preparation through another route. Withdrawals, fee and proceeds collection, and transfers remain available.`,
   },
   {
     protocols: ["ekubo"],
@@ -4977,11 +4982,17 @@ and the LI.FI API, each included where it is configured. Provider API keys are s
 and are never accepted as tool arguments.
 
 Every quote and its execution envelope include jurisdiction metadata:
-policy_version, restricted_jurisdictions (ISO alpha-2 country codes), assets
-(chain_id, token, side, restricted_jurisdictions), and execution_notice.
-Restrictions depend on direction: the union covers the input disposal and output
-acquisition, including the destination chain for bridges. An empty list means no
-restriction in this policy version, not a general eligibility certification.
+policy_version, coverage, execution_hold, restricted_jurisdictions (ISO alpha-2
+country codes), assets (chain_id, token, side, classification, class_sources,
+restricted_jurisdictions, execution_hold), and execution_notice. Every asset is
+listed: classification is rhj_stock_token (Robinhood Stock Token, restricted on
+both sides), outside_class (exact address verified outside that class),
+unclassified (on a covered chain but not yet classified: execution_hold), or
+out_of_scope (chain not covered by the policy). The union covers the input and
+output assets, including the destination chain for bridges. An empty list for a
+classified asset means no restriction in this policy version, not a general
+eligibility certification; coverage=incomplete means the list is not
+authoritative and the plan must not be executed.
 Quotes are available regardless of the connection country and require no proof.
 ${QUOTE_JURISDICTION_NOTICE}
 The agent must retain this metadata when handing the plan reference to the wallet;

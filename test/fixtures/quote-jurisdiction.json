@@ -6,41 +6,73 @@
     "specified_token": "0x0000000000000000000000000000000000000000",
     "other_token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
     "expected": {
-      "policy_version": "ekubo-token-jurisdictions-v1",
+      "policy_version": "ekubo-token-jurisdictions-v2",
+      "coverage": "complete",
+      "execution_hold": false,
       "restricted_jurisdictions": [
         "AE",
+        "BY",
         "CA",
         "CH",
         "CU",
         "GB",
         "IR",
         "KP",
+        "MM",
+        "RU",
+        "SD",
         "SG",
+        "SS",
         "SY",
         "UA",
-        "US"
+        "US",
+        "VE"
       ],
       "assets": [
         {
           "chain_id": "4663",
+          "token": "0x0000000000000000000000000000000000000000",
+          "side": "sell",
+          "classification": "outside_class",
+          "class_sources": [
+            "native"
+          ],
+          "restricted_jurisdictions": [],
+          "execution_hold": false
+        },
+        {
+          "chain_id": "4663",
           "token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
           "side": "buy",
+          "classification": "rhj_stock_token",
+          "class_sources": [
+            "curated",
+            "ekubo_v1",
+            "issuer_registry"
+          ],
           "restricted_jurisdictions": [
             "AE",
+            "BY",
             "CA",
             "CH",
             "CU",
             "GB",
             "IR",
             "KP",
+            "MM",
+            "RU",
+            "SD",
             "SG",
+            "SS",
             "SY",
             "UA",
-            "US"
-          ]
+            "US",
+            "VE"
+          ],
+          "execution_hold": false
         }
       ],
-      "execution_notice": "Beware jurisdiction restrictions: a quote or execution plan is not permission to trade. For a nonempty restricted_jurisdictions list, before requesting transaction signatures or submitting any approval or swap, the agent/wallet must evaluate the user's connection jurisdiction against restricted_jurisdictions. If it is restricted or unknown, obtain the user's explicit attestation that they are not legally domiciled in any listed jurisdiction; never infer domicile from an agent/server IP or attest on the user's behalf. Do not execute if the user cannot attest. Keep the attestation client-side; do not send it to the quote API or MCP server."
+      "execution_notice": "A quote, execution plan, simulation or wallet approval is not permission to trade. Robinhood Stock Tokens are tokenised debt securities subject to issuer restrictions and applicable law. Before requesting signatures or submitting approvals or trades, establish the user's relevant jurisdiction and eligibility, including location, residence or entity incorporation, US-person status under Regulation S, any person for whose account or benefit the transaction is made, and issuer Prohibited Investor restrictions. Never infer these facts from an agent or server IP. If required facts or asset-policy coverage are unknown, do not proceed. Only the user or an authorized representative of the actual investor may provide an explicit factual attestation; an agent must not attest on their behalf. A known prohibited fact cannot be overridden by attestation. An attestation is not a license, legal exemption or substitute for required screening. Keep the attestation client-side; do not send it to the quote API or MCP server. No blanket disposal exemption applies."
     }
   },
   {
@@ -50,29 +82,73 @@
     "specified_token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
     "other_token": "0x0000000000000000000000000000000000000000",
     "expected": {
-      "policy_version": "ekubo-token-jurisdictions-v1",
+      "policy_version": "ekubo-token-jurisdictions-v2",
+      "coverage": "complete",
+      "execution_hold": false,
       "restricted_jurisdictions": [
+        "AE",
+        "BY",
+        "CA",
+        "CH",
         "CU",
+        "GB",
         "IR",
         "KP",
+        "MM",
+        "RU",
+        "SD",
+        "SG",
+        "SS",
         "SY",
-        "UA"
+        "UA",
+        "US",
+        "VE"
       ],
       "assets": [
         {
           "chain_id": "4663",
           "token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
           "side": "sell",
+          "classification": "rhj_stock_token",
+          "class_sources": [
+            "curated",
+            "ekubo_v1",
+            "issuer_registry"
+          ],
           "restricted_jurisdictions": [
+            "AE",
+            "BY",
+            "CA",
+            "CH",
             "CU",
+            "GB",
             "IR",
             "KP",
+            "MM",
+            "RU",
+            "SD",
+            "SG",
+            "SS",
             "SY",
-            "UA"
-          ]
+            "UA",
+            "US",
+            "VE"
+          ],
+          "execution_hold": false
+        },
+        {
+          "chain_id": "4663",
+          "token": "0x0000000000000000000000000000000000000000",
+          "side": "buy",
+          "classification": "outside_class",
+          "class_sources": [
+            "native"
+          ],
+          "restricted_jurisdictions": [],
+          "execution_hold": false
         }
       ],
-      "execution_notice": "Beware jurisdiction restrictions: a quote or execution plan is not permission to trade. For a nonempty restricted_jurisdictions list, before requesting transaction signatures or submitting any approval or swap, the agent/wallet must evaluate the user's connection jurisdiction against restricted_jurisdictions. If it is restricted or unknown, obtain the user's explicit attestation that they are not legally domiciled in any listed jurisdiction; never infer domicile from an agent/server IP or attest on the user's behalf. Do not execute if the user cannot attest. Keep the attestation client-side; do not send it to the quote API or MCP server."
+      "execution_notice": "A quote, execution plan, simulation or wallet approval is not permission to trade. Robinhood Stock Tokens are tokenised debt securities subject to issuer restrictions and applicable law. Before requesting signatures or submitting approvals or trades, establish the user's relevant jurisdiction and eligibility, including location, residence or entity incorporation, US-person status under Regulation S, any person for whose account or benefit the transaction is made, and issuer Prohibited Investor restrictions. Never infer these facts from an agent or server IP. If required facts or asset-policy coverage are unknown, do not proceed. Only the user or an authorized representative of the actual investor may provide an explicit factual attestation; an agent must not attest on their behalf. A known prohibited fact cannot be overridden by attestation. An attestation is not a license, legal exemption or substitute for required screening. Keep the attestation client-side; do not send it to the quote API or MCP server. No blanket disposal exemption applies."
     }
   },
   {
@@ -82,41 +158,73 @@
     "specified_token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
     "other_token": "0x0000000000000000000000000000000000000000",
     "expected": {
-      "policy_version": "ekubo-token-jurisdictions-v1",
+      "policy_version": "ekubo-token-jurisdictions-v2",
+      "coverage": "complete",
+      "execution_hold": false,
       "restricted_jurisdictions": [
         "AE",
+        "BY",
         "CA",
         "CH",
         "CU",
         "GB",
         "IR",
         "KP",
+        "MM",
+        "RU",
+        "SD",
         "SG",
+        "SS",
         "SY",
         "UA",
-        "US"
+        "US",
+        "VE"
       ],
       "assets": [
         {
           "chain_id": "4663",
+          "token": "0x0000000000000000000000000000000000000000",
+          "side": "sell",
+          "classification": "outside_class",
+          "class_sources": [
+            "native"
+          ],
+          "restricted_jurisdictions": [],
+          "execution_hold": false
+        },
+        {
+          "chain_id": "4663",
           "token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
           "side": "buy",
+          "classification": "rhj_stock_token",
+          "class_sources": [
+            "curated",
+            "ekubo_v1",
+            "issuer_registry"
+          ],
           "restricted_jurisdictions": [
             "AE",
+            "BY",
             "CA",
             "CH",
             "CU",
             "GB",
             "IR",
             "KP",
+            "MM",
+            "RU",
+            "SD",
             "SG",
+            "SS",
             "SY",
             "UA",
-            "US"
-          ]
+            "US",
+            "VE"
+          ],
+          "execution_hold": false
         }
       ],
-      "execution_notice": "Beware jurisdiction restrictions: a quote or execution plan is not permission to trade. For a nonempty restricted_jurisdictions list, before requesting transaction signatures or submitting any approval or swap, the agent/wallet must evaluate the user's connection jurisdiction against restricted_jurisdictions. If it is restricted or unknown, obtain the user's explicit attestation that they are not legally domiciled in any listed jurisdiction; never infer domicile from an agent/server IP or attest on the user's behalf. Do not execute if the user cannot attest. Keep the attestation client-side; do not send it to the quote API or MCP server."
+      "execution_notice": "A quote, execution plan, simulation or wallet approval is not permission to trade. Robinhood Stock Tokens are tokenised debt securities subject to issuer restrictions and applicable law. Before requesting signatures or submitting approvals or trades, establish the user's relevant jurisdiction and eligibility, including location, residence or entity incorporation, US-person status under Regulation S, any person for whose account or benefit the transaction is made, and issuer Prohibited Investor restrictions. Never infer these facts from an agent or server IP. If required facts or asset-policy coverage are unknown, do not proceed. Only the user or an authorized representative of the actual investor may provide an explicit factual attestation; an agent must not attest on their behalf. A known prohibited fact cannot be overridden by attestation. An attestation is not a license, legal exemption or substitute for required screening. Keep the attestation client-side; do not send it to the quote API or MCP server. No blanket disposal exemption applies."
     }
   },
   {
@@ -126,29 +234,73 @@
     "specified_token": "0x0000000000000000000000000000000000000000",
     "other_token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
     "expected": {
-      "policy_version": "ekubo-token-jurisdictions-v1",
+      "policy_version": "ekubo-token-jurisdictions-v2",
+      "coverage": "complete",
+      "execution_hold": false,
       "restricted_jurisdictions": [
+        "AE",
+        "BY",
+        "CA",
+        "CH",
         "CU",
+        "GB",
         "IR",
         "KP",
+        "MM",
+        "RU",
+        "SD",
+        "SG",
+        "SS",
         "SY",
-        "UA"
+        "UA",
+        "US",
+        "VE"
       ],
       "assets": [
         {
           "chain_id": "4663",
           "token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
           "side": "sell",
+          "classification": "rhj_stock_token",
+          "class_sources": [
+            "curated",
+            "ekubo_v1",
+            "issuer_registry"
+          ],
           "restricted_jurisdictions": [
+            "AE",
+            "BY",
+            "CA",
+            "CH",
             "CU",
+            "GB",
             "IR",
             "KP",
+            "MM",
+            "RU",
+            "SD",
+            "SG",
+            "SS",
             "SY",
-            "UA"
-          ]
+            "UA",
+            "US",
+            "VE"
+          ],
+          "execution_hold": false
+        },
+        {
+          "chain_id": "4663",
+          "token": "0x0000000000000000000000000000000000000000",
+          "side": "buy",
+          "classification": "outside_class",
+          "class_sources": [
+            "native"
+          ],
+          "restricted_jurisdictions": [],
+          "execution_hold": false
         }
       ],
-      "execution_notice": "Beware jurisdiction restrictions: a quote or execution plan is not permission to trade. For a nonempty restricted_jurisdictions list, before requesting transaction signatures or submitting any approval or swap, the agent/wallet must evaluate the user's connection jurisdiction against restricted_jurisdictions. If it is restricted or unknown, obtain the user's explicit attestation that they are not legally domiciled in any listed jurisdiction; never infer domicile from an agent/server IP or attest on the user's behalf. Do not execute if the user cannot attest. Keep the attestation client-side; do not send it to the quote API or MCP server."
+      "execution_notice": "A quote, execution plan, simulation or wallet approval is not permission to trade. Robinhood Stock Tokens are tokenised debt securities subject to issuer restrictions and applicable law. Before requesting signatures or submitting approvals or trades, establish the user's relevant jurisdiction and eligibility, including location, residence or entity incorporation, US-person status under Regulation S, any person for whose account or benefit the transaction is made, and issuer Prohibited Investor restrictions. Never infer these facts from an agent or server IP. If required facts or asset-policy coverage are unknown, do not proceed. Only the user or an authorized representative of the actual investor may provide an explicit factual attestation; an agent must not attest on their behalf. A known prohibited fact cannot be overridden by attestation. An attestation is not a license, legal exemption or substitute for required screening. Keep the attestation client-side; do not send it to the quote API or MCP server. No blanket disposal exemption applies."
     }
   },
   {
@@ -158,53 +310,93 @@
     "specified_token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
     "other_token": "0xff080c8ce2e5feadaca0da81314ae59d232d4afd",
     "expected": {
-      "policy_version": "ekubo-token-jurisdictions-v1",
+      "policy_version": "ekubo-token-jurisdictions-v2",
+      "coverage": "complete",
+      "execution_hold": false,
       "restricted_jurisdictions": [
         "AE",
+        "BY",
         "CA",
         "CH",
         "CU",
         "GB",
         "IR",
         "KP",
+        "MM",
+        "RU",
+        "SD",
         "SG",
+        "SS",
         "SY",
         "UA",
-        "US"
+        "US",
+        "VE"
       ],
       "assets": [
         {
           "chain_id": "4663",
           "token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
           "side": "sell",
-          "restricted_jurisdictions": [
-            "CU",
-            "IR",
-            "KP",
-            "SY",
-            "UA"
-          ]
-        },
-        {
-          "chain_id": "4663",
-          "token": "0xff080c8ce2e5feadaca0da81314ae59d232d4afd",
-          "side": "buy",
+          "classification": "rhj_stock_token",
+          "class_sources": [
+            "curated",
+            "ekubo_v1",
+            "issuer_registry"
+          ],
           "restricted_jurisdictions": [
             "AE",
+            "BY",
             "CA",
             "CH",
             "CU",
             "GB",
             "IR",
             "KP",
+            "MM",
+            "RU",
+            "SD",
             "SG",
+            "SS",
             "SY",
             "UA",
-            "US"
-          ]
+            "US",
+            "VE"
+          ],
+          "execution_hold": false
+        },
+        {
+          "chain_id": "4663",
+          "token": "0xff080c8ce2e5feadaca0da81314ae59d232d4afd",
+          "side": "buy",
+          "classification": "rhj_stock_token",
+          "class_sources": [
+            "curated",
+            "ekubo_v1",
+            "issuer_registry"
+          ],
+          "restricted_jurisdictions": [
+            "AE",
+            "BY",
+            "CA",
+            "CH",
+            "CU",
+            "GB",
+            "IR",
+            "KP",
+            "MM",
+            "RU",
+            "SD",
+            "SG",
+            "SS",
+            "SY",
+            "UA",
+            "US",
+            "VE"
+          ],
+          "execution_hold": false
         }
       ],
-      "execution_notice": "Beware jurisdiction restrictions: a quote or execution plan is not permission to trade. For a nonempty restricted_jurisdictions list, before requesting transaction signatures or submitting any approval or swap, the agent/wallet must evaluate the user's connection jurisdiction against restricted_jurisdictions. If it is restricted or unknown, obtain the user's explicit attestation that they are not legally domiciled in any listed jurisdiction; never infer domicile from an agent/server IP or attest on the user's behalf. Do not execute if the user cannot attest. Keep the attestation client-side; do not send it to the quote API or MCP server."
+      "execution_notice": "A quote, execution plan, simulation or wallet approval is not permission to trade. Robinhood Stock Tokens are tokenised debt securities subject to issuer restrictions and applicable law. Before requesting signatures or submitting approvals or trades, establish the user's relevant jurisdiction and eligibility, including location, residence or entity incorporation, US-person status under Regulation S, any person for whose account or benefit the transaction is made, and issuer Prohibited Investor restrictions. Never infer these facts from an agent or server IP. If required facts or asset-policy coverage are unknown, do not proceed. Only the user or an authorized representative of the actual investor may provide an explicit factual attestation; an agent must not attest on their behalf. A known prohibited fact cannot be overridden by attestation. An attestation is not a license, legal exemption or substitute for required screening. Keep the attestation client-side; do not send it to the quote API or MCP server. No blanket disposal exemption applies."
     }
   },
   {
@@ -214,22 +406,256 @@
     "specified_token": "0x0000000000000000000000000000000000000000",
     "other_token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
     "expected": {
-      "policy_version": "ekubo-token-jurisdictions-v1",
+      "policy_version": "ekubo-token-jurisdictions-v2",
+      "coverage": "complete",
+      "execution_hold": false,
       "restricted_jurisdictions": [],
-      "assets": [],
+      "assets": [
+        {
+          "chain_id": "1",
+          "token": "0x0000000000000000000000000000000000000000",
+          "side": "sell",
+          "classification": "out_of_scope",
+          "class_sources": [],
+          "restricted_jurisdictions": [],
+          "execution_hold": false
+        },
+        {
+          "chain_id": "1",
+          "token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
+          "side": "buy",
+          "classification": "out_of_scope",
+          "class_sources": [],
+          "restricted_jurisdictions": [],
+          "execution_hold": false
+        }
+      ],
       "execution_notice": null
     }
   },
   {
-    "name": "unrestricted",
+    "name": "unclassified asset on a covered chain",
     "chain_id": 4663,
     "amount": "1",
     "specified_token": "0x0000000000000000000000000000000000000000",
     "other_token": "0x1111111111111111111111111111111111111111",
     "expected": {
-      "policy_version": "ekubo-token-jurisdictions-v1",
+      "policy_version": "ekubo-token-jurisdictions-v2",
+      "coverage": "incomplete",
+      "execution_hold": true,
       "restricted_jurisdictions": [],
-      "assets": [],
+      "assets": [
+        {
+          "chain_id": "4663",
+          "token": "0x0000000000000000000000000000000000000000",
+          "side": "sell",
+          "classification": "outside_class",
+          "class_sources": [
+            "native"
+          ],
+          "restricted_jurisdictions": [],
+          "execution_hold": false
+        },
+        {
+          "chain_id": "4663",
+          "token": "0x1111111111111111111111111111111111111111",
+          "side": "buy",
+          "classification": "unclassified",
+          "class_sources": [],
+          "restricted_jurisdictions": [],
+          "execution_hold": true
+        }
+      ],
+      "execution_notice": "A quote, execution plan, simulation or wallet approval is not permission to trade. Robinhood Stock Tokens are tokenised debt securities subject to issuer restrictions and applicable law. Before requesting signatures or submitting approvals or trades, establish the user's relevant jurisdiction and eligibility, including location, residence or entity incorporation, US-person status under Regulation S, any person for whose account or benefit the transaction is made, and issuer Prohibited Investor restrictions. Never infer these facts from an agent or server IP. If required facts or asset-policy coverage are unknown, do not proceed. Only the user or an authorized representative of the actual investor may provide an explicit factual attestation; an agent must not attest on their behalf. A known prohibited fact cannot be overridden by attestation. An attestation is not a license, legal exemption or substitute for required screening. Keep the attestation client-side; do not send it to the quote API or MCP server. No blanket disposal exemption applies."
+    }
+  },
+  {
+    "name": "issuer-registry listing missing from v1 (AMC)",
+    "chain_id": 4663,
+    "specified_token": "0x0000000000000000000000000000000000000000",
+    "other_token": "0x05a3d1cd21d0c88145e82600e62e7e496e0f222b",
+    "amount": "1",
+    "destination_chain_id": null,
+    "expected": {
+      "policy_version": "ekubo-token-jurisdictions-v2",
+      "coverage": "complete",
+      "execution_hold": false,
+      "restricted_jurisdictions": [
+        "AE",
+        "BY",
+        "CA",
+        "CH",
+        "CU",
+        "GB",
+        "IR",
+        "KP",
+        "MM",
+        "RU",
+        "SD",
+        "SG",
+        "SS",
+        "SY",
+        "UA",
+        "US",
+        "VE"
+      ],
+      "assets": [
+        {
+          "chain_id": "4663",
+          "token": "0x0000000000000000000000000000000000000000",
+          "side": "sell",
+          "classification": "outside_class",
+          "class_sources": [
+            "native"
+          ],
+          "restricted_jurisdictions": [],
+          "execution_hold": false
+        },
+        {
+          "chain_id": "4663",
+          "token": "0x05a3d1cd21d0c88145e82600e62e7e496e0f222b",
+          "side": "buy",
+          "classification": "rhj_stock_token",
+          "class_sources": [
+            "curated",
+            "issuer_registry"
+          ],
+          "restricted_jurisdictions": [
+            "AE",
+            "BY",
+            "CA",
+            "CH",
+            "CU",
+            "GB",
+            "IR",
+            "KP",
+            "MM",
+            "RU",
+            "SD",
+            "SG",
+            "SS",
+            "SY",
+            "UA",
+            "US",
+            "VE"
+          ],
+          "execution_hold": false
+        }
+      ],
+      "execution_notice": "A quote, execution plan, simulation or wallet approval is not permission to trade. Robinhood Stock Tokens are tokenised debt securities subject to issuer restrictions and applicable law. Before requesting signatures or submitting approvals or trades, establish the user's relevant jurisdiction and eligibility, including location, residence or entity incorporation, US-person status under Regulation S, any person for whose account or benefit the transaction is made, and issuer Prohibited Investor restrictions. Never infer these facts from an agent or server IP. If required facts or asset-policy coverage are unknown, do not proceed. Only the user or an authorized representative of the actual investor may provide an explicit factual attestation; an agent must not attest on their behalf. A known prohibited fact cannot be overridden by attestation. An attestation is not a license, legal exemption or substitute for required screening. Keep the attestation client-side; do not send it to the quote API or MCP server. No blanket disposal exemption applies."
+    }
+  },
+  {
+    "name": "legacy v1 address kept after leaving curation (ARM)",
+    "chain_id": 4663,
+    "specified_token": "0x666716999e75d2652398ff830bbc2e485946e140",
+    "other_token": "0x0000000000000000000000000000000000000000",
+    "amount": "1",
+    "destination_chain_id": null,
+    "expected": {
+      "policy_version": "ekubo-token-jurisdictions-v2",
+      "coverage": "complete",
+      "execution_hold": false,
+      "restricted_jurisdictions": [
+        "AE",
+        "BY",
+        "CA",
+        "CH",
+        "CU",
+        "GB",
+        "IR",
+        "KP",
+        "MM",
+        "RU",
+        "SD",
+        "SG",
+        "SS",
+        "SY",
+        "UA",
+        "US",
+        "VE"
+      ],
+      "assets": [
+        {
+          "chain_id": "4663",
+          "token": "0x666716999e75d2652398ff830bbc2e485946e140",
+          "side": "sell",
+          "classification": "rhj_stock_token",
+          "class_sources": [
+            "ekubo_v1"
+          ],
+          "restricted_jurisdictions": [
+            "AE",
+            "BY",
+            "CA",
+            "CH",
+            "CU",
+            "GB",
+            "IR",
+            "KP",
+            "MM",
+            "RU",
+            "SD",
+            "SG",
+            "SS",
+            "SY",
+            "UA",
+            "US",
+            "VE"
+          ],
+          "execution_hold": false
+        },
+        {
+          "chain_id": "4663",
+          "token": "0x0000000000000000000000000000000000000000",
+          "side": "buy",
+          "classification": "outside_class",
+          "class_sources": [
+            "native"
+          ],
+          "restricted_jurisdictions": [],
+          "execution_hold": false
+        }
+      ],
+      "execution_notice": "A quote, execution plan, simulation or wallet approval is not permission to trade. Robinhood Stock Tokens are tokenised debt securities subject to issuer restrictions and applicable law. Before requesting signatures or submitting approvals or trades, establish the user's relevant jurisdiction and eligibility, including location, residence or entity incorporation, US-person status under Regulation S, any person for whose account or benefit the transaction is made, and issuer Prohibited Investor restrictions. Never infer these facts from an agent or server IP. If required facts or asset-policy coverage are unknown, do not proceed. Only the user or an authorized representative of the actual investor may provide an explicit factual attestation; an agent must not attest on their behalf. A known prohibited fact cannot be overridden by attestation. An attestation is not a license, legal exemption or substitute for required screening. Keep the attestation client-side; do not send it to the quote API or MCP server. No blanket disposal exemption applies."
+    }
+  },
+  {
+    "name": "verified outside the class",
+    "chain_id": 4663,
+    "specified_token": "0x0000000000000000000000000000000000000000",
+    "other_token": "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+    "amount": "1",
+    "destination_chain_id": null,
+    "expected": {
+      "policy_version": "ekubo-token-jurisdictions-v2",
+      "coverage": "complete",
+      "execution_hold": false,
+      "restricted_jurisdictions": [],
+      "assets": [
+        {
+          "chain_id": "4663",
+          "token": "0x0000000000000000000000000000000000000000",
+          "side": "sell",
+          "classification": "outside_class",
+          "class_sources": [
+            "native"
+          ],
+          "restricted_jurisdictions": [],
+          "execution_hold": false
+        },
+        {
+          "chain_id": "4663",
+          "token": "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+          "side": "buy",
+          "classification": "outside_class",
+          "class_sources": [
+            "issuer_token_contracts_page"
+          ],
+          "restricted_jurisdictions": [],
+          "execution_hold": false
+        }
+      ],
       "execution_notice": null
     }
   }

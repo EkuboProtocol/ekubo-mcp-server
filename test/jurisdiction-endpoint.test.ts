@@ -28,6 +28,11 @@ const ROBINHOOD_CHAIN = 4663;
 const NVDA = "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec";
 const USDG = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
 const SENDER = "0x1111111111111111111111111111111111111111";
+const UNKNOWN = "0x3333333333333333333333333333333333333333";
+const V2_COUNTRIES = [
+  "AE", "BY", "CA", "CH", "CU", "GB", "IR", "KP", "MM",
+  "RU", "SD", "SG", "SS", "SY", "UA", "US", "VE",
+];
 
 /**
  * Cloudflare populates `cf` on the request it hands the Worker. Bun's Request
@@ -180,8 +185,8 @@ describe("jurisdiction restrictions over the MCP endpoint", () => {
         }, country);
         expect(result.isError).toBeUndefined();
         expect(result.structuredContent).toMatchObject({
-          jurisdiction: { restricted_jurisdictions: ["AE", "CA", "CH", "CU", "GB", "IR", "KP", "SG", "SY", "UA", "US"] },
-          quotes: [{ execution: { jurisdiction: { policy_version: "ekubo-token-jurisdictions-v1" } } }],
+          jurisdiction: { restricted_jurisdictions: V2_COUNTRIES, coverage: "complete", execution_hold: false },
+          quotes: [{ execution: { jurisdiction: { policy_version: "ekubo-token-jurisdictions-v2" } } }],
         });
         const quotes = result.structuredContent.quotes as { execution: Record<string, unknown> }[];
         expect(quotes[0]!.execution).toHaveProperty("execution_plan_reference");
@@ -189,6 +194,51 @@ describe("jurisdiction restrictions over the MCP endpoint", () => {
         const stored = [...env.ARTIFACT_STORE.entries.values()].map((entry) => JSON.parse(entry.value));
         expect(stored.some((plan) => plan.extensions?.["ekubo.jurisdiction"]?.restricted_jurisdictions.includes("US"))).toBe(true);
       }
+    } finally {
+      mockedFetch.mockRestore();
+    }
+  });
+
+  it("holds an unclassified asset on the covered chain for every connection", async () => {
+    for (const country of ["FR", "US", undefined]) {
+      const result = await callTool(
+        "prepare_oracle_capacity_expansion",
+        { chain_id: ROBINHOOD_CHAIN, sender: SENDER, token: UNKNOWN, min_capacity: 64 },
+        country,
+      );
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        error: {
+          code: "restricted_jurisdiction",
+          details: { restricted_assets: [{ token: UNKNOWN, classification: "unclassified" }] },
+        },
+      });
+    }
+  });
+
+  it("marks a quote for an unclassified asset as an execution hold", async () => {
+    const mockedFetch = spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL) => {
+      if (!input.toString().startsWith("https://quoter.test/")) return new Response("not found", { status: 404 });
+      return Response.json({
+        block_number: 123, block_hash: "0x01", total_calculated: "900",
+        estimated_gas_cost: 25000, price_impact: 0.001,
+        splits: [{ amount_specified: "1000", amount_calculated: "900", route: [{ swap: {
+          type: "core", pool_key: { token0: "0x0000000000000000000000000000000000000000", token1: UNKNOWN, config: `0x${"00".repeat(32)}` },
+          sqrt_ratio_limit: "0x000000000000000000000000", skip_ahead: 0,
+        } }] }],
+      });
+    }) as typeof fetch);
+    try {
+      const result = await callTool("get_quotes_with_plans", {
+        chain_id: ROBINHOOD_CHAIN,
+        token_in: "0x0000000000000000000000000000000000000000", token_out: UNKNOWN,
+        quote_type: "exact_input", amount: "1000", sender: SENDER, slippage_bps: 10,
+      }, "FR");
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent).toMatchObject({
+        jurisdiction: { coverage: "incomplete", execution_hold: true, restricted_jurisdictions: [] },
+        quotes: [{ execution: { jurisdiction: { execution_hold: true } } }],
+      });
     } finally {
       mockedFetch.mockRestore();
     }
@@ -214,10 +264,9 @@ describe("jurisdiction restrictions over the MCP endpoint", () => {
   });
 
   /**
-   * The disposal is the point of the carve-out, so it is checked through the
-   * endpoint and not only against the gate. There is no quoter here, so this
-   * asserts the jurisdiction gate specifically rather than a successful quote:
-   * whatever this fails on downstream, it must no longer be the region.
+   * Quotes are informational and carry metadata instead of a country gate, in
+   * both directions. There is no quoter here, so this asserts the jurisdiction
+   * gate specifically rather than a successful quote.
    */
   it("does not stop a swap quote that disposes of a restricted asset", async () => {
     const result = await callTool(

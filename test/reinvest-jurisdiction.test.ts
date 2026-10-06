@@ -15,13 +15,42 @@ const ORIGIN = "https://mcp.ekubo.org";
 const CHAIN = "4663";
 const veToken = "0x9d7008E169D040B6c0140eb92E7cA82B12643497" as const;
 const sender = "0x1111111111111111111111111111111111111111" as const;
-/** Unrestricted stand-in for the STONX stake token. */
-const STAKE = "0x2222222222222222222222222222222222222222" as const;
-/** NVDA, one of RHC_STOCK_TOKEN_ADDRESSES. */
+/** STONX, the stake token: verified outside the Stock Token class. */
+const STAKE = "0x570c5aa79c798e7a418412cc8399ae5bcce570c5" as const;
+/** NVDA, a Robinhood Stock Token. */
 const NVDA = "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec" as const;
-/** USDG: not a restricted asset. */
+/** USDG: verified outside the Stock Token class. */
 const USDG = "0x5fc5360d0400a0fd4f2af552add042d716f1d168" as const;
-const SELL_SIDE_RESTRICTED = ["CU", "IR", "KP", "SY", "UA"];
+/** Not classified by the policy: held. */
+const UNKNOWN = "0x3333333333333333333333333333333333333333" as const;
+const V2_COUNTRIES = [
+  "AE", "BY", "CA", "CH", "CU", "GB", "IR", "KP", "MM",
+  "RU", "SD", "SG", "SS", "SY", "UA", "US", "VE",
+];
+const STAKE_BUY = {
+  chain_id: CHAIN, token: STAKE, side: "buy", classification: "outside_class",
+  class_sources: ["ekubo_issued"], restricted_jurisdictions: [], execution_hold: false,
+};
+const USDG_SELL = {
+  chain_id: CHAIN, token: USDG, side: "sell", classification: "outside_class",
+  class_sources: ["issuer_token_contracts_page"], restricted_jurisdictions: [], execution_hold: false,
+};
+const NVDA_SELL = {
+  chain_id: CHAIN, token: NVDA, side: "sell", classification: "rhj_stock_token",
+  class_sources: ["curated", "ekubo_v1", "issuer_registry"], restricted_jurisdictions: V2_COUNTRIES,
+  execution_hold: false,
+};
+
+async function refusal(call: Promise<unknown>): Promise<ServiceError> {
+  let error: unknown;
+  try {
+    await call;
+  } catch (caught) {
+    error = caught;
+  }
+  expect(error).toBeInstanceOf(ServiceError);
+  return error as ServiceError;
+}
 
 function env(): Env {
   return {
@@ -100,6 +129,8 @@ interface ReferencedSwapPhase {
   phase: string;
   jurisdiction: {
     policy_version: string;
+    coverage: string;
+    execution_hold: boolean;
     restricted_jurisdictions: string[];
     assets: unknown[];
     execution_notice: string | null;
@@ -135,13 +166,15 @@ async function storedPlan(testEnv: Env, child: ReferencedChild) {
 }
 
 describe("prepare_ve33_reinvest phase=swap jurisdiction metadata", () => {
-  it("carries empty metadata inline for an unrestricted sell", async () => {
+  it("carries explicit empty metadata inline for an unrestricted sell", async () => {
     const testEnv = env();
     const result = await referenced(testEnv, [USDG], "US");
     const empty = {
-      policy_version: JURISDICTION_POLICY_VERSION,
+      policy_version: "ekubo-token-jurisdictions-v2",
+      coverage: "complete",
+      execution_hold: false,
       restricted_jurisdictions: [],
-      assets: [],
+      assets: [USDG_SELL, STAKE_BUY],
       execution_notice: null,
     };
     expect(result.jurisdiction).toEqual(empty);
@@ -160,27 +193,32 @@ describe("prepare_ve33_reinvest phase=swap jurisdiction metadata", () => {
     expect(result.producer_country_gate).not.toHaveProperty("outcome");
   });
 
-  it("carries sell-side restrictions inline for a restricted equity sold for the stake token", async () => {
+  it("refuses to sell a Stock Token from any v2 country: no disposal exemption", async () => {
+    for (const country of V2_COUNTRIES) {
+      const error = await refusal(swapPhase(env(), [NVDA], country));
+      expect(error.code).toBe("restricted_jurisdiction");
+      expect(error.details).toMatchObject({
+        country,
+        restricted_assets: [{ token: NVDA, side: "sell", classification: "rhj_stock_token" }],
+      });
+    }
+  });
+
+  it("carries the full country floor inline when a Stock Token sale is prepared elsewhere", async () => {
     const testEnv = env();
-    const result = await referenced(testEnv, [NVDA], "US");
+    const result = await referenced(testEnv, [NVDA], "FR");
     const child = result.exact_input_full_balance_swaps[0]!;
     expect(child.jurisdiction).toEqual({
       policy_version: JURISDICTION_POLICY_VERSION,
-      restricted_jurisdictions: SELL_SIDE_RESTRICTED,
-      assets: [
-        {
-          chain_id: CHAIN,
-          token: NVDA,
-          side: "sell",
-          restricted_jurisdictions: SELL_SIDE_RESTRICTED,
-        },
-      ],
+      coverage: "complete",
+      execution_hold: false,
+      restricted_jurisdictions: V2_COUNTRIES,
+      assets: [NVDA_SELL, STAKE_BUY],
       execution_notice: QUOTE_JURISDICTION_NOTICE,
     });
     expect(result.jurisdiction).toEqual(child.jurisdiction as never);
-    expect(result.jurisdiction.execution_notice).toContain(
-      "not permission to trade",
-    );
+    expect(result.jurisdiction.execution_notice).toContain("not permission to trade");
+    expect(result.jurisdiction.execution_notice).toContain("No blanket disposal exemption applies.");
     const plan = await storedPlan(testEnv, child);
     expect(plan.extensions["ekubo.jurisdiction"]).toEqual(child.jurisdiction);
     expect(walletExecutionPlanSchema.safeParse(plan).success).toBe(true);
@@ -188,7 +226,7 @@ describe("prepare_ve33_reinvest phase=swap jurisdiction metadata", () => {
 
   it("unions a restricted and an unrestricted child at the top level", async () => {
     const testEnv = env();
-    const result = await referenced(testEnv, [USDG, NVDA], "US");
+    const result = await referenced(testEnv, [USDG, NVDA], "FR");
     const children = result.exact_input_full_balance_swaps;
     expect(children).toHaveLength(2);
     for (const child of children) {
@@ -202,28 +240,31 @@ describe("prepare_ve33_reinvest phase=swap jurisdiction metadata", () => {
         (child.jurisdiction.restricted_jurisdictions as string[]).length > 0,
     );
     expect(restrictedChildren).toHaveLength(1);
-    expect(result.jurisdiction.restricted_jurisdictions).toEqual(
-      SELL_SIDE_RESTRICTED,
-    );
+    expect(result.jurisdiction.restricted_jurisdictions).toEqual(V2_COUNTRIES);
     expect(result.jurisdiction.assets).toEqual(
       children.flatMap((child) => child.jurisdiction.assets as unknown[]),
     );
-    expect(result.jurisdiction.assets).toHaveLength(1);
+    expect(result.jurisdiction.assets).toHaveLength(4);
+    expect(result.jurisdiction.coverage).toBe("complete");
     expect(result.jurisdiction.execution_notice).toBe(
       QUOTE_JURISDICTION_NOTICE,
     );
   });
 
   it("still fails closed on a restricted sell from an unresolved connection", async () => {
-    let error: unknown;
-    try {
-      await swapPhase(env(), [NVDA], null);
-    } catch (caught) {
-      error = caught;
+    const error = await refusal(swapPhase(env(), [NVDA], null));
+    expect(error.code).toBe("restricted_jurisdiction");
+    expect(error.details).toMatchObject({ country: null });
+  });
+
+  it("holds the whole phase when any fee token is unclassified, from any country", async () => {
+    for (const country of ["FR", "US", null]) {
+      const error = await refusal(swapPhase(env(), [USDG, UNKNOWN], country));
+      expect(error.code).toBe("restricted_jurisdiction");
+      expect(error.details).toMatchObject({
+        restricted_assets: [{ token: UNKNOWN, side: "sell", classification: "unclassified" }],
+      });
     }
-    expect(error).toBeInstanceOf(ServiceError);
-    expect((error as ServiceError).code).toBe("restricted_jurisdiction");
-    expect((error as ServiceError).details).toMatchObject({ country: null });
   });
 
   it("records an unresolved connection when only unrestricted assets are sold", async () => {
@@ -248,6 +289,8 @@ describe("prepare_ve33_reinvest phase=swap jurisdiction metadata", () => {
         exact_input_full_balance_swaps: [{}],
         jurisdiction: {
           policy_version: JURISDICTION_POLICY_VERSION,
+          coverage: "complete",
+          execution_hold: false,
           restricted_jurisdictions: [],
           assets: [],
           execution_notice: null,

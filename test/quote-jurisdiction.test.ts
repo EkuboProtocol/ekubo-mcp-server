@@ -23,8 +23,13 @@ describe("public quote jurisdiction metadata", () => {
       { chainId: "1", token, side: "sell" },
       { chainId: "4663", token, side: "buy" },
     ]);
-    expect(result.assets).toHaveLength(1);
-    expect(result.assets[0]).toMatchObject({ chain_id: "4663", side: "buy" });
+    expect(result.assets).toHaveLength(2);
+    expect(result.assets[0]).toMatchObject({
+      chain_id: "1", side: "sell", classification: "out_of_scope", restricted_jurisdictions: [],
+    });
+    expect(result.assets[1]).toMatchObject({
+      chain_id: "4663", side: "buy", classification: "rhj_stock_token",
+    });
     expect(result.restricted_jurisdictions).toContain("US");
   });
 

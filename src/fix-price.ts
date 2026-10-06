@@ -119,8 +119,8 @@ export async function prepareFixPoolPrice(
   const poolKey = pool.pool_key;
   // This action swaps the pool to a target price, so it trades the pair just as
   // a swap does and is gated the same way. Which token it ends up buying falls
-  // out of the target price rather than the caller's intent, and moving a pool
-  // to a price is not an exit from a position, so neither side is a disposal.
+  // out of the target price rather than the caller's intent, so both tokens
+  // are checked as acquisitions.
   assertAssetsTradable(
     [
       { chainId: input.chainId, token: poolKey.token0, side: "buy" },
