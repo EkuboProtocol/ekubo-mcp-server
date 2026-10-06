@@ -427,3 +427,39 @@ export function quoteJurisdiction(assets: readonly RestrictableAsset[]) {
     execution_notice: restricted.length ? QUOTE_JURISDICTION_NOTICE : null,
   };
 }
+
+export type QuoteJurisdiction = ReturnType<typeof quoteJurisdiction>;
+
+/**
+ * One jurisdiction summary for a response that carries several swap plans, so
+ * a caller deciding whether the whole batch needs the user's attestation reads
+ * one list instead of walking every child.
+ */
+export function mergeQuoteJurisdictions(
+  jurisdictions: readonly QuoteJurisdiction[],
+): QuoteJurisdiction {
+  const restricted = [
+    ...new Set(
+      jurisdictions.flatMap((entry) => entry.restricted_jurisdictions),
+    ),
+  ].sort();
+  return {
+    policy_version: JURISDICTION_POLICY_VERSION,
+    restricted_jurisdictions: restricted,
+    assets: jurisdictions.flatMap((entry) => entry.assets),
+    execution_notice: restricted.length ? QUOTE_JURISDICTION_NOTICE : null,
+  };
+}
+
+/**
+ * Record that the connection-country check ran and let the request through.
+ * It describes the MCP connection only; it says nothing about the user's
+ * domicile and is not permission to trade.
+ */
+export function producerCountryGate(country: RequestCountry) {
+  return {
+    applied: true as const,
+    policy_version: JURISDICTION_POLICY_VERSION,
+    country_resolved: country !== null,
+  };
+}

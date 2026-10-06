@@ -39,6 +39,8 @@ import {
 } from "./execution-plan.js";
 import {
   assertAssetsTradable,
+  mergeQuoteJurisdictions,
+  producerCountryGate,
   type RequestCountry,
 } from "./token-restrictions.js";
 
@@ -2233,6 +2235,10 @@ export async function prepareVe33Reinvest(
     );
     return {
       phase: "swap" as const,
+      jurisdiction: mergeQuoteJurisdictions(
+        swapPlans.map((plan) => plan.jurisdiction),
+      ),
+      producer_country_gate: producerCountryGate(intent.country),
       exact_input_full_balance_swaps: swapPlans,
       stake_token_amount_already_claimed: directStakeAmount.toString(),
       next_phase:

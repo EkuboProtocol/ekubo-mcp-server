@@ -740,6 +740,7 @@ export async function prepareSwap(
     selection,
     unavailable_sources: quoted.failures,
     quote_source_url: selected.sourceUrl,
+    jurisdiction: swapJurisdiction(intent),
     quote: {
       ...preparedQuote(intent, selected, prepared),
       raw: selected.raw,
