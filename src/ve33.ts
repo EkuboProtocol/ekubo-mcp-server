@@ -319,6 +319,7 @@ export type PrepareVe33ReinvestIntent =
       stakeToken: Address;
       feeBalances: { token: Address; amount: string }[];
       slippageBps: number;
+      swapDeadlineMinutes?: number;
       source: QuoteSource;
     }
   | {
@@ -2200,6 +2201,7 @@ export async function prepareVe33Reinvest(
             amount,
             source: intent.source,
             slippageBps: intent.slippageBps,
+            swapDeadlineMinutes: intent.swapDeadlineMinutes,
             sender: getAddress(intent.sender),
             recipient: getAddress(intent.sender),
           },

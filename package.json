@@ -1,6 +1,6 @@
 {
   "name": "@ekubo/mcp-worker",
-  "version": "0.45.1",
+  "version": "0.46.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@ekubo/sdk": "0.0.10",
-    "@ekubo/yul-router-sdk": "0.7.1",
+    "@ekubo/yul-router-sdk": "0.8.0",
     "@modelcontextprotocol/server": "2.3.0",
     "@morpho-org/morpho-sdk": "6.2.0",
     "@uniswap/sdk-core": "7.19.4",
