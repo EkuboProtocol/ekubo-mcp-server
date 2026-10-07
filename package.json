@@ -27,7 +27,7 @@
     "@uniswap/v4-sdk": "2.4.1",
     "agents": "0.26.0",
     "jsbi": "3.2.5",
-    "viem": "2.57.1",
+    "viem": "2.57.2",
     "zod": "^4.6.5"
   },
   "devDependencies": {
