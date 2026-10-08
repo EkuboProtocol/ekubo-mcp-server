@@ -690,7 +690,7 @@ describe("Worker discovery", () => {
       "as a value in the code block that received it",
       "add no agent-level confirmation",
       "report a policy rejection verbatim",
-      "Scope: these rules govern this server's tools",
+      "Scope: the handoff and calldata rules here govern this server's tools",
       "do not substitute hand-built calldata for a prepared plan",
       "ekubo://docs/execution-plan",
       "ekubo://docs/ve33-workflow",
