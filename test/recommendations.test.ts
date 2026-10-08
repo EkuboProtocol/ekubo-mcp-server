@@ -4,6 +4,10 @@ import { describe, expect, it } from "bun:test";
 import { numberToHex } from "viem";
 import { ServiceError } from "../src/core.js";
 import { getStonxAllocationRecommendation } from "../src/recommendations.js";
+import {
+  allocationBps,
+  optimalVoterAllocation,
+} from "../src/stonx-efficiency.js";
 
 const chainId = "4663";
 const veToken = "0x9d7008E169D040B6c0140eb92E7cA82B12643497" as const;
@@ -396,6 +400,229 @@ describe("STONX allocation recommendations", () => {
     )).toBe(true);
   });
 });
+
+describe("STONX emissions efficiency and voter-optimal allocation", () => {
+  const evenRows = [
+    recommendationRow({ pair: "ETH/A", token1, symbol1: "A", weight: 5_000, cap: 10_000, priority: 1 }),
+    recommendationRow({ pair: "ETH/B", token1: token2, symbol1: "B", weight: 5_000, cap: 10_000, priority: 2 }),
+  ];
+  // A holds 80% of the votes but only 1/11 of the fees still being generated.
+  const pricedPools = [
+    pricedPoolRow("10", token1, "8000000000000000000", "1", "10"),
+    pricedPoolRow("21", token2, "2000000000000000000", "10", "70"),
+  ];
+  // About $1,000 of STONX per seven-day epoch at $1 and zero decimals.
+  const emissionState = {
+    currentTimestamp: "1",
+    currentEmissionRate: String(Math.round((1_000 * 2 ** 32) / 604_800)),
+    totalRemainingEmissions: "1000000000",
+  };
+
+  it("reports the KPI and flags low-retention pools without changing targets", async () => {
+    const result = await getStonxAllocationRecommendation(
+      env,
+      { chainId, veToken, ve33, options: { ve33EmissionState: emissionState } },
+      pricedFetcher(evenRows, pricedPools),
+    );
+    expect(informationalOutputSchemas.get_stonx_allocation_recommendation!.parse(result)).toEqual(result);
+    expect(result.target_basis).toBe("provider");
+    expect(result.targets).toEqual([
+      { pool_key_id: "10", swap_fee: "123", weight_bps: 5_000 },
+      { pool_key_id: "21", swap_fee: "123", weight_bps: 5_000 },
+    ]);
+    const a = result.recommendations[0].emissions_efficiency!;
+    const b = result.recommendations[1].emissions_efficiency!;
+    expect(a.vote_share).toBeCloseTo(0.8);
+    expect(a.retained_epoch_ve33_fees_usd).toBe(7);
+    expect(a.fee_retention_ratio).toBeCloseTo(0.7);
+    expect(a.emission_share_per_retained_fee_share).toBeCloseTo(8.8);
+    expect(a.projected_emissions_usd_per_epoch).toBeCloseTo(800, -1);
+    expect(a.emissions_usd_per_retained_fee_usd).toBeCloseTo(800 / 7, -1);
+    expect(a.prune_candidate).toBe(true);
+    expect(a.prune_reason).toBe("emission_share_exceeds_retained_fee_share");
+    expect(b.prune_candidate).toBe(false);
+    expect(result.emissions_efficiency.status).toBe("complete");
+    expect(result.emissions_efficiency.local_read_requirement).toBeNull();
+  });
+
+  it("asks for the emission rate when only the rate-free KPI is available", async () => {
+    const result = await getStonxAllocationRecommendation(
+      env,
+      { chainId, veToken, ve33 },
+      pricedFetcher(evenRows, pricedPools),
+    );
+    expect(result.emissions_efficiency.status).toBe("emission_rate_required");
+    expect(result.emissions_efficiency.local_read_requirement).toMatchObject({
+      resume: { tool: "get_stonx_allocation_recommendation" },
+    });
+    const a = result.recommendations[0].emissions_efficiency!;
+    expect(a.prune_candidate).toBe(true);
+    expect(a.projected_emissions_usd_per_epoch).toBeNull();
+    expect(result.execution_ready).toBe(true);
+  });
+
+  it("prunes low-efficiency pools and redistributes their weight only on request", async () => {
+    const result = await getStonxAllocationRecommendation(
+      env,
+      { chainId, veToken, ve33, options: { pruneLowEfficiency: true } },
+      pricedFetcher(evenRows, pricedPools),
+    );
+    expect(result.execution_ready).toBe(true);
+    expect(result.targets).toEqual([
+      { pool_key_id: "21", swap_fee: "123", weight_bps: 10_000 },
+    ]);
+    expect(result.recommendations[0]).toMatchObject({
+      execution_status: "low_emissions_efficiency",
+      executable_weight_bps: null,
+    });
+    expect(result.recommendations[0].emissions_efficiency).toMatchObject({
+      prune_candidate: true,
+    });
+  });
+
+  it("keeps the provider plan and the infrastructure floor out of pruning", async () => {
+    const rows = [
+      { ...evenRows[0], allocation_bucket: "infrastructure" },
+      evenRows[1],
+    ];
+    const result = await getStonxAllocationRecommendation(
+      env,
+      { chainId, veToken, ve33, options: { pruneLowEfficiency: true } },
+      pricedFetcher(rows, pricedPools),
+    );
+    expect(result.recommendations[0].emissions_efficiency).toMatchObject({
+      prune_candidate: false,
+    });
+    expect(result.target_total_weight_bps).toBe(10_000);
+  });
+
+  it("is not execution-ready for a voter until the emission rate is supplied", async () => {
+    const result = await getStonxAllocationRecommendation(
+      env,
+      {
+        chainId,
+        veToken,
+        ve33,
+        options: {
+          voter: { voteWeight: "1000000000000000000", pools: [{ poolKeyId: "10", lpShare: 0.5 }] },
+        },
+      },
+      pricedFetcher(evenRows, pricedPools),
+    );
+    expect(result.execution_ready).toBe(false);
+    expect(result.voter_optimization).toMatchObject({ status: "local_read_required" });
+  });
+
+  it("redirects a voter's weight to their own pool when its emissions outweigh fees", async () => {
+    const run = (lpShare: number) =>
+      getStonxAllocationRecommendation(
+        env,
+        {
+          chainId,
+          veToken,
+          ve33,
+          options: {
+            ve33EmissionState: emissionState,
+            voter: { voteWeight: "1000000000000000000", pools: [{ poolKeyId: "10", lpShare }] },
+          },
+        },
+        pricedFetcher(evenRows, pricedPools),
+      );
+    const withLp = await run(0.5);
+    expect(withLp.execution_ready).toBe(true);
+    expect(withLp.target_basis).toBe("voter_optimal");
+    expect(withLp.targets).toEqual([
+      { pool_key_id: "10", swap_fee: "123", weight_bps: 10_000 },
+    ]);
+    expect(withLp.provider_targets).toHaveLength(2);
+    const value = (withLp.voter_optimization as {
+      expected_value_usd_per_epoch: {
+        voter_optimal: { total_usd: number };
+        provider_targets: { total_usd: number };
+      };
+    }).expected_value_usd_per_epoch;
+    expect(value.voter_optimal.total_usd).toBeGreaterThan(value.provider_targets.total_usd);
+
+    const withoutLp = await run(0);
+    expect(withoutLp.targets).toEqual([
+      { pool_key_id: "21", swap_fee: "123", weight_bps: 10_000 },
+    ]);
+    expect(withoutLp.recommendation_id).not.toBe(withLp.recommendation_id);
+  });
+
+  it("splits equal pools evenly and sends fee-less votes to the voter's own pool", () => {
+    const even = optimalVoterAllocation(
+      [
+        { poolKeyId: "1", swapFee: "0", feesUsd: 100, othersWeight: 10, lpShare: 0 },
+        { poolKeyId: "2", swapFee: "0", feesUsd: 100, othersWeight: 10, lpShare: 0 },
+      ],
+      4,
+      0,
+      24,
+    );
+    expect(even[0].weight).toBeCloseTo(2, 6);
+    expect(even[1].weight).toBeCloseTo(2, 6);
+    expect(allocationBps(even, 25).map(({ weightBps }) => weightBps)).toEqual([5_000, 5_000]);
+
+    const own = optimalVoterAllocation(
+      [
+        { poolKeyId: "1", swapFee: "0", feesUsd: 0, othersWeight: 10, lpShare: 0.1 },
+        { poolKeyId: "2", swapFee: "0", feesUsd: 0, othersWeight: 10, lpShare: 0 },
+      ],
+      4,
+      1_000,
+      24,
+    );
+    expect(own.map(({ weight }) => weight)).toEqual([4, 0]);
+  });
+});
+
+function pricedPoolRow(
+  poolKeyId: string,
+  asset1: `0x${string}`,
+  voteWeight: string,
+  fees24h: string,
+  fees7d: string,
+) {
+  return {
+    ...poolRow(poolKeyId, asset1, 1_024),
+    pool_total_vote_weight: voteWeight,
+    swap_fee: "456",
+    ve33_fees0_24h: fees24h,
+    ve33_fees1_24h: "0",
+    ve33_fees0_7d: fees7d,
+    ve33_fees1_7d: "0",
+    volume0_24h: "100",
+    volume1_24h: "0",
+  };
+}
+
+function pricedFetcher(
+  rows: Record<string, unknown>[],
+  poolRows: Record<string, unknown>[],
+) {
+  return (async (input: RequestInfo | URL) => {
+    const url = new URL(input.toString());
+    if (url.hostname === "api.dune.com") {
+      return recommendationResponse(new Date().toISOString(), rows);
+    }
+    if (url.pathname === "/tokens/batch") {
+      return Response.json(
+        url.searchParams.getAll("id").map((id) => ({
+          chain_id: chainId,
+          address: id.split(":")[1],
+          decimals: 0,
+          usd_price: 1,
+        })),
+      );
+    }
+    return Response.json({
+      data: poolRows,
+      total_vote_weight: "10000000000000000000",
+      pagination: { page: 1, pageSize: 200, totalPages: 1, totalItems: poolRows.length },
+    });
+  }) as typeof fetch;
+}
 
 function recommendationRow({
   pair,

@@ -1337,7 +1337,107 @@ export const prepareVe33ReinvestSchema = z
     }
   });
 
-export const getStonxAllocationRecommendationSchema = z.object({});
+const ve33EmissionStateSchema = z
+  .object({
+    current_timestamp: uintString.describe(
+      "Locally decoded getEmissionState state.currentTimestamp",
+    ),
+    current_emission_rate: uintString.describe(
+      "Locally decoded Q32 getEmissionState state.currentEmissionRate",
+    ),
+    total_remaining_emissions: uintString.describe(
+      "Locally decoded getEmissionState state.totalRemainingEmissions",
+    ),
+  })
+  .optional()
+  .describe(
+    "Wallet-locally decoded emission state from the tool's local_read_requirement; omit on the first call",
+  );
+
+const decimalVoteWeight = z
+  .string()
+  .regex(/^(?:0|[1-9][0-9]{0,77})$/, "must be a decimal integer string");
+
+export const getStonxAllocationRecommendationSchema = z.object({
+  voter: z
+    .object({
+      vote_weight: decimalVoteWeight.describe(
+        "The voter's total vote weight in base units, the total applied vote weight get_ve33_allocations reports",
+      ),
+      pools: z
+        .array(
+          z.object({
+            pool_key_id: z
+              .string()
+              .regex(/^(?:0|[1-9][0-9]*)$/)
+              .describe("Ve33 pool_key_id from get_ve33_allocations or get_positions_by_owner"),
+            lp_share: z
+              .number()
+              .finite()
+              .min(0)
+              .max(1)
+              .describe("The voter's share of this pool's emission-earning liquidity, 0 to 1"),
+            current_vote_weight: decimalVoteWeight
+              .optional()
+              .describe("The voter's vote weight currently applied to this pool; defaults to 0"),
+          }),
+        )
+        .max(200)
+        .refine(
+          (pools) => new Set(pools.map((pool) => pool.pool_key_id)).size === pools.length,
+          { message: "pools must not repeat a pool_key_id" },
+        ),
+    })
+    .optional()
+    .describe(
+      "Optional voter position. When supplied with ve33_emission_state, targets become the voter-optimal allocation that also values the emissions the voter's own LP positions receive (Mazett 2024); provider_targets keeps the neutral plan.",
+    ),
+  ve33_emission_state: ve33EmissionStateSchema,
+  prune_low_efficiency: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Withhold recommendations whose emissions-efficiency KPI marks them prune candidates and redistribute their weight",
+    ),
+  max_emission_share_per_fee_share: z
+    .number()
+    .finite()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe(
+      "Prune threshold for emission share divided by retained voter-fee share; defaults to 3",
+    ),
+});
+
+function stonxRecommendationOptions(
+  input: z.infer<typeof getStonxAllocationRecommendationSchema>,
+) {
+  const state = input.ve33_emission_state;
+  return {
+    pruneLowEfficiency: input.prune_low_efficiency,
+    maxEmissionSharePerFeeShare: input.max_emission_share_per_fee_share,
+    ve33EmissionState:
+      state === undefined
+        ? undefined
+        : {
+            currentTimestamp: state.current_timestamp,
+            currentEmissionRate: state.current_emission_rate,
+            totalRemainingEmissions: state.total_remaining_emissions,
+          },
+    voter:
+      input.voter === undefined
+        ? undefined
+        : {
+            voteWeight: input.voter.vote_weight,
+            pools: input.voter.pools.map((pool) => ({
+              poolKeyId: pool.pool_key_id,
+              lpShare: pool.lp_share,
+              currentVoteWeight: pool.current_vote_weight,
+            })),
+          },
+  };
+}
 
 export const getLiquidityOpportunitiesSchema = z.object({
   chain_id: chainId
@@ -2067,7 +2167,7 @@ export const publicToolCatalog = [
     name: "get_stonx_allocation_recommendation",
     title: "Get suggested STONX allocations",
     description:
-      "Return a provider-neutral STONX allocation recommendation and an exactly 10,000-bps executable target list capped at 25 initialized canonical Ve33 pools. The upstream snapshot refreshes at most once a day: past a day old a refresh is attempted and awaited, but the existing snapshot still answers the request when that refresh does not land, and only a snapshot older than a week is refused. Read snapshot_age_seconds to see how old the answer actually is. The tool constructs no transaction; use compact_max_lock for one final voting NFT per target.",
+      "Return a provider-neutral STONX allocation recommendation and an exactly 10,000-bps executable target list capped at 25 initialized canonical Ve33 pools. The upstream snapshot refreshes at most once a day: past a day old a refresh is attempted and awaited, but the existing snapshot still answers the request when that refresh does not land, and only a snapshot older than a week is refused. Read snapshot_age_seconds to see how old the answer actually is. Every recommendation carries an emissions_efficiency KPI (emissions per dollar of voter fees retained one epoch later) with prune candidates flagged; prune_low_efficiency=true withholds them. Supplying voter (vote weight and LP share per pool) with ve33_emission_state makes targets the voter-optimal allocation that values emissions redirected to the voter's own pools, keeping the neutral plan as provider_targets; without the emission state, execution_ready is false and local_read_requirement says what to read. The tool constructs no transaction; use compact_max_lock for one final voting NFT per target.",
     inputSchema: z.toJSONSchema(getStonxAllocationRecommendationSchema),
   },
   {
@@ -3193,12 +3293,13 @@ export function createEkuboServer(
         ? {}
         : { outputSchema: toolOutputSchema("get_stonx_allocation_recommendation") }),
     },
-    async () =>
+    async (input) =>
       toolResult(() =>
         getStonxAllocationRecommendation(env, {
           chainId: ROBINHOOD_STONX_CHAIN_ID,
           veToken: ROBINHOOD_STONX_VE_TOKEN,
           ve33: ROBINHOOD_STONX_VE33,
+          options: stonxRecommendationOptions(input),
         }),
       ),
   );
