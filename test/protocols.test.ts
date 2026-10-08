@@ -218,13 +218,13 @@ describe("Per-protocol server instructions", () => {
     expect(instructions).toBe(serverInstructions(ALL_PROTOCOLS));
     // Spot-check the paragraphs the pre-split endpoint is relied on for.
     expect(instructions).toContain(
-      "use this Ekubo MCP before any browser or website tool",
+      "use this MCP before any browser or website tool",
     );
     expect(instructions).toContain(
       "Morpho, Sky, Lido, Merkl, and Aerodrome discovery follows the same no-proxy boundary",
     );
     expect(instructions).toContain(
-      "LP position transfers are supported only through prepare_lp_position_transfer",
+      "LP positions move only through prepare_lp_position_transfer",
     );
     expect(instructions).not.toContain("Endpoint scope:");
   });
