@@ -63,17 +63,20 @@ type Budget = {
 // instructions 4,183 -> 896. Every Ekubo-scoped endpoint's instructions carry
 // the CLO jurisdiction notice verbatim, about 480 of those tokens. The
 // /mcp/ekubo tools budget was raised from 104,000 for the STONX
-// emissions-efficiency KPI (EKU-950), which landed after it was set.
+// emissions-efficiency KPI (EKU-950), which landed after it was set. Every
+// non-Safe instructions budget was raised by 550 characters for the scope
+// sentence (EKU-988): without it, agents read the handoff rules as a ban on
+// the user's own cast/sncast work outside this server.
 const ENDPOINTS: Record<string, Budget> = {
-  "/mcp": { instructions: 7_400, tools: 170_000, tool: 11_200, resources: 4_200 },
-  "/mcp/ekubo": { instructions: 4_400, tools: 105_000, tool: 11_200, resources: 1_900 },
-  "/mcp/aave": { instructions: 4_200, tools: 9_100, tool: 1_600, resources: 300 },
-  "/mcp/aerodrome": { instructions: 4_900, tools: 18_400, tool: 2_600, resources: 850 },
-  "/mcp/lido": { instructions: 4_200, tools: 5_700, tool: 1_300, resources: 750 },
-  "/mcp/merkl": { instructions: 4_700, tools: 3_400, tool: 2_200, resources: 750 },
-  "/mcp/morpho": { instructions: 4_200, tools: 5_600, tool: 1_900, resources: 750 },
-  "/mcp/sky": { instructions: 4_200, tools: 4_100, tool: 1_100, resources: 750 },
-  "/mcp/uniswap": { instructions: 3_700, tools: 21_500, tool: 2_100, resources: 300 },
+  "/mcp": { instructions: 7_950, tools: 170_000, tool: 11_200, resources: 4_200 },
+  "/mcp/ekubo": { instructions: 4_950, tools: 105_000, tool: 11_200, resources: 1_900 },
+  "/mcp/aave": { instructions: 4_750, tools: 9_100, tool: 1_600, resources: 300 },
+  "/mcp/aerodrome": { instructions: 5_450, tools: 18_400, tool: 2_600, resources: 850 },
+  "/mcp/lido": { instructions: 4_750, tools: 5_700, tool: 1_300, resources: 750 },
+  "/mcp/merkl": { instructions: 5_250, tools: 3_400, tool: 2_200, resources: 750 },
+  "/mcp/morpho": { instructions: 4_750, tools: 5_600, tool: 1_900, resources: 750 },
+  "/mcp/sky": { instructions: 4_750, tools: 4_100, tool: 1_100, resources: 750 },
+  "/mcp/uniswap": { instructions: 4_250, tools: 21_500, tool: 2_100, resources: 300 },
   "/mcp/safe": { instructions: 1_400, tools: 12_100, tool: 2_600, resources: 300 },
 };
 
