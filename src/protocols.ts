@@ -16,6 +16,7 @@ import { safeTools } from "./safe.js";
 
 export const PROTOCOL_SLUGS = [
   "ekubo",
+  "ekubo-advanced",
   "aave",
   "aerodrome",
   "lido",
@@ -39,10 +40,10 @@ export type ProtocolDescriptor = {
 };
 
 /**
- * Everything the catalog carries that is not one of the six satellite
- * protocols: Ekubo's own pools, positions, TWAMM, auctions, ve(3,3), and the
- * token, quote, transfer, and approval tools that are Ekubo-native rather than
- * shared infrastructure.
+ * Ekubo's core tools: the token, quote, transfer, LP position, rewards and
+ * ve(3,3) tools most sessions use. The rarely used operator tools live in
+ * EKUBO_ADVANCED_TOOLS on `/mcp/ekubo-advanced`, so a session that only swaps
+ * or manages positions does not carry their definitions; `/mcp` serves both.
  *
  * Token lookup is deliberately not duplicated onto the satellite endpoints.
  * Each of those protocols discovers its own assets — `get_aave_v3_markets`,
@@ -72,9 +73,6 @@ const EKUBO_TOOLS = [
   "get_positions_by_owner",
   "get_pool",
   "get_pool_liquidity",
-  "list_pool_keys",
-  "derive_pool_id",
-  "decode_pool_config",
   "get_position",
   "get_position_pool_candidates",
   "prepare_lp_position_deposit",
@@ -83,6 +81,18 @@ const EKUBO_TOOLS = [
   "prepare_wrap_unwrap",
   "prepare_transfers",
   "prepare_lp_position_transfer",
+  "get_rewards_claims_by_owner",
+  "prepare_rewards_claim",
+  "prepare_ve33_increase_stake",
+  "prepare_ve33_merge",
+  "prepare_ve33_withdraw",
+  "get_liquidity_opportunities",
+] as const;
+
+const EKUBO_ADVANCED_TOOLS = [
+  "list_pool_keys",
+  "derive_pool_id",
+  "decode_pool_config",
   "prepare_fix_pool_price",
   "prepare_twamm_order",
   "prepare_twamm_order_collection",
@@ -95,13 +105,7 @@ const EKUBO_TOOLS = [
   "prepare_oracle_capacity_expansion",
   "prepare_approval_revocations",
   "prepare_old_gekubo_unwrap",
-  "get_rewards_claims_by_owner",
-  "prepare_rewards_claim",
   "prepare_revenue_buybacks",
-  "prepare_ve33_increase_stake",
-  "prepare_ve33_merge",
-  "prepare_ve33_withdraw",
-  "get_liquidity_opportunities",
   "prepare_pool_initialization",
 ] as const;
 
@@ -110,9 +114,17 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
     slug: "ekubo",
     title: "Ekubo Protocol",
     description:
-      "Ekubo swaps and bridges, pools, LP positions, TWAMM, auctions, incentives, and ve(3,3) STONX voting",
+      "Ekubo swaps and bridges, tokens, pools, LP positions, transfers, rewards, and ve(3,3) STONX voting",
     skill: null,
     tools: EKUBO_TOOLS,
+  },
+  {
+    slug: "ekubo-advanced",
+    title: "Ekubo Protocol advanced",
+    description:
+      "Ekubo auctions, TWAMM orders, pool initialization and price fixes, oracle capacity, manual boosts, revenue buybacks, old gEKUBO unwrap, approval revocations, and pool-key enumeration",
+    skill: null,
+    tools: EKUBO_ADVANCED_TOOLS,
   },
   {
     slug: "aave",

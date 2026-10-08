@@ -23,6 +23,13 @@ o200k tokens, instructions + tools/list + resources/list:
 | `/mcp/ekubo` |    51 |   44,788 |  23,963 |  17,440 |               16,132 |        1,105 |
 | `/mcp/safe`  |     6 |    6,322 |   3,195 |   2,622 |                2,294 |          497 |
 
+EKU-994 then split Ekubo's 51 tools across two endpoints; `/mcp` is unchanged:
+
+| Endpoint               | Tools | Total  | tools/list | Instructions | Resources |
+| ---------------------- | ----: | -----: | ---------: | -----------: | --------: |
+| `/mcp/ekubo`           |    34 | 13,187 |     11,816 |          960 |       411 |
+| `/mcp/ekubo-advanced`  |    17 |  5,321 |      4,312 |          826 |       183 |
+
 Every endpoint except `/mcp/safe` carries the CLO jurisdiction notice and the
 jurisdiction-metadata paragraph verbatim, about 480 tokens, and
 `get_quotes_with_plans` carries the notice again in its description. Raise a

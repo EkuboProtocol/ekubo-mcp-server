@@ -29,6 +29,8 @@ a data API and the quoter remains a route-data service.
 - `POST/GET /mcp` — MCP Streamable HTTP endpoint serving bundled protocols (excludes Safe)
 - `POST/GET /mcp/{ekubo,aave,aerodrome,lido,merkl,morpho,sky,uniswap}` — the same MCP
   contract narrowed to one protocol
+- `POST/GET /mcp/ekubo-advanced` — Ekubo's operator tools, kept off `/mcp/ekubo`
+  (see below)
 - `POST/GET /mcp/safe` — dedicated Safe signer preparation; see [Safe coverage](docs/safe.md)
 - `GET /` — service metadata, per-protocol endpoints, and canonical
   documentation links
@@ -51,6 +53,16 @@ without a protocol fails the build rather than quietly appearing on no
 per-protocol endpoint.
 
 `/mcp` remains the endpoint for the bundled catalog. Safe clients must add `/mcp/safe`.
+
+Ekubo itself is split in two. `/mcp/ekubo` carries the core tools most
+sessions use: tokens, quotes and swaps, pools, LP positions and deposits,
+withdrawals and claims, liquidity opportunities, transfers, wrap/unwrap,
+rewards, and ve(3,3)/STONX. `/mcp/ekubo-advanced` carries the rarely used
+operator tools: auctions, TWAMM orders, pool initialization and price fixes,
+oracle capacity, manual boosts, revenue buybacks, the old gEKUBO unwrap,
+approval revocations, and pool-key enumeration and derivation. Each one's
+instructions name the other, so an agent that needs a tool from the other half
+tells the user which server to add. `/mcp` serves both halves.
 `/tools?protocol=safe` publishes the Safe catalog; unfiltered `/tools` describes `/mcp`.
 
 Filtering happens at the two registration choke points in `createEkuboServer`
