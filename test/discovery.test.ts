@@ -885,6 +885,32 @@ describe("Worker discovery", () => {
       "https://api.morpho.org/graphql",
     );
 
+    const ve33Workflow = await worker.fetch(
+      new Request("https://mcp.ekubo.org/mcp", {
+        method: "POST",
+        headers: { ...headers, "mcp-protocol-version": "2025-11-25" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 35,
+          method: "resources/read",
+          params: { uri: "ekubo://docs/ve33-workflow" },
+        }),
+      }),
+      env,
+      context,
+    );
+    const ve33WorkflowText = (
+      (await mcpJson(ve33Workflow)) as {
+        result: { contents: { text: string }[] };
+      }
+    ).result.contents[0].text;
+    for (const sentence of [
+      "Execute onchain_validation's read_calls_reference through wallet_batch_eth_call immediately before signing, simulate the exact transaction from sender, and discard the plan after any state change or failed expectation.",
+      "Never construct raw vote, clearVote, extendStake, mergeStakes, withdrawStake, or burn calldata from the ABI resource when a first-class safe workflow exists.",
+    ]) {
+      expect(ve33WorkflowText).toContain(sentence);
+    }
+
     const templates = await worker.fetch(
       new Request("https://mcp.ekubo.org/mcp", {
         method: "POST",
