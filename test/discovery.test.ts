@@ -349,16 +349,16 @@ describe("Worker discovery", () => {
     const swapTool = catalog.tools.find(
       (tool) => tool.name === "get_quotes_with_plans",
     );
-    expect(swapTool?.description).toContain(
-      "maximum value impact is approximately one estimated gas fee",
-    );
-    expect(swapTool?.description).toContain("not a generic 50 bps/0.5%");
-    expect(
-      (
-        (swapTool?.inputSchema.properties as Record<string, unknown>)
-          .slippage_bps as { description?: string }
-      ).description,
-    ).toContain("Honor an explicit user preference");
+    // The slippage rule is stated once, on the parameter it sizes.
+    expect(swapTool?.description).toContain("Size slippage_bps by its own rule");
+    expect(swapTool?.description).toContain("entire-balance swap");
+    const slippage = (
+      (swapTool?.inputSchema.properties as Record<string, unknown>)
+        .slippage_bps as { description?: string }
+    ).description;
+    expect(slippage).toContain("Honor the user's preference");
+    expect(slippage).toContain("near one gas fee");
+    expect(slippage).toContain("Never use a generic 50 bps (0.5%) default");
     // Every tool is informational and read-only: preparation tools return
     // transaction plans but never submit them. Fresh plans and quotes remain
     // non-idempotent because their returned references or values can change.
@@ -671,79 +671,56 @@ describe("Worker discovery", () => {
     };
     expect(initializeResult.result.capabilities.tools).toBeDefined();
     expect(initializeResult.result.serverInfo.version).toBe(MCP_SERVER_VERSION);
-    expect(initializeResult.result.instructions).toContain(
-      "get_ve33_allocations",
-    );
-    expect(initializeResult.result.instructions).toContain(
-      "use this Ekubo MCP before any browser or website tool",
+    const instructions = String(initializeResult.result.instructions);
+    expect(instructions).toContain(
+      "use this MCP before any browser or website tool",
     );
     // The instructions route by capability, not by naming individual chains.
     // The one exception is the counsel-approved jurisdiction notice, which
     // names the restricted asset class rather than a chain.
-    expect(
-      String(initializeResult.result.instructions).replaceAll("Robinhood Stock Token", ""),
-    ).not.toContain("Robinhood");
-    expect(initializeResult.result.instructions).toContain(
-      "A quote is only worth what it can still execute for",
+    expect(instructions.replaceAll("Robinhood Stock Token", "")).not.toContain(
+      "Robinhood",
     );
-    expect(initializeResult.result.instructions).toContain(
-      "maximum value impact is approximately one gas fee",
-    );
-    expect(initializeResult.result.instructions).toContain(
-      "Never substitute a generic 50 bps (0.5%) default",
-    );
-    expect(initializeResult.result.instructions).toContain(
-      "never the reverted calldata unchanged",
-    );
-    expect(initializeResult.result.instructions).toContain(
-      'For "all", "max", or "entire balance" swaps',
-    );
-    expect(initializeResult.result.instructions).toContain("get_tokens");
-    expect(initializeResult.result.instructions).toContain(
-      "Never infer the user's wallet",
-    );
-    expect(initializeResult.result.instructions).toContain(
-      "unconditionally before that vote is cleared or moved",
-    );
-    expect(initializeResult.result.instructions).toContain(
-      "strategy=compact_max_lock",
-    );
-    expect(initializeResult.result.instructions).toContain(
-      "update my STONX allocations to the suggested allocations",
-    );
-    expect(initializeResult.result.instructions).toContain(
-      "wallet must never construct calldata",
-    );
-    expect(initializeResult.result.instructions).toContain(
-      "execution_plan_reference",
-    );
-    expect(initializeResult.result.instructions).toContain(
-      "pass the envelope unchanged as the wallet tool's reference argument",
-    );
-    expect(initializeResult.result.instructions).toContain(
+    for (const rule of [
       MCP_TOOL_CATALOG_REVISION,
-    );
-    expect(initializeResult.result.instructions).toContain(
-      "Do not ask the user for a separate agent-level confirmation",
-    );
-    expect(initializeResult.result.instructions).toContain(
-      "Cast remains an optional fallback",
-    );
-    expect(initializeResult.result.instructions).toContain(
+      "call get_quotes_with_plans once with sender and slippage_bps",
+      "never a generic 50 bps",
+      "send that simulation",
+      "Pass each envelope unchanged as the wallet tool's reference argument",
+      "as a value in the code block that received it",
+      "add no agent-level confirmation",
+      "report a policy rejection verbatim",
+      "Never construct calldata",
+      "ekubo://docs/execution-plan",
+      "ekubo://docs/ve33-workflow",
+      "ekubo://docs/lp-position-workflow",
+      "never infer it from the machine, repository, or keystore",
       "Aave market discovery happens directly between the agent",
-    );
-    expect(initializeResult.result.instructions).toContain(
       "https://api.v3.aave.com/graphql",
-    );
-    expect(initializeResult.result.instructions).toContain(
       "ekubo://skills/use-morpho",
-    );
-    expect(initializeResult.result.instructions).not.toContain(
-      "receiving explicit user confirmation",
-    );
-    expect(initializeResult.result.instructions).not.toMatch(
-      /dune|8187907|api\.dune/i,
-    );
+    ]) {
+      expect(instructions).toContain(rule);
+    }
+    expect(instructions).not.toContain("receiving explicit user confirmation");
+    expect(instructions).not.toMatch(/dune|8187907|api\.dune/i);
+    // Tool-family workflow moved out of the instructions into the description
+    // of the tool it governs, where it is read when that tool is chosen.
+    const describes = (name: string) =>
+      publicToolCatalog.find((tool) => tool.name === name)!.description;
+    for (const [name, rule] of [
+      ["get_quotes_with_plans", "entire-balance swap"],
+      ["get_stonx_allocation_recommendation", "strategy=compact_max_lock"],
+      ["prepare_ve33_reallocation", "pass its exact state_id"],
+      ["prepare_ve33_reinvest", "never a pre-existing balance"],
+      ["prepare_ve33_extend", "max_duration=true must be the user's explicit choice"],
+      ["get_liquidity_opportunities", "ranking_complete=false"],
+      ["prepare_lp_position_deposit", "never a quoted output"],
+      ["prepare_lp_position_earnings_claim", "expected_owner"],
+      ["prepare_lp_position_withdraw", "expected_owner"],
+      ["get_ve33_allocations", "pass only owner"],
+    ] as const) {
+      expect(describes(name)).toContain(rule);
+    }
 
     const listed = await worker.fetch(
       new Request("https://mcp.ekubo.org/mcp", {
