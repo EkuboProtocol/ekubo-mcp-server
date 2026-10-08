@@ -204,5 +204,92 @@
     "page": 1,
     "page_size": 50,
     "has_more": false
+  },
+  "pool_eth_usdc": {
+    "chain_id": "8453",
+    "current_state_query": {
+      "read_calls_reference": {
+        "artifact_type": "read_calls",
+        "bytes": 3120,
+        "integrity": {
+          "algorithm": "keccak256",
+          "value": "0x7a2e4f9c1b5d8a3f6e0c2d4b7a9e1f3c5d6a8b0e2f4a6c8d1b3e5f7a9c2d4e6b8a0f2"
+        },
+        "kind": "artifact_reference",
+        "url": "https://mcp.ekubo.org/artifacts/read_calls/4d2f7a1e8b6c49a5d3f0e7c9b2a5d8f1e6"
+      },
+      "state_call_id": "q0"
+    },
+    "pool_id": "0x9b7d0d2f8c4a4e6b8a1c3d5e7f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9",
+    "pool_key": {
+      "fee": "0.05%",
+      "token0": "0x0000000000000000000000000000000000000000",
+      "token1": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    }
+  },
+  "rewards": {
+    "claims": [
+      {
+        "chain_id": "8453",
+        "claim": {
+          "account": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+          "amount": "2500000",
+          "index": "3"
+        },
+        "drop_address": "0x3C1308C8D0F9C3B2E8B7A6D5C4E3F2A1B0C9D8E7",
+        "key": {
+          "owner": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+          "root": "0x8f2a5c7e9b1d4f6a0c3e8b5d2f7a4c9e1b6d3f5a8c0e2b7d4f1a6c9e3b5d8f2a4c6",
+          "token": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+        },
+        "proof": [
+          "0x1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f"
+        ]
+      }
+    ],
+    "onchain_validation": {
+      "status": "not_executed"
+    },
+    "owner": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A"
+  },
+  "stonx_allocs": {
+    "allocations": [],
+    "chain_id": "4663",
+    "owner": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+    "schema_version": "2",
+    "snapshot": {
+      "active_vote_ve_tokens": 2,
+      "indexed_owned_ve_tokens": 2,
+      "indexed_source_url": "https://api.ekubo.org/ve33/v1/allocations/0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+      "projected_at_timestamp": "1750000000",
+      "unvoted_ve_tokens": 0
+    },
+    "state_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+    "totals": {
+      "allocated_stake_amount": "1500000000000000000000",
+      "applied_vote_weight": "1500000000000000000000",
+      "projected_current_voting_power": "1490000000000000000000",
+      "stake_amount": "1500000000000000000000",
+      "unvoted_stake_amount": "0"
+    },
+    "ve33": "0xD18685a514E59b06d59824e16Db07e73345d9953",
+    "ve_token": "0x9d7008E169D040B6c0140eb92E7cA82B12643497"
+  },
+  "tokens_mainnet": {
+    "chain_id": "1",
+    "tokens": [
+      {
+        "address": "0x0000000000000000000000000000000000000000",
+        "decimals": 18,
+        "symbol": "ETH",
+        "visibility_priority": 100
+      },
+      {
+        "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "decimals": 6,
+        "symbol": "USDC",
+        "visibility_priority": 99
+      }
+    ]
   }
 }

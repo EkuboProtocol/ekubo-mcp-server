@@ -962,7 +962,7 @@ catalog (plus the Cloud Wallet catalog, for handoffs) and checks the first tool
 call of each. It runs the Cloud Wallet harness from a sibling checkout
 (`CLOUD_WALLET_DIR`, default `../cloud-wallet`); `MCP_URL` selects another
 endpoint, such as a local `wrangler dev`. The scenario format and options are in
-cloud-wallet `docs/MCP-CONTEXT.md`. A full five-model run costs about 15,000
+cloud-wallet `docs/MCP-CONTEXT.md`. A full five-model run costs about 42,000
 neurons, more than the 10,000-neuron free daily allowance, so it is not part of
 CI.
 
