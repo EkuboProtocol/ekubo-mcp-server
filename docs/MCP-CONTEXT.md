@@ -25,7 +25,11 @@ o200k tokens, instructions + tools/list + resources/list:
 
 Every endpoint except `/mcp/safe` carries the CLO jurisdiction notice and the
 jurisdiction-metadata paragraph verbatim, about 480 tokens. Raise a budget only
-with a reason the extra tokens buy.
+with a reason the extra tokens buy. One such raise: every non-Safe
+instructions budget grew by 300 characters (about 60 tokens) for the opening
+scope sentence, after agents read the handoff rules as a ban on the user's own
+cast/sncast work outside this server. Restrictive rules in this text are scoped
+to this server's tools and plans; do not write one as a blanket prohibition.
 
 ## How the catalog is kept small
 

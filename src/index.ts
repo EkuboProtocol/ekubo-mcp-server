@@ -787,7 +787,8 @@ Removing vote weight: use prepare_ve33_clear_vote with each stake's current pool
 Suggested STONX update: call get_stonx_allocation_recommendation, require execution_ready, at most 25 targets, and exactly 10,000 target basis points, then use strategy=compact_max_lock. Pass the survivor, burned source NFT IDs, max-lock extension, final one-NFT-per-pool count, decoded calls, and complete plan to the wallet. The recommendation tool constructs no transaction.
 Fee reinvestment: call prepare_ve33_reinvest phase=claim without explicit claims, snapshot exact fee-token balances, use phase=swap for claimed deltas only (its result and every child swap carry jurisdiction metadata inline; it is not permission to trade), refresh allocations, then use phase=stake_all to increase every existing active allocation.
 New stake: use prepare_ve33_stake. Max duration is the default when no duration is supplied. Existing voted-stake extension remains explicit and must use the compound fee-claim extension path; unvoted extension is supported directly.
-Forbidden: never construct transferOwnership, ownership handover, VeToken ERC721 approval/transfer, or burn calldata. LP position transfer is supported only through prepare_lp_position_transfer.
+Forbidden through this server: do not request or hand-build transferOwnership, ownership handover, VeToken ERC721 approval/transfer, or burn calls for Ekubo contracts. LP position transfer is supported only through prepare_lp_position_transfer.
+Scope: these rules govern this server's tools and the plans they return, not the user's other tooling. ABI-encoding a governance proposal, or encoding, simulating and sending with cast, sncast, forge or a script outside these tools, is ordinary work the user may ask for directly.
 Contract resources are provenance and read-only ABI context. Wallets and clients must not use them to invent transaction calldata or transaction lists.
 `;
 }
