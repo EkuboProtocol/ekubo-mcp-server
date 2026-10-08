@@ -1,5 +1,9 @@
 import { QUOTE_JURISDICTION_NOTICE_V2 } from "./token-restrictions.js";
-import { publishCompactCatalog, type RegisteredToolConfig } from "./mcp-catalog.js";
+import {
+  catalogSummary,
+  publishCompactCatalog,
+  type RegisteredToolConfig,
+} from "./mcp-catalog.js";
 import { uniswapTools, uniswapCatalog } from "./uniswap/tools.js";
 import { safeTools, safeCatalog } from "./safe.js";
 import { informationalOutputSchemas } from "./informational-output-schemas.js";
@@ -191,7 +195,7 @@ function isPositiveBigInt(value: string | number): boolean {
 
 const chainId = z
   .union([
-    z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    z.number().int(),
     z
       .string()
       .regex(
@@ -204,7 +208,7 @@ const chainId = z
 const address = z
   .string()
   .regex(/^0x[0-9a-fA-F]{40}$/, "must be a 20-byte EVM address");
-const tokenAddressSchema = address.describe("Token; the zero address is the native token");
+const tokenAddressSchema = address.describe("Token; zero address = native");
 const tokenIdentifier = z
   .string()
   .regex(
@@ -237,7 +241,7 @@ const swapDeadlineMinutes = z
   .max(MAX_SWAP_DEADLINE_MINUTES)
   .optional()
   .describe(
-    `Onchain deadline for an Ekubo router route, in minutes; default and maximum ${DEFAULT_SWAP_DEADLINE_MINUTES}. Past it the route reverts with DeadlineExpired().`,
+    `Ekubo router route deadline; default ${DEFAULT_SWAP_DEADLINE_MINUTES}`,
   );
 const quoteSource = z.enum(["ekubo", "0x", "across", "layerzero", "lifi"]);
 const amount = z
@@ -325,7 +329,7 @@ export const exportTokensSchema = z.object({
   chain_id: chainId
     .optional()
     .describe(
-      "Export only this EVM chain's tokens. Almost always pass this: a wallet holds names for the chain it is on. Note that scoping by chain does not by itself bring an export under a wallet's per-import limit — at the interface visibility threshold Ethereum carries about 5,600 tokens, BNB Chain 3,600, Base 2,600, and Arbitrum and Polygon around 1,000 each. Omit to export across every indexed chain",
+      "Export only this chain; almost always pass it, since a wallet holds names for the chain it is on. Ethereum alone has about 5,600 tokens",
     ),
   max_tokens: z
     .number()
@@ -334,7 +338,7 @@ export const exportTokensSchema = z.object({
     .max(10_000)
     .optional()
     .describe(
-      "Largest number of entries to export; defaults to 1,000, which is what a wallet accepts in one import. An export larger than the importer's limit is refused whole rather than truncated, so a bigger number is not a safer one. When more tokens exist than this allows, the result reports complete=false and carries the first max_tokens of them",
+      "Defaults to 1,000, what a wallet accepts in one import; a larger export is refused whole, not truncated",
     ),
 });
 
@@ -359,7 +363,7 @@ export const getTokensSchema = z.object({
     )
     .min(1)
     .max(1_000)
-    .describe("Exact token identifiers; entries may span multiple chains"),
+    .describe("Entries may span chains"),
 });
 
 const quoteRequestSchema = z.object({
@@ -378,7 +382,7 @@ export const getValueTransferStatusSchema = z.object({
     .enum(["layerzero", "lifi"])
     .optional()
     .describe(
-      "Which provider carried the transfer, taken from the executed quote's source. Defaults to layerzero. The two are tracked differently, so naming the wrong one cannot find the transfer.",
+      "The executed quote's source; defaults to layerzero",
     ),
   quote_id: z
     .string()
@@ -386,35 +390,35 @@ export const getValueTransferStatusSchema = z.object({
     .max(256)
     .optional()
     .describe(
-      "The provider_quote_id of the option that was executed, taken from that quote's normalized or execution.quote fields. Required for layerzero, which reuses the quote id as the transfer id. For lifi it is optional and used only to label the answer, because LI.FI does not accept a quote id as a lookup key.",
+      "The executed option's provider_quote_id; required for layerzero",
     ),
   transaction_hash: z
     .string()
     .regex(/^0x[0-9a-fA-F]{64}$/, "must be a 32-byte transaction hash")
     .optional()
     .describe(
-      "Origin-chain transaction hash of the submitted transfer. Required for lifi, which resolves a transfer by nothing else. For layerzero it is optional but should always be passed once it is known: it lets LayerZero resolve the transfer before its own indexer has caught up, and some route types (Stargate taxi among them) refuse to report status without it.",
+      "Origin transaction hash; required for lifi, and pass it for layerzero once known (some routes need it)",
     ),
   origin_chain_id: chainId
     .optional()
     .describe(
-      "Chain the transfer was sent from. Only used by lifi, where it narrows the lookup to one chain instead of every chain LI.FI indexes, and is therefore worth passing every time.",
+      "Origin chain; lifi only, narrows the lookup",
     ),
   destination_chain_id: chainId
     .optional()
-    .describe("Chain the transfer is being delivered to. Only used by lifi."),
+    .describe("Destination chain; lifi only"),
 });
 
 export const getQuotesWithPlansSchema = quoteRequestSchema.extend({
   sender: address
     .optional()
     .describe(
-      "Transaction sender. Pass with slippage_bps once the user has decided, so every option arrives with its execution_plan_reference; omit both for an indicative comparison.",
+      "Transaction sender; pass with slippage_bps once the user has decided, so every option carries its plan",
     ),
   recipient: address
     .optional()
     .describe(
-      "Optional output recipient; defaults to sender when execution plans are requested",
+      "Defaults to sender",
     ),
   slippage_bps: z
     .number()
@@ -423,14 +427,14 @@ export const getQuotesWithPlansSchema = quoteRequestSchema.extend({
     .max(10_000)
     .optional()
     .describe(
-      "Slippage bound written into the calldata; required with sender. Honor the user's preference. Otherwise keep the maximum slippage loss near one gas fee: slippage_bps ~= 10,000 * gas-cost value / swap-notional value, both in the same currency. Never use a generic 50 bps (0.5%) default, especially on Ethereum mainnet. After a slippage failure, re-quote rather than widen the bound.",
+      "Slippage bound written into the calldata, in basis points: 0.1% = 10, 0.3% = 30. Required with sender. Honor the user's preference. Otherwise keep the maximum slippage loss near one gas fee: slippage_bps ~= 10,000 * gas-cost value / swap-notional value, both in the same currency. Never use a generic 50 bps (0.5%) default, especially on Ethereum mainnet. After a slippage failure, re-quote rather than widen the bound.",
     ),
   swap_deadline_minutes: swapDeadlineMinutes,
   include_raw_quotes: z
     .boolean()
     .optional()
     .describe(
-      "Echo each provider's untouched response beside the normalized amounts. Off by default: these blobs are the largest part of a response and the least useful, since every field a choice turns on is already normalized. Turn it on to diagnose a provider.",
+      "Echo raw provider responses; only to diagnose a provider",
     ),
 });
 
@@ -460,7 +464,7 @@ const poolAddress = z
   .string()
   .regex(/^0x[0-9a-fA-F]{1,40}$/, "must fit in a 20-byte EVM address");
 
-const poolKeySchema = z
+const poolKeyObjectSchema = z
   .object({
     token0: poolAddress,
     token1: poolAddress,
@@ -479,6 +483,10 @@ const poolKeySchema = z
       (poolKey.fee !== undefined && poolKey.extension !== undefined),
     "provide config, or provide fee, tick_spacing, and extension",
   );
+const poolKeySchema = catalogSummary(
+  poolKeyObjectSchema,
+  "PoolKey {token0, token1, config} or {token0, token1, fee, tick_spacing, extension, stableswap_params?}, as read from the pool or vote",
+);
 
 const exactPoolKeySchema = z
   .object({
@@ -488,7 +496,7 @@ const exactPoolKeySchema = z
     fee: uintLikeString
       .optional()
       .describe(
-        "Exact uint64 Q64 fee as a decimal or hexadecimal string; never pass it as a JSON number",
+        "uint64 Q64 fee as a string, never a JSON number",
       ),
     tick_spacing: z.union([z.number().int().min(1), uintLikeString]).optional(),
     extension: poolAddress.optional(),
@@ -504,11 +512,14 @@ const exactPoolKeySchema = z
     "provide config, or fee, extension, and tick_spacing/stableswap_params",
   );
 
-const encodedPoolKeySchema = z.object({
-  token0: tokenAddressSchema,
-  token1: tokenAddressSchema,
-  config: bytes32,
-});
+const encodedPoolKeySchema = catalogSummary(
+  z.object({
+    token0: tokenAddressSchema,
+    token1: tokenAddressSchema,
+    config: bytes32,
+  }),
+  "PoolKey {token0, token1, config}: token addresses (zero = native), bytes32 config",
+);
 
 export const getPositionsByOwnerSchema = z.object({
   owner: address,
@@ -520,14 +531,14 @@ export const getPositionsByOwnerSchema = z.object({
 
 export const getPositionSchema = z.object({
   owner: address.describe(
-    "Current indexed owner used to locate the exact position without ERC721 enumeration",
+    "Current owner",
   ),
   chain_id: chainId,
   positions_address: address.describe(
     "Ekubo Positions or Ve33Positions manager",
   ),
   token_id: uintLikeString.describe(
-    "Position NFT token ID as an exact decimal or hexadecimal integer string",
+    "Position NFT ID",
   ),
 });
 
@@ -535,7 +546,7 @@ export const getPoolSchema = z.object({
   chain_id: chainId,
   core_address: poolAddress,
   pool_id: uintLikeString.describe(
-    "PoolKey hash as an exact decimal or hexadecimal integer string",
+    "Pool ID",
   ),
 });
 
@@ -544,20 +555,20 @@ export const getPoolLiquiditySchema = getPoolSchema;
 export const listPoolKeysSchema = z.object({
   chain_id: chainId,
   core_address: poolAddress.describe(
-    "Exact Core deployment whose initialized pools to enumerate",
+    "Core deployment",
   ),
   token_a: poolAddress
     .optional()
-    .describe("Keep only pools containing this token on either side"),
+    .describe("Pools containing this token"),
   token_b: poolAddress
     .optional()
     .describe(
-      "With token_a, keep only pools for the exact pair (order-insensitive)",
+      "With token_a, the exact pair",
     ),
   extension: poolAddress
     .optional()
     .describe(
-      "Keep only pools using this extension; pass the zero address for extensionless pools",
+      "Zero address = extensionless",
     ),
   page_size: z
     .number()
@@ -569,7 +580,7 @@ export const listPoolKeysSchema = z.object({
   after_pool_id: uintLikeString
     .optional()
     .describe(
-      "Keyset cursor: return pools whose pool_id is strictly greater; pass the previous page's next_after_pool_id",
+      "Previous page's next_after_pool_id",
     ),
 });
 
@@ -581,18 +592,18 @@ export const decodePoolConfigSchema = z.object({ config: bytes32 });
 
 export const getPositionPoolCandidatesSchema = z.object({
   chain_id: chainId,
-  token_a: poolAddress.describe("First token in either numeric order"),
-  token_b: poolAddress.describe("Second token in either numeric order"),
+  token_a: poolAddress.describe("Either order"),
+  token_b: poolAddress,
   min_tvl_usd: z
     .number()
     .finite()
     .min(0)
     .default(0)
     .describe(
-      "Optional indexed TVL floor. Zero is the creation-safe default so tiny initialized pools are not hidden",
+      "TVL floor; default 0 keeps tiny pools visible",
     ),
-  core_address: poolAddress.optional().describe("Optional exact Core filter"),
-  extension: poolAddress.optional().describe("Optional exact extension filter"),
+  core_address: poolAddress.optional(),
+  extension: poolAddress.optional(),
   pool_type: z.enum(["concentrated", "stableswap"]).optional(),
 });
 
@@ -601,27 +612,27 @@ export const prepareLpPositionDepositSchema = z
     chain_id: chainId,
     sender: address,
     core_address: poolAddress.describe(
-      "Exact v3 Core address from pool discovery or the interface configuration",
+      "v3 Core address",
     ),
     pool_id: uintLikeString
       .optional()
-      .describe("Exact pool ID; may be omitted when pool_key is supplied"),
+      .describe("Omit when pool_key is supplied"),
     pool_key: encodedPoolKeySchema
       .optional()
       .describe(
-        "Exact v3 PoolKey. Required for a new uninitialized pool because it is not yet recoverable from the index.",
+        "Required for an uninitialized pool",
       ),
     pool_initialized: z
       .boolean()
       .optional()
       .describe(
-        "Set false only for a new pool that must be initialized in this transaction",
+        "false only for a new pool to initialize here",
       ),
     mode: z.enum(["mint_new", "add_liquidity"]).default("mint_new"),
     token_id: uintLikeString
       .optional()
       .describe(
-        "Required only for add_liquidity; omit when minting a new position NFT",
+        "add_liquidity only",
       ),
     tick_lower: z.number().int().min(-88_722_835).max(88_722_835),
     tick_upper: z.number().int().min(-88_722_835).max(88_722_835),
@@ -632,13 +643,13 @@ export const prepareLpPositionDepositSchema = z
       .max(88_722_835)
       .optional()
       .describe(
-        "Required only when minting into an uninitialized pool; the MCP prepends maybeInitializePool at this exact tick",
+        "Uninitialized pool only: initializes at this tick",
       ),
     max_amount0: uintString.describe(
-      "Maximum token0 input in base units; use zero for a single-sided deposit",
+      "Max token0 base units; 0 for single-sided",
     ),
     max_amount1: uintString.describe(
-      "Maximum token1 input in base units; use zero for a single-sided deposit",
+      "Max token1 base units; 0 for single-sided",
     ),
     slippage_bps: z
       .number()
@@ -646,7 +657,7 @@ export const prepareLpPositionDepositSchema = z
       .min(1)
       .max(5_000)
       .describe(
-        "User-selected liquidity slippage tolerance; used to derive a nonzero minimum liquidity",
+        "User-selected liquidity slippage",
       ),
   })
   .refine(
@@ -669,11 +680,11 @@ export const prepareLpPositionDepositSchema = z
 export const preparePoolInitializationSchema = z.object({
   chain_id: chainId,
   sender: address.describe(
-    "Wallet that will submit the permissionless initialization transaction",
+    "Submitting wallet",
   ),
-  core_address: poolAddress.describe("Exact current v3 Core address"),
+  core_address: poolAddress.describe("v3 Core address"),
   pool_key: encodedPoolKeySchema.describe(
-    "Exact v3 PoolKey to initialize; the pool ID is derived and returned",
+    "Pool to initialize",
   ),
   initial_tick: z
     .number()
@@ -681,53 +692,53 @@ export const preparePoolInitializationSchema = z.object({
     .min(-88_722_835)
     .max(88_722_835)
     .describe(
-      "Initial EVM tick. The first successful initialization permanently selects the pool's initial price.",
+      "The first initialization permanently sets the price",
     ),
 });
 
 export const prepareLpPositionEarningsClaimSchema = z.object({
   chain_id: chainId,
   sender: address.describe(
-    "Current position owner and wallet that will submit the transaction",
+    "Position owner",
   ),
   positions_address: address.describe(
-    "Exact Positions or Ve33Positions manager from the owned position",
+    "Positions or Ve33Positions manager",
   ),
   token_id: uintLikeString.describe(
-    "Position NFT token ID as an exact decimal or hexadecimal integer string",
+    "Position NFT ID",
   ),
   recipient: address
     .optional()
-    .describe("Fee or reward recipient; defaults to sender"),
+    .describe("Defaults to sender"),
 });
 
 const lpPositionWithdrawalSchema = z.object({
   positions_address: address.describe(
-    "Exact Positions or Ve33Positions manager from the owned position",
+    "Positions or Ve33Positions manager",
   ),
   token_id: uintLikeString.describe(
-    "Position NFT token ID as an exact decimal or hexadecimal integer string",
+    "Position NFT ID",
   ),
   liquidity: amount.describe(
-    "Exact positive uint128 liquidity to withdraw, normally selected from the decoded pending current-state query",
+    "uint128 liquidity, at most the decoded current-state value",
   ),
   recipient: address
     .optional()
-    .describe("Principal and earnings recipient; defaults to sender"),
+    .describe("Defaults to sender"),
 });
 
 export const prepareLpPositionWithdrawSchema = z
   .object({
     chain_id: chainId,
     sender: address.describe(
-      "Current owner of every position and wallet that will submit the transaction",
+      "Owner of every position",
     ),
     withdrawals: z
       .array(lpPositionWithdrawalSchema)
       .min(1)
       .max(100)
       .describe(
-        "One or more position withdrawals to prepare in one wallet-batch-capable execution plan",
+        "One entry per position",
       ),
   })
   .strict();
@@ -743,22 +754,22 @@ const transferChainId = chainId.refine(
   fitsTransferUint256,
   "chain_id must fit uint256",
 ).describe(
-  "EVM chain ID as a positive JSON integer, decimal string, or hexadecimal string; must fit uint256",
+  "EVM chain ID",
 );
 const transferSender = address.refine(
   isNonzeroTransferAddress,
   "sender must be a valid-checksum nonzero address",
-).describe("Nonzero wallet that owns and will send every asset");
+).describe("Nonzero owner of every asset");
 const transferRecipient = address.refine(
   isNonzeroTransferAddress,
   "recipient must be a valid-checksum nonzero address",
-).describe("Nonzero account or contract that will receive this transfer");
+).describe("Nonzero recipient address");
 const transferToken = address.refine(
   isNonzeroTransferAddress,
   "token must be a valid-checksum nonzero contract address",
-).describe("Nonzero ERC token contract address");
+).describe("Nonzero token contract address");
 const transferTokenId = uintString.describe(
-  "ERC token ID as an unsigned decimal integer; zero is valid",
+  "Token ID; zero is valid",
 ).refine(fitsTransferUint256, "token_id must fit uint256");
 const positiveTransferAmount = z.string().regex(
   /^[1-9][0-9]*$/,
@@ -780,7 +791,7 @@ const nativeTransferSchema = z.object({
   kind: z.literal("native"),
   recipient: transferRecipient,
   amount: positiveTransferAmount.describe(
-    "Positive native-token amount in wei",
+    "Wei",
   ),
 }).strict();
 const erc20TransferSchema = z.object({
@@ -788,7 +799,7 @@ const erc20TransferSchema = z.object({
   token: transferToken,
   recipient: transferRecipient,
   amount: positiveTransferAmount.describe(
-    "Positive ERC-20 amount in base units",
+    "Base units",
   ),
 }).strict();
 const erc721TransferSchema = z.object({
@@ -797,13 +808,13 @@ const erc721TransferSchema = z.object({
   recipient: transferRecipient,
   token_id: transferTokenId,
   safe: z.boolean().optional().describe(
-    "Omit or set true to use safeTransferFrom (the default); set false to use transferFrom",
+    "safeTransferFrom by default; false uses transferFrom",
   ),
   data: z.string().regex(
     /^0x(?:[0-9a-fA-F]{2})*$/,
     "data must be 0x-prefixed whole bytes",
   ).optional().describe(
-    "Optional receiver callback data for the four-argument safeTransferFrom overload; requires safe to be omitted or true",
+    "Receiver callback data for the four-argument safeTransferFrom; not with safe=false",
   ),
 })
   .strict()
@@ -821,16 +832,16 @@ const erc1155TransferSchema = z.object({
   recipient: transferRecipient,
   token_id: transferTokenId,
   amount: positiveTransferAmount.describe(
-    "Positive ERC-1155 token amount in base units",
+    "Base units",
   ),
   safe: z.literal(true).optional().describe(
-    "Omit or set true; ERC-1155 defines safeTransferFrom but no unsafe transferFrom method",
+    "ERC-1155 has no unsafe transfer",
   ),
   data: z.string().regex(
     /^0x(?:[0-9a-fA-F]{2})*$/,
     "data must be 0x-prefixed whole bytes",
   ).optional().describe(
-    "Optional receiver callback data; omitted data defaults to empty bytes (0x)",
+    "Receiver callback data; defaults to empty (0x)",
   ),
 }).strict();
 
@@ -904,7 +915,7 @@ export const prepareTwammOrderSchema = z.object({
   salt: bytes32
     .optional()
     .describe(
-      "Salt the order NFT is minted against, which fixes its token id. Omit it and one is derived from the request, so the same order always resolves to the same id and a retry is detectable instead of minting a second order. Supply your own only when identical orders need independent ids.",
+      "Fixes the order's token id; omit to derive it from the request. Supply one only when identical orders need distinct ids",
     ),
 });
 
@@ -1037,8 +1048,12 @@ export const prepareRevenueBuybacksSchema = z.object({
   roll_tokens: z.array(address).max(200),
 });
 
+const ve33ChainId = chainId.describe(
+  "With ve_token, from get_ve33_allocations (STONX: 4663), not the wallet's chain",
+);
+
 export const prepareVe33IncreaseStakeSchema = z.object({
-  chain_id: chainId,
+  chain_id: ve33ChainId,
   ve_token: address,
   sender: address,
   stake_token: address,
@@ -1047,7 +1062,7 @@ export const prepareVe33IncreaseStakeSchema = z.object({
 });
 
 export const prepareVe33MergeSchema = z.object({
-  chain_id: chainId,
+  chain_id: ve33ChainId,
   ve_token: address,
   sender: address,
   destination_ve_id: uintString,
@@ -1068,7 +1083,7 @@ export const prepareVe33MergeSchema = z.object({
 });
 
 export const prepareVe33WithdrawSchema = z.object({
-  chain_id: chainId,
+  chain_id: ve33ChainId,
   ve_token: address,
   sender: address,
   ve_id: uintString,
@@ -1081,7 +1096,7 @@ const claimSchema = z.object({
 });
 
 export const prepareVe33VoteSchema = z.object({
-  chain_id: chainId,
+  chain_id: ve33ChainId,
   ve_token: address,
   sender: address,
   source_ve_id: uintString,
@@ -1114,7 +1129,7 @@ export const prepareVe33VoteSchema = z.object({
 
 export const prepareVe33ExtendSchema = z
   .object({
-    chain_id: chainId,
+    chain_id: ve33ChainId,
     ve_token: address,
     sender: address,
     ve_id: uintString,
@@ -1132,7 +1147,7 @@ export const prepareVe33ExtendSchema = z
   );
 
 export const prepareVe33SplitSchema = z.object({
-  chain_id: chainId,
+  chain_id: ve33ChainId,
   ve_token: address,
   sender: address,
   ve_id: uintString,
@@ -1142,7 +1157,7 @@ export const prepareVe33SplitSchema = z.object({
 
 export const prepareVe33StakeSchema = z
   .object({
-    chain_id: chainId,
+    chain_id: ve33ChainId,
     ve_token: address,
     sender: address,
     stake_token: address,
@@ -1174,7 +1189,7 @@ export const prepareVe33StakeSchema = z
   });
 
 export const prepareVe33ClaimSchema = z.object({
-  chain_id: chainId,
+  chain_id: ve33ChainId,
   ve_token: address,
   sender: address,
   recipient: address.optional(),
@@ -1182,7 +1197,7 @@ export const prepareVe33ClaimSchema = z.object({
 });
 
 export const prepareVe33ClearVoteSchema = z.object({
-  chain_id: chainId,
+  chain_id: ve33ChainId,
   ve_token: address,
   sender: address,
   recipient: address
@@ -1202,7 +1217,7 @@ export const prepareVe33ClearVoteSchema = z.object({
 });
 
 export const prepareAllVe33FeeClaimsSchema = z.object({
-  chain_id: chainId,
+  chain_id: ve33ChainId,
   ve_token: address,
   sender: address.describe(
     "Owner whose indexed VeTokens and active votes should be discovered",
@@ -1235,7 +1250,7 @@ export const getVe33AllocationsSchema = z
   );
 
 export const prepareVe33ReallocationSchema = z.object({
-  chain_id: chainId,
+  chain_id: ve33ChainId,
   ve_token: address,
   sender: address.describe(
     "VeToken owner that will execute the atomic batch",
@@ -1277,7 +1292,7 @@ export const prepareVe33ReallocationSchema = z.object({
 export const prepareVe33ReinvestSchema = z
   .object({
     phase: z.enum(["claim", "swap", "stake", "stake_all"]),
-    chain_id: chainId,
+    chain_id: ve33ChainId,
     ve_token: address,
     sender: address,
     claims: z.array(claimSchema).min(1).max(100).optional(),
@@ -1335,22 +1350,14 @@ export const prepareVe33ReinvestSchema = z
     }
   });
 
-const ve33EmissionStateSchema = z
-  .object({
-    current_timestamp: uintString.describe(
-      "Locally decoded getEmissionState state.currentTimestamp",
-    ),
-    current_emission_rate: uintString.describe(
-      "Locally decoded Q32 getEmissionState state.currentEmissionRate",
-    ),
-    total_remaining_emissions: uintString.describe(
-      "Locally decoded getEmissionState state.totalRemainingEmissions",
-    ),
-  })
-  .optional()
-  .describe(
-    "Wallet-locally decoded emission state from the tool's local_read_requirement; omit on the first call",
-  );
+const ve33EmissionStateSchema = catalogSummary(
+  z.object({
+    current_timestamp: uintString,
+    current_emission_rate: uintString,
+    total_remaining_emissions: uintString,
+  }),
+  "{current_timestamp, current_emission_rate, total_remaining_emissions}: decimal strings decoded locally from getEmissionState (rate is Q32) via local_read_requirement; omit on the first call",
+).optional();
 
 const decimalVoteWeight = z
   .string()
@@ -1360,7 +1367,7 @@ export const getStonxAllocationRecommendationSchema = z.object({
   voter: z
     .object({
       vote_weight: decimalVoteWeight.describe(
-        "The voter's total vote weight in base units, the total applied vote weight get_ve33_allocations reports",
+        "Total applied vote weight from get_ve33_allocations",
       ),
       pools: z
         .array(
@@ -1368,16 +1375,16 @@ export const getStonxAllocationRecommendationSchema = z.object({
             pool_key_id: z
               .string()
               .regex(/^(?:0|[1-9][0-9]*)$/)
-              .describe("Ve33 pool_key_id from get_ve33_allocations or get_positions_by_owner"),
+              .describe("Ve33 pool_key_id"),
             lp_share: z
               .number()
               .finite()
               .min(0)
               .max(1)
-              .describe("The voter's share of this pool's emission-earning liquidity, 0 to 1"),
+              .describe("Voter's share of the pool's emission-earning liquidity"),
             current_vote_weight: decimalVoteWeight
               .optional()
-              .describe("The voter's vote weight currently applied to this pool; defaults to 0"),
+              .describe("Defaults to 0"),
           }),
         )
         .max(200)
@@ -1388,14 +1395,14 @@ export const getStonxAllocationRecommendationSchema = z.object({
     })
     .optional()
     .describe(
-      "Optional voter position. When supplied with ve33_emission_state, targets become the voter-optimal allocation that also values the emissions the voter's own LP positions receive (Mazett 2024); provider_targets keeps the neutral plan.",
+      "With ve33_emission_state, makes targets voter-optimal",
     ),
   ve33_emission_state: ve33EmissionStateSchema,
   prune_low_efficiency: z
     .boolean()
     .default(false)
     .describe(
-      "Withhold recommendations whose emissions-efficiency KPI marks them prune candidates and redistribute their weight",
+      "Withhold prune candidates and redistribute their weight",
     ),
   max_emission_share_per_fee_share: z
     .number()
@@ -1404,7 +1411,7 @@ export const getStonxAllocationRecommendationSchema = z.object({
     .max(100)
     .optional()
     .describe(
-      "Prune threshold for emission share divided by retained voter-fee share; defaults to 3",
+      "Prune above this emission share / retained fee share; default 3",
     ),
 });
 
@@ -1441,7 +1448,7 @@ export const getLiquidityOpportunitiesSchema = z.object({
   chain_id: chainId
     .optional()
     .describe(
-      "Optional production chain filter; omit to match the interface's cross-chain opportunity feed",
+      "Omit for every chain",
     ),
   types: z
     .array(z.enum(["boosted_fees", "incentive", "ve33_emissions"]))
@@ -1451,35 +1458,20 @@ export const getLiquidityOpportunitiesSchema = z.object({
       message: "types must not contain duplicates",
     })
     .default(["boosted_fees", "incentive", "ve33_emissions"])
-    .describe("Opportunity classes to include; defaults to all interface classes"),
+    .describe("Defaults to all"),
   token: z
     .string()
     .regex(/^0x[0-9a-fA-F]+$/, "token must be hexadecimal")
     .optional()
-    .describe("Optional EVM or Starknet token address appearing in the pair"),
+    .describe("Token in the pair (EVM or Starknet)"),
   min_apr: z
     .number()
     .finite()
     .min(0)
     .optional()
-    .describe("Optional APR ratio floor; 1.0 means 100%, not 1%"),
+    .describe("APR ratio floor; 1.0 = 100%"),
   limit: z.number().int().min(1).max(100).default(25),
-  ve33_emission_state: z
-    .object({
-      current_timestamp: uintString.describe(
-        "Locally decoded getEmissionState state.currentTimestamp",
-      ),
-      current_emission_rate: uintString.describe(
-        "Locally decoded Q32 getEmissionState state.currentEmissionRate",
-      ),
-      total_remaining_emissions: uintString.describe(
-        "Locally decoded getEmissionState state.totalRemainingEmissions",
-      ),
-    })
-    .optional()
-    .describe(
-      "Wallet-locally decoded emission state from the tool's local_read_requirement; omit on the first call",
-    ),
+  ve33_emission_state: ve33EmissionStateSchema,
 });
 
 export const getAaveV3MarketsSchema = z.object({
@@ -1630,40 +1622,38 @@ export const getMerklDeploymentSchema = z.object({
     .describe("Optional chain to check against the verified Merkl Distributor catalog"),
 });
 export const prepareMerklClaimSchema = z.object({
-  chain_id: chainId.describe("Chain the rewards were earned on, from the Merkl rewards summary"),
-  sender: address.describe("Wallet claiming its own rewards; also the leaf's user address"),
+  chain_id: chainId.describe("From the Merkl rewards summary"),
+  sender: address.describe("Claiming wallet; the leaf's user address"),
   rewards: z
     .array(
       z.object({
         token: tokenAddressSchema.describe("Reward token address exactly as Merkl returned it"),
-        amount: amount.describe(
-          "The reward's cumulative amount field, unchanged. This is not the claimable delta: the contract transfers this minus what was already claimed.",
-        ),
+        amount: amount.describe("Merkl's cumulative amount, unchanged; not the claimable delta"),
         proofs: z
           .array(bytes32)
           .max(64)
-          .describe("The token's proofs array, in order, copied unchanged from Merkl"),
+          .describe("Merkl's proofs, in order, unchanged"),
       }),
     )
     .min(1)
     .max(32)
     .describe(
-      "One entry per reward token on this chain. Batch every token together: the Distributor takes arrays, so a five-token claim is one transaction and one approval.",
+      "One entry per reward token on this chain, all in one claim",
     ),
 });
 
 const aerodromeActionSchema = z.object({
-  chain_id: chainId.describe("Must be Base chain 8453; Aerodrome exists nowhere else"),
-  sender: address.describe("Wallet that will execute the Aerodrome action"),
+  chain_id: chainId.describe("Base (8453) only"),
+  sender: address,
 });
 const aerodromeDeadline = amount.describe(
-  "Unix timestamp after which the router rejects this transaction. Pick a real near-term deadline; one already past makes the plan a guaranteed revert.",
+  "Near-term unix timestamp; a past one makes the plan revert",
 );
 const aerodromeClaimSources = z
   .array(
     z.object({
       contract: address.describe(
-        "The fee or bribe contract address exactly as a Sugar rewards read returned it",
+        "Fee or bribe contract from a Sugar rewards read",
       ),
       tokens: z
         .array(address)
@@ -1680,7 +1670,7 @@ export const getAerodromeDeploymentSchema = z.object({
     .describe("Optional chain to check against Aerodrome's Base-only deployment"),
 });
 export const prepareAerodromeSugarReadsSchema = z.object({
-  chain_id: chainId.describe("Must be Base chain 8453"),
+  chain_id: chainId.describe("Base (8453) only"),
   dataset: z
     .enum([
       "pools",
@@ -1693,7 +1683,7 @@ export const prepareAerodromeSugarReadsSchema = z.object({
       "venft_pool_rewards",
     ])
     .describe(
-      "Which Sugar dataset to read. pools and positions come from LpSugar, venfts from VeSugar, and epochs and rewards from RewardsSugar.",
+      "Sugar dataset",
     ),
   account: address
     .optional()
@@ -1708,56 +1698,54 @@ export const prepareAerodromeSugarReadsSchema = z.object({
     .min(1)
     .max(500)
     .optional()
-    .describe("Page size, capped by the lens contract's own maximum (500 pools, 200 positions)"),
-  offset: z.number().int().min(0).optional().describe("Page offset, defaults to 0"),
+    .describe("Page size; at most 500 pools or 200 positions"),
+  offset: z.number().int().min(0).optional(),
 });
 export const prepareAerodromeLiquidityDepositSchema = aerodromeActionSchema.extend({
-  token_a: tokenAddressSchema.describe("First token of the v2 pair"),
-  token_b: tokenAddressSchema.describe("Second token of the v2 pair"),
+  token_a: address,
+  token_b: address,
   stable: z
     .boolean()
     .describe(
-      "True for a stable pool, false for a volatile one. The pair plus this flag identifies the pool, so a wrong value targets a different pool or none at all.",
+      "Stable (true) or volatile pool; with the pair it identifies the pool",
     ),
-  amount_a_desired: amount.describe("Maximum token_a to deposit in base units"),
-  amount_b_desired: amount.describe("Maximum token_b to deposit in base units"),
-  amount_a_min: amount.describe(
-    "Minimum token_a the deposit must consume. The pool takes whatever its reserve ratio demands and refunds the rest, so this is the slippage bound.",
-  ),
-  amount_b_min: amount.describe("Minimum token_b the deposit must consume"),
+  amount_a_desired: amount.describe("Maximum token_a"),
+  amount_b_desired: amount.describe("Maximum token_b"),
+  amount_a_min: amount.describe("Slippage bound: minimum token_a consumed"),
+  amount_b_min: amount.describe("Minimum token_b consumed"),
   deadline: aerodromeDeadline,
-  recipient: address.optional().describe("LP token recipient; defaults to sender"),
+  recipient: address.optional().describe("Defaults to sender"),
 });
 export const prepareAerodromeLiquidityWithdrawSchema = aerodromeActionSchema.extend({
-  token_a: tokenAddressSchema.describe("First token of the v2 pair"),
-  token_b: tokenAddressSchema.describe("Second token of the v2 pair"),
-  stable: z.boolean().describe("True for a stable pool, false for a volatile one"),
+  token_a: address,
+  token_b: address,
+  stable: z.boolean().describe("Stable (true) or volatile pool"),
   liquidity: amount.describe("Exact LP token amount to burn in base units"),
   amount_a_min: amount.describe("Minimum token_a to receive"),
   amount_b_min: amount.describe("Minimum token_b to receive"),
   deadline: aerodromeDeadline,
-  recipient: address.optional().describe("Token recipient; defaults to sender"),
+  recipient: address.optional().describe("Defaults to sender"),
   lp_token: address
     .optional()
     .describe(
-      "The pool address the router will pull LP tokens from, as resolved by this tool's first-phase pool read. Omit it to get that read back; supply it to get the complete approve + removeLiquidity + cleanup plan.",
+      "Pool address from this tool's first-phase read; omit to get that read, supply it for the full plan",
     ),
 });
 export const prepareAerodromeGaugeDepositSchema = aerodromeActionSchema.extend({
-  gauge: address.describe("The pool's gauge address, from a Sugar pools read"),
+  gauge: address.describe("Gauge from a Sugar pools read"),
   amount: amount.describe("Exact LP token amount to stake in base units"),
   lp_token: address
     .optional()
     .describe(
-      "The gauge's stakingToken, as resolved by this tool's first-phase read. Omit it to get that read back; supply it to get the complete approve + deposit + cleanup plan.",
+      "Gauge stakingToken from this tool's first-phase read; omit to get that read, supply it for the full plan",
     ),
 });
 export const prepareAerodromeGaugeWithdrawSchema = aerodromeActionSchema.extend({
-  gauge: address.describe("The pool's gauge address, from a Sugar pools read"),
+  gauge: address.describe("Gauge from a Sugar pools read"),
   amount: amount.describe("Exact LP token amount to unstake in base units"),
 });
 export const prepareAerodromeGaugeClaimSchema = aerodromeActionSchema.extend({
-  gauge: address.describe("The pool's gauge address, from a Sugar pools read"),
+  gauge: address.describe("Gauge from a Sugar pools read"),
   account: address
     .optional()
     .describe(
@@ -1820,7 +1808,7 @@ export const prepareAerodromeIncentiveClaimSchema = aerodromeActionSchema.extend
 
 const lidoActionSchema = z.object({
   chain_id: chainId.describe("Must be Ethereum chain 1"),
-  sender: address.describe("Wallet that will execute the Lido action"),
+  sender: address,
 });
 
 export const getLidoDeploymentSchema = z.object({});
@@ -1924,7 +1912,7 @@ const exportedTokenListOutputSchema = z.looseObject({
   complete: z.boolean(),
 });
 const countryCodeSchema = z.string().regex(/^[A-Z]{2}$/);
-const quoteJurisdictionSchema = z.object({
+const quoteJurisdictionSchema = catalogSummary(z.object({
   policy_version: z.string(),
   policy_digest: z.string().regex(/^[0-9a-f]{64}$/),
   coverage: z.enum(["complete", "unknown"]),
@@ -1941,7 +1929,7 @@ const quoteJurisdictionSchema = z.object({
     execution_hold: z.boolean(),
   })),
   execution_notice: z.string().nullable(),
-});
+}), "jurisdiction metadata (ekubo-token-jurisdictions-v2): coverage, execution_hold, restricted_jurisdictions, per-asset classification");
 const quotesOutputSchema = z.looseObject({
   jurisdiction: quoteJurisdictionSchema,
   quotes: z
@@ -2060,14 +2048,14 @@ export const publicToolCatalog = [
     name: "list_tokens",
     title: "List Ekubo tokens",
     description:
-      "First step for symbol-based swaps, including tokenized stocks and stablecoins: list the canonical Ekubo token list, ordered by descending visibility_priority so the preferred token wins ambiguous symbol matches. Pass search to match a symbol prefix or suffix, chain_id to stay on one chain, and min_visibility_priority to reach tokens the interface hides by default.",
+      "First step for symbol-based swaps, including tokenized stocks and stablecoins: list canonical Ekubo tokens by descending visibility_priority, so the preferred token wins an ambiguous symbol. Use search for a symbol prefix or suffix and min_visibility_priority to reach tokens the interface hides.",
     inputSchema: z.toJSONSchema(listTokensSchema),
   },
   {
     name: "export_tokens",
     title: "Export Ekubo tokens for a wallet",
     description:
-      "Hand a wallet the canonical token list without reading it. Returns only a token_list_reference envelope and the count it stands for: no entries, so nothing enters your context that you would only pass on. Use this to import token names into a wallet so it can label transactions, or to name the addresses for a bulk balance read; pass the envelope unchanged as the wallet tool's reference argument. The stored body carries exactly what a wallet acts on — chain ID, address, symbol, name, decimals — and none of the logo URLs, prices, supplies, or bridge maps that make the full list 483 KB. Scope it with chain_id: a wallet holds names for the chain it is on. Check complete in the result — false means the chain has more tokens at this visibility than max_tokens allowed and the export is a prefix, not the chain's list; the busiest chains carry several thousand each, well past the 1,000 a wallet accepts in one import. Use list_tokens instead whenever you need to read entries yourself, such as resolving a symbol the user typed.",
+      "Return a token_list_reference envelope (chain ID, address, symbol, name, decimals) and its count, with no entries, so a wallet can import token names; pass it unchanged as the wallet tool's reference argument. complete=false means the export is a prefix of the chain's list. Use list_tokens to read entries yourself.",
     inputSchema: z.toJSONSchema(exportTokensSchema),
   },
   {
@@ -2081,21 +2069,21 @@ export const publicToolCatalog = [
     name: "get_tokens",
     title: "Get multiple Ekubo tokens",
     description:
-      "Fetch canonical metadata for 1 to 1,000 exact token identifiers in one batch request. Tokens may span chains. Results preserve input order and duplicates; identifiers absent from the canonical token list are omitted.",
+      "Fetch canonical metadata for up to 1,000 token identifiers in one batch request, preserving input order; identifiers absent from the canonical list are omitted.",
     inputSchema: z.toJSONSchema(getTokensSchema),
   },
   {
     name: "get_quotes_with_plans",
     title: "Get swap or bridge quotes with execution plans",
     description:
-      QUOTE_JURISDICTION_NOTICE_V2 + " " + "The whole non-browser swap path for onchain swap, trade, exchange, or convert requests on supported EVM chains: one call returns every available Ekubo and 0x quote for a same-chain swap, each already carrying the execution_plan_reference that executes it, without accepting or selecting a source. Choose an option and pass its execution.execution_plan_reference envelope unchanged as the wallet's reference argument; the wallet fetches and verifies the plan body itself; there is no second preparation step, so the quote the user compared is the quote that executes rather than a different one fetched after they agreed. Do not call this tool again for an option it already prepared: that buys a fresh quote and restarts the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the request. Omit sender and slippage_bps for an indicative comparison that fetches no calldata; supply both for plans. Size slippage_bps by its own rule. Never retry reverted calldata unchanged. For an all, max, or entire-balance swap, read the exact input-token balance with the wallet's balance tool and quote that amount. Simulate the chosen plan once with the wallet, show the user that result, and send that same simulation. Cross-chain requests are quoted by Across, LayerZero's Value Transfer API, and LI.FI where each is configured, and are compared the same way as same-chain options; after executing a LayerZero or LI.FI option, get_value_transfer_status is polled to confirm delivery, with that option's provider_quote_id for LayerZero and with the origin transaction hash for LI.FI. Provider failures are reported separately in unavailable_sources, and an option that could not be made executable reports its own execution_unavailable while the rest stand. Compare options on amount_out together with native_fee: some providers, LayerZero among them, charge a messaging fee in native token on top of the input that amount_out does not reflect, and ranking on amount_out alone can pick an option that costs an order of magnitude more all in. When any option charges one the comparison block names it in native_fee_sources and says whether its basis nets it out. Set include_raw_quotes only to diagnose a provider; the normalized amounts carry every field a choice turns on. Supports EIP-155 token identifiers.",
+      QUOTE_JURISDICTION_NOTICE_V2 + " " + "The whole non-browser swap path for onchain swap, trade, exchange, or convert requests on supported EVM chains: one call returns every available quote (Ekubo and 0x same-chain; Across, LayerZero and LI.FI cross-chain), each carrying the execution_plan_reference that executes it. Pass the chosen option's execution.execution_plan_reference unchanged as the wallet's reference argument; there is no second preparation step. Do not call this tool again for an option it already prepared; call again only after a revert, an expiry, or a change to the request. Omit sender and slippage_bps for an indicative comparison; supply both for plans. Size slippage_bps by its own rule. Never retry reverted calldata unchanged. For an all, max, or entire-balance swap, quote the exact input-token balance from the wallet's balance tool. Simulate the chosen plan once, show the user that result, and send that same simulation. Compare options on amount_out together with native_fee, which LayerZero charges outside amount_out. Confirm LayerZero or LI.FI delivery with get_value_transfer_status. Failed providers are listed in unavailable_sources.",
     inputSchema: z.toJSONSchema(getQuotesWithPlansSchema),
   },
   {
     name: "get_value_transfer_status",
     title: "Track a LayerZero or LI.FI cross-chain transfer",
     description:
-      "Report where an executed LayerZero or LI.FI transfer has got to, from origin submission through delivery on the destination chain. A bridge is the one execution plan whose successful origin receipt does not mean the user has their funds, so this is how a cross-chain transfer is confirmed finished rather than merely sent. Pass source set to the executed quote's source. For layerzero, call it with that option's provider_quote_id and the origin transaction_hash, which some route types require rather than merely prefer. For lifi, the origin transaction_hash is the only key that resolves a transfer and is required; pass origin_chain_id with it to narrow the lookup. Poll every fifteen to thirty seconds while settled is false, and stop as soon as it is true: transfers settle in minutes rather than seconds, and this call draws on the same metered budget as a quote, so polling faster costs the next quote without learning anything sooner. Status UNKNOWN or NOT_FOUND immediately after submission usually means the transfer has not been indexed yet rather than that it was lost. Read substatus before reporting a settled LI.FI transfer as delivered: REFUNDED and PARTIAL are reported under status DONE. Applies to LayerZero and LI.FI options; Across transfers are not tracked here.",
+      "Report whether an executed LayerZero or LI.FI transfer has been delivered; its origin receipt alone does not mean the user has the funds. Poll every 15 to 30 seconds while settled is false (it draws on the quote budget). UNKNOWN or NOT_FOUND right after submission usually means not yet indexed. For LI.FI, read substatus: REFUNDED and PARTIAL report as status DONE. Across transfers are not tracked here.",
     inputSchema: z.toJSONSchema(getValueTransferStatusSchema),
   },
   {
@@ -2151,7 +2139,7 @@ export const publicToolCatalog = [
     name: "prepare_ve33_clear_vote",
     title: "Prepare ve-token vote clearing",
     description:
-      "Remove the active vote from one or more ve-tokens, claiming each stake's current pool fees immediately before its clearVote in one atomic batch. Use this instead of raw clearVote calldata: Ve33 discards a stake's pending voter fees when its weight goes to zero, and the required current_pool_key reverts the whole batch with PoolNotVoted if it is not that stake's active pool, so no vote is cleared against a stale key. Nothing is burned, withdrawn, split, merged, or transferred: stake amount, lock end, and NFT ownership are untouched and the vote can be re-applied later with prepare_ve33_vote. What it does release is vote weight — a cleared stake stops directing emissions and stops earning that pool's voter fees, the pool's active swap fee re-averages over the fee votes that remain, and a pool left with no vote weight charges a zero extension fee. Prefer prepare_ve33_reallocation when votes are moving to other pools rather than going away.",
+      "Remove the active vote from one or more ve-tokens, claiming each stake's current pool fees immediately before its clearVote in one atomic batch. Use this instead of raw clearVote calldata: Ve33 discards pending voter fees when a stake's weight goes to zero, and a current_pool_key that is not the stake's active pool reverts the whole batch. Stake amount, lock end and NFT ownership are untouched; the stake stops directing emissions and earning that pool's voter fees. Prefer prepare_ve33_reallocation when votes move to other pools. See ekubo://docs/ve33-workflow.",
     inputSchema: z.toJSONSchema(prepareVe33ClearVoteSchema),
   },
   {
@@ -2165,7 +2153,7 @@ export const publicToolCatalog = [
     name: "get_stonx_allocation_recommendation",
     title: "Get suggested STONX allocations",
     description:
-      "Return a provider-neutral STONX allocation recommendation and an exactly 10,000-bps executable target list capped at 25 initialized canonical Ve33 pools. The upstream snapshot refreshes at most once a day: past a day old a refresh is attempted and awaited, but the existing snapshot still answers the request when that refresh does not land, and only a snapshot older than a week is refused. Read snapshot_age_seconds to see how old the answer actually is. Every recommendation carries an emissions_efficiency KPI (emissions per dollar of voter fees retained one epoch later) with prune candidates flagged; prune_low_efficiency=true withholds them. Supplying voter (vote weight and LP share per pool) with ve33_emission_state makes targets the voter-optimal allocation that values emissions redirected to the voter's own pools, keeping the neutral plan as provider_targets; without the emission state, execution_ready is false and local_read_requirement says what to read. The tool constructs no transaction. To apply it, require execution_ready=true, then pass its targets, the state_id from get_ve33_allocations for the connected wallet, and strategy=compact_max_lock to prepare_ve33_reallocation.",
+      "Return a provider-neutral STONX allocation recommendation with an emissions_efficiency KPI per pool and an executable target list (exactly 10,000 bps, at most 25 Ve33 pools). The snapshot refreshes daily; read snapshot_age_seconds. voter with ve33_emission_state makes targets voter-optimal and keeps the neutral plan as provider_targets; without the emission state, execution_ready is false and local_read_requirement says what to read. The tool constructs no transaction. To apply it, require execution_ready=true, then pass its targets, the state_id from get_ve33_allocations for the connected wallet, and strategy=compact_max_lock to prepare_ve33_reallocation.",
     inputSchema: z.toJSONSchema(getStonxAllocationRecommendationSchema),
   },
   {
@@ -2179,14 +2167,14 @@ export const publicToolCatalog = [
     name: "get_positions_by_owner",
     title: "Get Ekubo positions by owner",
     description:
-      "Enumerate an owner's indexed Ekubo position NFTs without relying on ERC721 enumeration. Returns pool keys, bounds, liquidity, current indexed pool state, rewards, and pagination. Optionally filter by chain and opened/closed state. For fresh onchain state, current_state_reads holds one { chain_id, read_calls_reference } per chain: pass each read_calls_reference through as a variable (const ref = result.current_state_reads[0].read_calls_reference; wallet_batch_eth_call({ chain_id, reference: ref })) in the same code block, never retyping url, bytes or integrity. Each position's current_state.state_call_id is the join key to results[].id in the wallet's response.",
+      "Enumerate an owner's indexed Ekubo position NFTs with pool keys, bounds, liquidity, indexed pool state and rewards. For fresh onchain state, pass each current_state_reads[].read_calls_reference to wallet_batch_eth_call as a value in the same code block; each position's current_state.state_call_id joins results[].id.",
     inputSchema: z.toJSONSchema(getPositionsByOwnerSchema),
   },
   {
     name: "get_pool",
     title: "Get an Ekubo pool",
     description:
-      "Resolve an exact chain/core/pool ID to its PoolKey and decoded config, verify that the key hashes back to the requested ID, and return the latest indexed pool-state snapshot plus a current_state_query read bundle: pass its read_calls_reference unchanged as wallet_batch_eth_call's reference argument for fresh on-chain sqrtRatio, tick, and liquidity.",
+      "Resolve a chain/core/pool ID to its verified PoolKey, decoded config and indexed pool state. For fresh sqrtRatio, tick and liquidity, pass current_state_query.read_calls_reference unchanged to wallet_batch_eth_call.",
     inputSchema: z.toJSONSchema(getPoolSchema),
   },
   {
@@ -2200,7 +2188,7 @@ export const publicToolCatalog = [
     name: "list_pool_keys",
     title: "List Ekubo pool keys",
     description:
-      "Discover initialized pools for one chain and Core deployment with keyset pagination: pools are ordered by ascending pool_id and after_pool_id fetches the next page. Filter by one token, an exact pair, or an extension (zero address means extensionless). Every returned pool_id is independently re-derived from its PoolKey, and each row carries the indexed state snapshot (null until the pool has indexed state).",
+      "Discover initialized pools for one chain and Core deployment, ordered by pool_id with keyset pagination, optionally filtered by token, pair or extension. Each pool_id is re-derived from its PoolKey and each row carries the indexed state (null until indexed).",
     inputSchema: z.toJSONSchema(listPoolKeysSchema),
   },
   {
@@ -2221,49 +2209,49 @@ export const publicToolCatalog = [
     name: "get_position",
     title: "Get complete Ekubo position details",
     description:
-      "Hydrate one indexed owner position with the same inputs used by the interface: pool key, bounds, indexed liquidity and pool state, NFT metadata, event history, campaigns and earned rewards, token metadata and USD prices, plus an exact pending Multicall3 eth_call and nested decode plan for current principal, fees or Ve33 rewards, and owner. Pass current_state_query.read_calls_reference through as a variable from this result to wallet_batch_eth_call in the same code block; current_state_query.state_call_id is the join key to results[].id.",
+      "Hydrate one owner position: pool key, bounds, liquidity, pool state, NFT metadata, history, rewards, token prices, and a pending read of current principal, fees or Ve33 rewards and owner. Pass current_state_query.read_calls_reference as a value to wallet_batch_eth_call in the same code block; current_state_query.state_call_id joins results[].id.",
     inputSchema: z.toJSONSchema(getPositionSchema),
   },
   {
     name: "get_position_pool_candidates",
     title: "Find pools for an LP position",
     description:
-      "List existing indexed pools for a token pair without browsing the data API or reading contract ABIs. Returns v2/v3 Core generation, independently verified exact PoolKeys and pool IDs, pool type and extension classification, token USD metadata, 24-hour TVL/volume/fee/depth statistics, and the correct Positions or Ve33Positions manager for each candidate. Defaults to min_tvl_usd=0 so initialized low-liquidity pools remain visible.",
+      "List indexed pools for a token pair with verified PoolKeys and pool IDs, Core generation, pool type, extension, 24-hour TVL/volume/fee stats and the right Positions or Ve33Positions manager.",
     inputSchema: z.toJSONSchema(getPositionPoolCandidatesSchema),
   },
   {
     name: "prepare_lp_position_deposit",
     title: "Prepare an LP position deposit",
     description:
-      "Prepare a new v3 position mint or add liquidity to an existing position in one first-class workflow. Resolves and verifies an indexed pool or derives an exact supplied PoolKey, initializes a new pool at initial_tick when requested, selects Positions or Ve33Positions, computes a nonzero minimum liquidity, and returns every approval, execution, refund, and cleanup transaction. No Cast encoding is required. Ekubo ticks use base 1.000001, so tick = ln(price in base units) x 10^6 and a Uniswap-style 1.0001 calculation is 100x too small. A position's token ratio follows the range and the current pool price, not the amounts deposited, so when a target composition matters do every swap first, re-read the tick with the pool's current_state_query, and mint once against that tick: a swap after the mint moves the tick and re-skews the position immediately. If the wallet lacks one side, execute that swap separately, wait for its receipt, keep native gas, and size the deposit from the measured balance, never a quoted output.",
+      "Prepare a v3 position mint or add_liquidity, initializing a new pool at initial_tick when requested, with every approval, refund and cleanup step. Ekubo ticks use base 1.000001, so tick = ln(price in base units) x 10^6 and a Uniswap-style 1.0001 calculation is 100x too small. The token ratio follows the range and current price: do every swap first, re-read the tick with the pool's current_state_query, then mint once. If the wallet lacks one side, execute that swap separately and size the deposit from the measured balance after its receipt, never a quoted output. See ekubo://docs/lp-position-workflow.",
     inputSchema: z.toJSONSchema(prepareLpPositionDepositSchema),
   },
   {
     name: "prepare_lp_position_earnings_claim",
     title: "Prepare an LP fee or reward claim",
     description:
-      "Prepare collection of all currently accrued fees from an owned standard position or all currently accrued rewards from an owned Ve33 position. Resolves the indexed PoolKey and bounds, automatically chooses v2 withdraw-with-zero-liquidity, v3 collectFees, or Ve33 claimRewards, preserves all liquidity and the NFT, supplies an atomic pending ownership/earnings read, exact decoded calldata and result fields, and a signer-neutral plan delivered as execution_plan_reference. No Cast encoding is required. Run its current_state_query first: require every inner call to succeed and the decoded owner to equal expected_owner, and pass the decoded fees or rewards to the wallet with the plan.",
+      "Prepare collection of all accrued fees from an owned standard position or rewards from an owned Ve33 position, keeping its liquidity and NFT. Run its current_state_query first: require every inner call to succeed and the decoded owner to equal expected_owner, and pass the decoded fees or rewards to the wallet with the plan.",
     inputSchema: z.toJSONSchema(prepareLpPositionEarningsClaimSchema),
   },
   {
     name: "prepare_lp_position_withdraw",
     title: "Prepare one or more LP position withdrawals",
     description:
-      "Prepare partial or full liquidity withdrawals from one or more owned EVM positions with one complete wallet-batch-capable plan. Pass withdrawals, one entry per position. Resolves each indexed PoolKey and bounds, uses each exact requested uint128 liquidity, automatically collects standard-position fees or Ve33 rewards as the interface does, supports explicit recipients, preserves the NFTs, and supplies pending ownership/liquidity/earnings validation, and exact decoded calldata and result fields. The wallet never constructs calldata. Read each position's current_state_query first and request no more liquidity than it decodes; require every inner call to succeed and owner to equal expected_owner. Hand the wallet every principal and earnings estimate and recipient.",
+      "Prepare partial or full withdrawals from one or more owned positions in one plan, collecting fees or Ve33 rewards and keeping the NFTs. Read each position's current_state_query first and request no more liquidity than it decodes; require every inner call to succeed and owner to equal expected_owner. Hand the wallet every principal and earnings estimate and recipient.",
     inputSchema: z.toJSONSchema(prepareLpPositionWithdrawSchema),
   },
   {
     name: "prepare_wrap_unwrap",
     title: "Prepare a direct wrapped-native wrap or unwrap",
     description:
-      "Prepare the interface's direct wrapped-native deposit or withdrawal with exact calldata and native value, on any chain whose wrapped native token has been verified. The wrapped asset is not ether everywhere -- BNB Chain wraps BNB, Polygon wraps POL, Monad wraps MON -- so the response names the token being wrapped rather than assuming WETH.",
+      "Prepare a direct wrapped-native deposit or withdrawal on a chain with a verified wrapped native token. The response names the wrapped token, which is not WETH everywhere (BNB Chain wraps BNB, Polygon POL, Monad MON).",
     inputSchema: z.toJSONSchema(prepareWrapUnwrapSchema),
   },
   {
     name: "prepare_transfers",
     title: "Prepare a batch of token transfers",
     description:
-      "Prepare one atomic-capable execution plan containing 1 to 4,096 ordered transfers on one EVM chain. Native, ERC-20, ERC-721, and ERC-1155 entries may be mixed freely. Every amount must be a positive decimal base-unit integer. ERC-721 safe defaults to true and may be set false to use transferFrom; safe ERC-721 and ERC-1155 entries accept optional receiver callback data. ERC-1155 defines no unsafe transfer method. Returns only a compact summary plus the execution_plan_reference, so even a large batch does not re-enter agent context.",
+      "Prepare one atomic-capable plan of 1 to 4,096 ordered native, ERC-20, ERC-721 and ERC-1155 transfers on one EVM chain, mixed freely. Returns a compact summary and the execution_plan_reference.",
     inputSchema: z.toJSONSchema(prepareTransfersSchema),
   },
   {
@@ -2284,7 +2272,7 @@ export const publicToolCatalog = [
     name: "prepare_twamm_order",
     title: "Prepare a TWAMM or DCA order",
     description:
-      "Prepare one or many current-interface TWAMM order splits, including exact approval and per-order native value, and the complete plan as one atomic batch of decodable steps. Every order mints against a salt, so details.token_id is the id that will exist on chain and is returned before anything is sent -- keep it, because prepare_twamm_order_collection and prepare_twamm_order_stop are keyed by it and nothing here enumerates orders by owner. Omitting salt derives one from the request, which also makes a retry resolve to the same id instead of minting a second order. Start and end times must be multiples of 256 seconds near the present, widening in powers of 16 further out; an unaligned time is rejected here rather than reverting on chain.",
+      "Prepare one or more TWAMM order splits with approvals and native value as one atomic batch. details.token_id is the order's id before anything is sent: keep it, because prepare_twamm_order_collection and prepare_twamm_order_stop are keyed by it and orders are not enumerable by owner. Start and end times must be multiples of 256 seconds near the present, widening in powers of 16 further out.",
     inputSchema: z.toJSONSchema(prepareTwammOrderSchema),
   },
   {
@@ -2403,14 +2391,14 @@ export const publicToolCatalog = [
     name: "get_liquidity_opportunities",
     title: "Find Ekubo liquidity opportunities",
     description:
-      "Return the same boosted-fee, active-incentive, and projected ve(3,3)-emission opportunities shown by the Ekubo interface, ranked by APR with canonical token metadata, exact actionable pools or pair-level pool-discovery handoffs, source freshness, and risk context. A request whose ranking includes Ve33 projections supplies a wallet-local emission-state read; pass its locally decoded values back to complete the final ranking. Call this before asking the user to choose a pair. APR is an annualized snapshot, not guaranteed yield: show its components, denominator, freshness, and range and impermanent-loss risk. If ranking_complete=false, run local_read_requirement through the wallet, decode it locally, and call again with ve33_emission_state before presenting the order as final.",
+      "Return the interface's boosted-fee, incentive and projected ve(3,3)-emission opportunities ranked by APR, with actionable pools or pool-discovery handoffs, freshness and risk context. Call this before asking the user to choose a pair. APR is an annualized snapshot, not guaranteed yield: show its components, denominator, freshness, and range and impermanent-loss risk. If ranking_complete=false, run local_read_requirement through the wallet, decode it locally, and call again with ve33_emission_state.",
     inputSchema: z.toJSONSchema(getLiquidityOpportunitiesSchema),
   },
   {
     name: "prepare_pool_initialization",
     title: "Prepare standalone pool initialization",
     description:
-      "Prepare one exact permissionless maybeInitializePool transaction for a supplied v3 PoolKey and initial tick. This is the standalone alternative to the atomic maybeInitializePool plus mintAndDeposit batch returned by prepare_lp_position_deposit when pool_initialized=false.",
+      "Prepare one permissionless maybeInitializePool transaction for a v3 PoolKey and initial tick; prepare_lp_position_deposit with pool_initialized=false does the same atomically with the mint.",
     inputSchema: z.toJSONSchema(preparePoolInitializationSchema),
   },
   {
@@ -2522,35 +2510,35 @@ export const publicToolCatalog = [
     name: "get_merkl_deployment",
     title: "Get the verified Merkl Distributor deployment",
     description:
-      "Locally return the Merkl reward Distributor address, the chains it was verified on, and how Merkl's reward fields behave. This server makes no Merkl API, RPC, or indexer request. Merkl lists 67 chains but the Distributor is not at the same address on all of them — ZKsync Era has no code there — so preparation is limited to the chains listed here.",
+      "Locally return the Merkl Distributor address, the chains it is verified on, and how Merkl's reward fields behave; preparation is limited to those chains. No Merkl API, RPC, or indexer request.",
     inputSchema: z.toJSONSchema(getMerklDeploymentSchema),
   },
   {
     name: "prepare_merkl_claim",
     title: "Prepare a Merkl reward claim",
     description:
-      "Prepare one Distributor claim covering every Merkl reward token the sender holds on a chain, from amounts and proofs the agent fetched from https://api.merkl.xyz/v4/users/{address}/rewards/summary. Every proof is folded here into the Merkle root it implies, all rewards must agree on that root, and the returned read bundle asks the wallet for the root the chain is actually enforcing plus each already-claimed total and claim-recipient override — so neither this server nor the wallet has to trust Merkl's API. Amounts are cumulative, not deltas: the contract transfers the amount minus what was already claimed. Distinct from prepare_rewards_claim, which claims Ekubo's own incentive drops.",
+      "Prepare one Distributor claim for every Merkl reward token the sender holds on a chain, from amounts and proofs fetched from https://api.merkl.xyz/v4/users/{address}/rewards/summary. The proofs are folded into their Merkle root here, and the read bundle checks it against the root the chain enforces, so Merkl's API need not be trusted. Distinct from prepare_rewards_claim, which claims Ekubo's own incentive drops.",
     inputSchema: z.toJSONSchema(prepareMerklClaimSchema),
   },
   {
     name: "get_aerodrome_deployment",
     title: "Get the verified Aerodrome Base deployment",
     description:
-      "Locally return Aerodrome's Base contracts — AERO, the veAERO escrow, Voter, Router, v2 pool factory, RewardsDistributor, both Slipstream generations, and the four Sugar lens contracts — plus the protocol behaviour an agent has to respect. Every address was derived on chain from the Voter outward rather than copied from Velodrome's SDKs, which publish Optimism addresses and a drifted struct layout. This server makes no Aerodrome API or RPC request. Aerodrome is Base-only; Velodrome is the same code elsewhere and is not prepared here.",
+      "Locally return Aerodrome's Base contracts (AERO, veAERO, Voter, Router, v2 factory, RewardsDistributor, Slipstream, Sugar lenses), derived on chain from the Voter, plus the protocol behaviour an agent must respect. No API or RPC request. Aerodrome is Base-only; Velodrome is not prepared here.",
     inputSchema: z.toJSONSchema(getAerodromeDeploymentSchema),
   },
   {
     name: "prepare_aerodrome_sugar_reads",
     title: "Prepare an Aerodrome Sugar read bundle",
     description:
-      "Build the exact eth_call bundle for one Sugar dataset — pools, an account's positions, veNFTs by account or id, epoch rewards, or a veNFT's claimable rewards — for the wallet to run against the user's own RPC. Sugar is Aerodrome's data pipeline: there is no API to call, the lens contracts answer eth_call, and this server stays out of the data path. Each call ships with a decode plan matching the deployed contract's struct layout, verified by decoding live responses. The addresses it returns — pool, gauge, fee, and bribe contracts, and veNFT ids — are the required inputs to the other prepare_aerodrome_* tools.",
+      "Build the eth_call bundle and decode plan for one Sugar dataset (pools, positions, veNFTs, epochs, rewards) for the wallet to run against the user's RPC; Sugar has no API. The pool, gauge, fee and bribe addresses and veNFT ids it returns are the inputs to the other prepare_aerodrome_* tools.",
     inputSchema: z.toJSONSchema(prepareAerodromeSugarReadsSchema),
   },
   {
     name: "prepare_aerodrome_liquidity_deposit",
     title: "Prepare an Aerodrome v2 liquidity deposit",
     description:
-      "Prepare a v2 addLiquidity through Aerodrome's Router, with an exact approval per side and an allowance cleanup after. The pool takes whatever its reserve ratio demands and refunds the rest, so both minimums are required rather than defaulted. The returned read bundle quotes the actual split and resolves the pool address, so a pair that has no pool yet is caught before a deposit sets its opening price. This mints LP tokens only; they earn no AERO until staked with prepare_aerodrome_gauge_deposit.",
+      "Prepare a v2 addLiquidity through Aerodrome's Router with exact approvals and allowance cleanup. The read bundle quotes the actual split and resolves the pool, so a pair with no pool is caught before a deposit sets its price. LP tokens earn no AERO until staked with prepare_aerodrome_gauge_deposit.",
     inputSchema: z.toJSONSchema(prepareAerodromeLiquidityDepositSchema),
   },
   {
@@ -4808,7 +4796,7 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
   },
   {
     protocols: null,
-    text: `Handoff: preparation tools return unsigned plans as execution_plan_reference and reads as read_calls_reference. Pass each envelope unchanged as the wallet tool's reference argument (wallet_batch_eth_call for reads), as a value in the code block that received it; never fetch, retype, or rebuild it, and after a 404 re-run its tool. Decode read results locally, matched by results[].id; never send them or credentials here. The wallet simulates and authorizes: add no agent-level confirmation, and report a policy rejection verbatim. Within this handoff, do not substitute hand-built calldata for a prepared plan, and do not request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calls except as part of a plan a preparation tool returned. See ekubo://docs/execution-plan.`,
+    text: `Handoff: preparation tools return unsigned plans as execution_plan_reference and reads as read_calls_reference. Pass each envelope unchanged as the wallet tool's reference argument (wallet_batch_eth_call for reads), as a value in the code block that received it; never fetch, retype, or rebuild it or restate it in text, and after a 404 re-run its tool. Decode read results locally, matched by results[].id; never send them or credentials here. The wallet simulates and authorizes: add no agent-level confirmation, and report a policy rejection verbatim. Within this handoff, do not substitute hand-built calldata for a prepared plan, and do not request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calls except as part of a plan a preparation tool returned. See ekubo://docs/execution-plan.`,
     ekuboOnlyTail:
       "LP positions move only through prepare_lp_position_transfer.",
   },
@@ -4996,7 +4984,7 @@ Every executable preparation result includes execution_plan_reference: an artifa
 
 ## Relay the reference, not the body
 
-The agent between this server and a wallet passes only the reference, and passes it whole: give the entire envelope unchanged as the wallet tool's reference argument — never rename, edit, or restate any of its fields. The wallet fetches the body over HTTPS, recomputes the integrity digest over the fetched bytes, checks the byte count, refuses a mismatch, and validates the plan exactly as it would an inline one. Never fetch, restate, summarize, or reconstruct the body yourself. A fetch 404 means the reference expired — re-run the preparation tool for fresh state and calldata. For a wallet that accepts only inline plans, fetch the reference URL once and hand over its exact JSON unchanged; an inline plan can also travel as a minimal envelope whose url is a data:application/json;base64 URI of those exact bytes (integrity optional there: the bytes are the reference).
+The agent between this server and a wallet passes only the reference, and passes it whole: give the entire envelope unchanged as the wallet tool's reference argument — never rename, edit, or restate any of its fields. The wallet fetches the body over HTTPS, recomputes the integrity digest over the fetched bytes, checks the byte count, refuses a mismatch, and validates the plan exactly as it would an inline one. Never fetch, restate, summarize, or reconstruct the body yourself. A fetch 404 means the reference expired — re-run the preparation tool for fresh state and calldata. For a wallet that accepts only inline plans, fetch the reference URL once and hand over its exact JSON unchanged; an inline plan can also travel as a minimal envelope whose url is a data:application/json;base64 URI of those exact bytes (carry bytes and integrity there too; wallets verify them against the decoded bytes).
 
 ## Bind the sender first
 

@@ -20,8 +20,6 @@ const ANNOTATION_DEFAULTS = {
 
 type Annotations = Partial<Record<keyof typeof ANNOTATION_DEFAULTS, boolean>>;
 
-const SAFE = Number.MAX_SAFE_INTEGER;
-
 // Keywords that constrain exactly one JSON type. Merging `anyOf` branches that
 // differ only in type keeps each constraint meaningful, because JSON Schema
 // applies it only to instances of its own type.
@@ -98,8 +96,29 @@ function mergeAnyOf(branches: unknown[]): JsonSchema | null {
 // names the envelope instead of spelling it out in every preparation tool.
 const ARTIFACT_REFERENCE_OUTPUT = {
   type: "object",
-  description: "artifact_reference envelope; pass it on unchanged",
+  description: "artifact_reference; pass unchanged",
 } as const;
+
+// A nested object that repeats across tools — a PoolKey argument, the
+// jurisdiction block on a result — is published as one line naming it rather
+// than its structure, wherever it appears. The handler still validates the
+// full zod shape.
+const SUMMARY_KEY = "x-catalog-summary";
+
+/** Publishes `schema` as `{ type: "object", description: summary }`. */
+export function catalogSummary<T extends z.ZodType>(schema: T, summary: string): T {
+  return schema.meta({ [SUMMARY_KEY]: summary });
+}
+
+function summarize(value: JsonSchema): JsonSchema | null {
+  const summary = value[SUMMARY_KEY];
+  if (typeof summary !== "string") return null;
+  return { type: value.type ?? "object", description: joinDescriptions(value.description, summary) };
+}
+
+function joinDescriptions(first: unknown, second: string): string {
+  return typeof first === "string" ? `${first.replace(/\.$/, "")}. ${second}` : second;
+}
 
 function isArtifactReference(value: object): boolean {
   const properties = (value as JsonSchema).properties as
@@ -115,11 +134,13 @@ const PATTERN_LABELS: Readonly<Record<string, string>> = {
   "^0x[0-9a-fA-F]{40}$": "address",
   "^0x[0-9a-fA-F]{1,40}$": "address",
   "^(?:0|[1-9][0-9]*)$": "decimal integer",
+  "^(0|[1-9][0-9]*)$": "decimal integer",
   "^[0-9]*[1-9][0-9]*$": "positive decimal integer",
   "^[1-9][0-9]*$": "positive decimal integer",
   "^-?(?:0|[1-9][0-9]*)$": "signed decimal integer",
   "^(?:(?:0|[1-9][0-9]*)|0x[0-9a-fA-F]+)$": "decimal or 0x-hex integer",
-  "^(?:[1-9][0-9]*|0x[0-9a-fA-F]+)$": "decimal or 0x-hex integer",
+  // The chain ID: its integer type already says what the string form holds.
+  "^(?:[1-9][0-9]*|0x[0-9a-fA-F]+)$": "",
   "^0x[0-9a-fA-F]{64}$": "bytes32 hex",
   "^0x[0-9a-fA-F]+$": "hex",
   "^0x(?:[0-9a-fA-F]{2})*$": "hex bytes",
@@ -135,22 +156,41 @@ export function labelPatterns(value: unknown): unknown {
     typeof schema.pattern === "string" ? PATTERN_LABELS[schema.pattern] : undefined;
   if (label === undefined) return schema;
   const { pattern: _pattern, ...rest } = schema;
-  const description =
-    typeof rest.description === "string" ? `${rest.description} (${label})` : label;
-  return { ...rest, description };
+  if (label === "") return rest;
+  // A description that already names the format ("Nonzero token address")
+  // is not followed by the label again.
+  if (typeof rest.description === "string") {
+    return rest.description.includes(label)
+      ? rest
+      : { ...rest, description: `${rest.description} (${label})` };
+  }
+  return { ...rest, description: label };
 }
 
-const isUnboundedInteger = (entry: unknown) => entry === SAFE || entry === -SAFE;
+// Bounds this wide (tick ranges, fee ceilings, uint32 durations, `.safe()`
+// integers, 78-digit uint256 strings) are server limits no sensible argument
+// reaches; the handler reports them if one does.
+const isServerLimit = (entry: unknown) => typeof entry === "number" && Math.abs(entry) >= 100_000;
+const isLengthLimit = (entry: unknown) => typeof entry === "number" && entry >= 64;
 
-/** Keywords that tell the reader nothing the schema does not already say. */
+/**
+ * Keywords that tell the reader nothing the schema does not already say, or
+ * nothing that changes the next call. An output schema is a reading guide —
+ * which fields exist and what they hold — so it drops `required`,
+ * `additionalProperties` and `pattern`; the handler's zod schema enforces
+ * the full shape.
+ */
 const NOISE: Readonly<Record<string, (entry: unknown, output: boolean) => boolean>> = {
   $schema: () => true,
-  additionalProperties: (entry) =>
-    entry === true || (isObject(entry) && Object.keys(entry).length === 0),
+  additionalProperties: (entry, output) =>
+    output || entry === true || (isObject(entry) && Object.keys(entry).length === 0),
+  required: (_entry, output) => output,
   propertyNames: (entry) =>
     isObject(entry) && Object.keys(entry).length === 1 && entry.type === "string",
-  minimum: isUnboundedInteger,
-  maximum: isUnboundedInteger,
+  minimum: isServerLimit,
+  maximum: isServerLimit,
+  maxItems: () => true,
+  maxLength: isLengthLimit,
   pattern: (_entry, output) => output,
 };
 
@@ -160,25 +200,47 @@ function isNoise(key: string, entry: unknown, output: boolean): boolean {
 
 /**
  * Removes what does not change the meaning of a schema for its reader: the
- * draft marker, `additionalProperties` that equals the default, zod's
- * `.safe()` integer bounds, string-keyed `propertyNames`, and `anyOf` unions
- * that a type list expresses exactly. A shared argument format is named
- * rather than spelled as a regex; output schemas drop `pattern` entirely,
- * since it describes a value the agent reads rather than writes.
+ * draft marker, `additionalProperties` that equals the default, server-limit
+ * bounds, string-keyed `propertyNames`, and `anyOf` unions that a type list
+ * expresses exactly. A shared argument format is named rather than spelled as
+ * a regex, and a repeated nested object is published as its one-line summary.
  */
 export function compactSchema(value: unknown, output = false): unknown {
   if (Array.isArray(value)) return value.map((item) => compactSchema(item, output));
   if (!isObject(value)) return value;
   if (output && isArtifactReference(value)) return ARTIFACT_REFERENCE_OUTPUT;
+  const summary = summarize(value);
+  if (summary !== null) return summary;
   const out: JsonSchema = {};
   for (const [key, entry] of Object.entries(value)) {
     if (isNoise(key, entry, output)) continue;
     out[key] = compactSchema(entry, output);
   }
-  const merged = Array.isArray(out.anyOf) ? mergeAnyOf(out.anyOf) : null;
-  if (merged === null) return out;
-  const { anyOf: _anyOf, ...rest } = out;
-  return { ...merged, ...rest };
+  return Array.isArray(out.anyOf) ? compactAnyOf(out, out.anyOf) : out;
+}
+
+function compactAnyOf(schema: JsonSchema, branches: unknown[]): JsonSchema {
+  const { anyOf: _anyOf, ...rest } = schema;
+  const merged = mergeAnyOf(branches);
+  if (merged !== null) return { ...merged, ...rest };
+  const nullable = mergeNullableSummary(branches, schema.description);
+  return nullable === null ? schema : { ...rest, ...nullable };
+}
+
+/** `anyOf: [summary, null]` reads as one nullable summary. */
+function mergeNullableSummary(branches: unknown[], description: unknown): JsonSchema | null {
+  if (branches.length !== 2) return null;
+  const summary = branches.find(
+    (branch) => isObject(branch) && typeof branch.description === "string" && branch.type === "object",
+  ) as JsonSchema | undefined;
+  const nullable = branches.some(
+    (branch) => isObject(branch) && Object.keys(branch).length === 1 && branch.type === "null",
+  );
+  if (summary === undefined || !nullable || Object.keys(summary).length !== 2) return null;
+  return {
+    type: ["object", "null"],
+    description: joinDescriptions(description, summary.description as string),
+  };
 }
 
 /**

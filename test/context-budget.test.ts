@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import worker from "../src/index.js";
-import { compactSchema, labelPatterns } from "../src/mcp-catalog.js";
+import { z } from "zod";
+import { catalogSummary, compactSchema, labelPatterns } from "../src/mcp-catalog.js";
 import { PROTOCOLS, protocolMcpPath } from "../src/protocols.js";
 import { fakeArtifactStore } from "./fake-r2.js";
 
@@ -59,25 +60,28 @@ type Budget = {
 };
 
 // Oct 2026 measurements, o200k tokens (instructions + tools/list +
-// resources/list): /mcp 72,327 -> 40,505; /mcp/ekubo 44,788 -> 23,963 with
-// instructions 4,183 -> 896. Every Ekubo-scoped endpoint's instructions carry
-// the CLO jurisdiction notice verbatim, about 480 of those tokens. The
-// /mcp/ekubo tools budget was raised from 104,000 for the STONX
-// emissions-efficiency KPI (EKU-950), which landed after it was set. Every
-// non-Safe instructions budget was raised by 550 characters for the scope
-// sentence (EKU-988): without it, agents read the handoff rules as a ban on
-// the user's own cast/sncast work outside this server.
+// resources/list): /mcp 72,327 -> 40,505 (EKU-971) -> 31,494 (EKU-991)
+// -> 31,741 (EKU-999); /mcp/ekubo 44,788 -> 23,963 -> 17,440 -> 17,702, of
+// which tools/list 16,388 and the largest tool, get_quotes_with_plans, 1,127.
+// EKU-999 spends ~270 tokens on small-model failures from EKU-993: the
+// slippage_bps unit, the ve33 chain_id source and no-restating references in
+// chat. Every Ekubo-scoped endpoint's
+// instructions carry the CLO jurisdiction notice verbatim, about 480 of
+// those tokens, and get_quotes_with_plans carries it again in its
+// description. Every non-Safe instructions budget was raised by 550 characters
+// for the scope sentence (EKU-988): without it, agents read the handoff rules
+// as a ban on the user's own cast/sncast work outside this server.
 const ENDPOINTS: Record<string, Budget> = {
-  "/mcp": { instructions: 7_950, tools: 170_000, tool: 11_200, resources: 4_200 },
-  "/mcp/ekubo": { instructions: 4_950, tools: 105_000, tool: 11_200, resources: 1_900 },
-  "/mcp/aave": { instructions: 4_750, tools: 9_100, tool: 1_600, resources: 300 },
-  "/mcp/aerodrome": { instructions: 5_450, tools: 18_400, tool: 2_600, resources: 850 },
-  "/mcp/lido": { instructions: 4_750, tools: 5_700, tool: 1_300, resources: 750 },
-  "/mcp/merkl": { instructions: 5_250, tools: 3_400, tool: 2_200, resources: 750 },
-  "/mcp/morpho": { instructions: 4_750, tools: 5_600, tool: 1_900, resources: 750 },
-  "/mcp/sky": { instructions: 4_750, tools: 4_100, tool: 1_100, resources: 750 },
-  "/mcp/uniswap": { instructions: 4_250, tools: 21_500, tool: 2_100, resources: 300 },
-  "/mcp/safe": { instructions: 1_400, tools: 12_100, tool: 2_600, resources: 300 },
+  "/mcp": { instructions: 7_950, tools: 133_000, tool: 5_200, resources: 4_200 },
+  "/mcp/ekubo": { instructions: 4_950, tools: 74_000, tool: 5_200, resources: 1_900 },
+  "/mcp/aave": { instructions: 4_750, tools: 8_500, tool: 1_500, resources: 300 },
+  "/mcp/aerodrome": { instructions: 5_450, tools: 15_000, tool: 2_200, resources: 850 },
+  "/mcp/lido": { instructions: 4_750, tools: 5_100, tool: 1_200, resources: 750 },
+  "/mcp/merkl": { instructions: 5_250, tools: 2_400, tool: 1_600, resources: 750 },
+  "/mcp/morpho": { instructions: 4_750, tools: 5_300, tool: 1_800, resources: 750 },
+  "/mcp/sky": { instructions: 4_750, tools: 3_800, tool: 1_100, resources: 750 },
+  "/mcp/uniswap": { instructions: 4_250, tools: 19_500, tool: 1_900, resources: 300 },
+  "/mcp/safe": { instructions: 1_400, tools: 11_000, tool: 2_450, resources: 300 },
 };
 
 async function measure(path: string) {
@@ -127,6 +131,30 @@ describe("MCP context budget", () => {
       type: "string",
       description: "address",
     });
+  });
+
+  it("names repeated objects and keeps output schemas to what an agent reads", () => {
+    const key = catalogSummary(z.object({ token0: z.string() }), "PoolKey {token0}");
+    expect(
+      compactSchema(
+        z.toJSONSchema(z.object({ a: key.optional(), b: key.nullable().describe("Vote") }), { io: "input" }),
+      ),
+    ).toEqual({
+      type: "object",
+      properties: {
+        a: { type: "object", description: "PoolKey {token0}" },
+        b: { type: ["object", "null"], description: "Vote. PoolKey {token0}" },
+      },
+      required: ["b"],
+    });
+    expect(
+      compactSchema(z.toJSONSchema(z.object({ id: z.string().regex(/^0x/) }), { io: "output" }), true),
+    ).toEqual({ type: "object", properties: { id: { type: "string" } } });
+    expect(labelPatterns({ type: "string", pattern: "^0x[0-9a-fA-F]{40}$", description: "Token address" })).toEqual({
+      type: "string",
+      description: "Token address",
+    });
+    expect(compactSchema({ type: "integer", minimum: -887272, maximum: 30 })).toEqual({ type: "integer", maximum: 30 });
   });
 
   it("publishes compact schemas", async () => {
