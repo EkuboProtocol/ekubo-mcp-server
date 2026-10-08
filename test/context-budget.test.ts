@@ -61,10 +61,12 @@ type Budget = {
 // Oct 2026 measurements, o200k tokens (instructions + tools/list +
 // resources/list): /mcp 72,327 -> 40,505; /mcp/ekubo 44,788 -> 23,963 with
 // instructions 4,183 -> 896. Every Ekubo-scoped endpoint's instructions carry
-// the CLO jurisdiction notice verbatim, about 480 of those tokens.
+// the CLO jurisdiction notice verbatim, about 480 of those tokens. The
+// /mcp/ekubo tools budget was raised from 104,000 for the STONX
+// emissions-efficiency KPI (EKU-950), which landed after it was set.
 const ENDPOINTS: Record<string, Budget> = {
   "/mcp": { instructions: 7_400, tools: 170_000, tool: 11_200, resources: 4_200 },
-  "/mcp/ekubo": { instructions: 4_400, tools: 104_000, tool: 11_200, resources: 1_900 },
+  "/mcp/ekubo": { instructions: 4_400, tools: 105_000, tool: 11_200, resources: 1_900 },
   "/mcp/aave": { instructions: 4_200, tools: 9_100, tool: 1_600, resources: 300 },
   "/mcp/aerodrome": { instructions: 4_900, tools: 18_400, tool: 2_600, resources: 850 },
   "/mcp/lido": { instructions: 4_200, tools: 5_700, tool: 1_300, resources: 750 },
