@@ -21,7 +21,7 @@
     "@ekubo/sdk": "0.0.10",
     "@ekubo/yul-router-sdk": "0.8.0",
     "@modelcontextprotocol/server": "2.3.1",
-    "@morpho-org/morpho-sdk": "6.4.0",
+    "@morpho-org/morpho-sdk": "6.5.0",
     "@uniswap/sdk-core": "7.19.4",
     "@uniswap/v3-sdk": "3.31.5",
     "@uniswap/v4-sdk": "2.4.1",
