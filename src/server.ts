@@ -427,7 +427,7 @@ export const getQuotesWithPlansSchema = quoteRequestSchema.extend({
     .max(10_000)
     .optional()
     .describe(
-      "Slippage bound written into the calldata; required with sender. Honor the user's preference. Otherwise keep the maximum slippage loss near one gas fee: slippage_bps ~= 10,000 * gas-cost value / swap-notional value, both in the same currency. Never use a generic 50 bps (0.5%) default, especially on Ethereum mainnet. After a slippage failure, re-quote rather than widen the bound.",
+      "Slippage bound written into the calldata, in basis points: 0.1% = 10, 0.3% = 30. Required with sender. Honor the user's preference. Otherwise keep the maximum slippage loss near one gas fee: slippage_bps ~= 10,000 * gas-cost value / swap-notional value, both in the same currency. Never use a generic 50 bps (0.5%) default, especially on Ethereum mainnet. After a slippage failure, re-quote rather than widen the bound.",
     ),
   swap_deadline_minutes: swapDeadlineMinutes,
   include_raw_quotes: z
@@ -1048,8 +1048,12 @@ export const prepareRevenueBuybacksSchema = z.object({
   roll_tokens: z.array(address).max(200),
 });
 
+const ve33ChainId = chainId.describe(
+  "With ve_token, from get_ve33_allocations (STONX: 4663), not the wallet's chain",
+);
+
 export const prepareVe33IncreaseStakeSchema = z.object({
-  chain_id: chainId,
+  chain_id: ve33ChainId,
   ve_token: address,
   sender: address,
   stake_token: address,
@@ -1058,7 +1062,7 @@ export const prepareVe33IncreaseStakeSchema = z.object({
 });
 
 export const prepareVe33MergeSchema = z.object({
-  chain_id: chainId,
+  chain_id: ve33ChainId,
   ve_token: address,
   sender: address,
   destination_ve_id: uintString,
@@ -1079,7 +1083,7 @@ export const prepareVe33MergeSchema = z.object({
 });
 
 export const prepareVe33WithdrawSchema = z.object({
-  chain_id: chainId,
+  chain_id: ve33ChainId,
   ve_token: address,
   sender: address,
   ve_id: uintString,
@@ -1092,7 +1096,7 @@ const claimSchema = z.object({
 });
 
 export const prepareVe33VoteSchema = z.object({
-  chain_id: chainId,
+  chain_id: ve33ChainId,
   ve_token: address,
   sender: address,
   source_ve_id: uintString,
@@ -1125,7 +1129,7 @@ export const prepareVe33VoteSchema = z.object({
 
 export const prepareVe33ExtendSchema = z
   .object({
-    chain_id: chainId,
+    chain_id: ve33ChainId,
     ve_token: address,
     sender: address,
     ve_id: uintString,
@@ -1143,7 +1147,7 @@ export const prepareVe33ExtendSchema = z
   );
 
 export const prepareVe33SplitSchema = z.object({
-  chain_id: chainId,
+  chain_id: ve33ChainId,
   ve_token: address,
   sender: address,
   ve_id: uintString,
@@ -1153,7 +1157,7 @@ export const prepareVe33SplitSchema = z.object({
 
 export const prepareVe33StakeSchema = z
   .object({
-    chain_id: chainId,
+    chain_id: ve33ChainId,
     ve_token: address,
     sender: address,
     stake_token: address,
@@ -1185,7 +1189,7 @@ export const prepareVe33StakeSchema = z
   });
 
 export const prepareVe33ClaimSchema = z.object({
-  chain_id: chainId,
+  chain_id: ve33ChainId,
   ve_token: address,
   sender: address,
   recipient: address.optional(),
@@ -1193,7 +1197,7 @@ export const prepareVe33ClaimSchema = z.object({
 });
 
 export const prepareVe33ClearVoteSchema = z.object({
-  chain_id: chainId,
+  chain_id: ve33ChainId,
   ve_token: address,
   sender: address,
   recipient: address
@@ -1213,7 +1217,7 @@ export const prepareVe33ClearVoteSchema = z.object({
 });
 
 export const prepareAllVe33FeeClaimsSchema = z.object({
-  chain_id: chainId,
+  chain_id: ve33ChainId,
   ve_token: address,
   sender: address.describe(
     "Owner whose indexed VeTokens and active votes should be discovered",
@@ -1246,7 +1250,7 @@ export const getVe33AllocationsSchema = z
   );
 
 export const prepareVe33ReallocationSchema = z.object({
-  chain_id: chainId,
+  chain_id: ve33ChainId,
   ve_token: address,
   sender: address.describe(
     "VeToken owner that will execute the atomic batch",
@@ -1288,7 +1292,7 @@ export const prepareVe33ReallocationSchema = z.object({
 export const prepareVe33ReinvestSchema = z
   .object({
     phase: z.enum(["claim", "swap", "stake", "stake_all"]),
-    chain_id: chainId,
+    chain_id: ve33ChainId,
     ve_token: address,
     sender: address,
     claims: z.array(claimSchema).min(1).max(100).optional(),
@@ -4792,7 +4796,7 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
   },
   {
     protocols: null,
-    text: `Handoff: preparation tools return unsigned plans as execution_plan_reference and reads as read_calls_reference. Pass each envelope unchanged as the wallet tool's reference argument (wallet_batch_eth_call for reads), as a value in the code block that received it; never fetch, retype, or rebuild it, and after a 404 re-run its tool. Decode read results locally, matched by results[].id; never send them or credentials here. The wallet simulates and authorizes: add no agent-level confirmation, and report a policy rejection verbatim. Within this handoff, do not substitute hand-built calldata for a prepared plan, and do not request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calls except as part of a plan a preparation tool returned. See ekubo://docs/execution-plan.`,
+    text: `Handoff: preparation tools return unsigned plans as execution_plan_reference and reads as read_calls_reference. Pass each envelope unchanged as the wallet tool's reference argument (wallet_batch_eth_call for reads), as a value in the code block that received it; never fetch, retype, or rebuild it or restate it in text, and after a 404 re-run its tool. Decode read results locally, matched by results[].id; never send them or credentials here. The wallet simulates and authorizes: add no agent-level confirmation, and report a policy rejection verbatim. Within this handoff, do not substitute hand-built calldata for a prepared plan, and do not request transferOwnership, ownership handover, VeToken ERC721 transfer/approval, or burn calls except as part of a plan a preparation tool returned. See ekubo://docs/execution-plan.`,
     ekuboOnlyTail:
       "LP positions move only through prepare_lp_position_transfer.",
   },

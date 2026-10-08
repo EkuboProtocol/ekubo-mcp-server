@@ -60,9 +60,12 @@ type Budget = {
 };
 
 // Oct 2026 measurements, o200k tokens (instructions + tools/list +
-// resources/list): /mcp 72,327 -> 40,505 (EKU-971) -> 31,494 (EKU-991);
-// /mcp/ekubo 44,788 -> 23,963 -> 17,440, of which tools/list 16,132 and the
-// largest tool, get_quotes_with_plans, 1,105. Every Ekubo-scoped endpoint's
+// resources/list): /mcp 72,327 -> 40,505 (EKU-971) -> 31,494 (EKU-991)
+// -> 31,741 (EKU-999); /mcp/ekubo 44,788 -> 23,963 -> 17,440 -> 17,702, of
+// which tools/list 16,388 and the largest tool, get_quotes_with_plans, 1,127.
+// EKU-999 spends ~270 tokens on small-model failures from EKU-993: the
+// slippage_bps unit, the ve33 chain_id source and no-restating references in
+// chat. Every Ekubo-scoped endpoint's
 // instructions carry the CLO jurisdiction notice verbatim, about 480 of
 // those tokens, and get_quotes_with_plans carries it again in its
 // description. Every non-Safe instructions budget was raised by 550 characters
