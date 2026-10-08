@@ -17,15 +17,16 @@ writes each endpoint's payloads for token counting.
 
 o200k tokens, instructions + tools/list + resources/list:
 
-| Endpoint     | Tools | Before | After  | Instructions before → after |
-| ------------ | ----: | -----: | -----: | --------------------------: |
-| `/mcp`       |   100 | 72,327 | 40,505 |               4,833 → 1,538 |
-| `/mcp/ekubo` |    51 | 44,788 | 23,963 |                 4,183 → 896 |
-| `/mcp/safe`  |     6 |  6,322 |  3,195 |                   273 → 269 |
+| Endpoint     | Tools | Original | EKU-971 | EKU-991 | tools/list (EKU-991) | Largest tool |
+| ------------ | ----: | -------: | ------: | ------: | -------------------: | -----------: |
+| `/mcp`       |   100 |   72,327 |  40,505 |  31,494 |               29,010 |        1,105 |
+| `/mcp/ekubo` |    51 |   44,788 |  23,963 |  17,440 |               16,132 |        1,105 |
+| `/mcp/safe`  |     6 |    6,322 |   3,195 |   2,622 |                2,294 |          497 |
 
 Every endpoint except `/mcp/safe` carries the CLO jurisdiction notice and the
-jurisdiction-metadata paragraph verbatim, about 480 tokens. Raise a budget only
-with a reason the extra tokens buy. One such raise: every non-Safe
+jurisdiction-metadata paragraph verbatim, about 480 tokens, and
+`get_quotes_with_plans` carries the notice again in its description. Raise a
+budget only with a reason the extra tokens buy. One such raise: every non-Safe
 instructions budget grew by 550 characters (about 115 tokens) for the opening
 scope sentence, after agents read the handoff rules as a ban on the user's own
 cast/sncast work outside this server. Restrictive rules in this text are scoped
@@ -41,9 +42,22 @@ to this server's tools and plans; do not write one as a blanket prohibition.
   type-specific keywords apply only to their own type), names shared formats
   (`address`, `decimal integer`, `bytes32 hex`) instead of spelling the regex,
   and sends only annotations that differ from the MCP defaults.
-- **Output schemas** keep their structure but not their patterns, and every
-  `artifact_reference` envelope is named rather than spelled out: the agent
-  passes it on without reading inside it.
+- **Output schemas** are a reading guide: they list the fields an agent
+  reads to decide its next call and drop `required`, `additionalProperties`
+  and `pattern`. Every `artifact_reference` envelope is named rather than
+  spelled out: the agent passes it on without reading inside it.
+- **Repeated nested objects are named once.** `catalogSummary()` publishes a
+  schema such as a PoolKey argument, the ve(3,3) emission state or the
+  `jurisdiction` result block as `{ type, description }` with a one-line
+  description of its fields, wherever it appears. The handler still parses
+  the full zod shape.
+- **Server limits are not published.** Bounds no sensible argument reaches
+  (tick ranges, fee ceilings, uint32 durations, 78-digit strings, array
+  maxima) are enforced by the handler and reported in its error.
+- **Argument descriptions say what the name and format do not.** A format
+  label is not repeated when the description already names it; a tool's
+  description is not restated in its arguments; multi-step detail lives in
+  the `ekubo://docs/*` resource that already covers it.
 - **Say each rule once.** The instructions carry what an agent needs before
   its first call: routing, the swap call shape, the jurisdiction notice, the
   reference pass-through rule, where workflows live, and endpoint scope.
