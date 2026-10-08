@@ -141,7 +141,17 @@ additional upstream fields.
   provider-neutral recommendation plus an exact 10,000-bps executable target
   list capped at 25 initialized canonical Ve33 pools. Snapshots older than one
   day trigger a refresh that is awaited for up to 20 seconds; stale, failed, or
-  timed-out refreshes fail closed instead of returning an executable plan
+  timed-out refreshes fail closed instead of returning an executable plan.
+  Each recommendation reports an `emissions_efficiency` KPI: emissions per
+  dollar of voter fees the pool still generates one epoch (7 days) later, plus
+  the rate-free `emission_share_per_retained_fee_share`; pools above the
+  threshold (default 3) or with votes but no retained fees are prune
+  candidates, and `prune_low_efficiency=true` withholds them. Passing `voter`
+  (vote weight and LP share per pool) with the locally decoded
+  `ve33_emission_state` returns voter-optimal `targets` that also value the
+  emissions redirected to the voter's own pools (Mazett 2024), with the
+  neutral plan kept as `provider_targets`. The 25-target, 10,000-bps contract
+  is unchanged
 - `prepare_ve33_reallocation` — resolve target `pool_key_id` values and
   compile up to 25 basis-point targets into one fee-preserving atomic VeToken
   multicall. `preserve_existing_locks` apportions each expiry cohort across

@@ -7,6 +7,18 @@ import {
   stringToHex,
 } from "viem";
 import { type Env, getVe33Pools, ServiceError } from "./core.js";
+import { ve33EmissionStateReadRequirement } from "./opportunities.js";
+import {
+  allocationBps,
+  buildEfficiencyContext,
+  type EfficiencyContext,
+  type EfficiencyOptions,
+  emissionsEfficiency,
+  optimalVoterAllocation,
+  parseVoterWeight,
+  type VoterCandidate,
+  voterValue,
+} from "./stonx-efficiency.js";
 
 const RECOMMENDATION_RESULT_URL =
   "https://api.dune.com/api/v1/query/8187907/results";
@@ -36,6 +48,7 @@ interface RecommendationIntent {
   chainId: string;
   veToken: Address;
   ve33: Address;
+  options?: EfficiencyOptions;
 }
 
 interface RecommendationRow {
@@ -86,10 +99,13 @@ interface ResolvedPool {
 interface ResolvedRecommendation {
   row: RecommendationRow;
   pool: ResolvedPool | null;
+  /** The initialized pool a low-efficiency prune withheld from execution. */
+  prunedPool?: ResolvedPool;
   unavailableReason:
     | "pool_not_initialized"
     | "ambiguous_pool_configuration"
     | "unsupported_pool_configuration"
+    | "low_emissions_efficiency"
     | null;
 }
 
@@ -112,12 +128,25 @@ export async function getStonxAllocationRecommendation(
       fetcher,
     ),
   ]);
+  const options = recommendationOptions(intent);
+  const efficiency = await buildEfficiencyContext(
+    env,
+    intent.chainId,
+    poolCatalog.pools,
+    poolCatalog.totalVoteWeight,
+    options,
+    fetcher,
+  );
   const resolved = snapshot.rows.map((row) =>
-    resolveRecommendation(
-      row,
-      poolCatalog.pools,
-      BigInt(intent.chainId),
-      getAddress(intent.ve33),
+    pruneIfInefficient(
+      resolveRecommendation(
+        row,
+        poolCatalog.pools,
+        BigInt(intent.chainId),
+        getAddress(intent.ve33),
+      ),
+      efficiency,
+      options.pruneLowEfficiency === true,
     ),
   );
   const executableCandidates = resolved
@@ -152,12 +181,20 @@ export async function getStonxAllocationRecommendation(
     0,
   );
   const redistributedWeight = unavailableWeight + excludedWeight;
-  const targets =
+  const providerTargets =
     executable?.map(({ recommendation, weightBps }) => ({
       pool_key_id: (recommendation.pool as ResolvedPool).poolKeyId,
       swap_fee: recommendation.row.swapFee.toString(),
       weight_bps: weightBps,
     })) ?? [];
+  const voter = voterOptimization(
+    options,
+    efficiency,
+    executableCandidates,
+    providerTargets,
+  );
+  const plan = finalTargets(voter, providerTargets, executable !== null);
+  const targets = plan.targets;
   const recommendationId = keccak256(
     stringToHex(
       JSON.stringify({
@@ -175,6 +212,7 @@ export async function getStonxAllocationRecommendation(
           pool_key_id: pool?.poolKeyId ?? null,
           unavailable_reason: unavailableReason,
         })),
+        options: recommendationOptionsDigestInput(options),
         targets,
       }),
     ),
@@ -197,7 +235,8 @@ export async function getStonxAllocationRecommendation(
     chain_id: intent.chainId,
     ve_token: getAddress(intent.veToken),
     ve33: getAddress(intent.ve33),
-    execution_ready: executable !== null,
+    execution_ready: plan.executionReady,
+    target_basis: plan.basis,
     original_total_weight_bps: BPS_TOTAL,
     unavailable_weight_bps: unavailableWeight,
     redistributed_weight_bps: executable === null ? 0 : redistributedWeight,
@@ -240,6 +279,12 @@ export async function getStonxAllocationRecommendation(
           recent_fee_trend_pct: row.recentFeeTrendPct,
           rationale: row.reason,
         },
+        emissions_efficiency: efficiencyFor(
+          efficiency,
+          row,
+          pool,
+          prunedPoolOf(resolved, row),
+        ),
       };
     }),
     unavailable_recommendations: unavailable.map(({ row, unavailableReason }) => ({
@@ -259,6 +304,9 @@ export async function getStonxAllocationRecommendation(
       reason: "target_limit",
     })),
     targets,
+    provider_targets: plan.providerTargets,
+    voter_optimization: voter.report,
+    emissions_efficiency: efficiencySummary(efficiency, options),
     target_total_weight_bps: targets.reduce(
       (sum, target) => sum + target.weight_bps,
       0,
@@ -284,6 +332,270 @@ export async function getStonxAllocationRecommendation(
       recommendation_tool_constructs_no_transaction: true,
     },
   };
+}
+
+const INFRASTRUCTURE_BUCKET = "infrastructure";
+
+type Target = { pool_key_id: string; swap_fee: string; weight_bps: number };
+
+function recommendationOptions(intent: RecommendationIntent): EfficiencyOptions {
+  return intent.options ?? {};
+}
+
+function finalTargets(
+  voter: VoterOptimizationResult,
+  providerTargets: Target[],
+  providerReady: boolean,
+) {
+  if (voter.ready === undefined) {
+    return {
+      targets: providerTargets,
+      executionReady: providerReady,
+      basis: "provider" as const,
+      providerTargets: undefined,
+    };
+  }
+  // A voter who asked for a personal plan must never be handed the neutral one
+  // as if it were theirs, so an incomplete optimisation is not executable.
+  return {
+    targets: voter.targets ?? providerTargets,
+    executionReady: voter.ready,
+    basis: voter.targets === null ? ("provider" as const) : ("voter_optimal" as const),
+    providerTargets: voter.targets === null ? undefined : providerTargets,
+  };
+}
+
+function pruneIfInefficient(
+  recommendation: ResolvedRecommendation,
+  efficiency: EfficiencyContext,
+  prune: boolean,
+): ResolvedRecommendation {
+  const { row, pool } = recommendation;
+  if (!prune || pool === null) return recommendation;
+  const kpi = emissionsEfficiency(
+    efficiency,
+    pool.poolKeyId,
+    row.bucket === INFRASTRUCTURE_BUCKET,
+  );
+  if (kpi === null || !kpi.prune_candidate) return recommendation;
+  return {
+    row,
+    pool: null,
+    prunedPool: pool,
+    unavailableReason: "low_emissions_efficiency",
+  };
+}
+
+function prunedPoolOf(
+  resolved: ResolvedRecommendation[],
+  row: RecommendationRow,
+): ResolvedPool | null {
+  return resolved.find((entry) => entry.row === row)?.prunedPool ?? null;
+}
+
+function efficiencyFor(
+  efficiency: EfficiencyContext,
+  row: RecommendationRow,
+  pool: ResolvedPool | null,
+  prunedPool: ResolvedPool | null,
+) {
+  const selected = pool ?? prunedPool;
+  if (selected === null) return null;
+  return emissionsEfficiency(
+    efficiency,
+    selected.poolKeyId,
+    row.bucket === INFRASTRUCTURE_BUCKET,
+  );
+}
+
+function recommendationOptionsDigestInput(options: EfficiencyOptions) {
+  return {
+    prune_low_efficiency: options.pruneLowEfficiency === true,
+    max_emission_share_per_fee_share:
+      options.maxEmissionSharePerFeeShare ?? null,
+    current_emission_rate:
+      options.ve33EmissionState?.currentEmissionRate ?? null,
+    voter: options.voter ?? null,
+  };
+}
+
+function efficiencySummary(
+  efficiency: EfficiencyContext,
+  options: EfficiencyOptions,
+) {
+  return {
+    status: efficiency.status,
+    epoch_seconds: 604_800,
+    total_retained_epoch_ve33_fees_usd: efficiency.totalRetainedFeesUsd,
+    projected_epoch_emissions_usd: efficiency.epochEmissionsUsd,
+    stonx_usd_price: efficiency.stonxUsdPrice,
+    max_emission_share_per_retained_fee_share:
+      efficiency.maxEmissionSharePerFeeShare,
+    pruning_applied: options.pruneLowEfficiency === true,
+    local_read_requirement:
+      efficiency.status === "emission_rate_required"
+        ? emissionRateReadRequirement()
+        : null,
+    methodology: {
+      kpi: "Emissions per dollar of voter fees retained one epoch later. Ekubo Ve33 streams emissions continuously and votes persist until changed, so the current vote share stands for the trailing epoch's emission share and the latest 24-hour voter-fee run rate, times seven, stands for the fees the pool still generates one epoch later.",
+      rate_free_kpi: "emission_share_per_retained_fee_share needs no emission rate: 1.0 means the pool receives emissions exactly in proportion to the voter fees it still generates. Pools above max_emission_share_per_retained_fee_share, or with votes but no retained fees, are prune candidates; the STONX/USDG infrastructure floor is exempt.",
+      usd_kpi: "projected_emissions_usd_per_epoch and the per-dollar ratios need the locally decoded emission rate (ve33_emission_state) and are null without it.",
+      pruning: "Only prune_low_efficiency=true withholds prune candidates from targets; their weight is then redistributed like any unavailable recommendation.",
+    },
+  };
+}
+
+function emissionRateReadRequirement() {
+  return ve33EmissionStateReadRequirement(
+    "get_stonx_allocation_recommendation",
+    "Price projected STONX emissions per pool and complete the own-pool emission term of a voter-optimal allocation using data decoded on the user's device.",
+  );
+}
+
+interface VoterOptimizationResult {
+  targets: { pool_key_id: string; swap_fee: string; weight_bps: number }[] | null;
+  ready: boolean | undefined;
+  report: Record<string, unknown> | null;
+}
+
+function voterOptimization(
+  options: EfficiencyOptions,
+  efficiency: EfficiencyContext,
+  executableCandidates: (ResolvedRecommendation & { pool: ResolvedPool })[],
+  providerTargets: { pool_key_id: string; swap_fee: string; weight_bps: number }[],
+): VoterOptimizationResult {
+  const voter = options.voter;
+  if (voter === undefined) return { targets: null, ready: undefined, report: null };
+  if (efficiency.epochEmissionsUsd === null) {
+    return {
+      targets: null,
+      ready: false,
+      report: {
+        status:
+          efficiency.status === "prices_unavailable"
+            ? "prices_unavailable"
+            : "local_read_required",
+        local_read_requirement:
+          efficiency.status === "prices_unavailable"
+            ? null
+            : emissionRateReadRequirement(),
+      },
+    };
+  }
+  const voteWeight = parseVoterWeight(voter.voteWeight, "voter.vote_weight");
+  const candidates = voterCandidates(voter, efficiency, executableCandidates);
+  const currentTotal = voter.pools.reduce(
+    (sum, pool) =>
+      sum + parseVoterWeight(pool.currentVoteWeight ?? "0", "current_vote_weight"),
+    0,
+  );
+  const totalAfter = Math.max(
+    voteWeight,
+    efficiency.totalVoteWeight - currentTotal + voteWeight,
+  );
+  const allocation = optimalVoterAllocation(
+    candidates,
+    voteWeight,
+    efficiency.epochEmissionsUsd,
+    totalAfter,
+  );
+  const bps = allocationBps(allocation, MAX_EXECUTABLE_RECOMMENDATION_TARGETS);
+  const targets = bps.map((target) => ({
+    pool_key_id: target.poolKeyId,
+    swap_fee: target.swapFee,
+    weight_bps: target.weightBps,
+  }));
+  const asWeights = (list: { pool_key_id: string; weight_bps: number }[]) =>
+    new Map(list.map((t) => [t.pool_key_id, (t.weight_bps * voteWeight) / BPS_TOTAL]));
+  return {
+    targets,
+    ready: targets.length > 0,
+    report: {
+      status: targets.length > 0 ? "complete" : "no_candidates",
+      rule: "Mazett (2024) optimal ve(3,3) vote: maximise voter fees F_i x_i/(w_i+x_i) plus own-pool emissions s_i E (w_i+x_i)/W over x_i >= 0 summing to the voter's weight.",
+      candidate_count: candidates.length,
+      epoch_emissions_usd: efficiency.epochEmissionsUsd,
+      total_vote_weight_after: totalAfter.toString(),
+      expected_value_usd_per_epoch: {
+        voter_optimal: voterValue(
+          candidates,
+          asWeights(targets),
+          efficiency.epochEmissionsUsd,
+          totalAfter,
+        ),
+        provider_targets: voterValue(
+          candidates,
+          asWeights(providerTargets),
+          efficiency.epochEmissionsUsd,
+          totalAfter,
+        ),
+      },
+      assumptions: [
+        "Next-epoch voter fees equal the latest 24-hour run rate times seven.",
+        "Other voters do not move; the emission rate and STONX price stay at their current values.",
+        "lp_share is the voter's share of the pool's emission-earning liquidity, supplied by the caller.",
+        "Pools outside the provider plan keep their current indexed swap fee.",
+      ],
+    },
+  };
+}
+
+function voterCandidates(
+  voter: NonNullable<EfficiencyOptions["voter"]>,
+  efficiency: EfficiencyContext,
+  executableCandidates: (ResolvedRecommendation & { pool: ResolvedPool })[],
+): VoterCandidate[] {
+  const voterPools = new Map(voter.pools.map((pool) => [pool.poolKeyId, pool]));
+  const swapFees = new Map<string, string>();
+  for (const { row, pool } of executableCandidates) {
+    swapFees.set(pool.poolKeyId, row.swapFee.toString());
+  }
+  for (const pool of voter.pools) {
+    const fee = ownPoolSwapFee(pool, efficiency, swapFees);
+    if (fee !== null) swapFees.set(pool.poolKeyId, fee);
+  }
+  return [...swapFees].flatMap(([poolKeyId, swapFee]) =>
+    voterCandidate(poolKeyId, swapFee, efficiency, voterPools.get(poolKeyId)),
+  );
+}
+
+function voterCandidate(
+  poolKeyId: string,
+  swapFee: string,
+  efficiency: EfficiencyContext,
+  own: NonNullable<EfficiencyOptions["voter"]>["pools"][number] | undefined,
+): VoterCandidate[] {
+  const indexed = efficiency.pools.get(poolKeyId);
+  if (indexed === undefined || indexed.retainedFeesUsd === null) return [];
+  const current = parseVoterWeight(
+    own?.currentVoteWeight ?? "0",
+    "current_vote_weight",
+  );
+  return [
+    {
+      poolKeyId,
+      swapFee,
+      feesUsd: indexed.retainedFeesUsd,
+      othersWeight: Math.max(0, indexed.voteWeight - current),
+      lpShare: own?.lpShare ?? 0,
+    },
+  ];
+}
+
+/// A pool the voter provides liquidity to but the provider plan does not
+/// recommend is voted at its current indexed swap fee, and only when it is an
+/// initialized concentrated-liquidity Ve33 pool.
+function ownPoolSwapFee(
+  pool: { poolKeyId: string; lpShare: number },
+  efficiency: EfficiencyContext,
+  planned: Map<string, string>,
+): string | null {
+  if (pool.lpShare <= 0 || planned.has(pool.poolKeyId)) return null;
+  const indexed = efficiency.pools.get(pool.poolKeyId);
+  if (indexed === undefined || indexed.tickSpacing === null) return null;
+  const fee = indexed.swapFee;
+  if (fee === null || !/^(?:0|[1-9][0-9]*)$/.test(fee)) return null;
+  return BigInt(fee) <= UINT64_MAX ? fee : null;
 }
 
 async function fetchRecommendationSnapshot(
