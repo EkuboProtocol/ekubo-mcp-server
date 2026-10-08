@@ -1,0 +1,221 @@
+[
+  {
+    "id": "swap-resolves-tokens-first",
+    "prior_tool_results": [
+      {
+        "tool": "wallet_list",
+        "result": "$accounts"
+      }
+    ],
+    "user": "Swap 0.1 ETH for USDC on Base.",
+    "expect": [
+      {
+        "tool": [
+          "list_tokens",
+          "get_token",
+          "get_tokens"
+        ]
+      },
+      {
+        "tool": "get_quotes_with_plans",
+        "args_match": {
+          "chain_id": "8453",
+          "token_out": {
+            "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "quote-with-sender-and-slippage",
+    "prior_tool_results": [
+      {
+        "tool": "wallet_list",
+        "result": "$accounts"
+      },
+      {
+        "tool": "list_tokens",
+        "args": {
+          "chain_id": "8453",
+          "search": "USDC"
+        },
+        "result": "$tokens_base"
+      }
+    ],
+    "user": "Sell exactly 0.1 ETH for USDC on Base with at most 0.3% slippage. Get me executable quotes.",
+    "expect": {
+      "tool": "get_quotes_with_plans",
+      "args_match": {
+        "chain_id": "8453",
+        "token_in": {
+          "address": "0x0000000000000000000000000000000000000000"
+        },
+        "token_out": {
+          "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+        },
+        "quote_type": "exact_input",
+        "amount": "100000000000000000",
+        "sender": {
+          "address": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A"
+        },
+        "slippage_bps": "30"
+      }
+    }
+  },
+  {
+    "id": "plan-reference-to-wallet",
+    "prior_tool_results": [
+      {
+        "tool": "wallet_list",
+        "result": "$accounts"
+      },
+      {
+        "tool": "get_quotes_with_plans",
+        "args": {
+          "chain_id": "8453",
+          "token_in": "0x0000000000000000000000000000000000000000",
+          "token_out": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          "quote_type": "exact_input",
+          "amount": "100000000000000000",
+          "sender": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+          "slippage_bps": 30
+        },
+        "result": "$quote_eth_usdc"
+      }
+    ],
+    "user": "Execute option 2.",
+    "expect": {
+      "tool": "wallet_simulate_execution_plan",
+      "args_match": {
+        "account_id": "eip155:8453:0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+        "artifact_reference": {
+          "from_prior": "1.options.1.execution_plan_reference"
+        }
+      }
+    }
+  },
+  {
+    "id": "stock-token-asks-jurisdiction",
+    "prior_tool_results": [
+      {
+        "tool": "wallet_list",
+        "result": "$accounts"
+      },
+      {
+        "tool": "get_quotes_with_plans",
+        "args": {
+          "chain_id": "8453",
+          "token_in": "0x0000000000000000000000000000000000000000",
+          "token_out": "0x6a1E2bb3c91b2C2C7A0b5bE7f4c42cB1AB3f6E21",
+          "quote_type": "exact_input",
+          "amount": "100000000000000000",
+          "sender": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+          "slippage_bps": 30
+        },
+        "result": "$quote_eth_tsla"
+      }
+    ],
+    "user": "Looks good, execute option 1.",
+    "expect": {
+      "tool": null
+    }
+  },
+  {
+    "id": "positions-read",
+    "prior_tool_results": [
+      {
+        "tool": "wallet_list",
+        "result": "$accounts"
+      }
+    ],
+    "user": "Show my Ekubo liquidity positions on Base.",
+    "expect": {
+      "tool": "get_positions_by_owner",
+      "args_match": {
+        "owner": {
+          "address": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A"
+        }
+      }
+    }
+  },
+  {
+    "id": "read-reference-to-wallet",
+    "prior_tool_results": [
+      {
+        "tool": "wallet_list",
+        "result": "$accounts"
+      },
+      {
+        "tool": "get_positions_by_owner",
+        "args": {
+          "owner": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+          "chain_id": "8453"
+        },
+        "result": "$positions"
+      }
+    ],
+    "user": "Now read the current on-chain state of that position.",
+    "expect": {
+      "tool": "wallet_batch_eth_call",
+      "args_match": {
+        "chain_id": "8453",
+        "reference": {
+          "from_prior": "1.current_state_reads.0.read_calls_reference"
+        }
+      }
+    }
+  },
+  {
+    "id": "lp-transfer-uses-prepare-tool",
+    "prior_tool_results": [
+      {
+        "tool": "wallet_list",
+        "result": "$accounts"
+      },
+      {
+        "tool": "get_positions_by_owner",
+        "args": {
+          "owner": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+          "chain_id": "8453"
+        },
+        "result": "$positions"
+      }
+    ],
+    "user": "Transfer that position to 0x8ba1f109551bD432803012645Ac136ddd64DBA72.",
+    "expect": {
+      "tool": "prepare_lp_position_transfer",
+      "args_match": {
+        "chain_id": "8453",
+        "sender": {
+          "address": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A"
+        },
+        "positions_address": {
+          "address": "0x02D9876A21AF7545f8632C3af76eC90b5ad4b66D"
+        },
+        "token_id": "41207",
+        "recipient": {
+          "address": "0x8ba1f109551bD432803012645Ac136ddd64DBA72"
+        }
+      }
+    }
+  },
+  {
+    "id": "rewards-read",
+    "prior_tool_results": [
+      {
+        "tool": "wallet_list",
+        "result": "$accounts"
+      }
+    ],
+    "user": "Do I have any Ekubo rewards I can claim?",
+    "expect": {
+      "tool": "get_rewards_claims_by_owner",
+      "args_match": {
+        "owner": {
+          "address": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A"
+        }
+      }
+    }
+  }
+]

@@ -1,0 +1,208 @@
+{
+  "accounts": {
+    "granted_scopes": [
+      "write"
+    ],
+    "accounts": [
+      {
+        "account_id": "eip155:8453:0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+        "address": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+        "chainId": 8453,
+        "label": "Main",
+        "networks": [
+          {
+            "chainId": 8453,
+            "status": "enabled"
+          }
+        ],
+        "networkChange": null,
+        "scopes": [
+          "write:0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A"
+        ]
+      }
+    ]
+  },
+  "tokens_base": {
+    "chain_id": "8453",
+    "tokens": [
+      {
+        "address": "0x0000000000000000000000000000000000000000",
+        "symbol": "ETH",
+        "decimals": 18,
+        "visibility_priority": 100
+      },
+      {
+        "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "symbol": "USDC",
+        "decimals": 6,
+        "visibility_priority": 99
+      },
+      {
+        "address": "0x6a1E2bb3c91b2C2C7A0b5bE7f4c42cB1AB3f6E21",
+        "symbol": "TSLA",
+        "name": "Tesla Robinhood Stock Token",
+        "decimals": 18,
+        "visibility_priority": 60
+      }
+    ]
+  },
+  "quote_eth_usdc": {
+    "quote_type": "exact_input",
+    "chain_id": "8453",
+    "token_in": "0x0000000000000000000000000000000000000000",
+    "token_out": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "amount": "100000000000000000",
+    "sender": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+    "slippage_bps": 30,
+    "options": [
+      {
+        "option": 1,
+        "source": "ekubo",
+        "amount_out": "412873211",
+        "minimum_amount_out": "411634591",
+        "execution_plan_reference": {
+          "kind": "artifact_reference",
+          "artifact_type": "execution_plan",
+          "url": "https://mcp.ekubo.org/artifacts/execution_plan/0b7d2c9e4a6f4183b5e1d9c7a3f2e8b6",
+          "bytes": 4113,
+          "integrity": {
+            "algorithm": "keccak256",
+            "value": "0x8e1d4b7a2c9f0e3d6b5a8c1f4e7d0a3b6c9e2f5a8d1b4c7e0f3a6d9b2c5e8f1a"
+          }
+        }
+      },
+      {
+        "option": 2,
+        "source": "aggregator",
+        "amount_out": "412650020",
+        "minimum_amount_out": "411412070",
+        "execution_plan_reference": {
+          "kind": "artifact_reference",
+          "artifact_type": "execution_plan",
+          "url": "https://mcp.ekubo.org/artifacts/execution_plan/5a3e9c1b7d2f4a6e8c0b2d4f6a8e1c3b",
+          "bytes": 5260,
+          "integrity": {
+            "algorithm": "keccak256",
+            "value": "0x1f3a5c7e9b2d4f6a8c0e1b3d5f7a9c2e4b6d8f0a1c3e5b7d9f2a4c6e8b0d1f3a"
+          }
+        }
+      }
+    ],
+    "jurisdiction": {
+      "policy": "ekubo-token-jurisdictions-v2",
+      "policy_digest": "0x4629b75c1e0a9d3f7b2c8e6a5d4f3b2a1c0e9d8f7a6b5c4d3e2f1a0b9c8d7e6f",
+      "assets": [
+        {
+          "address": "0x0000000000000000000000000000000000000000",
+          "symbol": "ETH",
+          "classification": "not_robinhood_stock_token",
+          "provenance": "native",
+          "restricted_jurisdictions": [],
+          "coverage": "covered",
+          "execution_hold": false
+        },
+        {
+          "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          "symbol": "USDC",
+          "classification": "not_robinhood_stock_token",
+          "provenance": "ekubo-token-list",
+          "restricted_jurisdictions": [],
+          "coverage": "covered",
+          "execution_hold": false
+        }
+      ]
+    }
+  },
+  "quote_eth_tsla": {
+    "quote_type": "exact_input",
+    "chain_id": "8453",
+    "token_in": "0x0000000000000000000000000000000000000000",
+    "token_out": "0x6a1E2bb3c91b2C2C7A0b5bE7f4c42cB1AB3f6E21",
+    "amount": "100000000000000000",
+    "sender": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+    "slippage_bps": 30,
+    "options": [
+      {
+        "option": 1,
+        "source": "ekubo",
+        "amount_out": "942117300000000000",
+        "minimum_amount_out": "939290948100000000",
+        "execution_plan_reference": {
+          "kind": "artifact_reference",
+          "artifact_type": "execution_plan",
+          "url": "https://mcp.ekubo.org/artifacts/execution_plan/c4e8a2d6f0b14c3e9a7d5b1f3e8c2a6d",
+          "bytes": 4388,
+          "integrity": {
+            "algorithm": "keccak256",
+            "value": "0x6b9d2f4a8c1e3b5d7f0a2c4e6b8d1f3a5c7e9b2d4f6a8c0e1b3d5f7a9c2e4b6d"
+          }
+        }
+      }
+    ],
+    "jurisdiction": {
+      "policy": "ekubo-token-jurisdictions-v2",
+      "policy_digest": "0x4629b75c1e0a9d3f7b2c8e6a5d4f3b2a1c0e9d8f7a6b5c4d3e2f1a0b9c8d7e6f",
+      "assets": [
+        {
+          "address": "0x0000000000000000000000000000000000000000",
+          "symbol": "ETH",
+          "classification": "not_robinhood_stock_token",
+          "provenance": "native",
+          "restricted_jurisdictions": [],
+          "coverage": "covered",
+          "execution_hold": false
+        },
+        {
+          "address": "0x6a1E2bb3c91b2C2C7A0b5bE7f4c42cB1AB3f6E21",
+          "symbol": "TSLA",
+          "classification": "robinhood_stock_token",
+          "provenance": "ekubo-token-list",
+          "restricted_jurisdictions": [
+            "US",
+            "CA",
+            "GB"
+          ],
+          "coverage": "covered",
+          "execution_hold": false
+        }
+      ]
+    }
+  },
+  "positions": {
+    "owner": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+    "positions": [
+      {
+        "chain_id": "8453",
+        "positions_address": "0x02D9876A21AF7545f8632C3af76eC90b5ad4b66D",
+        "token_id": "41207",
+        "pool_key": {
+          "token0": "0x0000000000000000000000000000000000000000",
+          "token1": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          "fee": "0.05%"
+        },
+        "tick_lower": -201000,
+        "tick_upper": -195000,
+        "liquidity": "183920018331",
+        "state_call_id": "p0"
+      }
+    ],
+    "current_state_reads": [
+      {
+        "chain_id": "8453",
+        "read_calls_reference": {
+          "kind": "artifact_reference",
+          "artifact_type": "read_calls",
+          "url": "https://mcp.ekubo.org/artifacts/read_calls/9f6c1e2a7b4d4f0e8a1c3b5d7e9f1a2b",
+          "bytes": 2874,
+          "integrity": {
+            "algorithm": "keccak256",
+            "value": "0x3c7e5a1b9d2f4e6a8c0b1d3f5e7a9c2b4d6f8e0a1c3b5d7f9e2a4c6b8d0f1e3a"
+          }
+        }
+      }
+    ],
+    "page": 1,
+    "page_size": 50,
+    "has_more": false
+  }
+}

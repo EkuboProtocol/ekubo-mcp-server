@@ -956,6 +956,16 @@ bun run dev
 Connect MCP Inspector to `http://localhost:8787/mcp`, or to
 `http://localhost:8787/mcp/<protocol>` for one protocol's tools.
 
+`bun run test:mcp-acceptance -- --cf` sends the scenarios in
+`test/mcp-acceptance/` to small Workers AI models with the live `/mcp/ekubo`
+catalog (plus the Cloud Wallet catalog, for handoffs) and checks the first tool
+call of each. It runs the Cloud Wallet harness from a sibling checkout
+(`CLOUD_WALLET_DIR`, default `../cloud-wallet`); `MCP_URL` selects another
+endpoint, such as a local `wrangler dev`. The scenario format and options are in
+cloud-wallet `docs/MCP-CONTEXT.md`. A full five-model run costs about 15,000
+neurons, more than the 10,000-neuron free daily allowance, so it is not part of
+CI.
+
 ## Deployment
 
 Production deployment is automatic through the Cloudflare Pages Git

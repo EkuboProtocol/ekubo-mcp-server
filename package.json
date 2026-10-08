@@ -12,6 +12,7 @@
     "deploy": "wrangler deploy",
     "smoke": "node script/smoke.mjs",
     "test": "bun test",
+    "test:mcp-acceptance": "sh script/mcp-acceptance.sh",
     "types": "wrangler types --include-runtime false --strict-vars false",
     "types:check": "wrangler types --include-runtime false --strict-vars false --check",
     "lint": "eslint .",
