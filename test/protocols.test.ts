@@ -13,6 +13,7 @@ import {
 } from "../src/protocols.js";
 import { PROTOCOL_SKILLS } from "../src/protocol-skills.js";
 import { MCP_TOOL_CATALOG_REVISION } from "../src/version.js";
+import { QUOTE_JURISDICTION_NOTICE_V2 } from "../src/token-restrictions.js";
 import expectedInstructions from "./fixtures/server-instructions.txt" with { type: "text" };
 
 const env = {
@@ -175,10 +176,10 @@ describe("Per-protocol MCP endpoints", () => {
     expect((await serverInfo("/mcp")).serverInfo.name).toBe("ekubo");
     for (const protocol of PROTOCOLS) {
       const info = await serverInfo(protocolMcpPath(protocol.slug));
-      // Ekubo's own endpoint keeps the plain name; the satellites are
-      // suffixed, so a harness listing all seven names them apart.
+      // Ekubo's own endpoints keep their slug; the satellites are suffixed,
+      // so a harness listing all of them names them apart.
       expect(info.serverInfo.name).toBe(
-        protocol.slug === "ekubo" ? "ekubo" : `ekubo-${protocol.slug}`,
+        protocol.slug.startsWith("ekubo") ? protocol.slug : `ekubo-${protocol.slug}`,
       );
       expect(info.serverInfo.title).toBe(protocol.title);
     }
@@ -198,7 +199,70 @@ describe("Per-protocol MCP endpoints", () => {
       expect(uris.includes("ekubo://docs/ve33-workflow")).toBe(
         protocol.slug === "ekubo",
       );
+      expect(uris.includes("ekubo://docs/lp-position-workflow")).toBe(
+        protocol.slug === "ekubo" || protocol.slug === "ekubo-advanced",
+      );
     }
+  });
+});
+
+describe("Ekubo core and advanced endpoints", () => {
+  const advanced = [
+    "list_pool_keys",
+    "derive_pool_id",
+    "decode_pool_config",
+    "prepare_fix_pool_price",
+    "prepare_pool_initialization",
+    "prepare_oracle_capacity_expansion",
+    "prepare_manual_pool_boost",
+    "prepare_revenue_buybacks",
+    "prepare_old_gekubo_unwrap",
+    "prepare_approval_revocations",
+    "prepare_twamm_order",
+    "prepare_twamm_order_collection",
+    "prepare_twamm_order_stop",
+    "prepare_twamm_virtual_orders",
+    "prepare_auction_create",
+    "prepare_auction_complete",
+    "prepare_auction_creator_proceeds",
+  ];
+
+  it("moves exactly the operator tools to /mcp/ekubo-advanced", async () => {
+    expect((await listedTools("/mcp/ekubo-advanced")).sort()).toEqual([...advanced].sort());
+    const core = await listedTools("/mcp/ekubo");
+    for (const tool of [
+      "get_quotes_with_plans",
+      "get_token",
+      "get_positions_by_owner",
+      "prepare_lp_position_deposit",
+      "prepare_lp_position_withdraw",
+      "prepare_lp_position_earnings_claim",
+      "get_liquidity_opportunities",
+      "prepare_ve33_reallocation",
+      "get_stonx_allocation_recommendation",
+      "prepare_transfers",
+      "prepare_wrap_unwrap",
+      "prepare_rewards_claim",
+    ]) {
+      expect(core).toContain(tool);
+    }
+    for (const tool of advanced) expect(core).not.toContain(tool);
+  });
+
+  it("tells each half which server holds the other", async () => {
+    const core = (await serverInfo("/mcp/ekubo")).instructions;
+    expect(core).toContain("add https://mcp.ekubo.org/mcp/ekubo-advanced");
+    for (const topic of ["auctions", "TWAMM", "price fixes", "oracle capacity", "revenue buybacks", "gEKUBO", "approval revocations"]) {
+      expect(core).toContain(topic);
+    }
+    const advancedText = (await serverInfo("/mcp/ekubo-advanced")).instructions;
+    expect(advancedText).toContain("are on https://mcp.ekubo.org/mcp/ekubo; connect it too");
+    // The jurisdiction notice covers TWAMM, auction, price-fix and oracle plans.
+    expect(advancedText).toContain(QUOTE_JURISDICTION_NOTICE_V2);
+    expect(advancedText).toContain("ekubo://docs/execution-plan");
+    expect(advancedText).not.toContain("Routing:");
+    expect(advancedText).not.toContain("Multi-step workflows:");
+    expect((await serverInfo("/mcp")).instructions).not.toContain("list_pool_keys finds them");
   });
 });
 

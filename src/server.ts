@@ -2687,6 +2687,18 @@ const UNIVERSAL_RESOURCES: ReadonlySet<string> = new Set([
   "ekubo-execution-plan",
 ]);
 
+/**
+ * Ekubo documentation `/mcp/ekubo-advanced` also needs: the LP workflow covers
+ * pool initialization and price fixes, and the contract directory names the
+ * deployments its tools act on.
+ */
+const ADVANCED_RESOURCES: ReadonlySet<string> = new Set([
+  "ekubo-lp-position-workflow",
+  "ekubo-evm-contract-directory",
+  "ekubo-evm-contracts-by-chain",
+  "ekubo-evm-contract-by-address",
+]);
+
 const SKILL_RESOURCE_PREFIX = "protocol-skill-";
 
 /**
@@ -2708,7 +2720,10 @@ function resourceEnabled(
     const skill = name.slice(SKILL_RESOURCE_PREFIX.length);
     return skills.has(skill) || skills.has(skill.replace(/-discovery$/, ""));
   }
-  return protocols.has("ekubo");
+  return (
+    protocols.has("ekubo") ||
+    (protocols.has("ekubo-advanced") && ADVANCED_RESOURCES.has(name))
+  );
 }
 
 export function createEkuboServer(
@@ -2720,7 +2735,8 @@ export function createEkuboServer(
   // showing seven Ekubo-hosted servers side by side names them apart. `/mcp`
   // keeps the plain `ekubo` identity every configured client already holds,
   // and so does `/mcp/ekubo`: it serves Ekubo's own protocol, and
-  // `ekubo-ekubo` would be a name nobody chose.
+  // `ekubo-ekubo` would be a name nobody chose. `/mcp/ekubo-advanced` is
+  // named by its slug for the same reason.
   const only =
     protocols.size === 1
       ? protocolBySlug([...protocols][0] as string)
@@ -2728,9 +2744,11 @@ export function createEkuboServer(
   const server = new McpServer(
     {
       name:
-        only === undefined || only.slug === "ekubo"
+        only === undefined
           ? "ekubo"
-          : `ekubo-${only.slug}`,
+          : only.slug.startsWith("ekubo")
+            ? only.slug
+            : `ekubo-${only.slug}`,
       title: only === undefined ? "Ekubo Protocol" : only.title,
       version: MCP_SERVER_VERSION,
       websiteUrl: "https://mcp.ekubo.org",
@@ -4805,6 +4823,15 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
     text: `Multi-step workflows: ekubo://docs/agent-workflow, ekubo://docs/lp-position-workflow, ekubo://docs/ve33-workflow. Use the connected wallet or ask; do not infer it from the machine, repository, or keystore.`,
   },
   {
+    // Wherever the core tools are also served, their workflow paragraph above
+    // already covers this, which keeps `/mcp` unchanged by the split.
+    protocols: ["ekubo-advanced"],
+    text: (protocols) =>
+      protocols.has("ekubo")
+        ? null
+        : `Pools are addressed by exact PoolKey: list_pool_keys finds them, derive_pool_id and decode_pool_config convert key, ID and config. Pool initialization and price fixes: ekubo://docs/lp-position-workflow. Use the connected wallet or ask; do not infer it from the machine, repository, or keystore.`,
+  },
+  {
     protocols: ["aave"],
     text: `Aave market discovery happens directly between the agent and Aave's public APIs; this MCP is not a proxy, indexer, cache, or credential holder. Read rates, liquidity, caps, pause/freeze state, eMode, and user positions from https://api.v3.aave.com/graphql (see https://aave.com/docs/aave-v3/getting-started/graphql and https://aave.com/docs/aave-v3/markets/data), then call get_aave_v3_markets and pass only a returned chain, Pool, and reserve address to a prepare_aave_v3_* tool. Live API data and this server's deployment catalog are inputs to wallet simulation, never substitutes for it.`,
   },
@@ -4883,9 +4910,16 @@ function endpointScopeSection(
   if (protocols.size !== 1) return null;
   const only = protocolBySlug([...protocols][0] as string);
   if (only === undefined) return null;
+  const rest = `${origin}/mcp/<protocol> serves each other protocol and ${origin}${ALL_PROTOCOLS_MCP_PATH} all but Safe. For a tool named above but not listed, tell the user which server to add rather than improvising its call.`;
+  if (only.slug === "ekubo") {
+    return `Endpoint scope: ${origin}${protocolMcpPath("ekubo")} has the core Ekubo Protocol tools. For auctions, TWAMM orders, pool initialization or price fixes, oracle capacity, manual boosts, revenue buybacks, old gEKUBO unwrap, approval revocations, or pool-key enumeration and derivation, add ${origin}${protocolMcpPath("ekubo-advanced")}; ${rest}`;
+  }
+  if (only.slug === "ekubo-advanced") {
+    return `Endpoint scope: ${origin}${protocolMcpPath("ekubo-advanced")} has only advanced Ekubo Protocol tools. Token lookup, quotes, pools, LP positions, transfers, rewards and ve(3,3) are on ${origin}${protocolMcpPath("ekubo")}; connect it too. ${rest}`;
+  }
   return `Endpoint scope: ${origin}${protocolMcpPath(
     only.slug,
-  )} has only ${only.title} tools; ${origin}/mcp/<protocol> serves each other protocol and ${origin}${ALL_PROTOCOLS_MCP_PATH} all but Safe. For a tool named above but not listed, tell the user which server to add rather than improvising its call.`;
+  )} has only ${only.title} tools; ${rest}`;
 }
 
 const SERVER_INSTRUCTIONS = serverInstructions(ALL_PROTOCOLS);

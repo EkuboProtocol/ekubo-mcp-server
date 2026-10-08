@@ -70,10 +70,13 @@ type Budget = {
 // those tokens, and get_quotes_with_plans carries it again in its
 // description. Every non-Safe instructions budget was raised by 550 characters
 // for the scope sentence (EKU-988): without it, agents read the handoff rules
-// as a ban on the user's own cast/sncast work outside this server.
+// as a ban on the user's own cast/sncast work outside this server. EKU-994
+// split /mcp/ekubo into core (34 tools) and /mcp/ekubo-advanced (17 operator
+// tools); /mcp is unchanged.
 const ENDPOINTS: Record<string, Budget> = {
   "/mcp": { instructions: 7_950, tools: 133_000, tool: 5_200, resources: 4_200 },
-  "/mcp/ekubo": { instructions: 4_950, tools: 74_000, tool: 5_200, resources: 1_900 },
+  "/mcp/ekubo": { instructions: 5_250, tools: 54_000, tool: 5_200, resources: 1_900 },
+  "/mcp/ekubo-advanced": { instructions: 4_650, tools: 20_000, tool: 2_000, resources: 900 },
   "/mcp/aave": { instructions: 4_750, tools: 8_500, tool: 1_500, resources: 300 },
   "/mcp/aerodrome": { instructions: 5_450, tools: 15_000, tool: 2_200, resources: 850 },
   "/mcp/lido": { instructions: 4_750, tools: 5_100, tool: 1_200, resources: 750 },
