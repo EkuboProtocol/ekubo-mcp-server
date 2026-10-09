@@ -4915,7 +4915,11 @@ function endpointScopeSection(
     const titles = canonicalProtocols(protocols).map(
       (slug) => protocolBySlug(slug)!.title,
     );
-    return `Endpoint scope: ${facetMcpUrl(origin, protocols)} serves exactly ${joinList(titles, "and")}. For another protocol, add its slug to protocols= or connect ${origin}/mcp/<protocol>; Safe is only at ${origin}${protocolMcpPath("safe")}. For a tool named above but not listed, tell the user which protocol to add rather than improvising its call.`;
+    const advanced =
+      protocols.has("ekubo") && !protocols.has("ekubo-advanced")
+        ? ` Auctions, TWAMM orders, pool initialization or price fixes, oracle capacity, manual boosts, revenue buybacks, old gEKUBO unwrap, approval revocations, and pool-key enumeration and derivation are in ekubo-advanced.`
+        : "";
+    return `Endpoint scope: ${facetMcpUrl(origin, protocols)} serves exactly ${joinList(titles, "and")}.${advanced} For another protocol, add its slug to protocols= or connect ${origin}/mcp/<protocol>; Safe is only at ${origin}${protocolMcpPath("safe")}. For a tool named above but not listed, tell the user which protocol to add rather than improvising its call.`;
   }
   const only = protocolBySlug([...protocols][0] as string);
   if (only === undefined) return null;

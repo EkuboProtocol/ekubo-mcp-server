@@ -455,7 +455,8 @@ export default {
  * for a facet of `/mcp`.
  *
  * `catalog_digest` covers the listed tools and the instructions that endpoint
- * serves. A gateway stores one catalog per configured URL, so comparing
+ * serves, not its resources: a release that changes only a resource leaves it
+ * unchanged. A gateway stores one catalog per configured URL, so comparing
  * digests across a release says exactly which configured URLs need a refresh;
  * the single catalog revision cannot say which combinations changed.
  */

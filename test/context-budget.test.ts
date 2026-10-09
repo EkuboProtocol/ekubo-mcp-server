@@ -90,12 +90,13 @@ const ENDPOINTS: Record<string, Budget> = {
 // Facets of /mcp (EKU-1123) state the shared paragraphs once instead of once
 // per connection. o200k on 0.50.0: ekubo+ekubo-advanced 17,818 vs 19,026 as two
 // connections; ekubo+uniswap 17,941 vs 18,914; the Cloud Wallet default (every
-// bundled protocol but ekubo-advanced) 27,624 vs 34,249 as eight.
+// bundled protocol but ekubo-advanced) 27,624 vs 34,249 as eight. A facet
+// with ekubo but not ekubo-advanced names the advanced tools (CSO I-1).
 const FACETS: Record<string, Budget> = {
-  "/mcp?protocols=ekubo+ekubo-advanced": { instructions: 5_250, tools: 74_000, tool: 5_200, resources: 1_900 },
-  "/mcp?protocols=ekubo+uniswap": { instructions: 5_250, tools: 74_000, tool: 5_200, resources: 1_900 },
+  "/mcp?protocols=ekubo+ekubo-advanced": { instructions: 5_500, tools: 74_000, tool: 5_200, resources: 1_900 },
+  "/mcp?protocols=ekubo+uniswap": { instructions: 5_500, tools: 74_000, tool: 5_200, resources: 1_900 },
   "/mcp?protocols=ekubo+aave+aerodrome+lido+merkl+morpho+sky+uniswap": {
-    instructions: 8_400,
+    instructions: 8_700,
     tools: 113_000,
     tool: 5_200,
     resources: 4_200,

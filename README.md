@@ -38,7 +38,7 @@ a data API and the quoter remains a route-data service.
   documentation links
 - `GET /tools` — deterministic tool catalog for non-MCP discovery, filterable
   with `?protocol=<slug>` or `?protocols=<slug>+<slug>`; `catalog_digest`
-  changes whenever that endpoint's tools or instructions do
+  changes whenever that endpoint's tools or instructions do (not its resources)
 - `GET /openapi.json` — OpenAPI 3.1 discovery contract
 - `GET /llms.txt` — concise agent workflow
 - `GET /skills/{use-morpho,use-sky,use-lido,use-merkl,use-aerodrome}/SKILL.md` — reusable direct-data

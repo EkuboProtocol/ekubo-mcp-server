@@ -565,6 +565,8 @@ describe("Protocol facets of /mcp", () => {
     expect(instructions).toContain(
       "Endpoint scope: https://mcp.ekubo.org/mcp?protocols=ekubo+ekubo-advanced serves exactly Ekubo Protocol and Ekubo Protocol advanced.",
     );
+    expect(instructions).not.toContain("are in ekubo-advanced");
+    expect((await serverInfo(facet("ekubo+uniswap"))).instructions).toContain("TWAMM orders");
     // The advanced-only workflow paragraph is covered by the core one here.
     expect(instructions).not.toContain("Pools are addressed by exact PoolKey");
   });
