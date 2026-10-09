@@ -282,18 +282,99 @@ export function protocolMcpPath(slug: ProtocolSlug): string {
 
 export const ALL_PROTOCOLS_MCP_PATH = "/mcp";
 
+/** The query parameter that narrows `/mcp` to a facet of named protocols. */
+export const FACET_QUERY_PARAMETER = "protocols";
+
+/** Whether `protocols` is exactly the bundled set `/mcp` serves. */
+export function isAllProtocols(protocols: ReadonlySet<ProtocolSlug>): boolean {
+  return (
+    protocols.size === ALL_PROTOCOLS.size &&
+    [...ALL_PROTOCOLS].every((slug) => protocols.has(slug))
+  );
+}
+
+/** Slugs in `PROTOCOL_SLUGS` order, the one order every facet URL is written in. */
+export function canonicalProtocols(
+  protocols: ReadonlySet<ProtocolSlug>,
+): ProtocolSlug[] {
+  return PROTOCOL_SLUGS.filter((slug) => protocols.has(slug));
+}
+
+/**
+ * The URL of the server for `protocols`: `/mcp/<slug>` for one, `/mcp` for the
+ * bundled set, otherwise `/mcp?protocols=<a>+<b>` in canonical order. A gateway
+ * keys its stored catalog on the URL, so one selection must yield one URL.
+ */
+export function facetMcpUrl(
+  origin: string,
+  protocols: ReadonlySet<ProtocolSlug>,
+): string {
+  const slugs = canonicalProtocols(protocols);
+  if (slugs.length === 1) return `${origin}${protocolMcpPath(slugs[0]!)}`;
+  if (isAllProtocols(protocols)) return `${origin}${ALL_PROTOCOLS_MCP_PATH}`;
+  return `${origin}${ALL_PROTOCOLS_MCP_PATH}?${FACET_QUERY_PARAMETER}=${slugs.join("+")}`;
+}
+
+export type FacetSelection =
+  | { readonly protocols: ReadonlySet<ProtocolSlug> }
+  | { readonly error: string };
+
+/**
+ * Parse `?protocols=` into a facet, or `null` when the parameter is absent.
+ *
+ * Slugs are separated by `+` (which URL decoding turns into a space), an
+ * encoded `+`, a comma, or a repeated parameter, in any order and with
+ * duplicates. Safe stays standalone: its signature-only tools are not mixed
+ * into a transaction-preparation server, so naming it here is refused.
+ */
+export function parseProtocolFacet(query: URLSearchParams): FacetSelection | null {
+  if (!query.has(FACET_QUERY_PARAMETER)) return null;
+  const names = query
+    .getAll(FACET_QUERY_PARAMETER)
+    .flatMap((value) => value.split(/[+\s,]+/))
+    .filter((name) => name.length > 0);
+  const bundled = [...ALL_PROTOCOLS].join(", ");
+  if (names.length === 0) {
+    return { error: `Name at least one protocol. Known protocols: ${bundled}.` };
+  }
+  if (names.length > PROTOCOL_SLUGS.length * 2) {
+    return { error: "Too many protocol names." };
+  }
+  const protocols = new Set<ProtocolSlug>();
+  for (const name of names) {
+    if (name === "safe") {
+      return { error: "Safe is served only at /mcp/safe and cannot be combined with other protocols." };
+    }
+    const protocol = protocolBySlug(name);
+    if (protocol === undefined) {
+      return { error: `Unknown protocol. Known protocols: ${bundled}.` };
+    }
+    protocols.add(protocol.slug);
+  }
+  return { protocols: isAllProtocols(protocols) ? ALL_PROTOCOLS : protocols };
+}
+
 /**
  * Resolve a request path to the protocol set its MCP server should serve.
  *
- * `/mcp` is the bundled protocol set, for clients configured before the split.
+ * `/mcp` is the bundled protocol set, for clients configured before the split,
+ * and `/mcp?protocols=<a>+<b>` is the facet of the named protocols.
  * `/mcp/<slug>` is exactly one. Anything else is not an MCP route, and the
  * caller falls through to the discovery handlers.
  */
 export function matchMcpRoute(
   pathname: string,
-): { route: string; protocols: ReadonlySet<ProtocolSlug> } | null {
+  query: URLSearchParams = new URLSearchParams(),
+):
+  | { route: string; protocols: ReadonlySet<ProtocolSlug> }
+  | { route: string; error: string }
+  | null {
   if (pathname === ALL_PROTOCOLS_MCP_PATH) {
-    return { route: ALL_PROTOCOLS_MCP_PATH, protocols: ALL_PROTOCOLS };
+    const facet = parseProtocolFacet(query);
+    if (facet === null) {
+      return { route: ALL_PROTOCOLS_MCP_PATH, protocols: ALL_PROTOCOLS };
+    }
+    return { route: ALL_PROTOCOLS_MCP_PATH, ...facet };
   }
   const slug = pathname.startsWith("/mcp/")
     ? pathname.slice("/mcp/".length)

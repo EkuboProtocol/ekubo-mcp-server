@@ -121,7 +121,10 @@ import { PROTOCOL_SKILLS } from "./protocol-skills.js";
 import {
   ALL_PROTOCOLS,
   ALL_PROTOCOLS_MCP_PATH,
+  canonicalProtocols,
   enabledSkillNames,
+  facetMcpUrl,
+  isAllProtocols,
   protocolBySlug,
   protocolMcpPath,
   PROTOCOLS,
@@ -4907,7 +4910,13 @@ function endpointScopeSection(
   protocols: ReadonlySet<ProtocolSlug>,
   origin: string,
 ): string | null {
-  if (protocols.size !== 1) return null;
+  if (isAllProtocols(protocols)) return null;
+  if (protocols.size > 1) {
+    const titles = canonicalProtocols(protocols).map(
+      (slug) => protocolBySlug(slug)!.title,
+    );
+    return `Endpoint scope: ${facetMcpUrl(origin, protocols)} serves exactly ${joinList(titles, "and")}. For another protocol, add its slug to protocols= or connect ${origin}/mcp/<protocol>; Safe is only at ${origin}${protocolMcpPath("safe")}. For a tool named above but not listed, tell the user which protocol to add rather than improvising its call.`;
+  }
   const only = protocolBySlug([...protocols][0] as string);
   if (only === undefined) return null;
   const rest = `${origin}/mcp/<protocol> serves each other protocol and ${origin}${ALL_PROTOCOLS_MCP_PATH} all but Safe. For a tool named above but not listed, tell the user which server to add rather than improvising its call.`;

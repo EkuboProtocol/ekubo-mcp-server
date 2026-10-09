@@ -16,6 +16,7 @@ import {
   createEkuboServer,
   publicToolCatalog,
   publicToolCatalogWithOutputs,
+  serverInstructions,
 } from "./server.js";
 import { MCP_SERVER_VERSION, MCP_TOOL_CATALOG_REVISION } from "./version.js";
 import {
@@ -25,10 +26,14 @@ import {
 import {
   ALL_PROTOCOLS_MCP_PATH,
   ALL_PROTOCOLS,
+  canonicalProtocols,
+  facetMcpUrl,
   matchMcpRoute,
+  parseProtocolFacet,
   protocolBySlug,
   protocolMcpPath,
   PROTOCOLS,
+  type ProtocolSlug,
 } from "./protocols.js";
 
 export default {
@@ -46,7 +51,12 @@ export default {
     // `/mcp` serves bundled protocols and is the endpoint every already-configured
     // client names; `/mcp/<slug>` serves one. Both go through the same
     // admission, pricing, and CORS path — only the tool set differs.
-    const mcpRoute = matchMcpRoute(url.pathname);
+    const mcpRoute = matchMcpRoute(url.pathname, url.searchParams);
+    if (mcpRoute !== null && "error" in mcpRoute) {
+      return json({ error: { code: "unknown_protocol", message: mcpRoute.error } }, 400, {
+        "cache-control": "no-store",
+      });
+    }
     if (mcpRoute !== null) {
       const admitted = await admitMcpRequest(request, env, actor);
       if (admitted.rejection !== null) return admitted.rejection;
@@ -168,6 +178,15 @@ export default {
                 protocols: [...ALL_PROTOCOLS],
                 tool_count: publicToolCatalog.length,
                 note: "Bundled protocols. Safe is available only at /mcp/safe.",
+              },
+              // One connection for several protocols. Each distinct URL is a
+              // separate server to a client or gateway, so slugs are written in
+              // by_protocol order; Safe cannot be combined.
+              combined: {
+                url_template: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}?protocols=<slug>+<slug>`,
+                example: facetMcpUrl(url.origin, new Set(["ekubo", "ekubo-advanced"])),
+                tools_url_template: `${url.origin}/tools?protocols=<slug>+<slug>`,
+                note: "Union of the named protocols' tools and resources, with shared instructions stated once. Write slugs in by_protocol order. Safe cannot be combined.",
               },
               by_protocol: PROTOCOLS.map((protocol) => ({
                 protocol: protocol.slug,
@@ -427,51 +446,70 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 /**
- * The tool catalog, optionally narrowed to one protocol's endpoint.
+ * The tool catalog, optionally narrowed to one protocol's endpoint or a facet.
  *
  * `?protocol=<slug>` answers "what would I get if I added only this server",
  * which is the question the wallet's server picker and any client comparing
  * endpoints actually asks. Without it that answer is only derivable by
- * connecting to each endpoint in turn.
+ * connecting to each endpoint in turn. `?protocols=<a>+<b>` answers the same
+ * for a facet of `/mcp`.
+ *
+ * `catalog_digest` covers the listed tools and the instructions that endpoint
+ * serves. A gateway stores one catalog per configured URL, so comparing
+ * digests across a release says exactly which configured URLs need a refresh;
+ * the single catalog revision cannot say which combinations changed.
  */
-function toolsDocument(url: URL) {
-  const requested = url.searchParams.get("protocol");
-  const protocol = requested === null ? undefined : protocolBySlug(requested);
-  if (requested !== null && protocol === undefined) {
-    return json(
-      {
-        error: {
-          code: "unknown_protocol",
-          message: `No such protocol. Known protocols: ${PROTOCOLS.map(
-            (known) => known.slug,
-          ).join(", ")}.`,
-        },
-      },
-      404,
-    );
+async function toolsDocument(url: URL) {
+  const selection = toolsSelection(url.searchParams);
+  if ("error" in selection) {
+    return json({ error: { code: "unknown_protocol", message: selection.error } }, 404);
   }
-  const tools =
-    protocol === undefined
-      ? publicToolCatalogWithOutputs.filter((tool) => tool.protocol !== "safe")
-      : publicToolCatalogWithOutputs.filter(
-          (tool) => tool.protocol === protocol.slug,
-        );
+  const { protocols, label } = selection;
+  const tools = publicToolCatalogWithOutputs.filter(
+    (tool) => tool.protocol !== undefined && protocols.has(tool.protocol as ProtocolSlug),
+  );
+  const instructions = serverInstructions(protocols, url.origin);
+  const digest = new Uint8Array(
+    await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(JSON.stringify({ tools, instructions })),
+    ),
+  );
   return json(
     {
       server_version: MCP_SERVER_VERSION,
       catalog_revision: MCP_TOOL_CATALOG_REVISION,
-      ...(protocol === undefined
-        ? { mcp_endpoint: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}` }
-        : {
-            protocol: protocol.slug,
-            mcp_endpoint: `${url.origin}${protocolMcpPath(protocol.slug)}`,
-          }),
+      catalog_digest: [...digest.slice(0, 6)]
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join(""),
+      ...label,
+      mcp_endpoint: facetMcpUrl(url.origin, protocols),
       tool_count: tools.length,
       tools,
     },
     200,
     { "cache-control": "no-store" },
   );
+}
+
+/** `?protocol=<slug>`, `?protocols=<a>+<b>`, or neither for the bundled set. */
+function toolsSelection(query: URLSearchParams):
+  | { protocols: ReadonlySet<ProtocolSlug>; label: Record<string, unknown> }
+  | { error: string } {
+  const requested = query.get("protocol");
+  if (requested !== null) {
+    const protocol = protocolBySlug(requested);
+    if (protocol === undefined) {
+      return {
+        error: `No such protocol. Known protocols: ${PROTOCOLS.map((known) => known.slug).join(", ")}.`,
+      };
+    }
+    return { protocols: new Set([protocol.slug]), label: { protocol: protocol.slug } };
+  }
+  const facet = parseProtocolFacet(query);
+  if (facet === null) return { protocols: ALL_PROTOCOLS, label: {} };
+  if ("error" in facet) return facet;
+  return { protocols: facet.protocols, label: { protocols: canonicalProtocols(facet.protocols) } };
 }
 
 /**
@@ -734,6 +772,7 @@ ${PROTOCOLS.map(
   (protocol) =>
     `- ${protocol.slug}: ${origin}${protocolMcpPath(protocol.slug)} (${protocol.tools.length} tools, catalog at ${origin}/tools?protocol=${protocol.slug})`,
 ).join("\n")}
+Combined endpoint: ${origin}${ALL_PROTOCOLS_MCP_PATH}?protocols=<slug>+<slug> serves several protocols on one connection, with shared instructions stated once (catalog at ${origin}/tools?protocols=<slug>+<slug>). Write slugs in the order listed above; Safe cannot be combined.
 OpenAPI: ${origin}/openapi.json
 Canonical data API OpenAPI: https://prod-api.ekubo.org/openapi.json
 Aggregated quote resource: ekubo://docs/quoter-api

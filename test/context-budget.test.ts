@@ -87,6 +87,21 @@ const ENDPOINTS: Record<string, Budget> = {
   "/mcp/safe": { instructions: 1_400, tools: 11_000, tool: 2_450, resources: 300 },
 };
 
+// Facets of /mcp (EKU-1123) state the shared paragraphs once instead of once
+// per connection. o200k on 0.50.0: ekubo+ekubo-advanced 17,818 vs 19,026 as two
+// connections; ekubo+uniswap 17,941 vs 18,914; the Cloud Wallet default (every
+// bundled protocol but ekubo-advanced) 27,624 vs 34,249 as eight.
+const FACETS: Record<string, Budget> = {
+  "/mcp?protocols=ekubo+ekubo-advanced": { instructions: 5_250, tools: 74_000, tool: 5_200, resources: 1_900 },
+  "/mcp?protocols=ekubo+uniswap": { instructions: 5_250, tools: 74_000, tool: 5_200, resources: 1_900 },
+  "/mcp?protocols=ekubo+aave+aerodrome+lido+merkl+morpho+sky+uniswap": {
+    instructions: 8_400,
+    tools: 113_000,
+    tool: 5_200,
+    resources: 4_200,
+  },
+};
+
 async function measure(path: string) {
   const init = await rpc(path, "initialize", {
     protocolVersion: "2025-11-25",
@@ -177,12 +192,12 @@ describe("MCP context budget", () => {
     }
   });
 
-  for (const [path, budget] of Object.entries(ENDPOINTS)) {
+  for (const [path, budget] of [...Object.entries(ENDPOINTS), ...Object.entries(FACETS)]) {
     it(`${path} stays within its budget`, async () => {
       const result = await measure(path);
       const dir = process.env.MCP_CONTEXT_DUMP;
       if (dir) {
-        const slug = path.replaceAll("/", "_");
+        const slug = path.replaceAll(/[/?=+]/g, "_");
         writeFileSync(`${dir}/${slug}.json`, JSON.stringify(result));
       }
       console.log(path, JSON.stringify(result.size), result.tools.length, "tools");
