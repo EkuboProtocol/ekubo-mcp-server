@@ -331,11 +331,17 @@ export async function prepareFixPoolPrice(
     input.quoteResult.calculatedAmount,
     "calculated_amount",
   );
+  // The route is exact-output with a partial fill that stops at the target, so
+  // the pool can only pay out the specified token and take in the calculated
+  // one: both router deltas are nonpositive. Either can be zero. Core moves an
+  // empty range straight to the limit without any token flow, so a pool with
+  // no liquidity between the current price and the target quotes 0/0, and
+  // thin liquidity can round the output down to 0.
   if (
     quoteSpecifiedToken !== specifiedToken ||
     quoteCalculatedToken !== calculatedToken ||
-    quotedSpecifiedAmount >= 0n ||
-    quotedCalculatedAmount >= 0n
+    quotedSpecifiedAmount > 0n ||
+    quotedCalculatedAmount > 0n
   ) {
     throw new ServiceError(
       "quote_mismatch",
@@ -355,8 +361,10 @@ export async function prepareFixPoolPrice(
   });
   const nativeValue =
     calculatedToken === NATIVE_TOKEN ? requiredInputAmount : 0n;
+  // A zero threshold makes the router revert unless the route takes no input,
+  // so a zero-cost plan needs no allowance, and approve(0) would erase one.
   const approvals =
-    calculatedToken === NATIVE_TOKEN
+    calculatedToken === NATIVE_TOKEN || requiredInputAmount === 0n
       ? []
       : [
           erc20ApprovalTransaction(
