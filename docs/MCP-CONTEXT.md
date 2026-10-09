@@ -30,6 +30,15 @@ EKU-994 then split Ekubo's 51 tools across two endpoints; `/mcp` is unchanged:
 | `/mcp/ekubo`           |    34 | 13,187 |     11,816 |          960 |       411 |
 | `/mcp/ekubo-advanced`  |    17 |  5,321 |      4,312 |          826 |       183 |
 
+EKU-1123 added combined endpoints, which state the shared paragraphs once per
+connection instead of once per protocol (0.50.0 measurements):
+
+| Selection                                   | Separate connections | `/mcp?protocols=` | Saved |
+| ------------------------------------------- | -------------------: | ----------------: | ----: |
+| Cloud Wallet default (8 bundled, no advanced) |               34,249 |            27,624 | 6,625 |
+| `ekubo+ekubo-advanced`                      |               19,026 |            17,818 | 1,208 |
+| `ekubo+uniswap`                             |               18,914 |            17,941 |   973 |
+
 Every endpoint except `/mcp/safe` carries the CLO jurisdiction notice and the
 jurisdiction-metadata paragraph verbatim, about 480 tokens, and
 `get_quotes_with_plans` carries the notice again in its description. Raise a

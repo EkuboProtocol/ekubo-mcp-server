@@ -31,11 +31,14 @@ a data API and the quoter remains a route-data service.
   contract narrowed to one protocol
 - `POST/GET /mcp/ekubo-advanced` — Ekubo's operator tools, kept off `/mcp/ekubo`
   (see below)
+- `POST/GET /mcp?protocols=<slug>+<slug>` — one connection serving the named
+  protocols (any of the above except Safe); see below
 - `POST/GET /mcp/safe` — dedicated Safe signer preparation; see [Safe coverage](docs/safe.md)
 - `GET /` — service metadata, per-protocol endpoints, and canonical
   documentation links
 - `GET /tools` — deterministic tool catalog for non-MCP discovery, filterable
-  with `?protocol=<slug>`
+  with `?protocol=<slug>` or `?protocols=<slug>+<slug>`; `catalog_digest`
+  changes whenever that endpoint's tools or instructions do (not its resources)
 - `GET /openapi.json` — OpenAPI 3.1 discovery contract
 - `GET /llms.txt` — concise agent workflow
 - `GET /skills/{use-morpho,use-sky,use-lido,use-merkl,use-aerodrome}/SKILL.md` — reusable direct-data
@@ -64,6 +67,20 @@ approval revocations, and pool-key enumeration and derivation. Each one's
 instructions name the other, so an agent that needs a tool from the other half
 tells the user which server to add. `/mcp` serves both halves.
 `/tools?protocol=safe` publishes the Safe catalog; unfiltered `/tools` describes `/mcp`.
+
+### Combined endpoints
+
+`/mcp?protocols=ekubo+ekubo-advanced` serves the union of the named protocols'
+tools and resources on one connection. The shared paragraphs (catalog revision,
+scope, jurisdiction notice, handoff) are stated once rather than once per
+connection, and an endpoint-scope paragraph names the protocols served. Slugs
+may be separated by `+`, `,` or repeated parameters and appear in any order, but
+`facetMcpUrl()` writes them in `PROTOCOL_SLUGS` order: a client or MCP gateway
+treats every distinct URL as a separate server with its own cached catalog, so
+one selection should have one URL. A facet naming every bundled protocol is
+`/mcp`, and one naming a single protocol is `/mcp/<slug>`. An unknown slug, an
+empty list or `safe` gets HTTP 400 before any MCP handling; Safe stays
+standalone.
 
 Filtering happens at the two registration choke points in `createEkuboServer`
 rather than at the call sites, and the instructions are composed from
