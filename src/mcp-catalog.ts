@@ -271,11 +271,33 @@ export type RegisteredToolConfig = {
 
 type ObjectSchema = { type: "object"; [key: string]: unknown };
 
+// Converting a zod schema and compacting it is most of the CPU of tools/list,
+// and the result depends only on the schema object, which is never changed
+// after it is built. Each schema is therefore converted once per isolate and
+// keyed by identity, so a schema built per request simply misses. Entries are
+// frozen: no caller can alter what a later request publishes.
+const objectSchemaCache = {
+  input: new WeakMap<z.ZodType, ObjectSchema>(),
+  output: new WeakMap<z.ZodType, ObjectSchema>(),
+};
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const entry of Object.values(value)) deepFreeze(entry);
+  }
+  return value;
+}
+
 function objectSchema(schema: z.ZodType | undefined, io: "input" | "output"): ObjectSchema {
   if (schema === undefined) return { type: "object", properties: {} };
+  const cached = objectSchemaCache[io].get(schema);
+  if (cached !== undefined) return cached;
   const compact = compactSchema(z.toJSONSchema(schema, { io }), io === "output");
   const { type: _type, ...json } = (io === "input" ? labelPatterns(compact) : compact) as JsonSchema;
-  return { type: "object", ...json };
+  const converted = deepFreeze<ObjectSchema>({ type: "object", ...json });
+  objectSchemaCache[io].set(schema, converted);
+  return converted;
 }
 
 export function compactTool(name: string, config: RegisteredToolConfig) {
