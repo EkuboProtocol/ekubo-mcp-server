@@ -85,6 +85,8 @@ const ENDPOINTS: Record<string, Budget> = {
   "/mcp/sky": { instructions: 4_750, tools: 3_800, tool: 1_100, resources: 750 },
   "/mcp/uniswap": { instructions: 4_250, tools: 19_500, tool: 1_900, resources: 300 },
   "/mcp/safe": { instructions: 1_400, tools: 11_000, tool: 2_450, resources: 300 },
+  // Standalone and support-disabled (EKU-1524): 810 / 6,775 / 1,660 / 523 measured.
+  "/mcp/launchpad": { instructions: 850, tools: 7_000, tool: 1_750, resources: 550 },
 };
 
 // Facets of /mcp (EKU-1123) state the shared paragraphs once instead of once

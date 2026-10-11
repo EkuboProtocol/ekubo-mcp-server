@@ -4,4 +4,4 @@ export const MCP_SERVER_VERSION = "0.51.0";
 // It is exposed in HTTP discovery and in the server instructions so clients
 // and smoke tests can detect a cached catalog independently of the
 // application version.
-export const MCP_TOOL_CATALOG_REVISION = "2026-10-09.protocol-facets";
+export const MCP_TOOL_CATALOG_REVISION = "2026-10-11.launchpad-zero-seed-hold";

@@ -1,6 +1,6 @@
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-const expectedServerVersion = "0.50.0";
-const expectedCatalogRevision = "2026-10-08.core-advanced-split";
+const expectedServerVersion = "0.51.0";
+const expectedCatalogRevision = "2026-10-11.launchpad-zero-seed-hold";
 const smokeNonce = `${Date.now()}-${Math.random()}`;
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
 

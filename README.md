@@ -34,6 +34,7 @@ a data API and the quoter remains a route-data service.
 - `POST/GET /mcp?protocols=<slug>+<slug>` — one connection serving the named
   protocols (any of the above except Safe); see below
 - `POST/GET /mcp/safe` — dedicated Safe signer preparation; see [Safe coverage](docs/safe.md)
+- `POST/GET /mcp/launchpad` — zero-seed launchpad, support disabled; see [Launchpad](docs/launchpad.md)
 - `GET /` — service metadata, per-protocol endpoints, and canonical
   documentation links
 - `GET /tools` — deterministic tool catalog for non-MCP discovery, filterable
