@@ -100,7 +100,7 @@ From the task worktree:
 ```sh
 bun test test/launchpad/zero-seed-policy.test.ts
 bun test test/launchpad/zero-seed-preview.test.ts
-bun test test/launchpad/zero-seed-endpoint.test.ts test/discovery.test.ts test/protocols.test.ts test/mcp-modern.test.ts test/yul-router.test.ts
+bun test test/launchpad/zero-seed-owner.test.ts test/launchpad/zero-seed-endpoint.test.ts test/discovery.test.ts test/protocols.test.ts test/mcp-modern.test.ts test/yul-router.test.ts
 bun script/zero-seed-abi-parity.ts /home/moody/Work/ekubo/artifacts/eku-1528/ZeroSeedLaunch.abi.json
 bun script/zero-seed-api-parity.ts /home/moody/Work/ekubo/artifacts/eku-1523/actual-handler-golden.json
 bun run lint
@@ -113,20 +113,39 @@ consumer validation of captured real-handler output, not a fresh SQL/HTTP
 integration run. It deliberately makes no network requests. API response shape
 and indexed fee semantics are unchanged.
 
+## Assembly continuation: local producer and opaque owner decoder
+
+`src/launchpad/zero-seed/owner.ts` seals local, explicitly non-executable
+create/claim bodies (`scope: synthetic-local-non-executable`,
+`executable: false`) with the artifact envelope's keccak256/byte-length rules,
+never storing them as an `execution_plan`. `localCreateBody` encodes `create`
+from exactly the one bound preview (installed supply/L, unchanged signed start).
+`decodeOwnerCreate`/`decodeOwnerClaim` check length, digest, strict schema and
+canonical bytes, the exact local pin, target, creator and requested intent,
+re-derive the installed pair and geometry, require canonical calldata equal to
+the summary, and enforce fresh time in `[build, expiry)`. They emit
+`zero-seed-launch-owner-summary/v1` with the frozen selectors and the five
+create / two claim statements matching the EKU-1513 examples byte for byte;
+rates are Q0.64 plus four-decimal half-up percentages. Additive `fields.binding`
+(requested vs installed supply/L, token, pool key, position, expiry) and
+`fields.rounding` (upper launch-token residue separate from per-asset Core
+unbooked dust; neither claimable principal nor fees; not known at creation, no
+shared bound) sit inside the schema's free `fields` object.
+
+Fixed in `policy.ts`: `validateClaimRecipient` mapped sinks with
+`.map(getAddress)`, passing the array index as the EIP-1191 chain id, so Core,
+extension and token sinks with checksum letters were not refused. A
+mixed-case control now fails on the old code and passes.
+
 ## Still required before delivery
 
-- Wire the single synthetic read preview into the replacement producer and
-  owner decoder; verify deterministic token/initcode identity and actual captured
-  preview arithmetic, then bind its exact receipt and disclosures to owner data.
-- Exact current create/claim ABI and opaque owner decoder; hash/length/expiry/
-  tamper controls, refusal of all claim sinks and mismatched installation pairs.
-- Quoter parity on its accepted request contract and current `0x03c8` router;
-  skipAhead=0/noPartial, positive output bounds and inclusive fresh deadline.
-  Enforce the executable-budget hold at the actual public preparation entrypoint.
-- Separate upper-bound token residue from per-asset Core unbooked dust. Neither
-  is creator fees or claimable principal. No shared <=90 bound.
-- Assembled local synthetic plan/decoder/API/quoter tests and inspectable exact
-  head/base/tree packet for downstream owner integration and final QA/Sage.
+- Deterministic token/initcode identity and captured actual preview arithmetic
+  (preview return values in tests are synthetic doubles).
+- Quoter parity on the accepted request contract and current `0x03c8` router:
+  skipAhead=0/noPartial, positive min output/finite max input, inclusive fresh
+  deadline; consumer stays non-executable behind the public refusal.
+- Reproducible API/quoter/decoder parity at the same block/time in both orders
+  and the final exact head/base/tree packet for owner integration and QA/Sage.
 
 ## Stop/reset and NOT PROVEN
 

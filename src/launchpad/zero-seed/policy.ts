@@ -88,8 +88,9 @@ export function validateMetadata(value: string): void {
 export function validateClaimRecipient(recipient: Address, sinks: {
   core: Address; extension: Address; token0: Address; token1: Address;
 }): void {
+  // Explicit callback: Array#map's index argument would become getAddress's EIP-1191 chain id.
   const address = getAddress(recipient);
-  const refused = [zeroAddress, sinks.core, sinks.extension, sinks.token0, sinks.token1].map(getAddress);
+  const refused = [zeroAddress, sinks.core, sinks.extension, sinks.token0, sinks.token1].map((sink) => getAddress(sink));
   if (refused.includes(address)) throw new ZeroSeedError("invalid_recipient");
 }
 

@@ -70,6 +70,16 @@ describe("frozen zero-seed constraints (not executable acceptance)", () => {
     expect(() => validateClaimRecipient(address("5"), sinks)).not.toThrow();
   });
 
+  test("sinks with checksum letters are refused in any casing", () => {
+    const pin = LOCAL_INSTANCE_PINS[0];
+    const sinks = { core: pin.core as Address, extension: pin.address as Address, token0: pin.quote as Address,
+      token1: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd" as Address };
+    for (const recipient of Object.values(sinks)) {
+      expect(() => validateClaimRecipient(recipient, sinks)).toThrow("invalid_recipient");
+      expect(() => validateClaimRecipient(recipient.toUpperCase().replace("0X", "0x") as Address, sinks)).toThrow("invalid_recipient");
+    }
+  });
+
   test("uncalibrated quote estimate cannot authorize executable use", () => {
     expect(refuseExecutableUse).toThrow("executable_budget_not_proven");
   });
