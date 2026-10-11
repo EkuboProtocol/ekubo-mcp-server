@@ -20,6 +20,36 @@ are helper checks, **not yet producer/decoder enforcement**. No chain/RPC/wallet
 reads occur. The existing artifact envelope and storage implementation are
 untouched.
 
+## Assembly continuation: single synthetic read
+
+[EKU-1574](/EKU/issues/EKU-1574) adds unregistered `abi.ts`, `installation.ts`
+and `preview.ts` under `src/launchpad/zero-seed/`. These are still not the
+registered producer or opaque owner decoder. `localInstallationPreview` uses
+one `read_calls` bundle and passes its stored reference unchanged to a
+**synthetic** wallet adapter. The tests use the existing `storeArtifact` with
+in-memory storage and verify exact body length/integrity. Neither storage nor
+the reference envelope changed. There are no provider calls or execution
+artifacts; the returned receipt is explicitly non-executable.
+
+The helper matches raw results by id at an exact input block number/hash/time,
+requires canonical ABI return bytes, and binds creator, all requested config,
+all emitted-instance pins, actual installed supply/liquidity and build/expiry.
+It checks supported quote/instance/runtime/ABI, two address orders, pool config,
+position geometry, positive amounts, exact protocol per-tick cap, checked
+uint64 timing and 31 UTF-8-byte metadata. It snapshots input before awaiting
+the read, then rechecks fresh time afterwards. Requested supply is not rewritten
+in the receipt; actual supply and liquidity are separate. Trading start is
+unchanged. A read failure never triggers an iterative adjustment.
+
+`zero-seed-abi-parity.ts` verifies the full compiled ABI SHA256 before comparing
+the selected create, preview and claim encodings and selectors. It does not
+change the frozen ABI or represent the selected subset as the full artifact.
+The encoded synthetic return amounts are test doubles, **not actual-handler
+preview output or a proof of installation math**. Exact deterministic token
+address/initcode binding, opaque byte decoding, claims, quoter parity and
+replacement registration still need assembly. No acceptance or whole-stack
+closure is claimed by this continuation.
+
 ## Exact upstream basis
 
 | Input | Head / hash |
@@ -52,6 +82,8 @@ From the task worktree:
 
 ```sh
 bun test test/launchpad/zero-seed-policy.test.ts
+bun test test/launchpad/zero-seed-preview.test.ts
+bun script/zero-seed-abi-parity.ts /home/moody/Work/ekubo/artifacts/eku-1528/ZeroSeedLaunch.abi.json
 bun script/zero-seed-api-parity.ts /home/moody/Work/ekubo/artifacts/eku-1523/actual-handler-golden.json
 bun run lint
 bun run build
@@ -67,9 +99,9 @@ and indexed fee semantics are unchanged.
 
 - Replace the obsolete registered staged tools, ABIs, tests and documentation;
   this checkpoint does not register a second implementation or enable support.
-- Single budgeted read-reference installation preview; bind requested supply and
-  actual supply/L, creator, exact config, unchanged signed start/expiry and all
-  disclosures to the stored plan.
+- Wire the single synthetic read preview into the replacement producer and
+  owner decoder; verify deterministic token/initcode identity and actual captured
+  preview arithmetic, then bind its exact receipt and disclosures to owner data.
 - Exact current create/claim ABI and opaque owner decoder; hash/length/expiry/
   tamper controls, refusal of all claim sinks and mismatched installation pairs.
 - Quoter parity on its accepted request contract and current `0x03c8` router;
