@@ -1,6 +1,6 @@
 import { uniswapTools } from "./uniswap/tools.js";
 import { safeTools } from "./safe.js";
-import { launchpadTools } from "./launchpad/prepare/tools.js";
+import { launchpadTools } from "./launchpad/zero-seed/tools.js";
 /**
  * The protocol partition behind the per-protocol MCP endpoints.
  *
@@ -217,8 +217,8 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
   },
   {
     slug: "launchpad",
-    title: "Ekubo launchpad prototype",
-    description: "Non-production launchpad prototype: launch lists, state, provenance, stats and swaps from the Ekubo data API, and unsigned plans for creating, trading (quoter-service and the Yul router), advancing and claiming creator fees; separate endpoint only, excluded from /mcp",
+    title: "Ekubo zero-seed launchpad (support disabled)",
+    description: "Zero-seed launchpad, support disabled: lists are empty, launch reads and creation and claim preparation refuse with launch_support_disabled, and trade preparation refuses executable use; separate endpoint only, excluded from /mcp",
     skill: null,
     tools: launchpadTools.map((tool) => tool.name),
   },

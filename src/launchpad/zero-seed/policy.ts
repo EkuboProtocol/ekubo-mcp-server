@@ -1,4 +1,5 @@
 import { type Address, getAddress, zeroAddress } from "viem";
+import { ServiceError } from "../../core.js";
 
 export const ABI_SHA256 = "189ff93c0f6fb64f6e7dd0675872bf6686692f8303e6218b8c2521bfa5ced215";
 export const POLICY_SHA256 = "7864a2d33a0fa8964922a5225653ed19842c590091f289eb4e29306feac6f6e1";
@@ -50,9 +51,10 @@ export function supportedInstances(requested: readonly InstancePin[], localHarne
   )).map((pin) => Object.freeze({ ...pin }));
 }
 
-export class ZeroSeedError extends Error {
-  constructor(public readonly code: string) {
-    super(code);
+/** A ServiceError, so MCP callers receive the stable code rather than unexpected_error. */
+export class ZeroSeedError extends ServiceError {
+  constructor(code: string) {
+    super(code, code);
     this.name = "ZeroSeedError";
   }
 }

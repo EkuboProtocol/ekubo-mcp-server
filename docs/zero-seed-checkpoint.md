@@ -50,6 +50,23 @@ address/initcode binding, opaque byte decoding, claims, quoter parity and
 replacement registration still need assembly. No acceptance or whole-stack
 closure is claimed by this continuation.
 
+## Assembly continuation: replaced registered surface
+
+The staged ScheduledLaunch/LaunchRouter/LockedLaunchLiquidity tools, ABIs,
+advance/migrate/fund paths, onboarding copy and their tests are deleted. The
+`/mcp/launchpad` catalog (revision `2026-10-11.launchpad-zero-seed-hold`) is
+now `src/launchpad/zero-seed/tools.ts`: list returns empty without a request;
+detail, swaps, claims, create and claim preparation refuse with
+`launch_support_disabled`; trade preparation refuses with
+`executable_budget_not_proven`. No tool returns or stores a reference.
+`launchpad://disclosures` carries the five mechanism disclosures (draft).
+`test/launchpad/zero-seed-endpoint.test.ts` drives the real worker.
+
+Identified but not yet changed: the shared swap path (`src/yul-router.ts`,
+`src/core.ts`) still accepts a single-hop `allow_partial` partial fill added
+for ScheduledLaunch at `e6b2080`. Zero-seed swaps are noPartial; remove it
+together with the quoter-parity consumer.
+
 ## Exact upstream basis
 
 | Input | Head / hash |
@@ -83,6 +100,7 @@ From the task worktree:
 ```sh
 bun test test/launchpad/zero-seed-policy.test.ts
 bun test test/launchpad/zero-seed-preview.test.ts
+bun test test/launchpad/zero-seed-endpoint.test.ts test/discovery.test.ts test/protocols.test.ts test/mcp-modern.test.ts test/yul-router.test.ts
 bun script/zero-seed-abi-parity.ts /home/moody/Work/ekubo/artifacts/eku-1528/ZeroSeedLaunch.abi.json
 bun script/zero-seed-api-parity.ts /home/moody/Work/ekubo/artifacts/eku-1523/actual-handler-golden.json
 bun run lint
@@ -97,8 +115,7 @@ and indexed fee semantics are unchanged.
 
 ## Still required before delivery
 
-- Replace the obsolete registered staged tools, ABIs, tests and documentation;
-  this checkpoint does not register a second implementation or enable support.
+- Remove the ScheduledLaunch partial-fill acceptance from the shared swap path.
 - Wire the single synthetic read preview into the replacement producer and
   owner decoder; verify deterministic token/initcode identity and actual captured
   preview arithmetic, then bind its exact receipt and disclosures to owner data.
