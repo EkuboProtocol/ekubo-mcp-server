@@ -16,8 +16,8 @@ import {
 } from "../src/core.js";
 
 const native = "0x0000000000000000000000000000000000000000";
-const tokenA = "0x1111111111111111111111111111111111111111";
-const tokenB = "0x2222222222222222222222222222222222222222";
+const tokenA = "0x0bd7d308f8e1639fab988df18a8011f41eacad73";
+const tokenB = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
 const sender = "0x3333333333333333333333333333333333333333";
 const recipient = "0x4444444444444444444444444444444444444444";
 const spender = "0x5555555555555555555555555555555555555555";
@@ -74,7 +74,7 @@ describe("aggregated quote providers", () => {
     expect(result.quotes).toHaveLength(2);
     expect(result.quotes[0]).toMatchObject({
       source: "ekubo",
-      source_url: "https://quoter.test/4663/1000/0x1111111111111111111111111111111111111111/0x2222222222222222222222222222222222222222",
+      source_url: "https://quoter.test/4663/1000/0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73/0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
       normalized: { amount_in: "1000", amount_out: "900" },
     });
     expect(result.quotes[0].quote).toEqual(ekuboQuote);

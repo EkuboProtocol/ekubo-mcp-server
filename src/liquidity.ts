@@ -24,10 +24,7 @@ import {
 } from "./abi-decode.js";
 import { positionsV3Address } from "./contracts.js";
 import { type Env, getTokens, ServiceError } from "./core.js";
-import {
-  assertAssetsTradable,
-  type RequestCountry,
-} from "./token-restrictions.js";
+import { quoteJurisdiction } from "./token-restrictions.js";
 import {
   executionPlan,
   executionPlanFromSteps,
@@ -423,11 +420,6 @@ export async function prepareLpPositionDeposit(
     maxAmount1: string;
     slippageBps: number;
     initialTick?: number;
-    /**
-     * Jurisdiction of the caller. Required rather than optional so a new call
-     * site cannot drop the restriction check by omitting it.
-     */
-    country: RequestCountry;
   },
   fetcher: Fetcher = fetch,
 ) {
@@ -527,20 +519,13 @@ export async function prepareLpPositionDeposit(
       "The indexed pool key does not match the supplied exact pool_key",
     );
   }
-  // Checked against the resolved pair rather than the input, because a caller
-  // may identify the pool by pool_id alone and never name its tokens.
-  //
-  // Both sides are acquisitions: this path only ever mints or adds liquidity,
-  // which takes on exposure to the pair rather than shedding it. Withdrawing
-  // is prepared elsewhere and is deliberately not gated at all, so the exit
-  // from an existing position was already available.
-  assertAssetsTradable(
-    [
-      { chainId: input.chainId, token: pool.pool_key.token0, side: "buy" },
-      { chainId: input.chainId, token: pool.pool_key.token1, side: "buy" },
-    ],
-    input.country,
-  );
+  // Labeled from the resolved pair rather than the input, because a caller may
+  // identify the pool by pool_id alone and never name its tokens. Adding
+  // liquidity takes on exposure to both tokens.
+  const jurisdiction = quoteJurisdiction([
+    { chainId: input.chainId, token: pool.pool_key.token0, side: "buy" },
+    { chainId: input.chainId, token: pool.pool_key.token1, side: "buy" },
+  ]);
   const isInitialized = input.poolInitialized ?? pool.pool_state !== null;
   if (!isInitialized && input.mode !== "mint_new") {
     throw new ServiceError(
@@ -805,6 +790,7 @@ export async function prepareLpPositionDeposit(
 
   return {
     schema_version: "1",
+    jurisdiction,
     action:
       input.mode === "mint_new"
         ? "ekubo_mint_lp_position"

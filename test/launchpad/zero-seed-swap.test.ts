@@ -35,9 +35,11 @@ const hop = (vector: Vector, change: Record<string, unknown>) => ({ splits: [{ .
   route: [{ swap: { ...vector.response.splits[0].route[0].swap, ...change } }] }] });
 
 describe("accepted quoter → 0x03c8 router (local, non-executable)", () => {
-  test("router pin is the executed 0x03c8 router, not the SDK default", () => {
+  test("router pin is the executed 0x03c8 router, held independently of the SDK default", () => {
     expect(fixture.router).toBe(ZERO_SEED_ROUTER);
-    expect(ZERO_SEED_ROUTER).not.toBe(YUL_ROUTER_ADDRESS.toLowerCase());
+    expect(ZERO_SEED_ROUTER).toBe("0x03c8b90854b90aa22448b11e885f692972da441c");
+    // Since @ekubo/yul-router-sdk 0.8.0 the default router is the same 0x03c8 router.
+    expect(YUL_ROUTER_ADDRESS.toLowerCase()).toBe(ZERO_SEED_ROUTER);
   });
 
   for (const vector of fixture.vectors) {

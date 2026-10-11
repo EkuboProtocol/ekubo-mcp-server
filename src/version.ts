@@ -1,4 +1,4 @@
-export const MCP_SERVER_VERSION = "0.44.1";
+export const MCP_SERVER_VERSION = "0.51.0";
 
 // Change this whenever public MCP tool schemas or response contracts change.
 // It is exposed in HTTP discovery and in the server instructions so clients

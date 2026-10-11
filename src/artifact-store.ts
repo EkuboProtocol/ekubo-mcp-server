@@ -103,11 +103,21 @@ export interface StorableTokenList {
   }[];
 }
 
-const PLAN_INSTRUCTION =
-  "Pass this reference object unchanged as the wallet's reference argument for simulating and sending. Do not fetch, restate, or reconstruct the plan; the wallet fetches it, verifies integrity, and validates it. A fetch 404 means the reference expired: re-run the Ekubo preparation tool for a fresh plan.";
+/**
+ * Shared tail of every envelope instruction. The envelope is a value, not
+ * text: the only reliable way to hand it to a wallet is to keep the producer
+ * result in a variable and pass the property through, in the same code block
+ * when the harness runs tool calls as code. Retyping url, bytes or integrity
+ * by hand is the observed failure of smaller models — a one-character slip
+ * fails the wallet's parse, length or digest check, or 404s.
+ */
+function passthroughRule(property: string): string {
+  return `Hold the producer result in a variable and pass this object through from it (const ref = result.${property}; then reference: ref) in the same code block; never retype url, bytes or integrity by hand, since a hand-copied envelope fails the wallet's parse, length or digest check, or 404s.`;
+}
 
-const READ_CALLS_INSTRUCTION =
-  "Pass this reference object unchanged as wallet_batch_eth_call's reference argument, with no inline calls; the wallet fetches, verifies, and executes the stored calls itself. Do not fetch or restate the calls. A fetch 404 means the reference expired: re-run the tool that produced it.";
+const PLAN_INSTRUCTION = `Pass this reference object unchanged as the wallet's reference argument for simulating and sending. Do not fetch, restate, or reconstruct the plan; the wallet fetches it, verifies integrity, and validates it. ${passthroughRule("execution_plan_reference")} A fetch 404 means the reference expired: re-run the Ekubo preparation tool for a fresh plan.`;
+
+const READ_CALLS_INSTRUCTION = `Pass this reference object unchanged as wallet_batch_eth_call's reference argument, with no inline calls; the wallet fetches, verifies, and executes the stored calls itself. Do not fetch or restate the calls. ${passthroughRule("read_calls_reference")} A fetch 404 means the reference expired: re-run the tool that produced it.`;
 
 const TOKEN_LIST_INSTRUCTION =
   "Pass this reference object unchanged as the reference argument of the wallet's propose-tokens tool (to suggest these names to its owner) or its get-balances tool (to read balances for these addresses), with no inline tokens; the wallet fetches and integrity-verifies the list itself. Do not fetch or restate the entries — writing out a thousand-token list costs roughly fifty thousand output tokens and this envelope costs a few hundred. A fetch 404 means the reference expired: re-run the tool that produced it.";

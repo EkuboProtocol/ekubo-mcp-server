@@ -19,6 +19,7 @@ function prepare(quote: unknown, amount: bigint) {
     quoteType: "exact_input",
     amount,
     slippageBps: 0,
+    deadline: 1_800_000_000,
   });
 }
 

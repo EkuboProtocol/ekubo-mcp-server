@@ -17,6 +17,7 @@ import { launchpadTools } from "./launchpad/zero-seed/tools.js";
 
 export const PROTOCOL_SLUGS = [
   "ekubo",
+  "ekubo-advanced",
   "aave",
   "aerodrome",
   "lido",
@@ -41,10 +42,10 @@ export type ProtocolDescriptor = {
 };
 
 /**
- * Everything the catalog carries that is not one of the six satellite
- * protocols: Ekubo's own pools, positions, TWAMM, auctions, ve(3,3), and the
- * token, quote, transfer, and approval tools that are Ekubo-native rather than
- * shared infrastructure.
+ * Ekubo's core tools: the token, quote, transfer, LP position, rewards and
+ * ve(3,3) tools most sessions use. The rarely used operator tools live in
+ * EKUBO_ADVANCED_TOOLS on `/mcp/ekubo-advanced`, so a session that only swaps
+ * or manages positions does not carry their definitions; `/mcp` serves both.
  *
  * Token lookup is deliberately not duplicated onto the satellite endpoints.
  * Each of those protocols discovers its own assets — `get_aave_v3_markets`,
@@ -74,9 +75,6 @@ const EKUBO_TOOLS = [
   "get_positions_by_owner",
   "get_pool",
   "get_pool_liquidity",
-  "list_pool_keys",
-  "derive_pool_id",
-  "decode_pool_config",
   "get_position",
   "get_position_pool_candidates",
   "prepare_lp_position_deposit",
@@ -85,6 +83,18 @@ const EKUBO_TOOLS = [
   "prepare_wrap_unwrap",
   "prepare_transfers",
   "prepare_lp_position_transfer",
+  "get_rewards_claims_by_owner",
+  "prepare_rewards_claim",
+  "prepare_ve33_increase_stake",
+  "prepare_ve33_merge",
+  "prepare_ve33_withdraw",
+  "get_liquidity_opportunities",
+] as const;
+
+const EKUBO_ADVANCED_TOOLS = [
+  "list_pool_keys",
+  "derive_pool_id",
+  "decode_pool_config",
   "prepare_fix_pool_price",
   "prepare_twamm_order",
   "prepare_twamm_order_collection",
@@ -97,13 +107,7 @@ const EKUBO_TOOLS = [
   "prepare_oracle_capacity_expansion",
   "prepare_approval_revocations",
   "prepare_old_gekubo_unwrap",
-  "get_rewards_claims_by_owner",
-  "prepare_rewards_claim",
   "prepare_revenue_buybacks",
-  "prepare_ve33_increase_stake",
-  "prepare_ve33_merge",
-  "prepare_ve33_withdraw",
-  "get_liquidity_opportunities",
   "prepare_pool_initialization",
 ] as const;
 
@@ -112,9 +116,17 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
     slug: "ekubo",
     title: "Ekubo Protocol",
     description:
-      "Ekubo swaps and bridges, pools, LP positions, TWAMM, auctions, incentives, and ve(3,3) STONX voting",
+      "Ekubo swaps and bridges, tokens, pools, LP positions, transfers, rewards, and ve(3,3) STONX voting",
     skill: null,
     tools: EKUBO_TOOLS,
+  },
+  {
+    slug: "ekubo-advanced",
+    title: "Ekubo Protocol advanced",
+    description:
+      "Ekubo auctions, TWAMM orders, pool initialization and price fixes, oracle capacity, manual boosts, revenue buybacks, old gEKUBO unwrap, approval revocations, and pool-key enumeration",
+    skill: null,
+    tools: EKUBO_ADVANCED_TOOLS,
   },
   {
     slug: "aave",
@@ -282,18 +294,99 @@ export function protocolMcpPath(slug: ProtocolSlug): string {
 
 export const ALL_PROTOCOLS_MCP_PATH = "/mcp";
 
+/** The query parameter that narrows `/mcp` to a facet of named protocols. */
+export const FACET_QUERY_PARAMETER = "protocols";
+
+/** Whether `protocols` is exactly the bundled set `/mcp` serves. */
+export function isAllProtocols(protocols: ReadonlySet<ProtocolSlug>): boolean {
+  return (
+    protocols.size === ALL_PROTOCOLS.size &&
+    [...ALL_PROTOCOLS].every((slug) => protocols.has(slug))
+  );
+}
+
+/** Slugs in `PROTOCOL_SLUGS` order, the one order every facet URL is written in. */
+export function canonicalProtocols(
+  protocols: ReadonlySet<ProtocolSlug>,
+): ProtocolSlug[] {
+  return PROTOCOL_SLUGS.filter((slug) => protocols.has(slug));
+}
+
+/**
+ * The URL of the server for `protocols`: `/mcp/<slug>` for one, `/mcp` for the
+ * bundled set, otherwise `/mcp?protocols=<a>+<b>` in canonical order. A gateway
+ * keys its stored catalog on the URL, so one selection must yield one URL.
+ */
+export function facetMcpUrl(
+  origin: string,
+  protocols: ReadonlySet<ProtocolSlug>,
+): string {
+  const slugs = canonicalProtocols(protocols);
+  if (slugs.length === 1) return `${origin}${protocolMcpPath(slugs[0]!)}`;
+  if (isAllProtocols(protocols)) return `${origin}${ALL_PROTOCOLS_MCP_PATH}`;
+  return `${origin}${ALL_PROTOCOLS_MCP_PATH}?${FACET_QUERY_PARAMETER}=${slugs.join("+")}`;
+}
+
+export type FacetSelection =
+  | { readonly protocols: ReadonlySet<ProtocolSlug> }
+  | { readonly error: string };
+
+/**
+ * Parse `?protocols=` into a facet, or `null` when the parameter is absent.
+ *
+ * Slugs are separated by `+` (which URL decoding turns into a space), an
+ * encoded `+`, a comma, or a repeated parameter, in any order and with
+ * duplicates. Safe stays standalone: its signature-only tools are not mixed
+ * into a transaction-preparation server, so naming it here is refused.
+ */
+export function parseProtocolFacet(query: URLSearchParams): FacetSelection | null {
+  if (!query.has(FACET_QUERY_PARAMETER)) return null;
+  const names = query
+    .getAll(FACET_QUERY_PARAMETER)
+    .flatMap((value) => value.split(/[+\s,]+/))
+    .filter((name) => name.length > 0);
+  const bundled = [...ALL_PROTOCOLS].join(", ");
+  if (names.length === 0) {
+    return { error: `Name at least one protocol. Known protocols: ${bundled}.` };
+  }
+  if (names.length > PROTOCOL_SLUGS.length * 2) {
+    return { error: "Too many protocol names." };
+  }
+  const protocols = new Set<ProtocolSlug>();
+  for (const name of names) {
+    if (name === "safe") {
+      return { error: "Safe is served only at /mcp/safe and cannot be combined with other protocols." };
+    }
+    const protocol = protocolBySlug(name);
+    if (protocol === undefined) {
+      return { error: `Unknown protocol. Known protocols: ${bundled}.` };
+    }
+    protocols.add(protocol.slug);
+  }
+  return { protocols: isAllProtocols(protocols) ? ALL_PROTOCOLS : protocols };
+}
+
 /**
  * Resolve a request path to the protocol set its MCP server should serve.
  *
- * `/mcp` is the bundled protocol set, for clients configured before the split.
+ * `/mcp` is the bundled protocol set, for clients configured before the split,
+ * and `/mcp?protocols=<a>+<b>` is the facet of the named protocols.
  * `/mcp/<slug>` is exactly one. Anything else is not an MCP route, and the
  * caller falls through to the discovery handlers.
  */
 export function matchMcpRoute(
   pathname: string,
-): { route: string; protocols: ReadonlySet<ProtocolSlug> } | null {
+  query: URLSearchParams = new URLSearchParams(),
+):
+  | { route: string; protocols: ReadonlySet<ProtocolSlug> }
+  | { route: string; error: string }
+  | null {
   if (pathname === ALL_PROTOCOLS_MCP_PATH) {
-    return { route: ALL_PROTOCOLS_MCP_PATH, protocols: ALL_PROTOCOLS };
+    const facet = parseProtocolFacet(query);
+    if (facet === null) {
+      return { route: ALL_PROTOCOLS_MCP_PATH, protocols: ALL_PROTOCOLS };
+    }
+    return { route: ALL_PROTOCOLS_MCP_PATH, ...facet };
   }
   const slug = pathname.startsWith("/mcp/")
     ? pathname.slice("/mcp/".length)

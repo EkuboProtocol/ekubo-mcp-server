@@ -20,10 +20,8 @@ import {
 import { type Env, getTokens, ServiceError } from "./core.js";
 import { coreDataFetcherContract } from "./contracts.js";
 import { decodePoolConfig, getPool } from "./pools.js";
-import {
-  assertAssetsTradable,
-  type RequestCountry,
-} from "./token-restrictions.js";
+import { swapDeadline } from "./swap-deadline.js";
+import { quoteJurisdiction } from "./token-restrictions.js";
 import {
   erc20ApprovalTransaction,
   preparedTransaction,
@@ -92,10 +90,10 @@ export interface PrepareFixPoolPriceInput {
     blockHash?: Hex;
   };
   /**
-   * Jurisdiction of the caller. Required rather than optional so a new call
-   * site cannot drop the restriction check by omitting it.
+   * Minutes the execute-phase route stays executable. Defaults to the
+   * interface's 30 minutes; see swap-deadline.ts.
    */
-  country: RequestCountry;
+  swapDeadlineMinutes?: number;
 }
 
 export async function prepareFixPoolPrice(
@@ -117,17 +115,13 @@ export async function prepareFixPoolPrice(
     fetcher,
   );
   const poolKey = pool.pool_key;
-  // This action swaps the pool to a target price, so it trades the pair just as
-  // a swap does and is gated the same way. Which token it ends up buying falls
-  // out of the target price rather than the caller's intent, and moving a pool
-  // to a price is not an exit from a position, so neither side is a disposal.
-  assertAssetsTradable(
-    [
-      { chainId: input.chainId, token: poolKey.token0, side: "buy" },
-      { chainId: input.chainId, token: poolKey.token1, side: "buy" },
-    ],
-    input.country,
-  );
+  // This action swaps the pool to a target price, so it trades the pair. Which
+  // token it ends up buying falls out of the target price rather than the
+  // caller's intent, so both are labeled as acquisitions.
+  const jurisdiction = quoteJurisdiction([
+    { chainId: input.chainId, token: poolKey.token0, side: "buy" },
+    { chainId: input.chainId, token: poolKey.token1, side: "buy" },
+  ]);
   const baseToken = getAddress(input.baseToken);
   if (baseToken !== poolKey.token0 && baseToken !== poolKey.token1) {
     throw new ServiceError(
@@ -190,6 +184,7 @@ export async function prepareFixPoolPrice(
 
   const shared = {
     schema_version: "1",
+    jurisdiction,
     action: "ekubo_fix_pool_price",
     agent_confirmation_required: false,
     wallet_validation_required: true,
@@ -336,11 +331,17 @@ export async function prepareFixPoolPrice(
     input.quoteResult.calculatedAmount,
     "calculated_amount",
   );
+  // The route is exact-output with a partial fill that stops at the target, so
+  // the pool can only pay out the specified token and take in the calculated
+  // one: both router deltas are nonpositive. Either can be zero. Core moves an
+  // empty range straight to the limit without any token flow, so a pool with
+  // no liquidity between the current price and the target quotes 0/0, and
+  // thin liquidity can round the output down to 0.
   if (
     quoteSpecifiedToken !== specifiedToken ||
     quoteCalculatedToken !== calculatedToken ||
-    quotedSpecifiedAmount >= 0n ||
-    quotedCalculatedAmount >= 0n
+    quotedSpecifiedAmount > 0n ||
+    quotedCalculatedAmount > 0n
   ) {
     throw new ServiceError(
       "quote_mismatch",
@@ -349,17 +350,21 @@ export async function prepareFixPoolPrice(
   }
   const requiredInputAmount = -quotedCalculatedAmount;
   const expectedOutputAmount = -quotedSpecifiedAmount;
+  const deadline = swapDeadline(input.swapDeadlineMinutes);
   const executionRoute = encodeRoute({
     specifiedToken,
     calculatedToken,
     specifiedAmount: TARGET_PRICE_SPECIFIED_AMOUNT,
     calculatedAmountThreshold: quotedCalculatedAmount,
+    deadline,
     hops: [hop],
   });
   const nativeValue =
     calculatedToken === NATIVE_TOKEN ? requiredInputAmount : 0n;
+  // A zero threshold makes the router revert unless the route takes no input,
+  // so a zero-cost plan needs no allowance, and approve(0) would erase one.
   const approvals =
-    calculatedToken === NATIVE_TOKEN
+    calculatedToken === NATIVE_TOKEN || requiredInputAmount === 0n
       ? []
       : [
           erc20ApprovalTransaction(
@@ -396,6 +401,7 @@ export async function prepareFixPoolPrice(
         expected_output_amount: expectedOutputAmount.toString(),
         quote_block_number: input.quoteResult.blockNumber ?? null,
         quote_block_hash: input.quoteResult.blockHash ?? null,
+        deadline_timestamp: deadline,
         partial_fill_stops_at_target: true,
       },
       onchainValidation: {
@@ -405,6 +411,7 @@ export async function prepareFixPoolPrice(
           "Immediately before signing, rerun both supplied pending reads through their read_calls_reference envelopes, verify the current price remains on the same side of the target, verify the quote tuple still matches, and simulate the exact execution plan.",
       },
     }),
+    jurisdiction,
     phase: "execute",
     next_phase: null,
   };

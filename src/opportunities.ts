@@ -60,7 +60,7 @@ const ROBINHOOD_VE33 = getAddress(
 const ROBINHOOD_VE33_DATA_FETCHER = getAddress(
   "0x61F03754b1c7A7F0E584FD8869c00Ba898ab888d",
 );
-const ROBINHOOD_STONX = getAddress(
+export const ROBINHOOD_STONX = getAddress(
   "0x570C5aa79c798E7A418412cC8399ae5bcCe570C5",
 );
 const Q32 = 1n << 32n;
@@ -483,7 +483,10 @@ export async function getLiquidityOpportunities(
   };
 }
 
-function ve33EmissionStateReadRequirement() {
+export function ve33EmissionStateReadRequirement(
+  resumeTool = "get_liquidity_opportunities",
+  purpose = "Complete the interface-equivalent ve33 emission projection and final opportunity ranking using data decoded on the user's device.",
+) {
   const data = encodeFunctionData({
     abi: VE33_DATA_FETCHER_ABI,
     functionName: "getEmissionState",
@@ -493,8 +496,7 @@ function ve33EmissionStateReadRequirement() {
     "getEmissionState",
   );
   return {
-    purpose:
-      "Complete the interface-equivalent ve33 emission projection and final opportunity ranking using data decoded on the user's device.",
+    purpose,
     status: "not_executed",
     chain_id: ROBINHOOD_CHAIN_ID,
     caip2_chain_id: `eip155:${ROBINHOOD_CHAIN_ID}`,
@@ -517,7 +519,7 @@ function ve33EmissionStateReadRequirement() {
     }),
     resume:
       {
-        tool: "get_liquidity_opportunities",
+        tool: resumeTool,
         preserve_original_arguments: true,
         arguments: {
           ve33_emission_state: {
@@ -748,7 +750,7 @@ function campaignAprs(
   return matches;
 }
 
-function validateEmissionState(input: Ve33EmissionStateInput) {
+export function validateEmissionState(input: Ve33EmissionStateInput) {
   const state = {
     currentTimestamp: unsigned(input.currentTimestamp, "current_timestamp"),
     currentEmissionRate: unsigned(
@@ -831,7 +833,7 @@ function usesTvlForApr(chainId: string) {
   );
 }
 
-function tokenPairUsd(
+export function tokenPairUsd(
   amount0: string,
   amount1: string,
   token0: JsonRecord | undefined,
@@ -853,7 +855,7 @@ function tokenPairDepthUsd(
   return (usd0 ?? 0) + (usd1 ?? 0);
 }
 
-function tokenAmountUsd(
+export function tokenAmountUsd(
   amount: unknown,
   token: JsonRecord | undefined,
   missingPriceAsZero = false,
@@ -920,7 +922,7 @@ function uniqueTokens(tokens: { chainId: string; address: string }[]) {
   });
 }
 
-function findToken(
+export function findToken(
   tokenMap: Map<string, JsonRecord>,
   chainId: string,
   address: string,
@@ -928,7 +930,7 @@ function findToken(
   return tokenMap.get(`${chainId}:${canonicalNumericHex(address)}`);
 }
 
-function tokenIdentity(token: JsonRecord) {
+export function tokenIdentity(token: JsonRecord) {
   return `${chainField(token)}:${canonicalNumericHex(stringField(token, "address"))}`;
 }
 
