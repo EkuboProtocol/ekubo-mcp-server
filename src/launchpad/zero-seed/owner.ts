@@ -92,7 +92,7 @@ function bindActual(body: CreateBody, requested: ParametersInput): ParametersInp
   if (!sameParameters(body.requested, requested)) throw new ZeroSeedError("requested_mismatch");
   validateParameters(body.requested, body.pin);
   if (body.requested.liquidity !== "0") throw new ZeroSeedError("preview_liquidity_must_be_zero");
-  validateInstallation(body.installation, body.requested, body.pin);
+  validateInstallation(body.installation, body.requested, body.pin, body.sender as Address);
   const actual = { ...body.requested, supply: body.installation.installedSupply, liquidity: body.installation.liquidity };
   if (!sameParameters(decodedParameters(body.data as Hex), actual)) throw new ZeroSeedError("calldata_summary_mismatch");
   return actual;

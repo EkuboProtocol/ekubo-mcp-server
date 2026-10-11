@@ -100,9 +100,11 @@ From the task worktree:
 ```sh
 bun test test/launchpad/zero-seed-policy.test.ts
 bun test test/launchpad/zero-seed-preview.test.ts
+bun test test/launchpad/zero-seed-token.test.ts test/launchpad/zero-seed-swap.test.ts
 bun test test/launchpad/zero-seed-owner.test.ts test/launchpad/zero-seed-endpoint.test.ts test/discovery.test.ts test/protocols.test.ts test/mcp-modern.test.ts test/yul-router.test.ts
 bun script/zero-seed-abi-parity.ts /home/moody/Work/ekubo/artifacts/eku-1528/ZeroSeedLaunch.abi.json
 bun script/zero-seed-api-parity.ts /home/moody/Work/ekubo/artifacts/eku-1523/actual-handler-golden.json
+bun script/zero-seed-stack-parity.ts /home/moody/Work/ekubo/artifacts
 bun run lint
 bun run build
 ```
@@ -137,15 +139,37 @@ Fixed in `policy.ts`: `validateClaimRecipient` mapped sinks with
 extension and token sinks with checksum letters were not refused. A
 mixed-case control now fails on the old code and passes.
 
-## Still required before delivery
+## Assembly continuation: token identity, captured preview, quoter → router
 
-- Deterministic token/initcode identity and captured actual preview arithmetic
-  (preview return values in tests are synthetic doubles).
-- Quoter parity on the accepted request contract and current `0x03c8` router:
-  skipAhead=0/noPartial, positive min output/finite max input, inclusive fresh
-  deadline; consumer stays non-executable behind the public refusal.
-- Reproducible API/quoter/decoder parity at the same block/time in both orders
-  and the final exact head/base/tree packet for owner integration and QA/Sage.
+- `token.ts` predicts the launch token exactly as `ZeroSeedLaunch._tokenAddress`:
+  CREATE2 from the instance with salt `keccak256(abi.encode(creator, salt))`
+  over the MintableERC20 creation code (`mintable-erc20.ts`, 4,419 bytes,
+  keccak `0x25da7fd3…` from `pins.json`) plus `abi.encode(extension, name,
+  symbol, decimals)`. The preview and the owner decoder both refuse an
+  installation whose token is not that address (`preview_token_mismatch`).
+  The prediction reproduces both emitted local tokens (l1 `0x89738a97…`,
+  l3 `0x66b53575…`, salt 1).
+- Test fixtures now use the actual creator, metadata, salt and the installed
+  supply/L that the actual contract's `previewInstallation` returned for l1
+  (token0) and l3 (token1). Unit-test timing stays synthetic boundary context.
+- `swap.ts` consumes one accepted quoter request/response (request contract
+  SHA256 `2319a23c…`). It needs one split with one forwarded hop through the
+  pinned instance and requires `skip_ahead` 0. It refuses partial intent, wrong-side or
+  missing guards, zero/over-int128 guards, a quote that misses the guard, and
+  any snapshot, amount or route mismatch. The deadline is inclusive and must
+  fit the router's uint32 field. The encoder reuses the SDK hop encoding and adds the current `0x03c8` deadline
+  flag. Its output matches all 8 executed router calldatas byte for byte, in
+  both orders. `estimated_gas_cost` is never read, and no gas, budget or
+  reference is returned. `launchpad_prepare_trade` still refuses with
+  `executable_budget_not_proven`.
+- `script/zero-seed-stack-parity.ts` hash-pins the API goldens, router
+  vectors, emitted chain, contract vectors and pins, then checks per order:
+  API ↔ chain ↔ contract-vector identity and installed pair, the CREATE2 token,
+  the preview → producer → owner decoder summary against the API detail, a claim
+  to the API's claim recipient, quoter → router bytes, and the router input pool
+  liquidity. For l3 the API tick at 1800001420 equals the quoter input tick at the
+  same time. The two runs have different block hashes. The API golden has no l1
+  tick at that time, so l1 is NOT COVERED.
 
 ## Stop/reset and NOT PROVEN
 
@@ -156,7 +180,8 @@ zero-filled runtime template as an executed pin. Do not reset shared worktrees.
 Discard only disposable local fixtures created by the owning harness. An app
 rollback cannot refund, withdraw, rebalance or migrate immutable principal.
 
-Producer/opaque-decoder parity, end-to-end timing enforcement, executable budgets,
+Same-blockhash API/quoter parity (the runs share time and state only), l1 tick
+parity at the quoter time, mined UserOps, executable budgets, wallet simulation,
 live provenance/registration/assets, mined UserOps, full WETH metadata,
 hosting/retention/oncall/costs, external audit, final QA/Sage and release are
 NOT PROVEN. No merge/deploy/signing/issuance/provider/credential/live-wallet,

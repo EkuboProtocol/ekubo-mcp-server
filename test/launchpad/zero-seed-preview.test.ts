@@ -109,7 +109,7 @@ describe("single synthetic installation preview (not executable evidence)", () =
     f.afterRead(() => { input.tradingStart = "87400"; input.name = "changed"; context.executionExpiry = "87400"; pin.runtime = "changed"; });
     const preview = await f.run(input, context, pin);
     expect(preview.actual.tradingStart).toBe("1300");
-    expect(preview.actual.name).toBe("Local λ");
+    expect(preview.actual.name).toBe("Zero Seed l1");
     expect(preview.build.executionExpiry).toBe("1299");
     expect(preview.pin.runtime).toBe(f.pin.runtime);
   });

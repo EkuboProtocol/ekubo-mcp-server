@@ -6,6 +6,7 @@ import { zeroSeedAbi } from "./abi.js";
 import { address, BuildContext, type BuildInput, bytes32, decimal, Parameters, type ParametersInput,
   previewData, validateBuild, validateParameters } from "./installation.js";
 import { type InstancePin, unsigned, ZeroSeedError } from "./policy.js";
+import { predictLaunchToken } from "./token.js";
 
 export const PREVIEW_ID = "zero_seed_installation";
 const PoolKey = z.strictObject({ token0: address, token1: address, config: bytes32 });
@@ -43,18 +44,26 @@ function positionId(lower: number, upper: number): Hex {
   return numberToHex((BigInt.asUintN(32, BigInt(lower)) << 32n) | BigInt.asUintN(32, BigInt(upper)), { size: 32 });
 }
 
-export function validateInstallation(result: InstallationInput, request: ParametersInput, pin: InstancePin): void {
+export function validateInstallation(
+  result: InstallationInput, request: ParametersInput, pin: InstancePin, creator: Address,
+): void {
   Installation.parse(result);
-  const tokenIs0 = BigInt(result.token) < BigInt(pin.quote);
-  const pair = tokenIs0 ? [result.token, pin.quote] : [pin.quote, result.token];
-  if (result.token === pin.quote || pair[0] !== result.poolKey.token0 || pair[1] !== result.poolKey.token1) {
-    throw new ZeroSeedError("preview_pair_mismatch");
-  }
+  if (result.token !== predictLaunchToken(pin.address as Address, creator, request)) throw new ZeroSeedError("preview_token_mismatch");
+  const tokenIs0 = validatePair(result, pin);
   const config = numberToHex((BigInt(pin.address) << 96n) | 0x80000000n | BigInt(request.tickSpacing), { size: 32 });
   const [lower, upper] = tokenIs0 ? [request.askTick, request.upperTick] : [-request.upperTick, -request.askTick];
   if (result.poolKey.config !== config || result.positionId !== positionId(lower, upper) ||
     result.initialTick !== (tokenIs0 ? lower : upper)) throw new ZeroSeedError("preview_geometry_mismatch");
   validateInstalledAmounts(result, request);
+}
+
+function validatePair(result: InstallationInput, pin: InstancePin): boolean {
+  const tokenIs0 = BigInt(result.token) < BigInt(pin.quote);
+  const pair = tokenIs0 ? [result.token, pin.quote] : [pin.quote, result.token];
+  if (result.token === pin.quote || pair[0] !== result.poolKey.token0 || pair[1] !== result.poolKey.token1) {
+    throw new ZeroSeedError("preview_pair_mismatch");
+  }
+  return tokenIs0;
 }
 
 function validateInstalledAmounts(result: InstallationInput, request: ParametersInput): void {
@@ -101,7 +110,7 @@ export async function localInstallationPreview(input: {
   const result = await wallet.read(reference);
   const raw = validateSnapshot(result, pin, build);
   const installation = normalizeInstallation(decodePreview(raw));
-  validateInstallation(installation, request, pin);
+  validateInstallation(installation, request, pin, creator);
   validateBuild(request, build, freshTime());
   const actual = { ...request, supply: installation.installedSupply, liquidity: installation.liquidity };
   return {
