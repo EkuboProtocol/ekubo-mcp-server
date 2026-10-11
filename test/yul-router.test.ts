@@ -1,12 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import exactIn from "./fixtures/launchpad/quoter-exact-in.json";
-import partialFill from "./fixtures/launchpad/quoter-partial-fill.json";
 import { type EvmQuoterQuote, prepareSwapFromQuote } from "../src/yul-router.js";
 
 /**
- * quoter-service#84 snapshots for the ScheduledLaunch vectors
- * launch_token0_buy_exact_in and launch_token0_buy_partial_fill_range_top,
- * with the hop bytes the EKU-826 worked example encoded with the same SDK.
+ * A quoter-service forwarded-hop snapshot, with the hop bytes the EKU-826
+ * worked example encoded with the same SDK.
  */
 const QUOTE_TOKEN = "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF";
 const LAUNCH_TOKEN = "0x504f4f373EF5529d60838DC1aC106932A33B5848";
@@ -24,31 +22,24 @@ function prepare(quote: unknown, amount: bigint) {
   });
 }
 
-describe("prepareSwapFromQuote with launch-pool hops", () => {
-  it("encodes a forwarded hop with its forwardee and no allowPartial for a full fill", () => {
+describe("prepareSwapFromQuote with forwarded hops", () => {
+  it("encodes a forwarded hop with its forwardee and a full fill", () => {
     const prepared = prepare(exactIn, 1000n * 10n ** 18n);
-    expect(prepared.partialFill).toBe(false);
+    expect(prepared.amountIn).toBe(1000n * 10n ** 18n);
     expect(prepared.amountOut).toBe(926849323490444487392n);
     expect(prepared.route.toLowerCase()).toContain(`${HOP}00000000`);
   });
 
-  it("accepts a single allow_partial hop filling less than requested, specifying only the filled amount", () => {
-    const prepared = prepare(partialFill, 900_000n * 10n ** 18n);
-    expect(prepared).toMatchObject({ partialFill: true, filledAmount: 105127107009426447987133n, amountIn: 105127107009426447987133n });
-    expect(prepared.transaction.value).toBe(0n);
-    expect(prepared.approval?.amount).toBe(105127107009426447987133n);
-    expect(prepared.route.toLowerCase()).toContain(`${HOP}80000000`);
-  });
-
-  it("refuses a short fill without allow_partial, a fill above the request, and a multi-split partial", () => {
-    const withoutFlag = structuredClone(partialFill) as Record<string, any>;
-    delete withoutFlag.splits[0].route[0].swap.allow_partial;
-    expect(() => prepare(withoutFlag, 900_000n * 10n ** 18n)).toThrow(/does not match/);
-    expect(() => prepare(partialFill, 10n ** 18n)).toThrow(/does not match/);
-    const twoSplits = structuredClone(partialFill) as Record<string, any>;
+  it("refuses partial-fill intent and any specified total other than the request", () => {
+    const partial = structuredClone(exactIn) as Record<string, any>;
+    partial.splits[0].route[0].swap.allow_partial = true;
+    expect(() => prepare(partial, 1000n * 10n ** 18n)).toThrow(/partial-fill/);
+    expect(() => prepare(exactIn, 1001n * 10n ** 18n)).toThrow(/does not match/);
+    expect(() => prepare(exactIn, 999n * 10n ** 18n)).toThrow(/does not match/);
+    const twoSplits = structuredClone(exactIn) as Record<string, any>;
     twoSplits.splits = [twoSplits.splits[0], twoSplits.splits[0]];
     twoSplits.total_calculated = (2n * BigInt(twoSplits.total_calculated)).toString();
-    expect(() => prepare(twoSplits, 900_000n * 10n ** 18n)).toThrow(/does not match/);
+    expect(() => prepare(twoSplits, 1000n * 10n ** 18n)).toThrow(/does not match/);
   });
 
   it("refuses a forwardee on a core hop", () => {

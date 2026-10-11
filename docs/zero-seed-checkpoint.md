@@ -62,10 +62,10 @@ detail, swaps, claims, create and claim preparation refuse with
 `launchpad://disclosures` carries the five mechanism disclosures (draft).
 `test/launchpad/zero-seed-endpoint.test.ts` drives the real worker.
 
-Identified but not yet changed: the shared swap path (`src/yul-router.ts`,
-`src/core.ts`) still accepts a single-hop `allow_partial` partial fill added
-for ScheduledLaunch at `e6b2080`. Zero-seed swaps are noPartial; remove it
-together with the quoter-parity consumer.
+The shared swap path (`src/yul-router.ts`, `src/core.ts`) no longer accepts
+the single-hop `allow_partial` partial fill added for ScheduledLaunch at
+`e6b2080`: a hop with `allow_partial: true` is refused and the split total must
+equal the request exactly. The ScheduledLaunch partial-fill fixture is deleted.
 
 ## Exact upstream basis
 
@@ -115,7 +115,6 @@ and indexed fee semantics are unchanged.
 
 ## Still required before delivery
 
-- Remove the ScheduledLaunch partial-fill acceptance from the shared swap path.
 - Wire the single synthetic read preview into the replacement producer and
   owner decoder; verify deterministic token/initcode identity and actual captured
   preview arithmetic, then bind its exact receipt and disclosures to owner data.

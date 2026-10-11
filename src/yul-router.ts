@@ -30,7 +30,7 @@ export type EvmQuoterRouteNode =
         skip_ahead: number;
         /** Core forward target of a forwarded hop, when it differs from or restates the pool extension. */
         forwardee?: Address;
-        /** The hop may fill less than its specified amount (ScheduledLaunch pools). */
+        /** Refused when true: every prepared swap must fill its full specified amount. */
         allow_partial?: boolean;
       };
       wrapped_token?: never;
@@ -80,13 +80,6 @@ export interface PrepareSwapFromQuoteParameters {
 
 export interface PreparedSwap {
   quoteType: EvmQuoterQuoteType;
-  /**
-   * The quote fills less than the requested amount through a single
-   * allow_partial hop. The route specifies only the filled amount.
-   */
-  partialFill: boolean;
-  /** The specified amount the route swaps: the requested amount, or less on a partial fill. */
-  filledAmount: bigint;
   tokenIn: Address;
   tokenOut: Address;
   amountIn: bigint;
@@ -209,22 +202,15 @@ export function prepareSwapFromQuote({
       total + parseSignedRawAmount(split.amount_specified, "amount_specified"),
     0n,
   );
-  const partialFill =
-    specifiedTotal !== expectedSpecified && isPartialFill(quote, expectedSpecified, specifiedTotal);
-  const filledAmount = partialFill
-    ? isExactOutput
-      ? -specifiedTotal
-      : specifiedTotal
-    : requestedAmount;
-  const amountIn = isExactOutput ? -quotedCalculated : filledAmount;
-  const amountOut = isExactOutput ? filledAmount : quotedCalculated;
+  const amountIn = isExactOutput ? -quotedCalculated : requestedAmount;
+  const amountOut = isExactOutput ? requestedAmount : quotedCalculated;
   const calculatedTotal = quote.splits.reduce(
     (total, split) =>
       total +
       parseSignedRawAmount(split.amount_calculated, "amount_calculated"),
     0n,
   );
-  if (specifiedTotal !== expectedSpecified && !partialFill) {
+  if (specifiedTotal !== expectedSpecified) {
     throw new Error(
       `quote split specified total ${specifiedTotal} does not match ${expectedSpecified}`,
     );
@@ -259,8 +245,6 @@ export function prepareSwapFromQuote({
 
   return {
     quoteType,
-    partialFill,
-    filledAmount,
     tokenIn,
     tokenOut,
     amountIn,
@@ -331,8 +315,10 @@ function quoterNodeToHop(node: EvmQuoterRouteNode): Hop {
     poolKey: node.swap.pool_key,
     sqrtRatioLimit: BigInt(node.swap.sqrt_ratio_limit),
     skipAhead: node.swap.skip_ahead,
-    ...(node.swap.allow_partial === true ? { allowPartial: true } : {}),
   };
+  if (node.swap.allow_partial === true) {
+    throw new Error("a partial-fill hop is not supported");
+  }
   switch (node.swap.type) {
     case "core":
       if (node.swap.forwardee !== undefined) {
@@ -352,25 +338,6 @@ function quoterNodeToHop(node: EvmQuoterRouteNode): Hop {
         `unsupported EVM quoter swap type: ${String(node.swap.type)}`,
       );
   }
-}
-
-/**
- * A partial fill is one split whose only hop is a swap with allow_partial,
- * filling a nonzero amount of the same sign as, and less than, the request.
- */
-function isPartialFill(
-  quote: EvmQuoterQuote,
-  expectedSpecified: bigint,
-  specifiedTotal: bigint,
-): boolean {
-  if (quote.splits.length !== 1 || quote.splits[0].route.length !== 1) {
-    return false;
-  }
-  const hop = quote.splits[0].route[0];
-  if (hop.swap === undefined || hop.swap.allow_partial !== true) return false;
-  return expectedSpecified > 0n
-    ? specifiedTotal > 0n && specifiedTotal < expectedSpecified
-    : specifiedTotal < 0n && specifiedTotal > expectedSpecified;
 }
 
 function parsePositiveAmount(value: string | bigint, name: string): bigint {
