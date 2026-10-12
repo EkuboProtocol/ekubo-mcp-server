@@ -33,6 +33,7 @@ import {
 import {
   CANONICAL_TOKEN_LIST_NAME,
   type Env,
+  failureCode,
   getQuotesWithPlans,
   getToken,
   getTokens,
@@ -197,15 +198,23 @@ function isPositiveBigInt(value: string | number): boolean {
 }
 
 const chainId = z
-  .union([
-    z.number().int(),
-    z
-      .string()
-      .regex(
-        /^(?:[1-9][0-9]*|0x[0-9a-fA-F]+)$/,
-        "chain_id must be a positive decimal or hexadecimal integer",
-      ),
-  ])
+  .union(
+    [
+      z.number().int(),
+      z
+        .string()
+        .regex(
+          /^(?:[1-9][0-9]*|0x[0-9a-fA-F]+)$/,
+          "chain_id must be a positive decimal or hexadecimal integer",
+        ),
+    ],
+    {
+      error: (issue) =>
+        issue.input === undefined
+          ? "chain_id is required"
+          : "chain_id must be an integer or a decimal or 0x-hex string",
+    },
+  )
   .refine(isPositiveBigInt, "chain_id must be positive")
   .describe("EVM chain ID");
 const address = z
@@ -994,10 +1003,10 @@ export const prepareManualPoolBoostSchema = z.object({
   chain_id: chainId,
   sender: address,
   pool_key: encodedPoolKeySchema,
-  start_time: uintString,
-  end_time: uintString,
-  amount0: uintString,
-  amount1: uintString,
+  start_time: uintString.describe("Unix seconds"),
+  end_time: uintString.describe("Unix seconds, after start_time"),
+  amount0: uintString.describe("Total token0 base units over the boost"),
+  amount1: uintString.describe("Total token1 base units over the boost"),
 });
 
 export const prepareOracleCapacityExpansionSchema = z.object({
@@ -1301,7 +1310,7 @@ export const prepareVe33ReinvestSchema = z
     claims: z.array(claimSchema).min(1).max(100).optional(),
     stake_token: address.optional(),
     fee_balances: z
-      .array(z.object({ token: address, amount: uintString }))
+      .array(z.object({ token: address, amount: uintString.describe("Base units") }))
       .min(1)
       .max(200)
       .optional(),
@@ -1309,7 +1318,7 @@ export const prepareVe33ReinvestSchema = z
     swap_deadline_minutes: swapDeadlineMinutes,
     source: quoteSource.optional(),
     ve_id: uintString.optional(),
-    amount: uintString.optional(),
+    amount: uintString.optional().describe("Stake token base units"),
     current_state_id: bytes32.optional(),
   })
   .superRefine((input, context) => {
@@ -1712,10 +1721,10 @@ export const prepareAerodromeLiquidityDepositSchema = aerodromeActionSchema.exte
     .describe(
       "Stable (true) or volatile pool; with the pair it identifies the pool",
     ),
-  amount_a_desired: amount.describe("Maximum token_a"),
-  amount_b_desired: amount.describe("Maximum token_b"),
-  amount_a_min: amount.describe("Slippage bound: minimum token_a consumed"),
-  amount_b_min: amount.describe("Minimum token_b consumed"),
+  amount_a_desired: amount.describe("Maximum token_a base units"),
+  amount_b_desired: amount.describe("Maximum token_b base units"),
+  amount_a_min: amount.describe("Slippage bound: minimum token_a base units consumed"),
+  amount_b_min: amount.describe("Minimum token_b base units consumed"),
   deadline: aerodromeDeadline,
   recipient: address.optional().describe("Defaults to sender"),
 });
@@ -1724,8 +1733,8 @@ export const prepareAerodromeLiquidityWithdrawSchema = aerodromeActionSchema.ext
   token_b: address,
   stable: z.boolean().describe("Stable (true) or volatile pool"),
   liquidity: amount.describe("Exact LP token amount to burn in base units"),
-  amount_a_min: amount.describe("Minimum token_a to receive"),
-  amount_b_min: amount.describe("Minimum token_b to receive"),
+  amount_a_min: amount.describe("Minimum token_a base units to receive"),
+  amount_b_min: amount.describe("Minimum token_b base units to receive"),
   deadline: aerodromeDeadline,
   recipient: address.optional().describe("Defaults to sender"),
   lp_token: address
@@ -4554,14 +4563,7 @@ async function toolResult(run: () => unknown | Promise<unknown>) {
       structuredContent,
     };
   } catch (error) {
-    const details = error instanceof ServiceError ? error.details : undefined;
-    const structuredContent = {
-      error: {
-        code: error instanceof ServiceError ? error.code : "unexpected_error",
-        message: error instanceof Error ? error.message : String(error),
-        ...(details === undefined ? {} : { details }),
-      },
-    };
+    const structuredContent = { error: toolError(error) };
     return {
       isError: true,
       content: [
@@ -4570,6 +4572,28 @@ async function toolResult(run: () => unknown | Promise<unknown>) {
       structuredContent,
     };
   }
+}
+
+function toolError(error: unknown) {
+  if (error instanceof ServiceError) {
+    return {
+      code: error.code,
+      message: error.message,
+      ...(error.details === undefined ? {} : { details: error.details }),
+    };
+  }
+  if (failureCode(error) === "upstream_timeout") {
+    return {
+      code: "upstream_timeout",
+      message:
+        "An upstream data service did not respond in time. Nothing was prepared or submitted; retry the same call shortly.",
+      details: { retryable: true },
+    };
+  }
+  return {
+    code: "unexpected_error",
+    message: error instanceof Error ? error.message : String(error),
+  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

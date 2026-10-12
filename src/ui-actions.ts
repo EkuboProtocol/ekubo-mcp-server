@@ -637,7 +637,7 @@ export function preparedUiAction(input: PreparedUiActionInput) {
       instruction:
         "Pass the complete plan to the wallet's simulation and authorization flow. Do not ask for separate agent-level confirmation; the wallet presents the simulated result and collects authorization or signature.",
       complete_transaction_list:
-        "execution_plan is the complete ordered transaction list for this action.",
+        "The plan behind execution_plan_reference is the complete ordered transaction list for this action.",
       calldata_complete:
         "All calldata and transaction ordering are supplied. Pass the execution_plan_reference envelope unchanged as the wallet's reference argument; do not reconstruct calldata or add calls with setup-specific tools.",
     },
