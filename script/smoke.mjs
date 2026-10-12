@@ -1,6 +1,14 @@
+import { readFile } from "node:fs/promises";
+
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-const expectedServerVersion = "0.50.0";
-const expectedCatalogRevision = "2026-10-08.core-advanced-split";
+// Read the expectations from the source being released, so a version bump
+// cannot leave this script asserting the previous release.
+const versionSource = await readFile(
+  new URL("../src/version.ts", import.meta.url),
+  "utf8",
+);
+const expectedServerVersion = sourceConstant("MCP_SERVER_VERSION");
+const expectedCatalogRevision = sourceConstant("MCP_TOOL_CATALOG_REVISION");
 const smokeNonce = `${Date.now()}-${Math.random()}`;
 const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
 
@@ -175,7 +183,7 @@ assert(
   "MCP server version is stale",
 );
 assert(
-  initialized.result?.instructions?.includes("get_ve33_allocations"),
+  initialized.result?.instructions?.includes("VeToken ERC721 transfer/approval"),
   "MCP VeToken safety instructions are missing",
 );
 assert(
@@ -446,6 +454,14 @@ async function mcpRequest(id, method, params, path = "/mcp") {
     throw new Error(`${method} returned an MCP event stream without data`);
   }
   return JSON.parse(data);
+}
+
+function sourceConstant(name) {
+  const match = new RegExp(`export const ${name} = "([^"]+)";`).exec(
+    versionSource,
+  );
+  if (match === null) throw new Error(`src/version.ts does not define ${name}`);
+  return match[1];
 }
 
 function assert(condition, message) {
