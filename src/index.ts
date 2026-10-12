@@ -57,6 +57,22 @@ export default {
         "cache-control": "no-store",
       });
     }
+    // A mistyped /mcp/<slug> otherwise falls through to the static routes and
+    // answers a client's POST with "Use GET", which points at the wrong fix.
+    if (mcpRoute === null && /^\/mcp\/[^/]+$/.test(url.pathname)) {
+      return json(
+        {
+          error: {
+            code: "unknown_protocol",
+            message: `No MCP endpoint at ${url.pathname}. Use ${ALL_PROTOCOLS_MCP_PATH} or one of ${PROTOCOLS.map(
+              (protocol) => protocolMcpPath(protocol.slug),
+            ).join(", ")}.`,
+          },
+        },
+        404,
+        { "cache-control": "no-store" },
+      );
+    }
     if (mcpRoute !== null) {
       const admitted = await admitMcpRequest(request, env, actor);
       if (admitted.rejection !== null) return admitted.rejection;

@@ -117,7 +117,7 @@ export const uniswapTools = [
   tool(
     "prepare_uniswap_v2_remove_liquidity",
     "Prepare Uniswap V2 liquidity withdrawal",
-    "Burn an exact LP amount through the canonical V2 router; realize accrued fees with principal. LP token address is derived from the factory. Optional native unwrapping. V2 has no separate fee claim. Requires atomic LP approval and cleanup.",
+    "Burn an exact LP amount through the canonical V2 router; realize accrued fees with principal. Raw minima protect withdrawal proceeds. LP token address is derived from the factory. Optional native unwrapping. V2 has no separate fee claim. Requires atomic LP approval and cleanup.",
     v2RemoveSchema,
     prepareV2Remove,
   ),

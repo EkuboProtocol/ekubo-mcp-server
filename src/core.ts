@@ -389,6 +389,19 @@ export class ServiceError extends Error {
 
 type Fetcher = typeof fetch;
 
+/**
+ * The stable code for a thrown error. AbortSignal.timeout() on an upstream
+ * fetch is the only source of a TimeoutError, so it is named as an upstream
+ * timeout rather than reported as a server defect.
+ */
+export function failureCode(error: unknown): string {
+  if (error instanceof ServiceError) return error.code;
+  if (error instanceof Error && error.name === "TimeoutError") {
+    return "upstream_timeout";
+  }
+  return "unexpected_error";
+}
+
 export async function listTokens(
   env: Env,
   input: {
@@ -1039,10 +1052,7 @@ async function collectQuotes(
     }
     failures.push({
       source: requestedSource,
-      code:
-        result.reason instanceof ServiceError
-          ? result.reason.code
-          : "unexpected_error",
+      code: failureCode(result.reason),
       message:
         result.reason instanceof Error
           ? result.reason.message

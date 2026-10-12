@@ -985,6 +985,14 @@ bun run dev
 Connect MCP Inspector to `http://localhost:8787/mcp`, or to
 `http://localhost:8787/mcp/<protocol>` for one protocol's tools.
 
+`test/tool-acceptance.test.ts` drives representative journeys through the real
+MCP boundary with mocked upstreams: catalog discoverability (descriptions,
+required arguments, chain and amount units, read-only hints), an owner-positions
+read with paging and its read-call reference, a transfers preparation through
+reference fetch, integrity, retry and expiry, input validation, and upstream
+timeouts, gateway errors and credential redaction. `AGENTS.md` lists what a
+user-facing tool change must add there.
+
 `bun run test:mcp-acceptance -- --cf` sends the scenarios in
 `test/mcp-acceptance/` to small Workers AI models with the live `/mcp/ekubo`
 catalog (plus the Cloud Wallet catalog, for handoffs) and checks the first tool
