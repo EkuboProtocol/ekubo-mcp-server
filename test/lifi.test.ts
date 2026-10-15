@@ -14,8 +14,6 @@ const tokenA = "0x1111111111111111111111111111111111111111";
 const tokenB = "0x2222222222222222222222222222222222222222";
 const sender = "0x3333333333333333333333333333333333333333";
 const recipient = "0x4444444444444444444444444444444444444444";
-// LI.FI names one contract as both the approval spender and the call target,
-// so the fixture keeps them the same address the live API does.
 const lifiDiamond = "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE";
 const acrossTarget = "0x7777777777777777777777777777777777777777";
 const originHash = `0x${"1".repeat(64)}`;
@@ -29,8 +27,6 @@ function envFor(overrides: Partial<Env> = {}): Env {
     ACROSS_API_KEY: "across-test-key",
     ACROSS_INTEGRATOR_ID: "0xbeef",
     ACROSS_API_URL: "https://across.test",
-    // LayerZero is left unconfigured so these cases weigh LI.FI against
-    // Across alone; the LayerZero suite covers the other pairing.
     LAYER_ZERO_API_KEY: "",
     LI_FI_API_KEY: "lifi-test-key",
     LI_FI_API_URL: "https://lifi.test/v1",
@@ -38,7 +34,6 @@ function envFor(overrides: Partial<Env> = {}): Env {
   } as Env & typeof overrides;
 }
 
-/** The step shape LI.FI answers a quote with, trimmed to the fields read. */
 const quoteResponse = {
   type: "lifi",
   id: "45bd70e0-439c-4c9a-89b6-1929e2be81a6:0",
@@ -49,11 +44,9 @@ const quoteResponse = {
     fromAmount: "1000",
     toAmount: "985",
     toAmountMin: "980",
-    // Already seconds, unlike LayerZero's milliseconds.
     executionDuration: 7,
   },
   transactionRequest: {
-    // Every number on an ethers TransactionRequest is a hex string.
     value: "0x7",
     to: lifiDiamond,
     data: "0xabcd",
@@ -71,7 +64,6 @@ const acrossResponse = {
   swapTx: { chainId: 8453, to: acrossTarget, data: "0xacac", value: "0" },
 };
 
-/** Serves the LI.FI and Across endpoints, recording every LI.FI request. */
 function lifiFetcher(options: { quote?: unknown; status?: number } = {}) {
   const requests: { url: string; apiKey: string | null; userAgent: string | null }[] =
     [];
@@ -121,15 +113,10 @@ describe("LI.FI value transfers", () => {
       fromAmount: "1000",
       fromAddress: sender,
       toAddress: recipient,
-      // Basis points become the decimal fraction LI.FI states slippage in.
       slippage: "0.0025",
     });
-    // A real sender has a balance to simulate against, so the route is
-    // simulated rather than skipped.
     expect(url.searchParams.get("skipSimulation")).toBeNull();
     expect(requests[0].apiKey).toBe("lifi-test-key");
-    // Workers send no User-Agent unless one is set, and an unnamed client is
-    // what a third-party edge answers with an HTML block page.
     expect(requests[0].userAgent).toMatch(/^ekubo-mcp\//);
 
     expect(result.source).toBe("lifi");
@@ -140,7 +127,6 @@ describe("LI.FI value transfers", () => {
       amount_out: "985",
       minimum_amount_out: "980",
       expected_fill_time_seconds: 7,
-      // LI.FI states no expiry; the route is re-solved on every request.
       quote_expiry_timestamp: null,
     });
     expect(planStepKinds(result)).toEqual([
@@ -148,7 +134,6 @@ describe("LI.FI value transfers", () => {
       "execution",
     ]);
     expect(planTargets(result)).toEqual([tokenA, lifiDiamond]);
-    // The hex value and gas limit are carried through as decimal base units.
     expect(planTransactions(result)[1]).toMatchObject({
       value: "7",
       gas: "1209900",
@@ -194,8 +179,6 @@ describe("LI.FI value transfers", () => {
         ...quoteResponse,
         estimate: {
           ...quoteResponse.estimate,
-          // The endpoint over-solves, so more arrives than was asked for and
-          // the source amount it names is the bound an approval must cover.
           fromAmount: "1020",
           toAmount: "1005",
           toAmountMin: "1005",
@@ -223,8 +206,6 @@ describe("LI.FI value transfers", () => {
       amount_out: "1005",
       maximum_amount_in: "1020",
     });
-    // The approval covers the solved source amount, and the leftover it may
-    // create is cleared once the transfer has a receipt.
     const [approval] = planTransactions(result);
     expect(decodeFunctionData({ abi: erc20Abi, data: approval.data })).toEqual({
       functionName: "approve",
@@ -242,15 +223,12 @@ describe("LI.FI value transfers", () => {
     const result = await getQuotesWithPlans(envFor(), bridgeIntent, fetcher);
 
     const url = new URL(requests[0].url);
-    // The placeholder depositor holds no balance, so a simulated route would
-    // be refused for a quote that is only being priced.
     expect(url.searchParams.get("skipSimulation")).toBe("true");
     expect(url.searchParams.get("fromAddress")).toBe(
       "0x0000000000000000000000000000000000000001",
     );
     const lifi = result.quotes.find((quote) => quote.source === "lifi");
     expect(lifi?.normalized).toMatchObject({ amount_out: "985" });
-    // Indicative quotes carry no calldata for any provider.
     expect(lifi?.execution).toBeNull();
   });
 
@@ -327,7 +305,6 @@ describe("LI.FI value transfers", () => {
       "lifi",
     ]);
     expect(result.unavailable_sources).toEqual([]);
-    // Both options arrive executable, so the comparison is between plans.
     expect(
       result.quotes.every((quote) => quote.execution?.execution_plan_ready),
     ).toBe(true);
@@ -341,8 +318,6 @@ describe("LI.FI value transfers", () => {
       fetcher,
     );
 
-    // Not attempted at all, so a deployment without the key reports no failure
-    // and spends no round trip on one.
     expect(result.quotes.map((quote) => quote.source)).toEqual(["across"]);
     expect(result.unavailable_sources).toEqual([]);
   });
@@ -441,7 +416,6 @@ describe("LI.FI transfer status", () => {
       fetcher,
     );
 
-    // DONE alone would read as delivered, and the funds never arrived.
     expect(result.settled).toBe(true);
     expect(result.polling.instruction).toContain("refunded");
   });
@@ -457,8 +431,6 @@ describe("LI.FI transfer status", () => {
       fetcher,
     );
 
-    // The window between broadcasting and LI.FI observing the transaction is
-    // the ordinary case, so a poll loop must survive it rather than end.
     expect(result).toMatchObject({ status: "NOT_FOUND", settled: false });
   });
 
@@ -506,8 +478,6 @@ describe("LI.FI transfer status", () => {
       fetcher,
     );
 
-    // The tool predates LI.FI, so a caller that names no source keeps the
-    // provider it has always been answered by.
     expect(new URL(url()).pathname).toBe("/v1/status/quote-oft");
     expect(result.source).toBe("layerzero");
   });

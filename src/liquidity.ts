@@ -519,9 +519,6 @@ export async function prepareLpPositionDeposit(
       "The indexed pool key does not match the supplied exact pool_key",
     );
   }
-  // Labeled from the resolved pair rather than the input, because a caller may
-  // identify the pool by pool_id alone and never name its tokens. Adding
-  // liquidity takes on exposure to both tokens.
   const jurisdiction = quoteJurisdiction([
     { chainId: input.chainId, token: pool.pool_key.token0, side: "buy" },
     { chainId: input.chainId, token: pool.pool_key.token1, side: "buy" },
@@ -1044,8 +1041,6 @@ export async function prepareLpPositionEarningsClaim(
     }),
     onchain_validation: {
       status: "not_executed",
-      // One stored bundle covers the position-state aggregate and, for Ve33,
-      // the stakeToken read: both always execute together on this chain.
       current_state_query: (() => {
         const { state_call, semantics, ...stateRest } = currentStateQuery;
         return {
@@ -1146,8 +1141,6 @@ export async function prepareLpPositionWithdraw(
       ),
     ),
   );
-  // Each withdrawal's plan is the only statement of its transactions, so the
-  // batch reads them back out of it rather than keeping a second copy.
   const transactions = prepared.flatMap((withdrawal) =>
     withdrawal.execution_plan.ordered_steps.map(({ transaction }) => ({
       chain_id: transaction.chain_id,

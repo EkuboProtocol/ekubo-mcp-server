@@ -45,10 +45,6 @@ interface ResolvedContract {
 
 const catalog = generated as unknown as GeneratedCatalog;
 
-// These are the EVM networks on which the published SDK router is supported by
-// the Ekubo interface. The router is not part of the generated catalog because
-// it is built from a separate repository, so its chains are listed here; the
-// address and ABI themselves always come from the SDK.
 const YUL_ROUTER_CHAIN_IDS = new Set([
   "1",
   "10",
@@ -104,12 +100,10 @@ export const ORDERS_V3_ADDRESSES = [
   getAddress("0x9bB520B6192F71ec3D015C8a74F914f9c94bF794"),
 ] as const;
 
-/** The v3 Positions manager to build new transactions against on `chainId`. */
 export function positionsV3Address(chainId: string): Address {
   return preferredDeployment(chainId, POSITIONS_V3_ADDRESSES);
 }
 
-/** The v3 Orders manager to build new transactions against on `chainId`. */
 export function ordersV3Address(chainId: string): Address {
   return preferredDeployment(chainId, ORDERS_V3_ADDRESSES);
 }
@@ -123,7 +117,6 @@ export function isPositionsV3Address(address: Address): boolean {
   return POSITIONS_V3_ADDRESSES.includes(address as never);
 }
 
-/** Whether `address` is any generation of the v3 Orders manager. */
 export function isOrdersV3Address(address: Address): boolean {
   return ORDERS_V3_ADDRESSES.includes(address as never);
 }
@@ -331,10 +324,6 @@ export function poolKeyIndexContract(chainId: string) {
   return namedContract(chainId, "PoolKeyIndex");
 }
 
-/**
- * Every BoostedFees extension deployed on a chain. There is more than one on
- * some chains, so this returns the set rather than a single address.
- */
 export function boostedFeesAddresses(chainId: string): Address[] {
   return Object.values(contractsForChain(chainId))
     .filter((contract) => contract.name === "BoostedFees")

@@ -3,43 +3,15 @@ import { z } from "zod";
 import type { Env } from "./core.js";
 import { walletBatchEthCallInputSchema } from "./wallet-compatibility.js";
 
-/**
- * How long a stored artifact body stays fetchable. This is a storage detail,
- * deliberately absent from the reference envelope: a 404 already tells a
- * wallet the body is gone, and a plan's semantic validity is expressed by the
- * deadline inside its calldata and enforced by the wallet's simulation
- * against current chain state — never by comparing wall clocks.
- *
- * Bodies live in R2, which is strongly consistent: a wallet on another edge
- * can fetch a reference the instant its producing tool call returns, with no
- * propagation window in which a fresh reference 404s. Expiry is enforced at
- * read time against the object's upload timestamp (one server's clock on
- * both sides, so no cross-clock coupling); configure a bucket lifecycle rule
- * to physically delete aged objects.
- */
 export const ARTIFACT_TTL_SECONDS = 3600;
 
 export type ArtifactType = "execution_plan" | "read_calls" | "token_list" | "typed_data_signature_request";
 
-/**
- * The compact handoff an agent relays instead of a wallet payload's body.
- *
- * The agent is the transport between this server and an unrelated wallet
- * server, and every byte of a tool result it must re-emit costs model output.
- * A body — calldata, decode plans, failure-policy prose — is consumed only by
- * the wallet, so it is stored here and travels as this envelope, which the
- * agent passes to the wallet VERBATIM as one `reference` argument. The wallet
- * fetches the body itself and recomputes `integrity.value` over the fetched
- * bytes, refusing a mismatch, so the two servers verify integrity without
- * sharing any state. Nothing in the envelope is vendor-specific: any producer
- * can emit it and any wallet can consume it.
- */
 export interface ArtifactReference {
   kind: "artifact_reference";
   artifact_type: ArtifactType;
   url: string;
   integrity: { algorithm: "keccak256"; value: `0x${string}` };
-  /** Exact stored byte length; consumers reject a body of any other size. */
   bytes: number;
   instruction: string;
 }
@@ -73,28 +45,9 @@ interface StorableReadCalls {
   calls: unknown[];
 }
 
-/**
- * A curated token list, stored in the shape a wallet's token-list parser
- * reads and nothing more.
- *
- * Only the five fields a wallet acts on are kept — the logo URLs, prices,
- * supplies, and per-chain bridge maps that make the canonical list 483 KB are
- * display data for this server's own callers, not for a wallet. Stripping
- * them makes the stored body roughly a quarter the size and makes the
- * integrity digest cover exactly the claim being made: these addresses are
- * called these things and scale by these decimals.
- */
 export interface StorableTokenList {
   name: string;
   tokens: {
-    /**
-     * Decimal, as a string. The token-list convention writes this as a JSON
-     * number, but the canonical list carries Starknet rows whose chain ID is
-     * 23448594291968334 — larger than `Number.MAX_SAFE_INTEGER`, so a number
-     * here would silently store a different chain than the one the API
-     * reported. A consumer that wants an integer can parse one; a consumer
-     * handed a rounded number has no way to notice.
-     */
     chain_id: string;
     address: string;
     symbol: string;
@@ -103,14 +56,6 @@ export interface StorableTokenList {
   }[];
 }
 
-/**
- * Shared tail of every envelope instruction. The envelope is a value, not
- * text: the only reliable way to hand it to a wallet is to keep the producer
- * result in a variable and pass the property through, in the same code block
- * when the harness runs tool calls as code. Retyping url, bytes or integrity
- * by hand is the observed failure of smaller models — a one-character slip
- * fails the wallet's parse, length or digest check, or 404s.
- */
 function passthroughRule(property: string): string {
   return `Hold the producer result in a variable and pass this object through from it (const ref = result.${property}; then reference: ref) in the same code block; never retype url, bytes or integrity by hand, since a hand-copied envelope fails the wallet's parse, length or digest check, or 404s.`;
 }
@@ -140,12 +85,8 @@ export async function storeArtifact(
     url: `${origin}/artifact/${id}`,
     integrity: {
       algorithm: "keccak256",
-      // Digest of the exact bytes stored and served; the wallet recomputes
-      // this over what it fetched and refuses a mismatch.
       value: keccak256(stringToHex(body)),
     },
-    // UTF-8 byte length, matching the Content-Length header the /artifact
-    // route serves; string length would diverge on any non-ASCII byte.
     bytes: new TextEncoder().encode(body).length,
     instruction: INSTRUCTIONS[artifact.artifactType],
   };
@@ -199,8 +140,6 @@ export async function referenceWalletArtifacts(
     }
     if (node === null || typeof node !== "object") return node;
     const record = node as Record<string, unknown>;
-    // One result can carry several bodies (per-chain read bundles, quote
-    // candidates); store them concurrently rather than serializing KV puts.
     const rewritten = await Promise.all(
       Object.entries(record).map(
         async ([key, entry]): Promise<[string, unknown]> => {

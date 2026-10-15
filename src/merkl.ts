@@ -88,7 +88,6 @@ const ZERO_ADDRESS = getAddress("0x0000000000000000000000000000000000000000");
 const LEAF_PARAMETERS = parseAbiParameters("address, address, uint256");
 const NODE_PARAMETERS = parseAbiParameters("bytes32, bytes32");
 
-/** Merkl's live trees are ~16 levels deep; this bounds a malformed input. */
 const MAX_PROOF_DEPTH = 64;
 const MAX_REWARDS_PER_CLAIM = 32;
 
@@ -150,20 +149,6 @@ export function getMerklDeployment(input: { chainId?: string } = {}) {
   };
 }
 
-/**
- * Build one `claim()` covering every supplied reward, and the reads that prove
- * it can succeed.
- *
- * The agent fetches `(token, amount, proofs)` from Merkl and this server never
- * sees the API. What makes that safe is not trust: the proof is folded here
- * into the root it implies, and the wallet reads the root the chain is
- * actually enforcing. Merkl is believed by neither side, and a proof for a
- * rotated or still-disputed tree fails simulation before anything is signed.
- *
- * No jurisdiction gate is applied, matching `prepare_rewards_claim` and the
- * server's stated rule that collecting what a user already earned is never
- * restricted.
- */
 export function prepareMerklClaim(input: {
   chainId: string;
   sender: string;

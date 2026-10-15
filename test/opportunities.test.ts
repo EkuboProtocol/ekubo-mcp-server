@@ -318,10 +318,6 @@ describe("liquidity opportunities", () => {
     expect(result.opportunities).toHaveLength(1);
   });
 
-  // The two branches above were each asserted against the producer and never
-  // against the contract the server actually validates results with, so a
-  // schema that accepted only the requiring branch looked correct in tests
-  // while rejecting every completed ranking at the wire.
   it("validates both branches against the declared output schema", async () => {
     const schema = toolOutputSchema("get_liquidity_opportunities");
     if (schema === undefined) {

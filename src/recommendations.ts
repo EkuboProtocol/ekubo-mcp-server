@@ -26,15 +26,6 @@ const RECOMMENDATION_EXECUTE_URL =
   "https://api.dune.com/api/v1/query/8187907/execute";
 const MAX_RECOMMENDATION_POOLS = 100;
 const MAX_EXECUTABLE_RECOMMENDATION_TARGETS = 25;
-/// The upstream query is scheduled at most once a day, so demanding a snapshot
-/// younger than the refresh interval makes the tool unavailable for part of
-/// every day: a snapshot just over a day old triggers a refresh that Dune
-/// declines to run, and the result is discarded even though it is perfectly
-/// serviceable. Allocation weights move slowly, so a week-old snapshot is worth
-/// far more than no recommendation at all.
-///
-/// Two thresholds instead of one: past REFRESH_AFTER a refresh is attempted,
-/// and only past MAX_AGE is a snapshot refused.
 const RECOMMENDATION_REFRESH_AFTER_MS = 24 * 60 * 60 * 1_000;
 const MAX_RECOMMENDATION_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
 const REFRESH_MAX_WAIT_MS = 20_000;
@@ -88,18 +79,12 @@ interface RecommendationRuntime {
 interface ResolvedPool {
   poolKeyId: string;
   poolId: Hex;
-  /**
-   * Null for a stableswap pool, which has amplification and a center tick
-   * where a concentrated-liquidity pool has tick spacing. Only pools that have
-   * one are ever selected, so the emitted value is always a number.
-   */
   tickSpacing: number | null;
 }
 
 interface ResolvedRecommendation {
   row: RecommendationRow;
   pool: ResolvedPool | null;
-  /** The initialized pool a low-efficiency prune withheld from execution. */
   prunedPool?: ResolvedPool;
   unavailableReason:
     | "pool_not_initialized"
@@ -227,10 +212,7 @@ export async function getStonxAllocationRecommendation(
       0,
       Math.floor(snapshotAgeMs(snapshot.snapshotAt, runtime) / 1_000),
     ),
-    /// Past this the snapshot is refused outright.
     snapshot_max_age_seconds: MAX_RECOMMENDATION_AGE_MS / 1_000,
-    /// Past this a refresh is attempted, but the snapshot stays serviceable
-    /// until it reaches snapshot_max_age_seconds.
     snapshot_refresh_after_seconds: RECOMMENDATION_REFRESH_AFTER_MS / 1_000,
     chain_id: intent.chainId,
     ve_token: getAddress(intent.veToken),
@@ -582,9 +564,6 @@ function voterCandidate(
   ];
 }
 
-/// A pool the voter provides liquidity to but the provider plan does not
-/// recommend is voted at its current indexed swap fee, and only when it is an
-/// initialized concentrated-liquidity Ve33 pool.
 function ownPoolSwapFee(
   pool: { poolKeyId: string; lpShare: number },
   efficiency: EfficiencyContext,
@@ -613,8 +592,6 @@ async function fetchRecommendationSnapshot(
   url.searchParams.set("limit", MAX_RECOMMENDATION_POOLS.toString());
   const payload = await fetchProviderJson(env, fetcher, url);
 
-  // What Dune already has, kept as the fallback for a refresh that does not
-  // land. Parsed eagerly so a malformed snapshot still surfaces its own error.
   let existing: RecommendationSnapshot | null = null;
   if (payload.state === "QUERY_STATE_COMPLETED") {
     existing = parseRecommendationSnapshot(payload, false);
@@ -638,11 +615,6 @@ async function fetchRecommendationSnapshot(
   );
 }
 
-/// Wait for a refresh, but treat it as an improvement rather than a
-/// precondition: a snapshot still inside the usable window answers the request
-/// when the refresh times out, errors, or comes back no newer than what we
-/// already had. Without a usable fallback the refresh's own failure stands, so
-/// a genuinely broken upstream is still reported as itself.
 async function refreshOrFallback(
   env: Env,
   fetcher: typeof fetch,
@@ -735,8 +707,6 @@ async function waitForRefreshedSnapshot(
   while (true) {
     const payload = await fetchProviderJson(env, fetcher, url);
     if (payload.state === "QUERY_STATE_COMPLETED") {
-      // Age is judged by the caller, which knows whether an older snapshot is
-      // standing by.
       return parseRecommendationSnapshot(payload, true);
     }
     if (!isActiveExecution(payload) || now() >= deadline) {
@@ -786,12 +756,10 @@ function snapshotAgeMs(
   return (runtime.now ?? Date.now)() - submittedAt;
 }
 
-/// Young enough that no refresh is worth attempting.
 function isCurrent(snapshotAt: string, runtime: RecommendationRuntime): boolean {
   return snapshotAgeMs(snapshotAt, runtime) <= RECOMMENDATION_REFRESH_AFTER_MS;
 }
 
-/// Young enough to answer with, refreshed or not.
 function isUsable(snapshotAt: string, runtime: RecommendationRuntime): boolean {
   return snapshotAgeMs(snapshotAt, runtime) <= MAX_RECOMMENDATION_AGE_MS;
 }
@@ -901,13 +869,6 @@ function resolveRecommendation(
       "Ve33 pool directory contains a duplicate matching pool",
     );
   }
-  // A recommendation names a pair and a swap fee tier, which is a statement
-  // about a concentrated-liquidity market; a stableswap pool priced by
-  // amplification is not the thing being recommended, and voting a fee-tier
-  // target onto one would misread the model. Such a pool is excluded here
-  // rather than at the parsing boundary, so that finding one beside a usable
-  // pool disqualifies neither the pair nor every other recommendation in the
-  // response.
   const concentrated = matching.filter(
     ({ tickSpacing }) => tickSpacing !== null,
   );

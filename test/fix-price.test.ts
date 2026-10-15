@@ -110,7 +110,6 @@ async function target(fixture: Fixture) {
   };
 }
 
-/** A compact current price on the requested side of the target. */
 async function currentFor(
   fixture: Fixture,
   direction: "increase" | "decrease",
@@ -153,10 +152,6 @@ function signedInt128(value: Hex) {
   return raw >= 1n << 127n ? raw - (1n << 128n) : raw;
 }
 
-/**
- * Decodes the router's packed calldata for a single-path, single core-hop
- * route with a deadline and no recipient, as YulRouter.yul reads it.
- */
 function decodeFixPriceRoute(data: Hex) {
   const flags = Number(hexToBigInt(sliceHex(data, 0, 1)));
   expect(flags).toBe(2);
@@ -218,7 +213,6 @@ describe("prepare_fix_pool_price quote acceptance", () => {
           partial_fill_stops_at_target: true,
         },
       });
-      // No approval: nothing is paid, and approve(0) would erase an allowance.
       expect(planStepKinds(result)).toEqual(["execution"]);
       const [transaction] = planTransactions(result);
       expect(getAddress(transaction.to)).toBe(YUL_ROUTER_ADDRESS);
@@ -228,11 +222,8 @@ describe("prepare_fix_pool_price quote acceptance", () => {
       expect(route).toEqual({
         specifiedToken: increasing ? fixture.token0 : fixture.token1,
         calculatedToken: increasing ? fixture.token1 : fixture.token0,
-        // Zero threshold: the router reverts unless the route takes no input.
         threshold: 0n,
         deadline: Math.floor(preparedAt / 1_000) + 1_800,
-        // Still the target-price route, not a no-op: the exact-out sentinel
-        // with a partial single hop limited at the target price.
         specifiedAmount: TARGET_PRICE_SENTINEL,
         hopCount: 1,
         token0: fixture.token0,

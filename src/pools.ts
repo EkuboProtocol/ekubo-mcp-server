@@ -196,11 +196,6 @@ export async function getPositionsByOwner(
       buildPositionStateReadPlan(position, owner),
     ]),
   );
-  // One stored read bundle per chain: every readable position on a chain is
-  // read by its own Multicall3 aggregate call inside that chain's bundle,
-  // chunked at the wallet boundary's 128-call maximum. Each position row
-  // links to its aggregate by state_call_id; the read machinery itself never
-  // travels through the agent.
   const callsByChain = new Map<
     string,
     { id: string; to: string; data: string; decode?: Record<string, unknown> }[]

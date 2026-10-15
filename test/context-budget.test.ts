@@ -6,11 +6,6 @@ import { catalogSummary, compactSchema, labelPatterns } from "../src/mcp-catalog
 import { PROTOCOLS, protocolMcpPath } from "../src/protocols.js";
 import { fakeArtifactStore } from "./fake-r2.js";
 
-// Everything a client loads at session start — the initialize instructions,
-// tools/list and resources/list — is paid for on every turn of every agent
-// session. These budgets are in JSON characters (roughly 3.5–4 per token on
-// current tokenizers). Raise one only with a reason the extra tokens buy.
-// MCP_CONTEXT_DUMP=<dir> writes each endpoint's payloads for token counting.
 
 const env = {
   ARTIFACT_STORE: fakeArtifactStore(),
@@ -49,30 +44,12 @@ async function rpc(path: string, method: string, params: Record<string, unknown>
 }
 
 type Budget = {
-  /** initialize instructions */
   instructions: number;
-  /** the whole tools/list array */
   tools: number;
-  /** the largest single tool entry */
   tool: number;
-  /** the resources/list result */
   resources: number;
 };
 
-// Oct 2026 measurements, o200k tokens (instructions + tools/list +
-// resources/list): /mcp 72,327 -> 40,505 (EKU-971) -> 31,494 (EKU-991)
-// -> 31,741 (EKU-999); /mcp/ekubo 44,788 -> 23,963 -> 17,440 -> 17,702, of
-// which tools/list 16,388 and the largest tool, get_quotes_with_plans, 1,127.
-// EKU-999 spends ~270 tokens on small-model failures from EKU-993: the
-// slippage_bps unit, the ve33 chain_id source and no-restating references in
-// chat. Every Ekubo-scoped endpoint's
-// instructions carry the CLO jurisdiction notice verbatim, about 480 of
-// those tokens, and get_quotes_with_plans carries it again in its
-// description. Every non-Safe instructions budget was raised by 550 characters
-// for the scope sentence (EKU-988): without it, agents read the handoff rules
-// as a ban on the user's own cast/sncast work outside this server. EKU-994
-// split /mcp/ekubo into core (34 tools) and /mcp/ekubo-advanced (17 operator
-// tools); /mcp is unchanged.
 const ENDPOINTS: Record<string, Budget> = {
   "/mcp": { instructions: 7_950, tools: 133_000, tool: 5_200, resources: 4_200 },
   "/mcp/ekubo": { instructions: 5_250, tools: 54_000, tool: 5_200, resources: 1_900 },
@@ -87,11 +64,6 @@ const ENDPOINTS: Record<string, Budget> = {
   "/mcp/safe": { instructions: 1_400, tools: 11_000, tool: 2_450, resources: 300 },
 };
 
-// Facets of /mcp (EKU-1123) state the shared paragraphs once instead of once
-// per connection. o200k on 0.50.0: ekubo+ekubo-advanced 17,818 vs 19,026 as two
-// connections; ekubo+uniswap 17,941 vs 18,914; the Cloud Wallet default (every
-// bundled protocol but ekubo-advanced) 27,624 vs 34,249 as eight. A facet
-// with ekubo but not ekubo-advanced names the advanced tools (CSO I-1).
 const FACETS: Record<string, Budget> = {
   "/mcp?protocols=ekubo+ekubo-advanced": { instructions: 5_500, tools: 74_000, tool: 5_200, resources: 1_900 },
   "/mcp?protocols=ekubo+uniswap": { instructions: 5_500, tools: 74_000, tool: 5_200, resources: 1_900 },
@@ -143,7 +115,6 @@ describe("MCP context budget", () => {
         description: "d",
       }),
     ).toEqual({ type: ["integer", "string", "null"], minimum: 0, pattern: "^1$", description: "d" });
-    // `const` is not type-specific, so these branches stay separate.
     const literal = { anyOf: [{ type: "string", const: "a" }, { type: "number" }] };
     expect(compactSchema(literal)).toEqual(literal);
     expect(labelPatterns({ type: "string", pattern: "^0x[0-9a-fA-F]{40}$" })).toEqual({

@@ -193,8 +193,6 @@ describe("Worker discovery", () => {
       metadata.operational_semantics.rate_limit_contract;
     expect(rateLimitContract.response).toContain("Retry-After");
     expect(rateLimitContract.response).toContain("-32029");
-    // Every scope the Worker can reject with is named, so a client can branch
-    // on data.scope without guessing what values exist.
     expect(Object.keys(rateLimitContract.scopes).sort()).toEqual([
       "burst",
       "metered_providers",
@@ -342,14 +340,11 @@ describe("Worker discovery", () => {
       catalog.tools.every((tool) => !tool.name.startsWith("ekubo_")),
     ).toBe(true);
     expect(JSON.stringify(catalog)).not.toMatch(/dune|8187907|api\.dune/i);
-    // The catalog revision lives once at the catalog level, not repeated in
-    // per-tool _meta.
     expect(catalog.catalog_revision).toBe(MCP_TOOL_CATALOG_REVISION);
     expect(catalog.tools.every((tool) => !("_meta" in tool))).toBe(true);
     const swapTool = catalog.tools.find(
       (tool) => tool.name === "get_quotes_with_plans",
     );
-    // The slippage rule is stated once, on the parameter it sizes.
     expect(swapTool?.description).toContain("Size slippage_bps by its own rule");
     expect(swapTool?.description).toContain("entire-balance swap");
     const slippage = (
@@ -359,9 +354,6 @@ describe("Worker discovery", () => {
     expect(slippage).toContain("Honor the user's preference");
     expect(slippage).toContain("near one gas fee");
     expect(slippage).toContain("Never use a generic 50 bps (0.5%) default");
-    // Every tool is informational and read-only: preparation tools return
-    // transaction plans but never submit them. Fresh plans and quotes remain
-    // non-idempotent because their returned references or values can change.
     const annotationFor = (name: string) =>
       catalog.tools.find((tool) => tool.name === name)?.annotations;
     expect(annotationFor("get_pool")).toMatchObject({
@@ -379,8 +371,6 @@ describe("Worker discovery", () => {
     expect(
       catalog.tools.every((tool) => tool.annotations?.readOnlyHint === true),
     ).toBe(true);
-    // A tool that reaches an indexer, a provider, or the artifact bucket is
-    // open-world; tools using only arguments or checked-in constants are not.
     for (const name of [
       "derive_pool_id",
       "decode_pool_config",
@@ -404,7 +394,6 @@ describe("Worker discovery", () => {
     ]) {
       expect(annotationFor(name)).toMatchObject({ openWorldHint: true });
     }
-    // Both handoff tools and informational envelopes declare output schemas.
     const outputSchemaFor = (name: string) =>
       catalog.tools.find((tool) => tool.name === name)?.outputSchema;
     expect(outputSchemaFor("prepare_wrap_unwrap")).toBeDefined();
@@ -493,8 +482,6 @@ describe("Worker discovery", () => {
     const listTokens = catalog.tools.find(
       (tool) => tool.name === "list_tokens",
     );
-    // Swapping is one tool. Nothing takes a source, because there is no
-    // second step left for a caller to have already chosen one for.
     expect(
       catalog.tools.map((tool) => tool.name).filter((name) =>
         ["get_quote", "prepare_swap"].includes(name),
@@ -504,9 +491,6 @@ describe("Worker discovery", () => {
       (swap?.inputSchema as { properties?: Record<string, unknown> })
         .properties,
     ).not.toHaveProperty("source");
-    // It does accept who will sign, so a quote arrives executable rather than
-    // costing a second provider round trip to become so. Every one of these is
-    // optional: an indicative comparison asks for none of them.
     for (const field of [
       "sender",
       "recipient",
@@ -549,8 +533,6 @@ describe("Worker discovery", () => {
         .properties,
     ).toHaveProperty("min_visibility_priority");
     expect(swap?.description).toContain("The whole non-browser swap path");
-    // The description has to keep the agent from spending a round trip
-    // re-quoting an option it was already handed a plan for.
     expect(swap?.description).toContain(
       "Do not call this tool again for an option it already prepared",
     );
@@ -675,9 +657,6 @@ describe("Worker discovery", () => {
     expect(instructions).toContain(
       "use this MCP before any browser or website tool",
     );
-    // The instructions route by capability, not by naming individual chains.
-    // The one exception is the counsel-approved jurisdiction notice, which
-    // names the restricted asset class rather than a chain.
     expect(instructions.replaceAll("Robinhood Stock Token", "")).not.toContain(
       "Robinhood",
     );
@@ -704,8 +683,6 @@ describe("Worker discovery", () => {
     }
     expect(instructions).not.toContain("receiving explicit user confirmation");
     expect(instructions).not.toMatch(/dune|8187907|api\.dune/i);
-    // Tool-family workflow moved out of the instructions into the description
-    // of the tool it governs, where it is read when that tool is chosen.
     const describes = (name: string) =>
       publicToolCatalog.find((tool) => tool.name === name)!.description;
     for (const [name, rule] of [
@@ -749,8 +726,6 @@ describe("Worker discovery", () => {
     expect(listResult.result.tools.map((tool) => tool.name)).toEqual(
       publicToolCatalog.map((tool) => tool.name),
     );
-    // The catalog revision is stated once in the server instructions and HTTP
-    // discovery instead of being repeated in every tool's _meta.
     expect(
       listResult.result.tools.every(
         (tool) => tool._meta?.["com.ekubo/catalogRevision"] === undefined,
@@ -1074,7 +1049,6 @@ describe("Worker discovery", () => {
     expect(splitResult.result.structuredContent.execution_plan_ready).toBe(
       true,
     );
-    // The plan body must not travel through the agent: only a reference does.
     expect(splitResult.result.structuredContent.execution_plan).toBeUndefined();
     const reference =
       splitResult.result.structuredContent.execution_plan_reference;
@@ -1087,8 +1061,6 @@ describe("Worker discovery", () => {
       /^https:\/\/mcp\.ekubo\.org\/artifact\/[0-9a-f-]{36}$/,
     );
 
-    // The wallet-side fetch: the stored body is served byte-for-byte, its
-    // keccak256 matches the reference, and it parses to the exact plan.
     const planFetch = await worker.fetch(
       new Request(reference.url),
       env,
@@ -1156,8 +1128,6 @@ describe("Worker discovery", () => {
     expect(cleared.execution_plan_reference.artifact_type).toBe(
       "execution_plan",
     );
-    // The owner/voteState bundle leaves as a reference too, so a hundred-stake
-    // clear does not drag two hundred decode plans through the agent.
     expect(cleared.onchain_validation.read_calls).toBeUndefined();
     expect(cleared.onchain_validation.read_calls_reference.artifact_type).toBe(
       "read_calls",

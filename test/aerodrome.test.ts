@@ -28,29 +28,22 @@ import { planStepKinds, planTargets, planTransactions } from "./plan-helpers.js"
 const sender = getAddress("0x4F2BF7469Bc38d1aE779b1F4affC588f35E60973");
 const aero = AERODROME_DEPLOYMENT.aero;
 const usdc = getAddress("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
-/** The gauge of the vAMM-tBTC/USDbC pool, from the Lp fixture below. */
 const gauge = getAddress("0x50f0249B824033Cf0AF0C8b9fe1c67c2842A34d5");
-/** The vAMM-tBTC/USDbC pool itself, which is that gauge's staking token. */
 const lpToken = getAddress("0x723AEf6543aecE026a15662Be4D3fb3424D502A9");
-const farFuture = "4102444800"; // 2100-01-01
+const farFuture = "4102444800";
 
-/** The details block a prepared action attaches, which is part of its contract. */
 // biome-ignore lint/suspicious/noExplicitAny: test helper over prepared results
 function details(result: any): Record<string, unknown> {
   return result.details;
 }
 
-/** Read a field off a phased result, which is a union with the plan shape. */
 // biome-ignore lint/suspicious/noExplicitAny: test helper over prepared results
 function phaseOf(result: any, key = "phase"): unknown {
   return result[key];
 }
 
-/** Pull one call's shipped decode plan out of a prepared read bundle. */
 // biome-ignore lint/suspicious/noExplicitAny: test helper over prepared results
 function readCall(result: any, id: string) {
-  // A phased result carries its reads under the query that resolves that
-  // phase, the way prepare_fix_pool_price does.
   const phaseQuery = Object.entries(result).find(
     ([key, value]) =>
       key.endsWith("_query") &&
@@ -70,13 +63,6 @@ function readCall(result: any, id: string) {
 }
 
 describe("deployment", () => {
-  /**
-   * These addresses were derived on chain from the Voter outward, not copied
-   * from the Velodrome SDKs — `sdk.js` ships Optimism addresses and would be a
-   * plausible-looking wrong answer for every one of them. Pinning them here
-   * makes a silent edit fail rather than quietly retarget every plan the
-   * server builds.
-   */
   it("pins the addresses the chain itself points at", () => {
     expect(AERODROME_DEPLOYMENT.voter).toBe(
       getAddress("0x16613524e02ad97eDfeF371bC883F2F5d6C480A5"),
@@ -98,11 +84,6 @@ describe("deployment", () => {
     );
   });
 
-  /**
-   * The current position manager reports the current Slipstream factory, and
-   * the legacy pair reports the legacy factory. Confusing the two is the exact
-   * mistake the SDK config invited, so the distinction is asserted.
-   */
   it("keeps the current and legacy concentrated deployments apart", () => {
     expect(AERODROME_DEPLOYMENT.concentrated.position_manager).toBe(
       getAddress("0xe1f8cd9AC4e4A65F54f38a5CdAfCA44f6dD68b53"),
@@ -141,17 +122,6 @@ describe("deployment", () => {
 });
 
 describe("sugar reads", () => {
-  /**
-   * The point of the whole integration: a read bundle whose decode plan is
-   * correct against what the deployed lens actually returns.
-   *
-   * The fixture is a real `all(1, 0, 0)` response, and it is decoded through
-   * the plan the server ships rather than through a copy — so a struct-layout
-   * mistake fails here instead of silently misreading every field. That is not
-   * hypothetical: `sdk.js`'s struct for this data has drifted from the
-   * deployed contract, and decoding with it yields well-formed nonsense rather
-   * than an error.
-   */
   it("decodes a real LpSugar response through the shipped decode plan", () => {
     const result = prepareAerodromeSugarReads({
       chainId: AERODROME_CHAIN_ID,
@@ -169,8 +139,6 @@ describe("sugar reads", () => {
     expect(decoded).toHaveLength(1);
     const pool = decoded[0];
     expect(pool.symbol).toBe("vAMM-tBTC/USDbC");
-    // -1 is the volatile marker, and it only lands here if every preceding
-    // field is the right width — an off-by-one layout shifts it to 0.
     expect(pool.type).toBe(-1);
     expect(pool.factory).toBe(AERODROME_DEPLOYMENT.pool_factory);
     expect(pool.emissions_token).toBe(AERODROME_DEPLOYMENT.aero);
@@ -180,12 +148,6 @@ describe("sugar reads", () => {
     expect(pool.token1).toBe(getAddress("0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA"));
   });
 
-  /**
-   * The escrow struct carries a trailing `managed_id` that the Sugar README's
-   * field list omits. veNFT #1 is deposited into managed NFT 10294, so a
-   * struct that stopped at `delegate_id` would drop a non-zero field that
-   * changes what the NFT can do.
-   */
   it("decodes a real VeSugar response including the trailing managed_id", () => {
     const result = prepareAerodromeSugarReads({
       chainId: AERODROME_CHAIN_ID,
@@ -237,7 +199,6 @@ describe("sugar reads", () => {
         limit: 501,
       }),
     ).toThrow(/maximum of 500/);
-    // MAX_POSITIONS is a different constant, and a positions page is capped by it.
     expect(() =>
       prepareAerodromeSugarReads({
         chainId: AERODROME_CHAIN_ID,
@@ -298,22 +259,10 @@ describe("liquidity", () => {
     expect(call.args?.[7]).toBe(sender);
   });
 
-  /**
-   * addLiquidity refunds whatever the pool ratio does not take, so an exact
-   * approval routinely goes partly unspent. Without the cleanup a stale
-   * allowance outlives the deposit that justified it.
-   */
   it("requires atomic batching so the cleanup cannot be dropped", () => {
     expect(deposit().execution_plan.required_capabilities).toContain("atomic_batch");
   });
 
-  /**
-   * A user who already LP'd through Aerodrome's own UI arrives with a standing
-   * router allowance, and for the tokens on the reset list an exact approval
-   * over a nonzero one reverts. The plan builder injects the approve(0) for
-   * every step marked `approval`, so this passes only while these approvals
-   * keep that kind — which is the thing worth pinning.
-   */
   it("inherits the approve(0) reset for a Base token that needs it", () => {
     const kta = getAddress("0xc0634090f2fe6c6d75e61be2b949464abb498973");
     const result = prepareAerodromeLiquidityDeposit({
@@ -336,7 +285,6 @@ describe("liquidity", () => {
       "allowance_cleanup",
       "allowance_cleanup",
     ]);
-    // The injected reset precedes KTA's real approval and zeroes it.
     expect(planTargets(result).slice(0, 2)).toEqual([kta, kta]);
     const reset = decodeFunctionData({
       abi: erc20Abi,
@@ -362,10 +310,6 @@ describe("liquidity", () => {
     ).toThrow(/amount_a_min exceeds amount_a_desired/);
   });
 
-  /**
-   * A deadline in the past is a transaction that cannot succeed, and the user
-   * still pays gas to find that out.
-   */
   it("rejects a deadline already in the past", () => {
     expect(() =>
       prepareAerodromeLiquidityDeposit({
@@ -401,8 +345,6 @@ describe("liquidity", () => {
       amountBMin: "1",
       deadline: farFuture,
     });
-    // Without the pool address there is no approval to build, so the tool
-    // returns the read rather than a plan that cannot execute.
     expect(phaseOf(phase1)).toBe("resolve_pool");
     expect(phaseOf(phase1, "execution_plan_ready")).toBe(false);
     expect(readCall(phase1, "quote_remove_liquidity").to).toBe(
@@ -474,9 +416,6 @@ describe("gauges", () => {
       gauge,
       amount: "1000",
     });
-    // Which token the gauge pulls is its own stakingToken(), never assumed, so
-    // without it the tool returns the read rather than a bare deposit that is
-    // a guaranteed allowance revert.
     expect(phaseOf(phase1)).toBe("resolve_staking_token");
     expect(phaseOf(phase1, "execution_plan_ready")).toBe(false);
     expect(readCall(phase1, "staking_token").to).toBe(gauge);
@@ -527,10 +466,6 @@ describe("gauges", () => {
     expect(readCall(result, "earned").to).toBe(gauge);
   });
 
-  /**
-   * getReward credits its argument, not the sender, so a claim can pay a
-   * different address than the one paying gas. The plan says so explicitly.
-   */
   it("names the account a claim actually pays", () => {
     const other = getAddress("0xBDE0c70BdC242577c52dFAD53389F82fd149EA5a");
     const result = prepareAerodromeGaugeClaim({
@@ -574,10 +509,6 @@ describe("locks", () => {
     expect(call.functionName).toBe("createLock");
   });
 
-  /**
-   * The escrow floors an unlock time to a week boundary, so anything under a
-   * week locks nothing at all — better refused here than signed.
-   */
   it("refuses a duration that would round down to nothing", () => {
     expect(() =>
       prepareAerodromeLock({
@@ -623,7 +554,6 @@ describe("locks", () => {
           data: planTransactions(result)[0].data,
         }).functionName,
       ).toBe(fn);
-      // Ownership and lock state are what decide whether these can succeed.
       expect(readCall(result, "owner").to).toBe(AERODROME_DEPLOYMENT.voting_escrow);
       expect(readCall(result, "locked").to).toBe(AERODROME_DEPLOYMENT.voting_escrow);
     }
@@ -658,10 +588,6 @@ describe("voting", () => {
     expect(planTargets(result)).toEqual([AERODROME_DEPLOYMENT.voter]);
   });
 
-  /**
-   * Voting twice in one epoch reverts, so the plan hands the wallet the read
-   * that detects it rather than letting the user discover it by paying gas.
-   */
   it("reads last_voted and every pool's gauge liveness", () => {
     const result = prepareAerodromeVote({
       chainId: AERODROME_CHAIN_ID,
@@ -675,11 +601,6 @@ describe("voting", () => {
     expect(details(result).one_vote_per_epoch).toContain("AlreadyVotedOrDeposited");
   });
 
-  /**
-   * The likely failure of a vote is a named epoch revert, not a balance. If
-   * the plan ships without the decode the user sees four opaque bytes for the
-   * one error they were most likely to hit.
-   */
   it("carries the revert decode that names the epoch errors", () => {
     const result = prepareAerodromeVote({
       chainId: AERODROME_CHAIN_ID,
@@ -776,10 +697,6 @@ describe("incentive claims", () => {
     );
   });
 
-  /**
-   * A claim naming no source is a transaction that succeeds and moves nothing,
-   * which is the failure mode this whole tool is shaped to avoid.
-   */
   it("refuses a claim with nothing to claim", () => {
     expect(() =>
       prepareAerodromeIncentiveClaim({ chainId: AERODROME_CHAIN_ID, sender, venftId: "42" }),

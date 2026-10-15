@@ -1,8 +1,3 @@
-/**
- * Map-backed stand-in for the ARTIFACT_STORE R2 bucket. Tests read `entries`
- * directly to assert what was stored, and may rewind an entry's `uploaded`
- * timestamp to exercise read-time expiry.
- */
 export function fakeArtifactStore() {
   const entries = new Map<string, { value: string; uploaded: Date }>();
   const bucket = {

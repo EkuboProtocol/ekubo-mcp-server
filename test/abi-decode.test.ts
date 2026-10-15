@@ -48,8 +48,6 @@ describe("local ABI decode plans", () => {
         },
       ],
     });
-    // The bundle is the exact stored body a wallet executes verbatim, so it
-    // must validate against the strict wallet boundary schema.
     expect(walletBatchEthCallInputSchema.safeParse(bundle).success).toBe(true);
   });
 

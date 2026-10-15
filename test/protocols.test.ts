@@ -102,9 +102,6 @@ async function serverInfo(path: string) {
 }
 
 describe("Protocol partition", () => {
-  // The one invariant that silently drifts: a tool added to the catalog but
-  // not to a protocol would be reachable on /mcp and on no per-protocol
-  // endpoint, and nothing else in the suite would notice.
   it("covers every catalog tool exactly once", () => {
     const assigned = PROTOCOLS.flatMap((protocol) => protocol.tools);
     expect(new Set(assigned).size).toBe(assigned.length);
@@ -178,8 +175,6 @@ describe("Per-protocol MCP endpoints", () => {
     expect((await serverInfo("/mcp")).serverInfo.name).toBe("ekubo");
     for (const protocol of PROTOCOLS) {
       const info = await serverInfo(protocolMcpPath(protocol.slug));
-      // Ekubo's own endpoints keep their slug; the satellites are suffixed,
-      // so a harness listing all of them names them apart.
       expect(info.serverInfo.name).toBe(
         protocol.slug.startsWith("ekubo") ? protocol.slug : `ekubo-${protocol.slug}`,
       );
@@ -190,14 +185,12 @@ describe("Per-protocol MCP endpoints", () => {
   it("offers a protocol only the skills it can read", async () => {
     for (const protocol of PROTOCOLS) {
       const uris = await listedResourceUris(protocolMcpPath(protocol.slug));
-      // The plan-handoff contract is the same on every endpoint.
       expect(uris).toContain("ekubo://docs/execution-plan");
       for (const skill of PROTOCOL_SKILLS) {
         expect(uris.includes(`ekubo://skills/${skill.name}`)).toBe(
           protocol.skill === skill.name,
         );
       }
-      // Ekubo's own documentation rides with Ekubo's own tools.
       expect(uris.includes("ekubo://docs/ve33-workflow")).toBe(
         protocol.slug === "ekubo",
       );
@@ -259,7 +252,6 @@ describe("Ekubo core and advanced endpoints", () => {
     }
     const advancedText = (await serverInfo("/mcp/ekubo-advanced")).instructions;
     expect(advancedText).toContain("are on https://mcp.ekubo.org/mcp/ekubo; connect it too");
-    // The jurisdiction notice covers TWAMM, auction, price-fix and oracle plans.
     expect(advancedText).toContain(QUOTE_JURISDICTION_NOTICE_V2);
     expect(advancedText).toContain("ekubo://docs/execution-plan");
     expect(advancedText).not.toContain("Routing:");
@@ -269,8 +261,6 @@ describe("Ekubo core and advanced endpoints", () => {
 });
 
 describe("Per-protocol server instructions", () => {
-  // Reviewed instruction fixture, updated explicitly when agent policy changes.
-  // Comparing only the generator with its own output would miss text drift.
   it("serves the reviewed all-protocol instructions", async () => {
     const expected = expectedInstructions
       .replace("{{CATALOG_REVISION}}", MCP_TOOL_CATALOG_REVISION)
@@ -282,7 +272,6 @@ describe("Per-protocol server instructions", () => {
   it("leaves /mcp's instructions unchanged by the split", async () => {
     const instructions = (await serverInfo("/mcp")).instructions;
     expect(instructions).toBe(serverInstructions(ALL_PROTOCOLS));
-    // Spot-check the paragraphs the pre-split endpoint is relied on for.
     expect(instructions).toContain(
       "use this MCP before any browser or website tool",
     );
@@ -300,12 +289,10 @@ describe("Per-protocol server instructions", () => {
     expect(sky).toContain("Sky discovery follows the same no-proxy boundary");
     expect(sky).toContain("get_sky_savings_deployment");
     expect(sky).toContain("ekubo://skills/use-sky");
-    // Nothing that tells the agent to reach for a tool this endpoint lacks.
     expect(sky).not.toContain("get_quotes_with_plans");
     expect(sky).not.toContain("prepare_lp_position_transfer");
     expect(sky).not.toContain("get_ve33_allocations");
     expect(sky).not.toContain("ekubo://skills/use-morpho");
-    // The universal handoff contract stays.
     expect(sky).toContain("ekubo://docs/execution-plan");
     expect(sky).toContain("read_calls_reference");
   });
@@ -390,8 +377,6 @@ describe("Per-protocol discovery documents", () => {
           toolCount: number;
         }[];
       };
-      // The canonical endpoint stays the one that serves everything: a client
-      // reading only this field must not land on a seventh of the catalog.
       expect(card.transport.endpoint).toBe("https://mcp.ekubo.org/mcp");
       const advertised = card["com.ekubo/protocolEndpoints"];
       expect(advertised.map((entry) => entry.protocol)).toEqual([
@@ -405,7 +390,6 @@ describe("Per-protocol discovery documents", () => {
           `https://mcp.ekubo.org${protocolMcpPath(protocol.slug)}`,
         );
         expect(entry?.toolCount).toBe(protocol.tools.length);
-        // Also in prose, for a reader or model consuming the card as text.
         expect(card.description).toContain(
           `https://mcp.ekubo.org${protocolMcpPath(protocol.slug)}`,
         );
@@ -567,7 +551,6 @@ describe("Protocol facets of /mcp", () => {
     );
     expect(instructions).not.toContain("are in ekubo-advanced");
     expect((await serverInfo(facet("ekubo+uniswap"))).instructions).toContain("TWAMM orders");
-    // The advanced-only workflow paragraph is covered by the core one here.
     expect(instructions).not.toContain("Pools are addressed by exact PoolKey");
   });
 

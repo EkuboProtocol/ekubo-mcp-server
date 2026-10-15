@@ -67,7 +67,6 @@ describe("MCP 2026-07-28", () => {
       expect(response.status).toBe(200);
       expect(body.id).toBe(7);
       expect(body.result).toMatchObject({ resultType: "complete", ttlMs: 300_000, cacheScope: "public" });
-      // Only result payloads are reusable, not request-specific RPC envelopes.
       expect(response.headers.get("cache-control")).toBe("no-store");
     }
     const full = (await rpc("tools/list")).body.result.tools;

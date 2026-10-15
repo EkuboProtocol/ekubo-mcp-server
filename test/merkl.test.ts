@@ -19,18 +19,6 @@ const sender = getAddress("0x4F2BF7469Bc38d1aE779b1F4affC588f35E60973");
 const wpol = getAddress("0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270");
 const comp = getAddress("0xc3d688B66703497DAA19211EEdff47f25384cdc3");
 
-/**
- * A real Polygon leaf. Merkl's rewards summary served this exact
- * (user, token, amount, proofs) tuple on 2026-08-18, and `root` is what the
- * Polygon Distributor's `getMerkleRoot()` returned at the same moment.
- *
- * This fixture is the point of the test file. The fold is the one thing here
- * that fails silently: `abi.encode` and the `abi.encodePacked` that
- * OpenZeppelin's MerkleProof and most tutorials use both produce a well-formed
- * 32-byte root, and only one of them is a root any Merkl tree ever contained.
- * A test written against our own implementation would pass under either, so
- * the expected value has to come from chain.
- */
 const POLYGON_LEAF = {
   amount: 7509629265870596190499n,
   proofs: [
@@ -55,11 +43,6 @@ const POLYGON_LEAF = {
   leafOnly: "0x51bb12976c39ee66f01463d506391879c0110f2943c70b3e0c09f517e4e364cc",
 } as const;
 
-/**
- * Two real Sonic leaves from the same tree, for the batch path. Different
- * tokens, different proof paths, one shared root — which is what makes a
- * multi-token `claim()` legal, and what the same-root check is protecting.
- */
 const SONIC_ROOT =
   "0x9ac5df8b56fa09cccfd55e165cc47bf6def0d34291e0498658de0632723b310c";
 const SONIC_LEAVES = [
@@ -141,7 +124,6 @@ describe("Merkl proof folding", () => {
   });
 
   it("hashes the leaf with abi.encode, not the packed encoding", () => {
-    // Pinned from the same live tuple: a switch to encodePacked changes this.
     expect(foldProof(sender, wpol, POLYGON_LEAF.amount, [])).toBe(
       POLYGON_LEAF.leafOnly,
     );
@@ -162,8 +144,6 @@ describe("Merkl proof folding", () => {
   it("sorts each pair, so a sibling hashes the same from either side", () => {
     const low = "0x1111111111111111111111111111111111111111111111111111111111111111";
     const high = "0x2222222222222222222222222222222222222222222222222222222222222222";
-    // Folding one leaf through both siblings in either order reaches the same
-    // node only because each step sorts; this pins that the sort exists.
     expect(foldProof(sender, wpol, 5n, [low])).toBe(foldProof(sender, wpol, 5n, [low]));
     expect(foldProof(sender, wpol, 5n, [low])).not.toBe(
       foldProof(sender, wpol, 5n, [high]),
@@ -235,8 +215,6 @@ describe("prepare_merkl_claim", () => {
       SONIC_LEAVES.map((leaf) => leaf.amount),
       SONIC_LEAVES.map((leaf) => leaf.proofs),
     ]);
-    // Both leaves belong to the same tree, so the batch has one root and the
-    // wallet has one value to compare against getMerkleRoot().
     expect((result.details as Record<string, unknown>).derived_merkle_root).toBe(
       SONIC_ROOT,
     );

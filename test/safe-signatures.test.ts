@@ -14,7 +14,6 @@ import { referenceWalletArtifacts, type ArtifactReference } from "../src/artifac
 import type { Env } from "../src/core.js";
 import { fakeArtifactStore } from "./fake-r2.js";
 
-// Public, deterministic test keys only. Ethers signs independently of the viem producer.
 const owner = new Wallet(`0x${"11".repeat(32)}`);
 const secondOwner = new Wallet(`0x${"22".repeat(32)}`);
 const stranger = new Wallet(`0x${"33".repeat(32)}`);
@@ -85,9 +84,6 @@ async function artifact(prepared: unknown) {
   return { reference, body: await stored!.text() };
 }
 
-// Minimal consumer of the producer's fixed Safe request shapes, not a general
-// untrusted-EIP-712 parser or network-fetch implementation. No producer digest
-// is used to sign: independently hash and sign only the verified stored body.
 async function signArtifact(reference: ArtifactReference, body: string, wallet = owner) {
   expect(reference.artifact_type).toBe("typed_data_signature_request");
   if (reference.bytes !== toUtf8Bytes(body).length || reference.integrity.value !== keccak256(toUtf8Bytes(body))) throw new Error("Artifact integrity mismatch");
@@ -113,7 +109,6 @@ async function assertAccepted(f: Fixture, digest: string, signature: string) {
 async function assertRejected(f: Fixture, digest: string, signature: string, reason = "GS026") {
   const result = await call(f.vm, f.safe, abi.encodeFunctionData("checkSignatures", [digest, "0x", signature]));
   expect(result.execResult.exceptionError).toBeDefined();
-  // Assert Safe's actual rejection, rather than accepting an unrelated EVM failure.
   expect(bytesToHex(result.execResult.returnValue)).toBe(concat(["0x08c379a0", AbiCoder.defaultAbiCoder().encode(["string"], [reason])]) as Hex);
 }
 
@@ -161,7 +156,6 @@ for (const contracts of versions) {
       expect((await f.vm.stateManager.getAccount(createAddressFromString(tx.to)))!.balance).toBe(123n);
       const nonce = await checkedCall(f.vm, f.safe, abi.encodeFunctionData("nonce"));
       expect(abi.decodeFunctionResult("nonce", nonce)[0]).toBe(1n);
-      // execTransaction hashes the current nonce, so the exact signed calldata cannot replay.
       expect((await call(f.vm, f.safe, data)).execResult.exceptionError).toBeDefined();
     });
 
@@ -171,7 +165,6 @@ for (const contracts of versions) {
       const wrongDigest = owner.signingKey.sign(prepared.request_digest).serialized;
       await assertRejected(f, prepared.signing_digest, wrongDigest);
       const personal = await owner.signMessage(hexToBytes(prepared.signing_digest));
-      // EIP-712 signatures use v=27/28. Safe's distinct eth_sign branch uses v>30.
       await assertRejected(f, prepared.signing_digest, personal);
       const other = await artifact(prepareSafeTransaction({ ...f, signer: stranger.address, transaction: transaction() }));
       const signed = await signArtifact(other.reference, other.body, stranger);
@@ -245,7 +238,6 @@ for (const contracts of versions) {
 
     it("matches Safe Wallet's text and application typed-data message preprocessing", async () => {
       const f = await fixture(contracts);
-      // Safe Wallet first hashes the application input, then wraps that digest in SafeMessage.
       const applicationDigests = [
         hashMessage("hello"),
         TypedDataEncoder.hash({ name: "Application", chainId: 1 }, { Message: [{ name: "text", type: "string" }] }, { text: "hello" }),

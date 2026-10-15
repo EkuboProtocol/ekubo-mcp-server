@@ -11,10 +11,6 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 
-/// Ekubo's Ve33 has no voting epochs: emissions stream continuously at the
-/// current rate and votes persist until changed. A week is the measurement
-/// epoch because it is the longest trailing fee window the pool directory
-/// reports.
 export const EFFICIENCY_EPOCH_SECONDS = 7 * 24 * 60 * 60;
 export const DEFAULT_MAX_EMISSION_SHARE_PER_FEE_SHARE = 3;
 const EPOCH_DAYS = 7;
@@ -62,9 +58,6 @@ export interface EfficiencyContext {
   maxEmissionSharePerFeeShare: number;
 }
 
-/// Prices every Ve33 pool's trailing and current fee flow and its emission
-/// share. A missing price source degrades the KPI to null rather than failing
-/// the recommendation, which stays usable without it.
 export async function buildEfficiencyContext(
   env: Env,
   chainId: string,
@@ -246,11 +239,6 @@ function scaledWeight(value: unknown): number {
   return 0;
 }
 
-/// Emissions-efficiency KPI for one pool: the emissions its votes direct over
-/// one epoch per dollar of voter fees it is still generating at the end of
-/// that epoch. Votes persist until changed, so the current vote share stands
-/// for the trailing epoch's emission share, and the latest day's fee run rate
-/// stands for what the pool retained one epoch later.
 export function emissionsEfficiency(
   context: EfficiencyContext,
   poolKeyId: string,
@@ -313,11 +301,8 @@ function ratio(numerator: number | null, denominator: number | null) {
 export interface VoterCandidate {
   poolKeyId: string;
   swapFee: string;
-  /// Voter fees the pool is expected to pay over the next epoch, in USD.
   feesUsd: number;
-  /// Vote weight already in the pool from everyone except this voter.
   othersWeight: number;
-  /// The voter's share of the pool's emission-earning liquidity.
   lpShare: number;
 }
 
@@ -384,7 +369,6 @@ export function optimalVoterAllocation(
   }));
 }
 
-/// The voter's expected fee and emission value for one epoch under a split.
 export function voterValue(
   candidates: VoterCandidate[],
   weights: Map<string, number>,
@@ -409,7 +393,6 @@ export function voterValue(
   };
 }
 
-/// Integer basis points over at most `limit` pools, summing to exactly 10,000.
 export function allocationBps(
   allocations: VoterAllocation[],
   limit: number,

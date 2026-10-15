@@ -14,14 +14,6 @@ import {
   preparedUiAction,
 } from "./ui-actions.js";
 
-/**
- * Aerodrome is Base-only, so unlike Merkl there is no chain set to verify —
- * there is one chain and a plan for any other is a mistake, not a gap.
- *
- * Velodrome is the same codebase on Optimism and the Superchain leaves under a
- * different brand and different addresses. Nothing here is shared with it: a
- * second deployment would be a sibling constant, not extra entries in this one.
- */
 export const AERODROME_CHAIN_ID = "8453";
 
 /**
@@ -37,32 +29,21 @@ export const AERODROME_CHAIN_ID = "8453";
 export const AERODROME_DEPLOYMENT = {
   chain_id: AERODROME_CHAIN_ID,
   network: "Base",
-  /** ve.token(), symbol() = "AERO". */
   aero: getAddress("0x940181a94A35A4569E4529A3CDfB74e38FD98631"),
-  /** Voter.ve(), symbol() = "veNFT". */
   voting_escrow: getAddress("0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4"),
-  /** Router.voter() and ve.voter() both return this. */
   voter: getAddress("0x16613524e02ad97eDfeF371bC883F2F5d6C480A5"),
   router: getAddress("0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43"),
-  /** Router.defaultFactory(); the v2 (stable/volatile) pool factory. */
   pool_factory: getAddress("0x420DD381b31aEf6683db6B902084cB0FFECe40Da"),
-  /** Voter.factoryRegistry() and Router.factoryRegistry() agree on this. */
   factory_registry: getAddress("0x5C3F18F06CC09CA1910767A34a20F771039E37C0"),
-  /** Voter.minter(). */
   minter: getAddress("0xeB018363F0a9Af8f91F06FEe6613a751b2A33FE5"),
-  /** RewardsDistributor; its ve() returns the escrow above. Pays the rebase. */
   rewards_distributor: getAddress("0x227f65131A261548b057215bB1D5Ab2997964C7d"),
-  /** Router.weth(). */
   weth: getAddress("0x4200000000000000000000000000000000000006"),
   concentrated: {
-    /** The current Slipstream factory, from position_manager.factory(). */
     factory: getAddress("0xf8f2eB4940CFE7d13603DDDD87f123820Fc061Ef"),
     position_manager: getAddress("0xe1f8cd9AC4e4A65F54f38a5CdAfCA44f6dD68b53"),
-    /** Still holds live positions; its own NFPM reports it as factory(). */
     legacy_factory: getAddress("0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A"),
     legacy_position_manager: getAddress("0x827922686190790b37229fd06084350E74485b72"),
   },
-  /** The Sugar lens contracts: Velodrome's onchain data pipeline. */
   sugar: {
     lp: getAddress("0x69dD9db6d8f8E7d83887A704f447b1a584b599A1"),
     rewards: getAddress("0x1b121EfDaF4ABb8785a315C51D29BCE0552A7678"),
@@ -71,16 +52,11 @@ export const AERODROME_DEPLOYMENT = {
   },
 } as const;
 
-/** LpSugar.MAX_LPS(), read on chain. A full page is a 560KB response. */
 const MAX_POOLS_PER_READ = 500;
-/** LpSugar.MAX_POSITIONS(), read on chain. */
 const MAX_POSITIONS_PER_READ = 200;
-/** Voter.vote() weights are relative, and the array is bounded here. */
 const MAX_VOTE_POOLS = 32;
-/** One claim call per bribe/fee contract, bounded so a plan stays reviewable. */
 const MAX_CLAIM_SOURCES = 32;
 const MAX_CLAIM_TOKENS_PER_SOURCE = 16;
-/** Aerodrome's epoch, and the escrow's maximum lock. */
 const WEEK_SECONDS = 604_800;
 const MAX_LOCK_SECONDS = 4 * 365 * 24 * 60 * 60;
 
@@ -138,13 +114,6 @@ export const AERODROME_ERC20_ABI = parseAbi([
   "function allowance(address owner,address spender) view returns (uint256)",
 ]);
 
-/**
- * The reverts these contracts raise by name, so a failed simulation says what
- * went wrong instead of showing four bytes. The ve(3,3) ones are the whole
- * reason this list exists: `AlreadyVotedOrDeposited` and `DistributeWindow`
- * are epoch-timing failures, and an agent that cannot read them will retry
- * inside the same window and fail identically.
- */
 export const AERODROME_ERRORS_ABI = parseAbi([
   "error AlreadyVotedOrDeposited()",
   "error DistributeWindow()",
@@ -163,7 +132,6 @@ export const AERODROME_ERRORS_ABI = parseAbi([
   "error SameEpoch()",
 ]);
 
-/** The struct LpSugar returns from `all`, verified by decoding a live pool. */
 const LP_STRUCT = {
   name: "",
   type: "tuple[]",
@@ -203,14 +171,6 @@ const LP_STRUCT = {
   ],
 } as const;
 
-/**
- * The struct LpSugar returns from `positions`.
- *
- * `locker` and `unlocks_at` are the two fields `sdk.js` omits. Decoding a live
- * response with its shape silently misreads every field after `sqrt_ratio_upper`,
- * which is why this is transcribed from the deployed contract's Vyper source
- * rather than from the JS bundle.
- */
 const POSITION_STRUCT = {
   name: "",
   type: "tuple[]",
@@ -236,7 +196,6 @@ const POSITION_STRUCT = {
   ],
 } as const;
 
-/** The veNFT struct, including the trailing `managed_id` the deployed lens returns. */
 const VENFT_COMPONENTS = [
   { name: "id", type: "uint256" },
   { name: "account", type: "address" },
@@ -457,18 +416,6 @@ export function getAerodromeDeployment(input: { chainId?: string } = {}) {
   };
 }
 
-/**
- * Build the read bundle for one Sugar dataset.
- *
- * This is the tool the rest of the integration hangs off. Aerodrome publishes
- * no data API — Sugar is the data pipeline, and it answers `eth_call` — so the
- * server's no-proxy boundary costs nothing here: handing the wallet a verified
- * bundle to run against its own RPC is simply how Sugar is meant to be used.
- *
- * `byIndex` and `byAddress` are deliberately not offered. Both revert on the
- * deployed Base lens, including for the canonical AERO/USDC pool, and `all`
- * with an offset covers the same ground.
- */
 export function prepareAerodromeSugarReads(input: {
   chainId: string;
   dataset: AerodromeSugarDataset;
@@ -705,9 +652,6 @@ export function prepareAerodromeLiquidityDeposit(input: {
       ),
       revertDecode: errorResultDecodePlan(AERODROME_ERRORS_ABI),
     },
-    // addLiquidity refunds the unused side, so an exact approval can be left
-    // partly unspent. Zeroing both is what keeps a stale allowance from
-    // outliving the deposit that justified it.
     approvalStep(input.chainId, tokenA, router, 0n, "allowance_cleanup"),
     approvalStep(input.chainId, tokenB, router, 0n, "allowance_cleanup"),
   ];
@@ -772,7 +716,6 @@ export function prepareAerodromeLiquidityDeposit(input: {
   });
 }
 
-/** Burn v2 LP tokens back into their underlying pair. */
 export function prepareAerodromeLiquidityWithdraw(input: {
   chainId: string;
   sender: string;
@@ -820,13 +763,6 @@ export function prepareAerodromeLiquidityWithdraw(input: {
       ],
     });
 
-  // removeLiquidity pulls the LP token, so the plan is only complete once it
-  // carries that approval. The LP token is the pool, and the pool address is
-  // whatever poolFor returns -- this server does not derive Aerodrome
-  // addresses, it reads them. So the first phase hands back the read that
-  // resolves it and the second phase builds approve + remove + cleanup as one
-  // atomic batch. Returning the bare removeLiquidity call, as this tool used
-  // to, is a guaranteed ERC20 allowance revert.
   if (input.lpToken === undefined) {
     return {
       schema_version: "1",
@@ -917,8 +853,6 @@ export function prepareAerodromeLiquidityWithdraw(input: {
         ),
         revertDecode: errorResultDecodePlan(AERODROME_ERRORS_ABI),
       },
-      // removeLiquidity consumes the whole approval, but an exact allowance
-      // that reverted leaves a standing grant to the router; zero it.
       approvalStep(input.chainId, lpToken, router, 0n, "allowance_cleanup"),
     ],
     atomicBatchRequired: true,
@@ -958,7 +892,6 @@ export function prepareAerodromeLiquidityWithdraw(input: {
   });
 }
 
-/** Stake v2 LP tokens into a pool's gauge to start earning AERO. */
 export function prepareAerodromeGaugeDeposit(input: {
   chainId: string;
   sender: string;
@@ -983,13 +916,6 @@ export function prepareAerodromeGaugeDeposit(input: {
       ],
     });
 
-  // The gauge pulls the LP token, so the plan is only complete once it carries
-  // that approval. Which token the gauge pulls is the gauge's own
-  // stakingToken(), not something this server can infer from the gauge
-  // address, so the first phase hands back the read that resolves it and the
-  // second builds approve + deposit + cleanup as one atomic batch. Returning
-  // the bare deposit call, as this tool used to, is a guaranteed allowance
-  // revert.
   if (input.lpToken === undefined) {
     return {
       schema_version: "1",
@@ -1093,7 +1019,6 @@ export function prepareAerodromeGaugeDeposit(input: {
   });
 }
 
-/** Unstake v2 LP tokens from a gauge. Emissions already earned stay claimable. */
 export function prepareAerodromeGaugeWithdraw(input: {
   chainId: string;
   sender: string;
@@ -1151,7 +1076,6 @@ export function prepareAerodromeGaugeWithdraw(input: {
   });
 }
 
-/** Claim accrued AERO emissions from a gauge. */
 export function prepareAerodromeGaugeClaim(input: {
   chainId: string;
   sender: string;
@@ -1216,14 +1140,6 @@ export type AerodromeLockAction =
   | "unlock_permanent"
   | "withdraw";
 
-/**
- * Build one veAERO lock action.
- *
- * These are one tool rather than six because they are one decision with a
- * mode: every branch targets the same escrow and the same balance, and the
- * validation reads that matter — is it locked, has it voted, is it permanent —
- * are identical across them.
- */
 export function prepareAerodromeLock(input: {
   chainId: string;
   sender: string;
@@ -1340,14 +1256,6 @@ export function prepareAerodromeLock(input: {
   });
 }
 
-/**
- * Cast or reset one veNFT's vote.
- *
- * Weights are proportional, so they are passed through as given rather than
- * normalized here: rescaling them would change the numbers a user reviews in
- * their wallet without changing the vote, which is a worse trade than leaving
- * them exactly as supplied.
- */
 export function prepareAerodromeVote(input: {
   chainId: string;
   sender: string;
@@ -1438,9 +1346,6 @@ export function prepareAerodromeVote(input: {
     chainId: input.chainId,
     sender,
     request,
-    // A vote is the one action whose likely failure is a named epoch-timing
-    // revert rather than a balance, so the plan carries the decode that turns
-    // AlreadyVotedOrDeposited into something an agent can act on.
     steps: [
       {
         kind: "execution",
@@ -1469,14 +1374,6 @@ export function prepareAerodromeVote(input: {
   });
 }
 
-/**
- * Claim a veNFT's voting rewards, its rebase, or both.
- *
- * The fee and bribe contract addresses are required inputs because there is no
- * honest way to derive them here: they are per-pool contracts that a Sugar
- * `rewards` read returns alongside the amounts. Guessing them would produce a
- * plan that silently claims nothing.
- */
 export function prepareAerodromeIncentiveClaim(input: {
   chainId: string;
   sender: string;

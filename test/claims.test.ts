@@ -28,8 +28,6 @@ const proof: Hex[] = [
   "0xe8de05c93dba2365dc7cbfe7ecfb084863a35c2e658cf274b399a7896f10bbda",
 ];
 
-// Verbatim shape of https://prod-api.ekubo.org/claims/<owner>: the drop owner and
-// the EKUBO token both arrive as unpadded hex integers, 35 and 39 nibbles wide.
 const UNPADDED_OWNER = "0xc771f6176268d5a9846e0956c3ef58597a1";
 const UNPADDED_TOKEN = "0x4c46e830bb56ce22735d5d8fc9cb90309317d0f";
 const PADDED_OWNER = "0x00000C771F6176268D5A9846E0956C3eF58597A1";
@@ -71,12 +69,9 @@ describe("getRewardsClaimsByOwner", () => {
     const [claim] = result.claims;
     expect(claim.key.owner).toBe(PADDED_OWNER);
     expect(claim.key.token).toBe(PADDED_TOKEN);
-    // Already 20 bytes upstream: normalization must only restore the checksum.
     expect(claim.drop_address).toBe("0xBe4C4C4e35DED081831A1f04e24E84dEFbA75fEC");
     expect(claim.claim.account).toBe(requester);
-    // The drop owner is the campaign funder, not the requesting wallet.
     expect(claim.requested_owner_matches_key).toBe(false);
-    // prepare_input is what downstream consumers hand back to us.
     expect(claim.prepare_input.key.owner).toBe(PADDED_OWNER);
     expect(claim.prepare_input.key.token).toBe(PADDED_TOKEN);
   });
@@ -99,8 +94,6 @@ describe("prepareRewardsClaim", () => {
   it("encodes unpadded addresses as their full 20-byte form", () => {
     const prepared = prepareRewardsClaim({
       chainId: "1",
-      // Same account as key.owner below, so the sender guard is satisfied while
-      // every address still arrives unpadded.
       sender: PADDED_OWNER,
       claims: [
         {

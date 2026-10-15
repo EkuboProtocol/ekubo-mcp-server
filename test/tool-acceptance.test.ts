@@ -1,9 +1,3 @@
-// Acceptance checks for user-facing tool behaviour, driven through the real
-// MCP boundary (worker.fetch -> tools/list, tools/call, /artifact/<id>) with
-// every upstream mocked. They hold the contract an agent relies on: a tool can
-// be chosen and filled from its published entry alone, results keep exact
-// values and opaque references, and every failure says what to do next.
-// AGENTS.md lists when a change must extend this file.
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { keccak256, stringToHex } from "viem";
 import worker from "../src/index.js";
@@ -115,8 +109,6 @@ describe("tool discoverability", () => {
       expect(tool.description.length).toBeGreaterThan(30);
       expect(tool.inputSchema.type).toBe("object");
       expect(tool.outputSchema?.type).toBe("object");
-      // Every required argument is published, so a call built from the
-      // schema alone is never rejected for a field the agent cannot see.
       for (const required of tool.inputSchema.required ?? []) {
         expect(tool.inputSchema.properties).toHaveProperty(required);
       }
@@ -134,7 +126,6 @@ describe("tool discoverability", () => {
           unstated.push(`${tool.name}.${name}`);
         }
         if (!/amount/.test(name) || property.type === "object" || property.type === "array") return;
-        // Units may be stated on the argument or once for the whole tool.
         const text = `${property.description ?? ""} ${tool.description}`;
         if (!/base units|wei|raw|cumulative amount|signed decimal integer/i.test(text)) {
           unstated.push(`${tool.name}.${name}`);
@@ -160,7 +151,6 @@ describe("read journey: owner positions", () => {
       stableswap_params: null,
     },
     bounds: { lower: -1024, upper: 1024 },
-    // Larger than 2^53: a number-typed round trip would change it.
     liquidity: "340282366920938463463374607431768211455",
     pool_state: { sqrt_ratio: "1", tick: 0, liquidity: "100" },
   });
@@ -191,7 +181,6 @@ describe("read journey: owner positions", () => {
     });
     expect(result.isError).toBeUndefined();
     const content = result.structuredContent!;
-    // The text block is the same JSON, for clients without structured output.
     expect(JSON.parse(result.content[0]!.text)).toEqual(content);
     expect(requested[0]).toBe(
       `https://api.test/positions/${OWNER}?chainId=4663&pageSize=1&page=2`,
@@ -266,8 +255,6 @@ describe("preparation journey: transfers handoff", () => {
     expect(result.isError).toBeUndefined();
     const content = result.structuredContent!;
 
-    // Preparation only: the result asks for wallet simulation and owner
-    // authorization and claims nothing was signed, sent or confirmed.
     expect(content).toMatchObject({
       action: "batch_transfers",
       execution_plan_ready: true,
@@ -293,7 +280,6 @@ describe("preparation journey: transfers handoff", () => {
     expect(new TextEncoder().encode(body).length).toBe(reference.bytes);
     const plan = JSON.parse(body);
     expect(plan).toMatchObject({ chain_id: "8453", sender: OWNER });
-    // uint256 max survives as an exact amount in the transfer calldata.
     expect(JSON.stringify(plan).toLowerCase()).toContain("f".repeat(64));
   });
 

@@ -43,9 +43,6 @@ const ORDERS_ABI = parseAbi([
   "function ownerOf(uint256 id) view returns (address owner)",
 ]);
 
-// Without these a TWAMM revert reaches the caller as a bare four-byte selector
-// and "execution reverted", which says nothing about which precondition failed.
-// From ITWAMM plus the sale-rate errors in math/twamm.sol.
 const TWAMM_ERRORS_ABI = parseAbi([
   "error TimeNumOrdersOverflow()",
   "error FullRangePoolOnly()",
@@ -57,11 +54,6 @@ const TWAMM_ERRORS_ABI = parseAbi([
   "error SaleRateDeltaOverflow()",
 ]);
 
-/**
- * The step size a TWAMM start or end time must be a multiple of, mirroring
- * `computeStepSize` in evm-contracts math/time.sol: 256 seconds near the
- * current time, then growing in powers of 16 as the gap widens.
- */
 function twammStepSize(currentTime: bigint, time: bigint): bigint {
   if (time <= currentTime + 4095n) {
     return 256n;
@@ -226,8 +218,6 @@ export function prepareTwammOrder(input: {
   // orders by owner. `mintAndIncreaseSellAmount` only exists in the salt-free
   // form, so a deterministic id costs one extra call.
   const salt = input.salt ?? defaultOrderSalt(sender, input.chainId, parsedOrders);
-  // The manager address is part of the derived id, so this has to be the same
-  // generation the transactions below are actually sent to.
   const ordersManager = ordersV3Address(input.chainId);
   const tokenId = deriveEvmTwammOrderTokenId(
     {
@@ -260,8 +250,6 @@ export function prepareTwammOrder(input: {
     ...parsedOrders.map((order) => order.amount),
   ];
   const nativeValue = sellToken === NATIVE_TOKEN ? totalAmount : 0n;
-  // One step per call so the wallet decodes each, with each order funding
-  // itself instead of one msg.value covering an opaque payload.
   const transactions = calls.map((call, index) =>
     preparedTransaction(
       input.chainId,
@@ -427,9 +415,6 @@ function prepareExistingOrderAction(
       );
     });
   }
-  // One step per call: an opaque `bytes[]` payload collapses the batch into a
-  // single allowlisted target the wallet cannot decode, and the atomic batch
-  // keeps the separate steps all-or-nothing.
   const transactions = calls.map((call) =>
     preparedTransaction(input.chainId, ordersAddress, call, 0n),
   );
@@ -540,14 +525,6 @@ function positiveUnsigned(value: string, bits: number, label: string) {
   return parsed;
 }
 
-/**
- * A salt for callers that did not choose one, derived from the request itself
- * so the same order always resolves to the same id. That makes a retry
- * detectable -- the second attempt derives an id that already exists rather
- * than silently minting a second order -- which is the property the salt-free
- * `mint()` cannot offer at all. Callers who want independent ids for identical
- * orders pass their own salt.
- */
 function defaultOrderSalt(
   sender: Address,
   chainId: string,

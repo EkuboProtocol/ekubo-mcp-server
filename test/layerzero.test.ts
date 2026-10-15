@@ -14,20 +14,12 @@ const tokenA = "0x1111111111111111111111111111111111111111";
 const tokenB = "0x2222222222222222222222222222222222222222";
 const sender = "0x3333333333333333333333333333333333333333";
 const recipient = "0x4444444444444444444444444444444444444444";
-// The documented hazard on this API is approving the multicall wrapper instead
-// of the delegate, so the two are distinct addresses in every fixture and the
-// assertions name which one the plan must reach.
 const transferDelegate = "0x5555555555555555555555555555555555555555";
 const lzMulticall = "0x6666666666666666666666666666666666666666";
 const acrossTarget = "0x7777777777777777777777777777777777777777";
 const expiresAt = "2026-08-19T12:00:00.000Z";
 const expiresAtSeconds = Math.floor(Date.parse(expiresAt) / 1000);
 
-/**
- * The chain catalog is cached per base URL for ten minutes, so a test that
- * wants a fresh catalog read asks for one under its own host rather than
- * depending on the order the tests happen to run in.
- */
 function envFor(host: string): Env {
   return {
     ARTIFACT_STORE: fakeArtifactStore(),
@@ -38,9 +30,6 @@ function envFor(host: string): Env {
     ACROSS_INTEGRATOR_ID: "0xbeef",
     ACROSS_API_URL: "https://across.test",
     LAYER_ZERO_API_KEY: "layerzero-test-key",
-    // These cases weigh LayerZero against Across specifically, so LI.FI is
-    // left unconfigured rather than mocked: an unconfigured provider is not
-    // attempted, which keeps the comparison here to the two under test.
     LI_FI_API_KEY: "",
     LAYER_ZERO_API_URL: `https://${host}/v1`,
     DUNE_API_KEY: "unused",
@@ -51,8 +40,6 @@ const chainsResponse = {
   chains: [
     { name: "Ethereum", chainKey: "ethereum", chainType: "EVM", chainId: 1 },
     { name: "Base", chainKey: "base", chainType: "EVM", chainId: 8453 },
-    // Non-EVM chains carry no EIP-155 id an intent could name, and no plan
-    // could execute one, so they must not enter the mapping.
     { name: "Solana", chainKey: "solana", chainType: "SOLANA" },
   ],
   pagination: {},
@@ -61,11 +48,9 @@ const chainsResponse = {
 const approveDelegate = encodeFunctionData({
   abi: erc20Abi,
   functionName: "approve",
-  // LayerZero issues an unlimited approval; the plan must not.
   args: [transferDelegate, maxUint256],
 });
 
-/** An OFT route beside an intent route that pays more but needs a signature. */
 const quotesResponse = {
   error: null,
   quotes: [
@@ -73,8 +58,6 @@ const quotesResponse = {
       id: "quote-aori",
       routeSteps: [{ type: "AORI", srcChainKey: "ethereum" }],
       srcAmount: "1000",
-      // Deliberately the best price in the set: the signature step, not the
-      // amount, is what has to disqualify it.
       dstAmount: "999",
       dstAmountMin: "995",
       duration: { estimated: "8000" },
@@ -126,7 +109,6 @@ const quotesResponse = {
   ],
 };
 
-/** Serves the chain catalog and the quote endpoint, recording each request. */
 function layerZeroFetcher(
   host: string,
   options: { quotes?: unknown; chains?: unknown } = {},
@@ -204,7 +186,6 @@ describe("LayerZero value transfers", () => {
       amount: "1000",
       options: {
         amountType: "EXACT_SRC_AMOUNT",
-        // 25 bps is a quarter of one percent.
         feeTolerance: { type: "PERCENT", amount: 0.25 },
       },
     });
@@ -217,7 +198,6 @@ describe("LayerZero value transfers", () => {
       amount_in: "1000",
       amount_out: "980",
       minimum_amount_out: "975",
-      // The API states milliseconds; the candidate carries seconds.
       expected_fill_time_seconds: 45,
       quote_expiry_timestamp: expiresAtSeconds,
     });
@@ -240,14 +220,10 @@ describe("LayerZero value transfers", () => {
     const layerZeroRequests = requests.filter((request) =>
       request.url.includes(host),
     );
-    // Both the chain catalog and the quote: a Worker sends no User-Agent
-    // unless one is set, and LayerZero answers a request without one with a
-    // 403 HTML page rather than JSON.
     expect(layerZeroRequests.length).toBeGreaterThan(1);
     for (const request of layerZeroRequests) {
       expect(request.userAgent).toMatch(/^ekubo-mcp\//);
     }
-    // The catalog read carries no credential, only the agent.
     const chains = layerZeroRequests.find((request) =>
       request.url.includes("/chains"),
     );
@@ -263,15 +239,12 @@ describe("LayerZero value transfers", () => {
       fetcher,
     );
 
-    // The approval targets the token, never the multicall wrapper.
     expect(planTargets(result)[0]).toBe(tokenA);
     const approval = decodeFunctionData({
       abi: erc20Abi,
       data: planTransactions(result)[0].data,
     });
     expect(approval.functionName).toBe("approve");
-    // The spender is the delegate LayerZero named, and the allowance is the
-    // exact transfer amount rather than the unlimited one it asked for.
     expect(approval.args).toEqual([transferDelegate, 1000n]);
     expect(planTransactions(result)[0].data).not.toBe(approveDelegate);
   });
@@ -285,8 +258,6 @@ describe("LayerZero value transfers", () => {
       fetcher,
     );
 
-    // quote-aori delivers 999 against quote-oft's 980, but an execution plan
-    // cannot perform its /submit-signature round trip.
     expect(result.quote.provider_quote_id).toBe("quote-oft");
     expect(result.quote.amount_out).toBe("980");
   });
@@ -348,8 +319,6 @@ describe("LayerZero value transfers", () => {
       fetcher,
     );
 
-    // Base only exists on the second page, so the destination could not have
-    // resolved without following the cursor.
     expect(result.source).toBe("layerzero");
     expect(requests.filter((url) => url.includes("/chains"))).toHaveLength(2);
   });
@@ -416,20 +385,13 @@ describe("LayerZero value transfers", () => {
       provider_quote_id: "quote-oft",
       amount_out: "980",
     });
-    // Both options arrive executable, so the comparison is between plans.
     expect(layerZero.execution?.execution_plan_ready).toBe(true);
     expect(result.quotes[0].execution?.execution_plan_ready).toBe(true);
 
-    // LayerZero charges a messaging fee in native token on top of the input.
-    // It is nowhere in amount_out, so a comparison on amount_out alone ranks
-    // it above options that are cheaper all in.
     expect(layerZero.normalized.native_fee).toBe("7");
     expect(layerZero.normalized.total_native_input).toBe("7");
     expect(result.quotes[0].normalized.native_fee).toBe("0");
 
-    // The output is an ERC-20 here, so the fee is in a different unit than
-    // amount_out and the basis cannot net it. Say that rather than claiming a
-    // complete comparison.
     expect(result.comparison.comparison_basis).toBe(
       "highest_calculated_amount_out",
     );
@@ -454,8 +416,6 @@ describe("LayerZero value transfers", () => {
       fetcher,
     );
 
-    // The Value Transfer API prices a source amount only, so this request has
-    // one provider — and the other's absence is stated rather than silent.
     expect(result.quotes.map((quote) => quote.source)).toEqual(["across"]);
     expect(result.unavailable_sources).toMatchObject([
       { source: "layerzero", code: "unsupported_quote_type" },
@@ -471,8 +431,6 @@ describe("LayerZero value transfers", () => {
       fetcher,
     );
 
-    // Not attempted at all, so a deployment without the key reports no failure
-    // and spends no round trip on one.
     expect(result.quotes.map((quote) => quote.source)).toEqual(["across"]);
     expect(result.unavailable_sources).toEqual([]);
     expect(requests.filter((request) => request.url.includes(host))).toEqual(
@@ -488,8 +446,6 @@ describe("LayerZero value transfers", () => {
     const quoteRequest = requests.find((request) =>
       request.url.includes("/quotes"),
     );
-    // Both wallet addresses are required by the API, so an indicative request
-    // borrows a placeholder rather than omitting them.
     expect(quoteRequest?.body).toMatchObject({
       srcWalletAddress: "0x0000000000000000000000000000000000000001",
       dstWalletAddress: "0x0000000000000000000000000000000000000001",

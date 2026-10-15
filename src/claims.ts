@@ -102,8 +102,6 @@ export async function getRewardsClaimsByOwner(
     claims,
     onchain_validation: {
       status: "not_executed",
-      // Two reads per claim, grouped into one stored bundle per chain. Each
-      // claim's is_claimed/is_available results are addressed by call id.
       validation_reads: (() => {
         const callsByChain = new Map<
           string,
@@ -145,7 +143,6 @@ export async function getRewardsClaimsByOwner(
           );
           callsByChain.set(item.chain_id, chainCalls);
         }
-        // The wallet boundary caps a bundle at 128 calls; chunk beyond it.
         const MAX_CALLS_PER_BUNDLE = 128;
         return [...callsByChain.entries()].flatMap(([chainId, chainCalls]) => {
           const chunks = [];

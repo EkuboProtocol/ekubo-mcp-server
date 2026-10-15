@@ -115,15 +115,6 @@ export interface ReadCall {
   decode?: Record<string, unknown>;
 }
 
-/**
- * Build the exact `wallet_batch_eth_call` argument object for one or more
- * prepared reads. The result travels under a `read_calls` property, which the
- * registration walker stores server-side and replaces with a
- * `read_calls_reference` envelope: the wallet fetches, digest-verifies, and
- * executes the stored calls itself, so neither the agent nor the wallet ever
- * assembles calldata or ABIs. Validated fail-closed against the wallet
- * boundary schema before it can ship.
- */
 export function readCallsBundle(input: {
   chainId: string;
   blockParameter?: ReadBlockParameter;
@@ -146,12 +137,6 @@ export function readCallsBundle(input: {
   return bundle;
 }
 
-/**
- * One read call whose result decodes as a single ABI function result,
- * mirroring what `localFunctionResultMetadata` used to describe — except the
- * call now ships inside the stored bundle instead of being reassembled by the
- * agent from an rpc_request/decode-plan pair.
- */
 export function functionReadCall(input: {
   id: string;
   to: string;

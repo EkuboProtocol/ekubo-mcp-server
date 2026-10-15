@@ -1,8 +1,6 @@
 import { readFile } from "node:fs/promises";
 
 const origin = (process.argv[2] ?? process.env.MCP_ORIGIN)?.replace(/\/+$/, "");
-// Read the expectations from the source being released, so a version bump
-// cannot leave this script asserting the previous release.
 const versionSource = await readFile(
   new URL("../src/version.ts", import.meta.url),
   "utf8",
@@ -28,9 +26,6 @@ assert(
   metadata.tool_catalog_revision === expectedCatalogRevision,
   "root tool catalog revision is stale",
 );
-// The limiter bindings are provisioned outside this repository, so a deploy
-// can silently come up with abuse protection missing. The published contract
-// is the one part of it a smoke run can see from outside.
 assert(
   ["burst", "sustained", "tool_units", "metered_providers"].every(
     (scope) =>
@@ -330,13 +325,6 @@ assert(
   "list_tokens requires arguments it should default",
 );
 
-// The per-protocol endpoints, checked against the deployment rather than
-// against this file's own list: the point of the check is that /mcp/<slug>
-// answers at all and serves exactly what the deployed root document says it
-// does. A deployment that routed every slug back to the full catalog would
-// pass a tools/list that only asserted "some tools came back".
-// The server card is a discovery surface of its own, and the one that was
-// left behind when the per-protocol endpoints landed everywhere else.
 const card = await getJson("/.well-known/mcp.json");
 assert(
   card.transport?.endpoint === `${origin}/mcp`,
