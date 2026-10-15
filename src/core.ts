@@ -49,6 +49,8 @@ export type Env = Omit<Cloudflare.Env, OptionalBindings> &
     LI_FI_API_URL?: string;
     ALLOWED_HOSTNAMES?: string;
     ALLOWED_ORIGINS?: string;
+    MOONPAY_PUBLISHABLE_KEY?: string;
+    MOONPAY_SECRET_KEY?: string;
   };
 
 export type QuoteSource = "ekubo" | "0x" | "across" | "layerzero" | "lifi";
