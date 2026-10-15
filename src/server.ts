@@ -7,6 +7,7 @@ import {
 import { uniswapTools, uniswapCatalog } from "./uniswap/tools.js";
 import { safeTools, safeCatalog } from "./safe.js";
 import { createMoonPayBuyLink, createMoonPayBuyLinkSchema } from "./moonpay.js";
+import { createCoinbaseOnrampLink, createCoinbaseOnrampLinkSchema } from "./coinbase-onramp.js";
 import { informationalOutputSchemas } from "./informational-output-schemas.js";
 import {
   McpServer,
@@ -2597,6 +2598,13 @@ const moonPayCatalog = [
       "Return a signed MoonPay sandbox checkout URL for buying ETH or USDC with a card into wallet_address. Show the URL to the user; MoonPay handles identity checks and payment on its own page. Sandbox only: test cards, Sepolia delivery, no real money.",
     inputSchema: z.toJSONSchema(createMoonPayBuyLinkSchema, { io: "input" }),
   },
+  {
+    name: "create_coinbase_onramp_link",
+    title: "Create a Coinbase Onramp sandbox checkout link",
+    description:
+      "Create a single-use Coinbase Onramp sandbox checkout URL for buying ETH or USDC on base, ethereum, arbitrum or optimism into wallet_address. Show the URL to the user; Coinbase handles identity checks and payment on its own page. Sandbox only: no real money moves.",
+    inputSchema: z.toJSONSchema(createCoinbaseOnrampLinkSchema, { io: "input" }),
+  },
 ];
 
 export const hostedToolCatalog = [...publicToolCatalog, ...safeCatalog, ...moonPayCatalog];
@@ -4170,6 +4178,9 @@ export function createEkuboServer(
   registerCatalogTool("create_moonpay_buy_link", createMoonPayBuyLinkSchema, (input) =>
     createMoonPayBuyLink(env, input),
   );
+  registerCatalogTool("create_coinbase_onramp_link", createCoinbaseOnrampLinkSchema, (input) =>
+    createCoinbaseOnrampLink(env, input),
+  );
 
   registerCatalogTool("get_lido_deployment", getLidoDeploymentSchema, () =>
     getLidoDeployment(),
@@ -4738,6 +4749,9 @@ export function serverInstructions(
   }
   if (protocols.size === 1 && protocols.has("moonpay")) {
     return `Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}\n\nMoonPay sandbox checkout only. create_moonpay_buy_link returns a signed checkout_url; show it to the user, who opens it in a browser and completes identity checks and payment with MoonPay. This server never sees card details, never holds funds and never signs transactions. Sandbox links accept only MoonPay test cards and deliver Sepolia testnet assets; no real payment is possible from this endpoint. Pass the user's own receiving address; do not guess one.\n\nEndpoint scope: ${origin}/mcp/moonpay only, excluded from ${origin}/mcp.`;
+  }
+  if (protocols.size === 1 && protocols.has("coinbase")) {
+    return `Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}\n\nCoinbase Onramp sandbox checkout only. create_coinbase_onramp_link returns a single-use checkout_url; show it to the user, who opens it in a browser and completes identity checks and payment with Coinbase. Create a new link if the user needs another attempt. This server never sees card details, never holds funds and never signs transactions. Every session is a Coinbase sandbox session; no real payment is possible from this endpoint. Pass the user's own receiving address; do not guess one.\n\nEndpoint scope: ${origin}/mcp/coinbase only, excluded from ${origin}/mcp.`;
   }
   return bundledServerInstructions(protocols, origin);
 }
