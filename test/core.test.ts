@@ -248,18 +248,11 @@ describe("tokenListEntries", () => {
     ]);
   });
 
-  /**
-   * The canonical list carries Starknet rows whose chain ID exceeds
-   * Number.MAX_SAFE_INTEGER. Writing one as a JSON number would store a
-   * different chain than the API reported, and nothing downstream could
-   * notice, so the entry has to stay a string end to end.
-   */
   it("does not round a chain ID past the safe integer range", () => {
     const starknet = { ...usdc, chain_id: "23448594291968334" };
     const [entry] = tokenListEntries([starknet]);
     expect(entry.chain_id).toBe("23448594291968334");
     expect(Number(entry.chain_id)).toBeGreaterThan(Number.MAX_SAFE_INTEGER);
-    // The value that would have been stored had this been a JSON number.
     expect(String(Number("23448594291968334"))).not.toBe("23448594291968334");
   });
 

@@ -188,9 +188,6 @@ export function prepareTransfers(input: {
     action: "batch_transfers",
     chainId: input.chainId,
     sender,
-    // The exact recipients, amounts, token contracts, and calldata live in the
-    // integrity-protected plan body. Repeating thousands of entries in the
-    // agent-visible result would defeat the artifact-reference handoff.
     request: {
       chain_id: input.chainId,
       sender,

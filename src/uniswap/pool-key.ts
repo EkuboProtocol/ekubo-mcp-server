@@ -26,7 +26,6 @@ export function verifyV4Pool(input: V4Key & { pool_id: string }) {
     );
 }
 
-/** PositionInfoLibrary: uint200 pool prefix, int24 upper/lower, uint8 flag. */
 export function decodeV4PositionInfo(info: string) {
   if (!/^(0|[1-9][0-9]*)$/.test(info))
     throw new Error("Position info must be a decimal uint256");

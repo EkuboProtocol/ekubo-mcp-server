@@ -103,9 +103,6 @@ describe("STONX allocation recommendations", () => {
   });
 
   it("ignores a stableswap pool sitting beside the pool it recommends", async () => {
-    // Two stableswap pools appeared in the live Ve33 directory beside the
-    // concentrated pools for the same pairs, and a required tick spacing made
-    // one unparseable row fail every recommendation in the response.
     const result = await getStonxAllocationRecommendation(
       env,
       { chainId, veToken, ve33 },
@@ -116,8 +113,6 @@ describe("STONX allocation recommendations", () => {
       ]),
     );
 
-    // Unchanged: the same pools are selected, by the same ids and weights, as
-    // when no stableswap pool was in the directory at all.
     expect(result.execution_ready).toBe(true);
     expect(result.targets).toEqual([
       { pool_key_id: "10", swap_fee: "123", weight_bps: 6_667 },
@@ -138,9 +133,6 @@ describe("STONX allocation recommendations", () => {
       ]),
     );
 
-    // Distinct from pool_not_initialized: the pool exists, but a swap-fee-tier
-    // recommendation is not a statement about a stableswap market, so it is
-    // named rather than silently treated as missing.
     expect(result.recommendations[0]).toMatchObject({
       execution_status: "unsupported_pool_configuration",
       executable_weight_bps: null,
@@ -274,7 +266,6 @@ describe("STONX allocation recommendations", () => {
       const url = new URL(input.toString());
       if (url.hostname !== "api.dune.com") return poolResponse(pools);
       if (url.pathname === "/api/v1/query/8187907/results") {
-        // Well past the one-week ceiling, so there is nothing to fall back to.
         return recommendationResponse("2026-06-01T12:00:00.000Z");
       }
       if (url.pathname === "/api/v1/query/8187907/execute") {
@@ -311,9 +302,6 @@ describe("STONX allocation recommendations", () => {
     expect(executeRequests).toBe(1);
   });
 
-  // The production outage this fixes: the upstream query runs at most once a
-  // day, so every snapshot spends part of each day past the refresh threshold
-  // with no newer run available. That must not take the tool offline.
   it("serves a day-old snapshot when the refresh never lands", async () => {
     const snapshotAt = "2026-08-01T12:00:00.000Z";
     let clock = Date.parse("2026-08-03T12:00:00.000Z");
@@ -351,12 +339,10 @@ describe("STONX allocation recommendations", () => {
       },
     );
 
-    // A refresh was attempted, and its failure did not discard the snapshot.
     expect(executeRequests).toBe(1);
     expect(result.snapshot_at).toBe(snapshotAt);
     expect(result.execution_ready).toBe(true);
     expect(result.target_total_weight_bps).toBe(10_000);
-    // The caller is told exactly how stale the answer is rather than guessing.
     expect(result.snapshot_age_seconds).toBeGreaterThanOrEqual(2 * 86_400);
     expect(result.snapshot_refreshed_on_request).toBe(false);
   });
@@ -406,12 +392,10 @@ describe("STONX emissions efficiency and voter-optimal allocation", () => {
     recommendationRow({ pair: "ETH/A", token1, symbol1: "A", weight: 5_000, cap: 10_000, priority: 1 }),
     recommendationRow({ pair: "ETH/B", token1: token2, symbol1: "B", weight: 5_000, cap: 10_000, priority: 2 }),
   ];
-  // A holds 80% of the votes but only 1/11 of the fees still being generated.
   const pricedPools = [
     pricedPoolRow("10", token1, "8000000000000000000", "1", "10"),
     pricedPoolRow("21", token2, "2000000000000000000", "10", "70"),
   ];
-  // About $1,000 of STONX per seven-day epoch at $1 and zero decimals.
   const emissionState = {
     currentTimestamp: "1",
     currentEmissionRate: String(Math.round((1_000 * 2 ** 32) / 604_800)),
@@ -686,8 +670,6 @@ function stableswapPoolRow(poolKeyId: string, asset1: `0x${string}`) {
     token0,
     token1: asset1,
     extension: ve33,
-    // A stableswap pool is priced by amplification around a center tick, so it
-    // reports no tick spacing at all. This is the exact shape prod-api returns.
     tick_spacing: null,
     pool_state: {},
   };

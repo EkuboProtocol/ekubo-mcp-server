@@ -69,8 +69,6 @@ describe("position interface parity", () => {
       position_state: 1,
       current_owner: 2,
     });
-    // Inner calls are described, not re-encoded: their bytes already exist
-    // inside the aggregate call.
     expect(plan.inner_calls.every((call) => !("call_data" in call))).toBe(true);
     const decodePlan = plan.state_call.decode as Record<string, unknown> & {
       results: Record<string, unknown>[];
@@ -257,8 +255,6 @@ describe("position interface parity", () => {
     if (result.current_state_query.available !== true) {
       throw new Error("expected an available current-state query");
     }
-    // getPosition keeps the aggregate call inline for historical APR replay
-    // alongside the stored read bundle.
     expect(result.current_state_query.aggregate_call?.to).toBeDefined();
     expect(result.current_state_query.read_calls.calls).toHaveLength(1);
     expect(

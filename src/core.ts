@@ -64,19 +64,10 @@ export interface QuoteIntent {
   amount: string;
 }
 
-/**
- * Everything needed to turn one quote into calldata, minus the choice of which
- * provider produced it. `prepareSwap` adds that choice; `getQuotesWithPlans` applies this
- * to every option it already fetched.
- */
 export interface SwapPreparationIntent extends QuoteIntent {
   slippageBps: number;
   recipient?: Address;
   sender: Address;
-  /**
-   * Minutes an Ekubo router route stays executable after preparation. Defaults
-   * to the interface's 30 minutes; see swap-deadline.ts.
-   */
   swapDeadlineMinutes?: number;
 }
 
@@ -84,31 +75,11 @@ export interface PrepareSwapIntent extends SwapPreparationIntent {
   source: QuoteSource;
 }
 
-/**
- * A quote request that may already know who will sign it.
- *
- * A quote is only worth what it can still execute for, and every second spent
- * between fetching one and broadcasting against it is a second the price can
- * move. Supplying a sender and a slippage tolerance up front lets discovery
- * return the calldata for each option it fetched, so the agent hands one
- * straight to the wallet instead of spending a second round trip — and a whole
- * agent turn — asking a provider to repeat what it just said.
- *
- * Both fields are optional together: without them this is the indicative
- * comparison it has always been, which is the right shape for "what would I
- * get" questions that are not going anywhere near a signature.
- */
 export interface QuoteDiscoveryIntent extends QuoteIntent {
   slippageBps?: number;
   recipient?: Address;
   sender?: Address;
   swapDeadlineMinutes?: number;
-  /**
-   * Echo each provider's untouched response back alongside the normalized
-   * amounts. Off by default: the raw blobs are the largest thing here and the
-   * smallest thing an agent needs, since every field a choice turns on is
-   * already normalized. They stay available for diagnosing a provider.
-   */
   includeRawQuotes?: boolean;
 }
 
@@ -155,7 +126,6 @@ interface QuoteCandidate {
   expectedFillTime: number | null;
 }
 
-/** One quote rendered as the exact transactions that would execute it. */
 interface PreparedCandidate {
   planId: Hex;
   recipient: Address;
@@ -222,11 +192,6 @@ interface AcrossTransaction {
   gas?: string;
 }
 
-/**
- * One entry of the LayerZero chain catalog. The Value Transfer API addresses
- * chains by a string key ("base", "arbitrum"), not by EIP-155 id, so every
- * request has to be translated through this list first.
- */
 interface LayerZeroChain {
   chainKey: string;
   chainType?: string;
@@ -283,12 +248,6 @@ interface LayerZeroStatusResponse {
   [key: string]: unknown;
 }
 
-/**
- * One LI.FI step: the whole of what a quote request returns, and the unit a
- * status lookup is later keyed by. Only the fields a comparison or an
- * execution plan turns on are named here; the rest of the step rides along
- * untouched in the candidate's raw quote.
- */
 interface LiFiQuote {
   id?: string;
   tool?: string;
@@ -303,7 +262,6 @@ interface LiFiQuote {
   [key: string]: unknown;
 }
 
-/** LI.FI states an ethers TransactionRequest, whose numbers are hex strings. */
 interface LiFiTransactionRequest {
   to?: Address;
   data?: Hex;
@@ -335,27 +293,11 @@ const ZERO_X_DEFAULT_URL = "https://api.0x.org";
 const ACROSS_DEFAULT_URL = "https://app.across.to/api";
 const ACROSS_PREVIEW_DEPOSITOR = "0x0000000000000000000000000000000000000001";
 const LAYERZERO_DEFAULT_URL = "https://transfer.layerzero-api.com/v1";
-// LayerZero uses the same sentinel as 0x for a chain's native currency.
 const LAYERZERO_NATIVE_TOKEN = ZERO_X_NATIVE_TOKEN;
 const LAYERZERO_PREVIEW_WALLET = "0x0000000000000000000000000000000000000001";
-/**
- * How long one fetch of the chain catalog is reused. The mapping from EIP-155
- * id to chain key changes only when LayerZero onboards a chain, so re-reading
- * it per quote would spend a round trip of the quote's own lifetime on data
- * that is effectively static.
- */
 const LAYERZERO_CHAINS_TTL_MS = 10 * 60 * 1000;
-/** Stops a malformed pagination cursor from looping the catalog walk forever. */
 const LAYERZERO_CHAINS_MAX_PAGES = 20;
 const LIFI_DEFAULT_URL = "https://li.quest/v1";
-/**
- * LI.FI requires a sending address on every quote, including one asked only
- * for a price, so an indicative request borrows the same placeholder depositor
- * the Across and LayerZero paths use. LI.FI names a chain's native currency by
- * the zero address, which is already how an intent names it, and addresses
- * chains by EIP-155 id, so unlike LayerZero this provider needs no token or
- * chain translation at all.
- */
 const LIFI_PREVIEW_SENDER = "0x0000000000000000000000000000000000000001";
 
 /**
@@ -389,11 +331,6 @@ export class ServiceError extends Error {
 
 type Fetcher = typeof fetch;
 
-/**
- * The stable code for a thrown error. AbortSignal.timeout() on an upstream
- * fetch is the only source of a TimeoutError, so it is named as an upstream
- * timeout rather than reported as a server defect.
- */
 export function failureCode(error: unknown): string {
   if (error instanceof ServiceError) return error.code;
   if (error instanceof Error && error.name === "TimeoutError") {
@@ -437,8 +374,6 @@ export async function listTokens(
       visibilityPriority(right) - visibilityPriority(left);
     if (priorityDifference !== 0) return priorityDifference;
 
-    // Exact symbol matches outrank prefix and suffix matches at equal
-    // visibility priority; with no search term every symbol is a non-match.
     if (normalizedQuery.length > 0) {
       const leftExact = tokenSymbol(left) === normalizedQuery ? 1 : 0;
       const rightExact = tokenSymbol(right) === normalizedQuery ? 1 : 0;
@@ -449,26 +384,8 @@ export async function listTokens(
   });
 }
 
-/**
- * The canonical list's name, recorded as the source of any suggestion made
- * from it. A wallet's owner reviews suggestions grouped under this, deciding
- * a whole list at once, so it has to name the real curator rather than the
- * tool that relayed it.
- */
 export const CANONICAL_TOKEN_LIST_NAME = "Ekubo canonical token list";
 
-/**
- * Reduce canonical token records to the five fields a wallet acts on.
- *
- * Everything else the API returns — logo URLs, prices, supplies, per-chain
- * bridge maps — is display data for this server's own callers and makes up
- * most of the 483 KB the full list weighs. A wallet needs only the claim
- * "this address is called this and scales by this", so that is all the
- * stored artifact says, and all its integrity digest commits to.
- *
- * Entries missing any of those fields are dropped: a wallet cannot name a
- * token it has no symbol for, and a half-entry is worse than an absent one.
- */
 export function tokenListEntries(
   tokens: Record<string, unknown>[],
 ): { chain_id: string; address: string; symbol: string; name: string; decimals: number }[] {
@@ -653,25 +570,11 @@ export async function getVe33Pools(
   };
 }
 
-/**
- * Every available quote, each already carrying the calldata that executes it.
- *
- * This is the whole swap path: one call fetches every provider's quote and
- * turns each one into an execution plan, so the agent picks an option and
- * hands its plan to a wallet without going back to any provider. The quote the
- * user compares is therefore the quote that executes, which a second
- * preparation round trip could never promise — it would fetch a different
- * quote after the user had already agreed to the first.
- */
 export async function getQuotesWithPlans(
   env: Env,
   intent: QuoteDiscoveryIntent,
   fetcher: Fetcher = fetch,
 ) {
-  // Naming the signer up front changes what the providers are asked for, not
-  // just what is done with the answer: 0x returns a firm quote with calldata
-  // instead of an indicative price, and Across estimates the real origin
-  // transaction for the real depositor.
   const preparation = swapPreparationIntent(intent);
   const result = await collectQuotes(
     env,
@@ -695,14 +598,6 @@ export async function getQuotesWithPlans(
   };
 }
 
-/**
- * The preparation intent hiding inside a discovery request, or null when this
- * request is only asking what a swap would be worth.
- *
- * Both fields are required together because neither is meaningful alone: a
- * sender without a slippage tolerance has no bound to write into the calldata,
- * and a tolerance without a sender has nothing to write calldata for.
- */
 function swapPreparationIntent(
   intent: QuoteDiscoveryIntent,
 ): SwapPreparationIntent | null {
@@ -777,14 +672,6 @@ export async function prepareSwap(
   };
 }
 
-/**
- * Turn one already-fetched quote into the exact bytes that would execute it.
- *
- * This is deliberately pure and free of network access. Every provider round
- * trip has already happened by the time it is called, so the same quote can be
- * made executable at the moment it is fetched — which is the only moment at
- * which it is fully worth what it says.
- */
 function prepareCandidate(
   intent: SwapPreparationIntent,
   selected: QuoteCandidate,
@@ -834,8 +721,6 @@ function prepareCandidate(
     maximumAmountIn = prepared.maximumAmountIn;
     blockNumber = prepared.block.number.toString();
     blockHash = prepared.block.hash;
-    // The router rejects the route after its deadline, so that is when this
-    // quote expires.
     quoteExpiryTimestamp = prepared.deadline;
     estimatedRouteGas = prepared.estimatedRouteGas;
     priceImpact = prepared.priceImpact;
@@ -924,7 +809,6 @@ function prepareCandidate(
   };
 }
 
-/** One quote's fetched amounts joined to the bounds its calldata enforces. */
 function preparedQuote(
   intent: SwapPreparationIntent,
   selected: QuoteCandidate,
@@ -936,8 +820,6 @@ function preparedQuote(
     amount_out: selected.amountOut.toString(),
     minimum_amount_out: prepared.minimumAmountOut?.toString() ?? null,
     maximum_amount_in: prepared.maximumAmountIn?.toString() ?? null,
-    // Repeated on the executable quote so the number a caller signs against
-    // carries the surcharge too, not just the comparison block.
     native_fee: nativeFee(intent, selected)?.toString() ?? null,
     total_native_input: selected.transaction?.value.toString() ?? null,
     slippage_bps: intent.slippageBps.toString(),
@@ -950,12 +832,6 @@ function preparedQuote(
   };
 }
 
-/**
- * How to execute any of these plans. Stated once for the whole response rather
- * than copied onto each option: it is the same text every time, and an agent
- * pays to read it once per copy. It is phrased against whatever the chosen
- * plan happens to contain so that it does not need to vary per option.
- */
 function clientExecution() {
   return {
     wallet:
@@ -1012,11 +888,7 @@ async function collectQuotes(
 
   const requestedSources: QuoteSource[] = isCrossChain
     ? source === "all"
-      ? // LayerZero and LI.FI join the cross-chain comparison only where each
-        // is configured. A deployment missing one of those keys keeps serving
-        // the routes it can rather than reporting a provider failure on every
-        // bridge request.
-        [
+      ? [
           "across",
           ...(env.LAYER_ZERO_API_KEY ? (["layerzero"] as const) : []),
           ...(env.LI_FI_API_KEY ? (["lifi"] as const) : []),
@@ -1085,11 +957,6 @@ function quoteComparison(
   const retryRecommended =
     result.candidates.length === 0 &&
     result.failures.some((failure) => failure.retry_recommended);
-  // A provider that charges a native surcharge on top of the input is not
-  // comparable to one that does not on amount_out alone. When the output is
-  // the native token the two are the same unit and the basis can net them;
-  // otherwise they are different units, so say so rather than advertising a
-  // basis that silently omits a real cost.
   const surcharged = result.candidates.filter((candidate) => {
     const fee = nativeFee(intent, candidate);
     return fee !== null && fee > 0n;
@@ -1105,9 +972,6 @@ function quoteComparison(
   return {
     comparison_basis: basis,
     compared_sources: result.candidates.map((candidate) => candidate.source),
-    // A comparison whose basis leaves out a cost some options charge and
-    // others do not is not a complete comparison, even when every provider
-    // answered.
     comparison_complete: result.failures.length === 0 && !basisOmitsFee,
     ...(surcharged.length > 0
       ? {
@@ -1283,8 +1147,6 @@ async function quoteAcross(
   const depositor = intent.sender
     ? getAddress(intent.sender)
     : ACROSS_PREVIEW_DEPOSITOR;
-  // Relative, not root-relative: the Across base carries a path (/api), and a
-  // leading slash would discard it and hit the app's HTML router instead.
   const url = new URL(
     "swap/approval",
     normalizedBase(env.ACROSS_API_URL ?? ACROSS_DEFAULT_URL),
@@ -1336,29 +1198,16 @@ async function quoteAcross(
       quote.checks?.allowance?.actual != null
         ? BigInt(quote.checks.allowance.actual)
         : null,
-    // Across returns an unlimited (uint256 max) approval. Drop it so
-    // buildApprovalTransactions issues an exact-amount approval instead,
-    // matching the ekubo and 0x paths, which both return [] here.
     approvalTransactions: [],
     quoteExpiryTimestamp: quote.quoteExpiryTimestamp ?? null,
     expectedFillTime: quote.expectedFillTime ?? null,
   };
 }
 
-/** Providers this server only ever asks for a transfer between two chains. */
 function isCrossChainSource(source: QuoteCollectionSource): boolean {
   return source === "across" || source === "layerzero" || source === "lifi";
 }
 
-/**
- * The LayerZero chain catalog, indexed by EIP-155 chain id.
- *
- * Cached per base URL for {@link LAYERZERO_CHAINS_TTL_MS} because it is the
- * one round trip in a LayerZero quote that buys nothing time-sensitive, and a
- * quote's worth decays from the moment it is fetched. A rejected lookup is
- * evicted rather than cached, so one failed catalog read does not disable the
- * provider for the rest of the isolate's life.
- */
 const layerZeroChainCatalog = new Map<
   string,
   { fetchedAt: number; keys: Promise<Map<string, string>> }
@@ -1395,16 +1244,12 @@ async function fetchLayerZeroChainKeys(
     if (nextToken !== undefined) {
       url.searchParams.set("pagination[nextToken]", nextToken);
     }
-    // Chain discovery is unauthenticated, so it stays usable for diagnosing a
-    // deployment whose key is missing or exhausted.
     const body = await fetchJson<LayerZeroChainsResponse>(
       url.toString(),
       fetcher,
       { headers: layerZeroHeaders() },
     );
     for (const chain of body.chains ?? []) {
-      // Only EVM chains carry an EIP-155 id that an intent can name, and only
-      // those can be executed through an execution plan.
       if (chain.chainType !== "EVM") continue;
       if (typeof chain.chainId !== "number" || !Number.isFinite(chain.chainId))
         continue;
@@ -1444,7 +1289,6 @@ function layerZeroToken(token: Address): string {
   return BigInt(token) === 0n ? LAYERZERO_NATIVE_TOKEN : getAddress(token);
 }
 
-/** The origin-chain calls one LayerZero quote resolves to, or null. */
 interface LayerZeroSteps {
   transaction: UnsignedTransaction;
   approvalSpender: Address | null;
@@ -1469,16 +1313,6 @@ function erc20ApprovalSpender(data: Hex): Address | null {
   }
 }
 
-/**
- * One quote's user steps rendered as an execution plan's worth of calls, or
- * null when this route cannot be expressed as one.
- *
- * An execution plan is a fixed set of transactions a wallet signs in order, so
- * a route is only usable here if every step is a transaction on the origin
- * chain. Intent routes (AORI) interleave an EIP-712 signature with a
- * round trip to /submit-signature that the plan has no way to perform, and a
- * route that requires it is dropped rather than half-executed.
- */
 function layerZeroSteps(
   quote: LayerZeroQuote,
   chainId: string,
@@ -1517,15 +1351,6 @@ function layerZeroSteps(
   };
 }
 
-/**
- * One quote out of the several LayerZero returns for a transfer.
- *
- * Routes that can be executed win outright over routes that cannot, because an
- * option that cannot be handed to a wallet is worth less than a slightly
- * cheaper one that can; within each group the largest destination amount wins.
- * All of these quotes are EXACT_SRC_AMOUNT, so they spend the same input and
- * differ only in what arrives.
- */
 function selectLayerZeroQuote(
   quotes: LayerZeroQuote[],
   chainId: string,
@@ -1554,14 +1379,12 @@ function selectLayerZeroQuote(
   );
 }
 
-/** LayerZero states an ISO expiry; the candidate carries epoch seconds. */
 function layerZeroExpiry(expiresAt: string | undefined): number | null {
   if (expiresAt === undefined) return null;
   const parsed = Date.parse(expiresAt);
   return Number.isNaN(parsed) ? null : Math.floor(parsed / 1000);
 }
 
-/** LayerZero states an estimated duration in milliseconds; Across in seconds. */
 function layerZeroFillTimeSeconds(
   estimated: string | number | null | undefined,
 ): number | null {
@@ -1582,9 +1405,6 @@ async function quoteLayerZero(
       "LayerZero is not configured for this deployment",
     );
   }
-  // The Value Transfer API prices a source amount only: there is no
-  // EXACT_DST_AMOUNT. Saying so is more use to the caller than a silent
-  // absence, since Across can still serve the same exact-output request.
   if (intent.quoteType === "exact_output") {
     throw new ServiceError(
       "unsupported_quote_type",
@@ -1597,8 +1417,6 @@ async function quoteLayerZero(
     layerZeroChainKey(baseUrl, fetcher, intent.chainId, "origin"),
     layerZeroChainKey(baseUrl, fetcher, destinationChainId, "destination"),
   ]);
-  // Both wallet addresses are required, so an indicative request borrows the
-  // same placeholder depositor the Across path uses.
   const srcWalletAddress = intent.sender
     ? getAddress(intent.sender)
     : LAYERZERO_PREVIEW_WALLET;
@@ -1616,9 +1434,6 @@ async function quoteLayerZero(
     amount: intent.amount,
     options: {
       amountType: "EXACT_SRC_AMOUNT",
-      // feeTolerance is a percentage, and it is the bound this route enforces
-      // on value lost, so the caller's basis points map straight onto it
-      // instead of the API's 1% default silently standing in for them.
       ...(intent.slippageBps === undefined
         ? {}
         : {
@@ -1641,8 +1456,6 @@ async function quoteLayerZero(
       body: JSON.stringify(request),
     },
   );
-  // A rejected transfer arrives as a populated error on an otherwise ordinary
-  // 200, so the body has to be checked even when the status did not complain.
   if (response.error) {
     throw new ServiceError(
       "upstream_error",
@@ -1672,8 +1485,6 @@ async function quoteLayerZero(
     amountOut: BigInt(quote.dstAmount as string),
     minimumAmountOut:
       quote.dstAmountMin === undefined ? null : BigInt(quote.dstAmountMin),
-    // EXACT_SRC_AMOUNT spends exactly what was asked for, so there is no
-    // separate upper bound on the input to enforce.
     maximumAmountIn: null,
     estimatedGas:
       steps?.transaction.gas === undefined
@@ -1684,8 +1495,6 @@ async function quoteLayerZero(
     approvalRequired: steps?.approvalSpender != null,
     approvalSpender: steps?.approvalSpender ?? null,
     approvalActual: null,
-    // Dropped so buildApprovalTransactions issues an exact-amount approval to
-    // the decoded spender, as the Across path does.
     approvalTransactions: [],
     quoteExpiryTimestamp: layerZeroExpiry(quote.expiresAt),
     expectedFillTime: layerZeroFillTimeSeconds(quote.duration?.estimated),
@@ -1725,8 +1534,6 @@ function liFiTransaction(
     chainId,
     to: getAddress(request.to),
     data: request.data,
-    // Every number on an ethers TransactionRequest is a hex string, which
-    // BigInt reads directly.
     value: BigInt(request.value ?? 0),
     ...(request.gasLimit === undefined
       ? {}
@@ -1748,10 +1555,6 @@ async function quoteLiFi(
   const baseUrl = env.LI_FI_API_URL ?? LIFI_DEFAULT_URL;
   const destinationChainId = intent.destinationChainId ?? intent.chainId;
   const exactOutput = intent.quoteType === "exact_output";
-  // Exact output is a separate endpoint rather than a parameter: /quote prices
-  // a source amount, and /quote/toAmount solves for the source amount that
-  // lands a stated destination amount. Both answer with the same step shape,
-  // so only the path and the amount parameter differ.
   const url = new URL(
     exactOutput ? "quote/toAmount" : "quote",
     normalizedBase(baseUrl),
@@ -1768,15 +1571,12 @@ async function quoteLiFi(
   if (intent.recipient) {
     url.searchParams.set("toAddress", getAddress(intent.recipient));
   }
-  // LI.FI states slippage as a decimal fraction, as Across does.
   if (intent.slippageBps !== undefined) {
     url.searchParams.set("slippage", (intent.slippageBps / 10_000).toString());
   }
   if (env.LI_FI_INTEGRATOR) {
     url.searchParams.set("integrator", env.LI_FI_INTEGRATOR);
   }
-  // The placeholder depositor holds no balance, so simulating against it would
-  // refuse a route that is only being priced rather than executed.
   if (!intent.sender) url.searchParams.set("skipSimulation", "true");
 
   const quote = await fetchJson<LiFiQuote>(url.toString(), fetcher, {
@@ -1794,18 +1594,12 @@ async function quoteLiFi(
     );
   }
   const transaction = liFiTransaction(quote.transactionRequest, intent.chainId);
-  // A native transfer has nothing to approve, and LI.FI names its own contract
-  // as the approval address regardless, so the token decides this rather than
-  // the presence of the field.
   const approvalRequired =
     BigInt(intent.tokenIn) !== 0n && estimate.approvalAddress !== undefined;
   return {
     source: "lifi",
     sourceUrl: url.toString(),
     raw: quote,
-    // LI.FI resolves a transfer status by step id as well as by origin
-    // transaction hash, so the id is what makes a submitted LI.FI transfer
-    // trackable before its origin hash is known.
     providerQuoteId: typeof quote.id === "string" ? quote.id : null,
     amountIn: BigInt(estimate.fromAmount),
     amountOut: BigInt(estimate.toAmount),
@@ -1813,10 +1607,6 @@ async function quoteLiFi(
       typeof estimate.toAmountMin === "string"
         ? BigInt(estimate.toAmountMin)
         : null,
-    // /quote/toAmount already solves for a source amount that covers the
-    // requested output under this slippage, so the amount it names is the
-    // bound an approval has to cover. An exact-input transfer spends exactly
-    // what was asked for and has no separate upper bound.
     maximumAmountIn: exactOutput ? BigInt(estimate.fromAmount) : null,
     estimatedGas:
       transaction.gas === undefined ? null : Number(transaction.gas),
@@ -1827,12 +1617,8 @@ async function quoteLiFi(
       ? getAddress(estimate.approvalAddress as Address)
       : null,
     approvalActual: null,
-    // Dropped so buildApprovalTransactions issues an exact-amount approval to
-    // the address LI.FI named, as the Across and LayerZero paths do.
     approvalTransactions: [],
-    // LI.FI states no quote expiry; the route is re-solved on each request.
     quoteExpiryTimestamp: null,
-    // Already seconds, unlike LayerZero's milliseconds.
     expectedFillTime:
       typeof estimate.executionDuration === "number"
         ? estimate.executionDuration
@@ -1840,33 +1626,9 @@ async function quoteLiFi(
   };
 }
 
-/**
- * Where one LayerZero transfer has got to.
- *
- * A bridge is the one execution plan whose origin receipt does not mean the
- * user has their funds, so the plan alone cannot answer whether the transfer
- * finished. The quote id returned with the executed option is the transfer id
- * here; supplying the origin transaction hash lets LayerZero resolve the
- * transfer before its own indexer has caught up.
- */
 export interface ValueTransferStatusInput {
-  /**
-   * Which provider carried this transfer. Defaults to LayerZero, which was
-   * the only tracked provider when this tool was introduced, so a caller that
-   * predates LI.FI keeps working unchanged.
-   */
   source?: "layerzero" | "lifi";
-  /**
-   * The provider's quote id. It is the transfer id itself on LayerZero and so
-   * required there; on LI.FI it identifies the quote but is not a key the
-   * status endpoint accepts, so it is carried only to correlate the answer
-   * with the option that was executed.
-   */
   quoteId?: string;
-  /**
-   * Origin-chain transaction hash. Required on LI.FI, which resolves a
-   * transfer by nothing else, and strongly preferred on LayerZero.
-   */
   transactionHash?: string;
   originChainId?: string;
   destinationChainId?: string;
@@ -1920,8 +1682,6 @@ async function layerZeroTransferStatus(
     quote_id: input.quoteId,
     origin_transaction_hash: input.transactionHash ?? null,
     status,
-    // LayerZero states one status and no refinement of it; the fields exist so
-    // that a caller reads one shape whichever provider carried the transfer.
     substatus: null,
     substatus_message: null,
     settled,
@@ -1943,14 +1703,6 @@ async function layerZeroTransferStatus(
   };
 }
 
-/**
- * Where one LI.FI transfer has got to.
- *
- * LI.FI resolves a transfer from its origin transaction hash, and accepts the
- * step id in the window before that hash exists, so both are usable and the
- * hash is preferred where it is known. Naming the origin chain is what keeps
- * the lookup from searching every chain LI.FI indexes.
- */
 async function liFiTransferStatus(
   env: Env,
   input: ValueTransferStatusInput,
@@ -2009,20 +1761,8 @@ async function liFiTransferStatus(
   };
 }
 
-/**
- * LI.FI's own numeric code for a transfer it cannot find. It answers that with
- * a 404 rather than a pending status, which in the window between broadcasting
- * the origin transaction and LI.FI observing it is the ordinary case rather
- * than a failure.
- */
 const LIFI_NOT_FOUND_CODE = 1003;
 
-/**
- * A status body, with the not-yet-indexed 404 translated into a status instead
- * of thrown. A poll loop has to be able to poll through that window; a thrown
- * error would end it at exactly the moment the transfer is most likely to be
- * in flight.
- */
 async function liFiStatusBody(
   url: string,
   fetcher: Fetcher,
@@ -2044,7 +1784,6 @@ async function liFiStatusBody(
   }
 }
 
-/** The origin and destination legs LI.FI reports, in the order they happen. */
 function liFiStatusHistory(body: LiFiStatusResponse) {
   return (
     [
@@ -2123,10 +1862,6 @@ function serializeCompleteQuote(
   preparation: SwapPreparationIntent | null,
   includeRawQuotes = false,
 ) {
-  // Both execution fields are always present, so every option has one shape
-  // whether or not this request asked for calldata. A caller reads
-  // `execution` and finds either a plan or null; it never has to know which
-  // kind of response it is holding to know how to look.
   return {
     source: candidate.source,
     source_url: candidate.sourceUrl,
@@ -2139,15 +1874,6 @@ function serializeCompleteQuote(
   };
 }
 
-/**
- * The execution half of one discovered option.
- *
- * A provider that cannot be made executable must not cost the user the ones
- * that can, so the failure is reported beside its own quote and every other
- * option still stands. That matters most for the provider whose quote is
- * indicative by construction: it stays visible for comparison and simply
- * cannot be handed to a wallet.
- */
 function executableQuote(
   intent: SwapPreparationIntent,
   candidate: QuoteCandidate,
@@ -2164,10 +1890,6 @@ function executableQuote(
       },
     };
   }
-  // The transactions are deliberately not restated beside the plan. They used
-  // to appear twice, byte for byte, and the copy outside the plan is the one
-  // nothing consumes: a wallet is handed execution_plan whole, and its
-  // ordered_steps already carry every approval, execution, and cleanup call.
   return {
     execution: {
       plan_id: prepared.planId,
@@ -2180,19 +1902,6 @@ function executableQuote(
   };
 }
 
-/**
- * Native value the sender parts with beyond the amount being swapped.
- *
- * Some providers charge a messaging fee in the chain's native token on top of
- * the input: LayerZero's plan asks for roughly 0.000266 ETH more than it
- * bridges. That surcharge appears nowhere in `amount_out`, so comparing
- * providers on `amount_out` alone ranks such a quote above one that is an
- * order of magnitude cheaper all in. It is visible here because the plan's
- * transaction value is known.
- *
- * Null when this request asked for no calldata, since an indicative quote has
- * no transaction to read a value from -- unknown, not zero.
- */
 function nativeFee(
   intent: QuoteIntent,
   candidate: QuoteCandidate,
@@ -2212,9 +1921,6 @@ function serializeCandidate(intent: QuoteIntent, candidate: QuoteCandidate) {
     amount_out: candidate.amountOut.toString(),
     minimum_amount_out: candidate.minimumAmountOut?.toString() ?? null,
     maximum_amount_in: candidate.maximumAmountIn?.toString() ?? null,
-    // What actually leaves the wallet in native token, and the part of it that
-    // is not the swap itself. Compare options on these, not on amount_out
-    // alone, whenever native_fee is non-zero.
     native_fee: fee?.toString() ?? null,
     total_native_input: candidate.transaction?.value.toString() ?? null,
     estimated_gas: candidate.estimatedGas,
@@ -2375,10 +2081,6 @@ async function fetchJson<T>(
   try {
     body = JSON.parse(raw);
   } catch {
-    // What came back instead is the only thing that explains why. A bare
-    // "non-JSON" leaves an operator with nothing to act on, and the usual
-    // cause — an edge or WAF page in front of the API — names itself in the
-    // first line of its own body.
     throw new ServiceError(
       "invalid_upstream_response",
       `Upstream returned non-JSON content from ${url}`,

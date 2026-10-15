@@ -1,4 +1,3 @@
-/** Public API smoke test; no wallet or credentials, no transactions. */
 import {
   discoverUniswapPools,
   getUniswapPool,

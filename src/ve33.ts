@@ -70,9 +70,6 @@ type VeTokenPortfolioReadFunction =
   | "voteState"
   | "votingPower";
 
-// Decode plans cross the artifact boundary and repeat once per child result.
-// Keep each one to the exact function it decodes instead of shipping the full
-// transactional VeToken ABI thousands of times.
 const VE_TOKEN_MULTICALL_ABI = parseAbi([
   "function multicall(bytes[] data) payable returns (bytes[] results)",
 ]);
@@ -660,7 +657,6 @@ export function prepareVe33Withdraw(intent: PrepareVe33WithdrawIntent) {
       requires_expired_stake: true,
       onchain_validation: {
         status: "not_executed",
-        // Both reads always run together on this chain: one stored bundle.
         read_calls: readCallsBundle({
           chainId: intent.chainId,
           calls: [
@@ -950,7 +946,6 @@ export function prepareVe33Merge(intent: PrepareVe33MergeIntent) {
   }
 
   const veToken = getAddress(intent.veToken);
-  // One ownerOf read per NFT, all inside one stored bundle.
   const mergeIds = [destinationVeId, ...sourceIds];
   const ownerReadCalls = readCallsBundle({
     chainId: intent.chainId,
@@ -1046,22 +1041,6 @@ export function prepareVe33Claim(intent: PrepareVe33ClaimIntent) {
   });
 }
 
-/**
- * Clearing a vote is the one weight-removing action with no first-class tool
- * until now, so agents reached for raw `clearVote` calldata and lost fees.
- *
- * Ve33 discards a stake's pending voter fees when its weight goes to zero:
- * `_adjustVoteWeight` snaps the fee-growth snapshot forward instead of paying
- * out. Every clear is therefore paired with a claim of the same pool, emitted
- * immediately before it in the same atomic batch, unconditionally — the only
- * claimable figure this server can see is indexed rather than chain state, so
- * "it looked like zero" is not a reason to drop the claim.
- *
- * `currentPoolKey` is required for that reason and for a second one that does
- * not depend on this server being right: `claimPoolFees` reverts with
- * `PoolNotVoted` unless the key is the stake's actual voted pool, so a stale or
- * mistaken key fails the whole batch before any vote is cleared.
- */
 export function prepareVe33ClearVote(intent: PrepareVe33ClearVoteIntent) {
   if (intent.votes.length === 0) throw invalid("at least one vote is required");
   const sender = getAddress(intent.sender);
@@ -1077,8 +1056,6 @@ export function prepareVe33ClearVote(intent: PrepareVe33ClearVoteIntent) {
     throw invalid("each ve_id may be cleared at most once");
   }
 
-  // Interleaved as claim, clear, claim, clear so a wallet reviewer reads each
-  // pair adjacent rather than matching a block of claims to a block of clears.
   const calls = cleared.flatMap(({ veId, poolKey, poolId }) => [
     {
       type: "claim_pool_fees",
@@ -1142,7 +1119,6 @@ export function prepareVe33ClearVote(intent: PrepareVe33ClearVoteIntent) {
   });
 }
 
-/** Owner and vote-state reads for every stake a clear-vote plan touches. */
 function clearVoteValidation(input: {
   chainId: string;
   veToken: Address;
@@ -3017,11 +2993,6 @@ function feeTokensFromClaims(
   );
 }
 
-/**
- * Balance snapshots for one phase's fee tokens. Every ERC-20 balanceOf read
- * ships inside one stored bundle; the native balance cannot travel there
- * (eth_getBalance is not an eth_call), so it stays a wallet-balance lookup.
- */
 function balanceSnapshots(
   chainId: string,
   tokens: readonly Address[],
@@ -3319,8 +3290,6 @@ function ve33Plan<TDetails extends Record<string, unknown>>({
   details: TDetails;
   value?: bigint;
 }) {
-  // Not a value any more, but still the guard: this throws if a plan would
-  // call a VeToken function that is not on the allowlist.
   for (const { data } of calls) {
     safeVeTokenFunctionName(data);
   }

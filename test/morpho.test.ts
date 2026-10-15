@@ -19,8 +19,6 @@ const owner = "0x3333333333333333333333333333333333333333";
 const deadline = 4_000_000_000n;
 const maxSharePrice = 1_001_000_000_000_000_000_000_000_000n;
 
-// VaultBundlesV1 deployments whose verified source was checked on Sourcify
-// for EKU-495. A registry change in a later SDK release must fail here first.
 const VAULT_BUNDLES_V1: Record<string, `0x${string}`> = {
   "1": "0x02912516d49dE997db75B9D7858faAE59209650B",
   "8453": "0x2B08A911f48dE25A7e305D910Afb5597aBE8ea7B",
@@ -90,8 +88,6 @@ describe("Morpho Vault V2 preparations", () => {
           functionName: "approve",
           args: [spender, 0n],
         });
-        // VaultBundlesV1 has no receiver argument: it deposits for msg.sender,
-        // which is the plan's `from`.
         expect(decode(vaultBundlesV1Abi, execution.data)).toEqual({
           functionName: "vaultBundlesV1Deposit",
           args: [

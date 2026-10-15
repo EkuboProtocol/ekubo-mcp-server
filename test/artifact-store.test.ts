@@ -86,12 +86,8 @@ describe("artifact store", () => {
     expect(reference.kind).toBe("artifact_reference");
     expect(reference.artifact_type).toBe("execution_plan");
     expect(reference.instruction).toContain("unchanged");
-    // No wall-clock fields travel in the envelope: validity is expressed by
-    // the calldata and enforced by simulation, storage expiry by a 404.
     expect(reference).not.toHaveProperty("expires_at");
     expect(reference).not.toHaveProperty("valid_until");
-    // No descriptive duplicate of the body travels either: the
-    // integrity-verified body is the only source of truth.
     expect(reference).not.toHaveProperty("summary");
 
     const id = reference.url.split("/artifact/")[1] ?? "";
@@ -104,8 +100,6 @@ describe("artifact store", () => {
     expect(JSON.parse(stored)).toEqual(planFixture());
     expect(store.entries.has(`artifact/${id}`)).toBe(true);
 
-    // R2 has no per-object TTL, so expiry is enforced at read time against
-    // the upload timestamp: an aged object reads as a miss.
     const entry = store.entries.get(`artifact/${id}`)!;
     entry.uploaded = new Date(
       Date.now() - (ARTIFACT_TTL_SECONDS + 1) * 1000,
@@ -312,8 +306,6 @@ describe("token list artifacts", () => {
     expect(JSON.parse(stored as string)).toEqual(body);
   });
 
-  /// A token list is not a plan and not a read bundle; nothing about the
-  /// envelope should let one stand in for another.
   it("does not share an instruction with the other artifact types", async () => {
     const env = { ARTIFACT_STORE: fakeArtifactStore() } as unknown as Env;
     const list = await storeArtifact(env, ORIGIN, {

@@ -12,7 +12,6 @@ const router = "0x3333333333333333333333333333333333333333" as const;
 const LDO = "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32" as const;
 const USDT = "0xdAC17F958D2ee523a2206206994597C13D831ec7" as const;
 const CRV = "0xD533a949740bb3306d119CC777fa900bA034cd52" as const;
-// Bridged USDT is a separate contract on every chain and none carry the guard.
 const ARBITRUM_USDT = "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9" as const;
 const OPTIMISM_USDT = "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58" as const;
 
@@ -36,9 +35,6 @@ describe("portable execution plan", () => {
         value: "0",
       },
     });
-    // The agent is the transport between two unrelated MCP servers, so every
-    // byte here costs model output. The plan carries only what the wallet
-    // actually consumes: no advisory policy prose, no per-step conditions.
     for (const step of execution.ordered_steps) {
       expect(step).not.toHaveProperty("eip1193");
       expect(step).not.toHaveProperty("submit_condition");
@@ -208,9 +204,6 @@ describe("allowance resets for tokens that reject an overwrite", () => {
     });
   }
 
-  // The user hitting this has a standing allowance granted somewhere else —
-  // the interface approves the Positions contract for an unlimited amount —
-  // and LDO, an Aragon MiniMe token, reverts rather than overwriting it.
   it("zeroes an LDO allowance before approving an exact amount", () => {
     const steps = planApproving("1", LDO).ordered_steps;
     expect(steps.map((step) => step.kind)).toEqual([
@@ -235,8 +228,6 @@ describe("allowance resets for tokens that reject an overwrite", () => {
     ]);
   });
 
-  // A gas figure prepared for the approval describes that call, not the reset
-  // that now precedes it.
   it("does not carry the approval's gas estimate onto the reset", () => {
     const steps = planApproving("1", LDO).ordered_steps;
     expect(steps[0].transaction).not.toHaveProperty("gas");
@@ -251,14 +242,10 @@ describe("allowance resets for tokens that reject an overwrite", () => {
     ]);
   });
 
-  // Only the mainnet deployments carry the guard; the bridged ones are
-  // ordinary ERC-20s and must not pay for a step they do not need.
   it("leaves the same address on another chain alone", () => {
     expect(planApproving("4663", LDO).ordered_steps).toHaveLength(3);
   });
 
-  // Found by probing the chain rather than by report: Curve's Vyper ERC20
-  // asserts the same condition mainnet USDT and LDO do.
   it("zeroes a CRV allowance", () => {
     expect(
       planApproving("1", CRV).ordered_steps.map((step) => step.kind),
@@ -270,8 +257,6 @@ describe("allowance resets for tokens that reject an overwrite", () => {
     expect(planApproving("10", OPTIMISM_USDT).ordered_steps).toHaveLength(3);
   });
 
-  // FUN carries the guard but reverts on approve(0) as well, so prefixing a
-  // reset would only add a step that fails.
   it("omits the tokens no reset can recover", () => {
     const fun = "0x419d0d8bDD9aF5e606Ae2232ed285Aff190E711b" as const;
     expect(planApproving("1", fun).ordered_steps).toHaveLength(3);
@@ -302,11 +287,6 @@ describe("allowance resets for tokens that reject an overwrite", () => {
     ).not.toThrow();
   });
 
-  /**
-   * A step's kind is a label the producing tool chose; the calldata is what the
-   * chain sees. A tool that emits an approval as an execution step must not
-   * silently lose its reset and ship a plan that reverts for these tokens only.
-   */
   it("resets a mislabeled approval, because the calldata is the trigger", () => {
     const result = executionPlanFromSteps({
       chainId: "1",
@@ -329,10 +309,6 @@ describe("allowance resets for tokens that reject an overwrite", () => {
     ]);
   });
 
-  /**
-   * The swap path builds its own zero approval when a provider reports a
-   * standing allowance. Adding a second one on top would just be a wasted call.
-   */
   it("adds no second reset when the caller already zeroed the allowance", () => {
     const result = executionPlanFromSteps({
       chainId: "1",
@@ -364,11 +340,6 @@ describe("allowance resets for tokens that reject an overwrite", () => {
     ]);
   });
 
-  /**
-   * The dedup is deliberately narrow: only a zero approval standing
-   * *immediately* before counts. A zero approval for a different spender leaves
-   * the one this approval needs untouched.
-   */
   it("still resets when the preceding zero approval is for another spender", () => {
     const otherSpender = "0x5555555555555555555555555555555555555555" as const;
     const zeroForOther = encodeFunctionData({

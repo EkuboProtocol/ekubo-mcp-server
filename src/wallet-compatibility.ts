@@ -1,8 +1,6 @@
 import { getAddress, isAddress } from "viem";
 import { z } from "zod";
 
-// Strict producer-side mirror of the public Ekubo wallet MCP boundary. Keep
-// this fail-closed: preparation must reject drift before emitting a handoff.
 
 const decimalQuantity = z.string().regex(/^(0|[1-9][0-9]*)$/).refine(
   (value) => BigInt(value) < 1n << 256n,
@@ -144,12 +142,6 @@ const simulationFailurePolicySchema = z.object({
   }
 });
 
-/**
- * Capabilities a plan may require of the wallet that executes it. The wallet
- * rejects any plan listing a capability it does not implement, so this list
- * is the producer-side mirror of the wallet's supported set: emitting an
- * entry not in it would produce plans no deployed wallet accepts.
- */
 export const WALLET_SUPPORTED_CAPABILITIES = ["atomic_batch"] as const;
 
 export const walletExecutionPlanSchema = z.object({

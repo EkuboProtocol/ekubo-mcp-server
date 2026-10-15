@@ -102,8 +102,6 @@ describe("LP position preparation", () => {
       }).positions_manager,
     ).toMatchObject({ address: positionsV3, contract: "Positions" });
 
-    // The reported symptom: this named the original manager on a chain that
-    // only has the recompiled one, and its resource_uri was a dangling link.
     expect(
       preparePoolInitialization({
         chainId: "10",
@@ -175,14 +173,10 @@ describe("LP position preparation", () => {
     expect(
       BigInt(result.liquidity_protection.minimum_liquidity),
     ).toBeGreaterThan(0n);
-    // The approval is the plan's first step now.
     expect(planStepKinds(result)[0]).toBe("approval");
     expect(planTransactions(result)[0]?.to).toBe(
       "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
     );
-    // No outer multicall: each Positions call is its own decodable step, and
-    // the native value rides on the deposit rather than on a wrapper.
-    // Step 0 is the approval; the value rides on the deposit.
     expect(planValues(result)).toEqual(["0", "100000000000000", "0", "0"]);
     expect(planFunctions(result, ALL_ABI)).toEqual([
       "approve",
@@ -190,8 +184,6 @@ describe("LP position preparation", () => {
       "refundNativeToken",
       "approve",
     ]);
-    // The plan itself is the artifact; what a policy must permit to sign it is
-    // the wallet's business, not this server's.
     expect(planTotalValue(result)).toBe(100000000000000n);
     expect(
       planStepKinds(result),
@@ -225,7 +217,6 @@ describe("LP position preparation", () => {
         maxAmount0: "58775049870",
         maxAmount1: "24688761276276600317",
         slippageBps: 100,
-        // AAPL is restricted in some jurisdictions but not in this one.
       },
       (async (input: RequestInfo | URL) => {
         const url = input.toString();
@@ -344,9 +335,6 @@ describe("LP position preparation", () => {
     expect(planTransactions(result)).toHaveLength(5);
   });
 
-  // Robinhood predates the v3.2.0 recompile and keeps the original Positions;
-  // the chains deployed after it only ever had the recompiled one, so building
-  // against the original there is a call to an address with no code.
   it("mints through the recompiled Positions on a post-recompile chain", async () => {
     const pool = derivePoolId({
       token0: native,
@@ -664,10 +652,6 @@ describe("LP position preparation", () => {
     expect(result.withdrawals[0].withdrawal.collects_fees).toBe(true);
   });
 
-  // The reported failure: a user with a standing LDO approval, granted by the
-  // interface's unlimited default, cannot add liquidity because LDO refuses to
-  // overwrite a nonzero allowance. The server reads no allowance state, so the
-  // reset is unconditional.
   it("zeroes the LDO allowance before approving an LDO deposit", async () => {
     const pool = derivePoolId({
       token0: native,
@@ -739,8 +723,6 @@ describe("LP position preparation", () => {
     expect(approval?.to).toBe(reset?.to);
     expect(BigInt(`0x${reset!.data.slice(74)}`)).toBe(0n);
     expect(BigInt(`0x${approval!.data.slice(74)}`)).toBeGreaterThan(0n);
-    // Every approval-bearing plan is already atomic, so the extra step does
-    // not change what the wallet has to support.
     expect(result.execution_plan.required_capabilities).toEqual([
       "atomic_batch",
     ]);

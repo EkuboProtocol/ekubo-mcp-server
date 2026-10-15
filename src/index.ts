@@ -41,24 +41,17 @@ export default {
     const url = new URL(request.url);
     const actor = rateLimitActor(request);
 
-    // A CORS preflight carries no body and does no work; limiting it only
-    // breaks browser clients without denying an abuser anything.
     if (request.method !== "OPTIONS") {
       const rejection = await enforceRequestRate(env, actor);
       if (rejection !== null) return rateLimited(rejection, null);
     }
 
-    // `/mcp` serves bundled protocols and is the endpoint every already-configured
-    // client names; `/mcp/<slug>` serves one. Both go through the same
-    // admission, pricing, and CORS path — only the tool set differs.
     const mcpRoute = matchMcpRoute(url.pathname, url.searchParams);
     if (mcpRoute !== null && "error" in mcpRoute) {
       return json({ error: { code: "unknown_protocol", message: mcpRoute.error } }, 400, {
         "cache-control": "no-store",
       });
     }
-    // A mistyped /mcp/<slug> otherwise falls through to the static routes and
-    // answers a client's POST with "Use GET", which points at the wrong fix.
     if (mcpRoute === null && /^\/mcp\/[^/]+$/.test(url.pathname)) {
       return json(
         {
@@ -133,19 +126,12 @@ export default {
       );
     }
 
-    // Stored artifact bodies (execution plans and read-call bundles), fetched
-    // by wallets from the reference URL a tool returned. Integrity and the
-    // reference byte count describe the canonical JSON. HTTP compression is
-    // only a wire representation; wallets decompress before verifying it.
     const artifactMatch = /^\/artifact\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(
       url.pathname,
     );
     if (artifactMatch !== null) {
       const body = await loadArtifact(env, artifactMatch[1]);
       if (body === null) {
-        // A miss can mean expiry, a bad id, or a KV propagation gap between
-        // the storing PoP and this one. Log it so the miss rate is measurable
-        // before deciding stronger storage is warranted.
         console.warn(
           JSON.stringify({
             event: "artifact_fetch_miss",
@@ -184,10 +170,6 @@ export default {
             mcp_endpoint: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}`,
             mcp_transport: "streamable-http",
             authentication: "none",
-            // One endpoint per protocol, plus the original bundle (except Safe).
-            // A client that only ever stakes with Lido connects to
-            // /mcp/lido and carries that protocol's tools alone; /mcp is
-            // unchanged and remains what every already-configured client uses.
             mcp_endpoints: {
               all: {
                 url: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}`,
@@ -195,9 +177,6 @@ export default {
                 tool_count: publicToolCatalog.length,
                 note: "Bundled protocols. Safe is available only at /mcp/safe.",
               },
-              // One connection for several protocols. Each distinct URL is a
-              // separate server to a client or gateway, so slugs are written in
-              // by_protocol order; Safe cannot be combined.
               combined: {
                 url_template: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}?protocols=<slug>+<slug>`,
                 example: facetMcpUrl(url.origin, new Set(["ekubo", "ekubo-advanced"])),
@@ -221,10 +200,6 @@ export default {
             llms_txt_url: `${url.origin}/llms.txt`,
             documentation: {
               mcp_server: "https://docs.ekubo.org/products/mcp-server/",
-              // Public write-up of what this server prepares and of the
-              // producer contract a third-party MCP server satisfies to hand
-              // plans to the Ekubo wallet. The machine-readable boundary stays
-              // operational_semantics below and ekubo://docs/execution-plan.
               protocol_coverage_and_producers:
                 "https://docs.ekubo.org/wallet/protocols/",
             },
@@ -315,9 +290,6 @@ export default {
               },
               mcp_http_cache:
                 "no-store; tool calls are not replayed from an MCP cache",
-              // Shapes, not numbers. A client needs to know which budget it
-              // hit and how to stop hitting it; a scraper given the exact
-              // ceilings would simply run just underneath them.
               rate_limit_contract: {
                 quota:
                   "No fixed request quota is guaranteed. Limits are enforced per caller, where a caller is one IPv4 address or one IPv6 /64.",
@@ -336,9 +308,6 @@ export default {
                 request_limits: {
                   max_body_bytes: MAX_MCP_BODY_BYTES,
                   max_jsonrpc_messages_per_request: MAX_BATCH_LENGTH,
-                  // An over-ceiling request is refused rather than served at a
-                  // discount. No individual tool reaches the ceiling, so this
-                  // only ever asks a client to split a batch.
                   max_tool_units_per_request: MAX_UNITS_PER_REQUEST,
                 },
               },
@@ -386,25 +355,8 @@ export default {
             documentationUrl: "https://docs.ekubo.org",
             transport: {
               type: "streamable-http",
-              // Discovery clients may consume the server card without first
-              // resolving it relative to the request URL. Advertise the
-              // canonical absolute endpoint so connection is immediate.
-              //
-              // This stays `/mcp`, the endpoint that serves every protocol:
-              // the card describes one server at one host, and a client that
-              // reads only this field must reach the complete tool set rather
-              // than an arbitrary seventh of it.
               endpoint: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}`,
             },
-            // The narrower endpoints, for a client that wants one protocol's
-            // tools instead of all of them. Namespaced because the server-card
-            // schema has no field for a server answering at several paths, and
-            // a bare key could collide with one it grows later; this server's
-            // tool `_meta` already uses the same `com.ekubo/` prefix for the
-            // same reason. Every other discovery surface — `/`, `/tools`,
-            // `llms.txt`, the OpenAPI document — gained these when the split
-            // landed, and the card was the one left behind, so a client
-            // discovering through it alone never learned they existed.
             "com.ekubo/protocolEndpoints": PROTOCOLS.map((protocol) => ({
               protocol: protocol.slug,
               title: protocol.title,
@@ -425,9 +377,6 @@ export default {
           },
           200,
           {
-            // Server cards are the discovery entry point. Keep them
-            // uncached so clients see endpoint and version changes
-            // immediately after deployment.
             "cache-control": "no-store",
             "access-control-allow-methods": "GET, HEAD, OPTIONS",
             "access-control-allow-headers": "content-type",
@@ -461,21 +410,6 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-/**
- * The tool catalog, optionally narrowed to one protocol's endpoint or a facet.
- *
- * `?protocol=<slug>` answers "what would I get if I added only this server",
- * which is the question the wallet's server picker and any client comparing
- * endpoints actually asks. Without it that answer is only derivable by
- * connecting to each endpoint in turn. `?protocols=<a>+<b>` answers the same
- * for a facet of `/mcp`.
- *
- * `catalog_digest` covers the listed tools and the instructions that endpoint
- * serves, not its resources: a release that changes only a resource leaves it
- * unchanged. A gateway stores one catalog per configured URL, so comparing
- * digests across a release says exactly which configured URLs need a refresh;
- * the single catalog revision cannot say which combinations changed.
- */
 async function toolsDocument(url: URL) {
   const selection = toolsSelection(url.searchParams);
   if ("error" in selection) {
@@ -509,7 +443,6 @@ async function toolsDocument(url: URL) {
   );
 }
 
-/** `?protocol=<slug>`, `?protocols=<a>+<b>`, or neither for the bundled set. */
 function toolsSelection(query: URLSearchParams):
   | { protocols: ReadonlySet<ProtocolSlug>; label: Record<string, unknown> }
   | { error: string } {
@@ -568,10 +501,6 @@ async function admitMcpRequest(
 
   const priced = chargeForMcpBody(body);
   if (!priced.ok) {
-    // An unparseable body is the MCP handler's error to report, not ours: it
-    // owns the JSON-RPC parse-error contract and the session semantics around
-    // it. The oversized asks are refused here, because serving them is what we
-    // are declining to do.
     if (priced.reason === "unparseable") {
       return { request: replayed, rejection: null };
     }
@@ -619,12 +548,6 @@ function bodyTooLarge() {
   );
 }
 
-/**
- * One rejection, said twice: as the HTTP status and `Retry-After` header a
- * transport backs off on, and — when the request was a single identified
- * JSON-RPC call — as an error body the client can attach to that call, so the
- * agent driving it reads why it was refused instead of only that it was.
- */
 function rateLimited(
   rejection: RateLimitRejection,
   id: string | number | null,
@@ -643,8 +566,6 @@ function rateLimited(
           jsonrpc: "2.0",
           id,
           error: {
-            // Implementation-defined server error; the JSON-RPC range
-            // -32000..-32099 is reserved for exactly this.
             code: -32029,
             message: rejection.message,
             data: {
@@ -741,8 +662,6 @@ function artifactResponse(request: Request, body: string) {
   return applySecurityHeaders(
     new Response(responseBody, {
       headers,
-      // The gzip branch already compressed its stream. Cloudflare otherwise
-      // interprets Content-Encoding as an instruction to encode it again.
       encodeBody: gzip ? "manual" : "automatic",
     }),
   );

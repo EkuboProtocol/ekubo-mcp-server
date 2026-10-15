@@ -60,9 +60,6 @@ const env: Env = {
   DUNE_API_KEY: "unused",
 };
 
-// Route header: flags (1) | split count - 1 (1) | specified token (20) |
-// calculated token (20) | int128 threshold (16) | [recipient (20)] |
-// [uint32 deadline (4)].
 const THRESHOLD_END = 1 + 1 + 20 + 20 + 16;
 
 function flags(route: Hex) {
@@ -106,7 +103,6 @@ describe("swap deadline", () => {
     expect(deadlineAt(prepared.transaction.data, THRESHOLD_END)).toBe(deadline);
     expect(prepared.transaction.to).toBe(ROUTER);
     expect(prepared.deadline).toBe(deadline);
-    // The quote call simulates the same route, deadline included.
     expect(prepared.quoteCalldata).toContain(prepared.route.slice(2));
   });
 
@@ -179,7 +175,6 @@ describe("swap deadline", () => {
 
     const [defaultTransaction] = planTransactions(byDefault);
     expect(defaultTransaction.to).toBe(ROUTER);
-    // recipient defaults to sender, so the deadline follows it.
     expect(flags(defaultTransaction.data)).toBe(3);
     expect(deadlineAt(defaultTransaction.data, THRESHOLD_END + 20)).toBe(
       NOW_SECONDS + 1_800,

@@ -410,7 +410,7 @@ describe("safe VeToken allocation workflows", () => {
       "vote",
       "vote",
     ]);
-    expect(false /* ve_id no longer echoed */).toBe(false);
+    expect(false ).toBe(false);
     expect(plan.safety).toMatchObject({
       all_current_fee_claims_are_first: true,
       claims_are_unconditional_even_when_claimable_is_zero: true,
@@ -426,8 +426,6 @@ describe("safe VeToken allocation workflows", () => {
     );
     expect(targetAmounts).toEqual(["450", "450"]);
 
-    // Each veToken call is its own step now, so there is no outer call to
-    // unwrap and the wallet can decode every one of them.
     expect(planTransactions(plan)).toHaveLength(6);
     expect(plan.execution_plan?.required_capabilities).toContain(
       "atomic_batch",
@@ -767,7 +765,6 @@ describe("safe VeToken allocation workflows", () => {
       projected_weight_bps_difference: 0,
     });
     expect(plan.projection.total_projected_vote_weight).not.toBe("0");
-    // No outer multicall: every veToken call is a step the wallet can decode.
     expect(planTransactions(plan).length).toBeGreaterThan(1);
   });
 

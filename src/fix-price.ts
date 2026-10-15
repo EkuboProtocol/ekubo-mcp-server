@@ -36,23 +36,6 @@ const VE33 = getAddress("0xD18685a514E59b06d59824e16Db07e73345d9953");
 const NATIVE_TOKEN = getAddress("0x0000000000000000000000000000000000000000");
 const TARGET_PRICE_SPECIFIED_AMOUNT = -(1n << 127n);
 
-/**
- * The current price comes from CoreDataFetcher.poolState, read through the
- * generated ABI rather than a copy of it.
- *
- * This used to call `poolPrice` against a hand-written ABI that declared
- * `uint96 sqrtRatio`. The deployed function actually returns
- * `(uint256 sqrtRatioFixed, int32 tick)` -- the Q128 fixed value, not the
- * compact 96-bit float -- so the float codec was applied to a number that had
- * already been expanded and rejected it as exceeding its encoding. The read
- * came back `usable: false`, and the value it did carry could not satisfy the
- * `pending_current_sqrt_ratio` argument the resume block asked for, which
- * requires a uint96. The two halves of the tool disagreed and no value could
- * pass between them.
- *
- * `poolState` returns the compact float that phase two wants, and is the same
- * call get_pool already uses successfully.
- */
 function coreDataFetcherPoolState(chainId: string) {
   const dataFetcher = coreDataFetcherContract(chainId);
   if (dataFetcher === undefined) {
@@ -89,10 +72,6 @@ export interface PrepareFixPoolPriceInput {
     blockNumber?: string;
     blockHash?: Hex;
   };
-  /**
-   * Minutes the execute-phase route stays executable. Defaults to the
-   * interface's 30 minutes; see swap-deadline.ts.
-   */
   swapDeadlineMinutes?: number;
 }
 
@@ -115,9 +94,6 @@ export async function prepareFixPoolPrice(
     fetcher,
   );
   const poolKey = pool.pool_key;
-  // This action swaps the pool to a target price, so it trades the pair. Which
-  // token it ends up buying falls out of the target price rather than the
-  // caller's intent, so both are labeled as acquisitions.
   const jurisdiction = quoteJurisdiction([
     { chainId: input.chainId, token: poolKey.token0, side: "buy" },
     { chainId: input.chainId, token: poolKey.token1, side: "buy" },
@@ -361,8 +337,6 @@ export async function prepareFixPoolPrice(
   });
   const nativeValue =
     calculatedToken === NATIVE_TOKEN ? requiredInputAmount : 0n;
-  // A zero threshold makes the router revert unless the route takes no input,
-  // so a zero-cost plan needs no allowance, and approve(0) would erase one.
   const approvals =
     calculatedToken === NATIVE_TOKEN || requiredInputAmount === 0n
       ? []

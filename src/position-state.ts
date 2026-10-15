@@ -42,9 +42,6 @@ const TWAMM_V3_ADDRESS = getAddress(
 const OLD_TWAMM_V3_ADDRESS = getAddress(
   "0xd4F1060cB9c1A13e1d2d20379b8aa2cF7541eD9b",
 );
-// Every chain the generated catalog knows has the contracts this builder reads
-// through, at the canonical Multicall3 address, so deriving the set means a
-// newly deployed chain works as soon as the catalog is regenerated.
 const SUPPORTED_EVM_CHAIN_IDS = new Set(contractChainIds());
 
 const POOL_KEY_COMPONENTS = [
@@ -284,18 +281,12 @@ export function buildPositionStateReadPlan(
     expected_owner: normalizedExpectedOwner,
     pool_key: poolKey,
     bounds: position.bounds,
-    // The one aggregate eth_call reading this position: a Multicall3
-    // aggregate3 whose decode plan resolves every inner result. Callers ship
-    // it inside a read_calls bundle (alone or merged with sibling reads).
     state_call: {
       id: `ekubo-position-state-${tokenId}`,
       to: MULTICALL3_ADDRESS,
       data: aggregateData,
       decode: decodePlan,
     } satisfies ReadCall,
-    // Every inner call's bytes are already encoded inside the aggregate, so
-    // they are described here rather than repeated. The result field lists
-    // live in the stored decode plan and are not restated either.
     inner_calls: calls.map((call, index) => ({
       index,
       purpose: call.purpose,
@@ -325,16 +316,6 @@ export type PositionStateReadPlan = ReturnType<
   typeof buildPositionStateReadPlan
 >;
 
-/**
- * Wrap one position's read plan as a self-contained current_state_query whose
- * `read_calls` bundle the registration walker stores and replaces with a
- * `read_calls_reference` envelope for wallet_batch_eth_call.
- *
- * `includeAggregateCall` additionally keeps the aggregate's to/data inline —
- * only get_position sets it, so an agent can replay the identical read
- * at a historical block for APR estimation; everywhere else the calldata
- * lives solely in the stored bundle.
- */
 export function positionStateQuery(
   plan: PositionStateReadPlan,
   options: { includeAggregateCall?: boolean } = {},

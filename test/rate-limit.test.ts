@@ -26,11 +26,6 @@ const baseEnv = {
   DUNE_API_KEY: "recommendation-test-key",
 } satisfies Env;
 
-/**
- * A counting stand-in for the Cloudflare binding. It records every draw per
- * key, which is how the weighted tests assert that an expensive tool spent
- * more of the budget than a cheap one rather than merely that it was allowed.
- */
 function fakeLimiter(limit: number) {
   const draws = new Map<string, number>();
   return {
@@ -156,8 +151,6 @@ describe("tool cost", () => {
   });
 
   it("prices every catalog tool below the per-request ceiling", () => {
-    // The ceiling refuses rather than clamps, so a tool priced at or above it
-    // would be a tool nobody can call. This is the guard on that.
     const overCeiling = publicToolCatalog
       .map((tool) => ({ name: tool.name, cost: toolCost(tool.name) }))
       .filter((tool) => tool.cost > MAX_UNITS_PER_REQUEST);
@@ -207,7 +200,6 @@ describe("pricing an MCP body", () => {
         units: toolCost("get_token") * 2 + toolCost("get_quotes_with_plans"),
         meteredCalls: 1,
       },
-      // No single id owns the answer to a batch.
       id: null,
     });
   });
@@ -236,7 +228,6 @@ describe("pricing an MCP body", () => {
       reason: "too_expensive",
     });
 
-    // One under the ceiling still prices, and prices at full cost.
     const affordable = Array.from({ length: count - 1 }, (_, index) =>
       toolCall(expensive, index),
     );
@@ -307,8 +298,6 @@ describe("Worker admission control", () => {
     );
     expect(first.status).toBe(200);
 
-    // A stored-artifact fetch costs an R2 read, so it draws from the same
-    // per-caller budget the discovery route just spent.
     const second = await worker.fetch(
       new Request(`https://mcp.ekubo.org${paths[1]}`, {
         headers: { "cf-connecting-ip": "203.0.113.7" },
@@ -421,7 +410,6 @@ describe("Worker admission control", () => {
     const metered = fakeLimiter(1);
     const env = {
       ...baseEnv,
-      // Deliberately generous, so only the metered budget can reject.
       RATE_LIMITER_TOOLS: fakeLimiter(10_000).binding,
       RATE_LIMITER_METERED: metered.binding,
     } satisfies Env;
@@ -438,7 +426,6 @@ describe("Worker admission control", () => {
     };
     expect(body.error.data.scope).toBe("metered_providers");
 
-    // Unlimited cheap calls must not restore the paid-provider headroom.
     for (let index = 0; index < 5; index += 1) {
       await worker.fetch(post(toolCall("derive_pool_id")), env, context);
     }
@@ -519,7 +506,6 @@ describe("Worker admission control", () => {
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error: { code: string } };
     expect(body.error.code).toBe("batch_too_expensive");
-    // Refused before pricing touched the budget, and never dispatched.
     expect(tools.drawsFor("tools:203.0.113.7")).toBe(0);
   });
 
@@ -540,9 +526,6 @@ describe("Worker admission control", () => {
     );
     expect(response.status).toBe(200);
     const payload = await response.text();
-    // Whether the handler answers as JSON or as an SSE frame, the initialize
-    // result is in there — which it could not be if the replayed request had
-    // arrived with an empty or truncated body.
     expect(payload).toContain("serverInfo");
     expect(payload).toContain("ekubo");
   });

@@ -296,7 +296,6 @@ describe("ve(3,3) call generation", () => {
       abi: parseAbi([
         "function stakeMaxDuration(uint128 amount,bytes32 salt) payable returns (uint256)",
       ]),
-      // Step 0 is the ERC-20 approval, which the plan now carries itself.
       data: planTransactions(result)[1].data,
     });
     expect(call.functionName).toBe("stakeMaxDuration");
@@ -437,7 +436,6 @@ describe("ve(3,3) call generation", () => {
       ve_id: "123",
       expected_pool_id: poolId(poolAArgument),
     });
-    // One step per claim rather than an opaque multicall payload.
     expect(planTransactions(result)).toHaveLength(2);
     expect(result.execution_plan?.required_capabilities).toContain(
       "atomic_batch",
@@ -555,8 +553,6 @@ describe("ve(3,3) call generation", () => {
     ).toBe(true);
     expect(claimed.fee_tokens).toEqual([token0, token1, token2]);
     expect(claimed.pre_claim_balance_snapshots.snapshots).toHaveLength(3);
-    // Native balance is a wallet-balance lookup; both ERC-20 balanceOf reads
-    // ship in one stored bundle addressed by call id.
     expect(
       claimed.pre_claim_balance_snapshots.snapshots.map(
         (snapshot) => snapshot.type,
@@ -614,7 +610,6 @@ describe("ve(3,3) call generation", () => {
     expect(
       staked.plan.allocations.map((allocation) => allocation.increase_amount),
     ).toEqual(["34", "66"]);
-    // One approval step plus one increase per allocation.
     expect(planTransactions(staked.plan)).toHaveLength(3);
     expect(staked.plan.safety).toMatchObject({
       every_existing_active_allocation_is_increased: true,
@@ -639,8 +634,6 @@ describe("ve(3,3) call generation", () => {
       ],
     });
 
-    // Interleaved, not two blocks: every clear is preceded by the claim that
-    // rescues the fees that clear would otherwise discard.
     expect(planFunctions(result, VE_TOKEN_ABI)).toEqual([
       "claimPoolFeesToSelf",
       "clearVote",
@@ -688,8 +681,6 @@ describe("ve(3,3) call generation", () => {
       "ekubo-ve33-owner-11",
       "ekubo-ve33-vote-11",
     ]);
-    // The expected pool id is what makes a moved vote detectable before
-    // signing: the claim leg reverts with PoolNotVoted if it no longer holds.
     expect(validation.reads[1]).toMatchObject({
       label: "vote_state",
       ve_id: "10",
@@ -746,7 +737,6 @@ describe("ve(3,3) call generation", () => {
   });
 });
 
-/** Pool id as Ve33 hashes it, for clear-vote validation expectations. */
 function clearVotePoolId(poolKey: ReturnType<typeof toPoolKeyArgument>) {
   return keccak256(
     encodeAbiParameters(

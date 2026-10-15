@@ -78,8 +78,6 @@ describe("contract resource provenance", () => {
     }
   });
 
-  // The recompile in v3.2.0 moved Positions and Orders. Getting this wrong is
-  // silent: the plan is built against an address with no code on that chain.
   const [POSITIONS_ORIGINAL, POSITIONS_RECOMPILED] = POSITIONS_V3_ADDRESSES;
   const [ORDERS_ORIGINAL, ORDERS_RECOMPILED] = ORDERS_V3_ADDRESSES;
   const originalManagerChainIds = ["1", "143", "4326", "4663", "8453", "42161"];
@@ -94,7 +92,6 @@ describe("contract resource provenance", () => {
         chainId,
         positions: expectsOriginal ? POSITIONS_ORIGINAL : POSITIONS_RECOMPILED,
       });
-      // Orders moved in the same recompile and splits the chains identically.
       expect({ chainId, orders: ordersV3Address(chainId) }).toEqual({
         chainId,
         orders: expectsOriginal ? ORDERS_ORIGINAL : ORDERS_RECOMPILED,

@@ -182,10 +182,6 @@ describe("aggregated quote providers", () => {
     expect(url.searchParams.get("afterToken")).toBe(`4663:${tokenA}`);
   });
 
-  // A quote is only good for as long as the price behind it holds, so the
-  // window between fetching one and broadcasting against it is the thing these
-  // tests are protecting. Discovery that already knows the signer closes that
-  // window by a whole provider round trip and a whole agent turn.
   describe("executable discovery", () => {
     const config = `0x${"00".repeat(32)}`;
     const ekuboQuote = {
@@ -245,8 +241,6 @@ describe("aggregated quote providers", () => {
         }) as typeof fetch,
       );
 
-      // One request per provider: discovery buys the quote, and nothing buys
-      // it again.
       expect(requested).toHaveLength(2);
       expect(result.execution).toMatchObject({
         execution_plans_included: true,
@@ -264,8 +258,6 @@ describe("aggregated quote providers", () => {
         expect(quote.execution?.plan_id).toMatch(/^0x[0-9a-f]{64}$/);
         expect(quote.execution?.quote.slippage_bps).toBe("50");
       }
-      // Naming the signer also changes what 0x is asked for: a firm quote
-      // carrying calldata rather than an indicative price.
       const zeroXUrl = new URL(
         requested.find((url) => url.startsWith("https://zero-x.test"))!,
       );
@@ -289,15 +281,10 @@ describe("aggregated quote providers", () => {
       const option = discovered.quotes.find(
         (quote) => quote.source === "ekubo",
       );
-      // Folding preparation into the quote is not a cheaper approximation of
-      // preparing separately: it is the same bytes, so the round trip it saves
-      // costs nothing.
       expect(option?.execution?.execution_plan).toEqual(
         prepared.execution_plan,
       );
       expect(option?.execution?.plan_id).toBe(prepared.plan_id);
-      // The execution block does not restate the provider blob the option
-      // already carries beside it; everything else about the quote matches.
       const { raw, ...preparedQuoteFields } = prepared.quote;
       expect(option?.quote).toEqual(raw);
       expect(option?.execution?.quote).toEqual(preparedQuoteFields);
@@ -311,17 +298,13 @@ describe("aggregated quote providers", () => {
       );
 
       for (const quote of result.quotes) {
-        // The calldata used to appear twice, byte for byte. Only the copy the
-        // wallet actually consumes survives.
         expect(quote.execution).not.toHaveProperty("transaction");
         expect(quote.execution).not.toHaveProperty("approvals");
         expect(quote.execution).not.toHaveProperty(
           "post_execution_transactions",
         );
         expect(quote.execution?.execution_plan.ordered_steps).not.toBeEmpty();
-        // Nor is the identical execution guidance copied onto every option.
         expect(quote.execution).not.toHaveProperty("client_execution");
-        // The raw provider blob is the largest thing here and off by default.
         expect(quote).not.toHaveProperty("quote");
       }
       expect(result.execution.client_execution).not.toBeNull();
@@ -343,7 +326,6 @@ describe("aggregated quote providers", () => {
         expect(quote.execution).toBeNull();
         expect(quote.execution_unavailable).toBeNull();
       }
-      // Without a taker, 0x is asked for a price rather than a firm quote.
       expect(
         new URL(requested.find((url) => url.startsWith("https://zero-x.test"))!)
           .pathname,
@@ -368,8 +350,6 @@ describe("aggregated quote providers", () => {
     });
 
     it("keeps the options it can execute when one provider cannot", async () => {
-      // 0x answered without calldata, so that option cannot be handed to a
-      // wallet. It stays visible for comparison and the rest still execute.
       const result = await getQuotesWithPlans(
         env,
         { ...intent, sender, slippageBps: 50 },
@@ -438,8 +418,6 @@ describe("aggregated quote providers", () => {
     expect(requestHeaders?.get("0x-api-key")).toBe("zero-x-test-key");
     expect(result.source).toBe("0x");
     expect(result.quote.maximum_amount_in).toBe("205");
-    // The plan is the only statement of the transactions: approval, swap,
-    // then the allowance cleanup.
     expect(planStepKinds(result)).toEqual([
       "approval",
       "execution",
@@ -525,7 +503,6 @@ describe("aggregated quote providers", () => {
         })) as typeof fetch,
     );
 
-    // A sufficient pre-existing allowance means no approval and no cleanup.
     expect(planStepKinds(result)).toEqual(["execution"]);
   });
 
@@ -585,10 +562,7 @@ describe("aggregated quote providers", () => {
     expect(authorization).toBe("Bearer across-test-key");
     expect(result.action).toBe("ekubo_bridge");
     expect(result.source).toBe("across");
-    // The approval and the bridge call are both steps of the one plan.
     expect(planStepKinds(result)).toEqual(["approval", "execution"]);
-    // Across returns an unlimited approval (0xaaaa here); it must be discarded
-    // in favour of an exact-amount approve for maxInputAmount.
     expect(planTransactions(result)[0].data).not.toBe("0xaaaa");
     const acrossApproval = decodeFunctionData({
       abi: erc20Abi,
@@ -596,7 +570,6 @@ describe("aggregated quote providers", () => {
     });
     expect(acrossApproval.functionName).toBe("approve");
     expect(acrossApproval.args).toEqual([spender, 205n]);
-    // The bridge call carries the native value, not the approval.
     expect(planTransactions(result)[1].value).toBe("3");
     expect(result.quote.expected_fill_time_seconds).toBe(12);
   });

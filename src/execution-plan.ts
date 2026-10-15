@@ -101,13 +101,6 @@ export function executionPlan({
   });
 }
 
-/**
- * Build a wallet handoff for UI actions that contain more than one top-level
- * transaction. Keeping these steps explicit avoids forcing wallet tooling to
- * infer a batch, invent calldata, or decide the submission order. Actions that
- * mirror an interface `forceAtomic` submission require the `atomic_batch`
- * capability, which the wallet must reject if it cannot honor.
- */
 export function executionPlanFromSteps({
   chainId,
   sender,
@@ -147,8 +140,6 @@ export function executionPlanFromSteps({
     caip2_chain_id: `eip155:${chainId}`,
     sender: normalizedSender,
     ordered_steps: steps,
-    // A capability names behavior the wallet must implement to execute this
-    // plan; a wallet rejects any plan requiring one it does not support.
     ...(atomicBatchRequired
       ? { required_capabilities: ["atomic_batch"] }
       : {}),
@@ -210,9 +201,6 @@ function withAllowanceResets(
     if (!alreadyReset) {
       result.push({
         kind: "approval",
-        // Built field by field rather than spread from the approval it
-        // precedes: a `gas` estimate carried over from that call would be
-        // attached to a different one.
         transaction: {
           chain_id: step.transaction.chain_id,
           to: step.transaction.to,

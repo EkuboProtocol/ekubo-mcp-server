@@ -79,7 +79,6 @@ const HARVESTED_ABI = parseAbi([
   "function withdrawStakeToSelf(uint256 veId) payable returns (uint128 amount)",
 ]);
 
-/** Every function these tests may see in a plan step. */
 export const ALL_ABI = [
   ...HARVESTED_ABI,
   ...erc20Abi,
@@ -90,12 +89,6 @@ export const ALL_ABI = [
   ...VE33_WITHDRAW_AND_CLAIM_REWARDS_ABI,
 ];
 
-/**
- * The execution plan is the only statement a prepared action makes about its
- * transactions, so tests read them back out of it rather than out of a
- * duplicated sibling field. Assertions written against decoded plan steps also
- * check what the plan actually does, rather than a label the server attached.
- */
 // biome-ignore lint/suspicious/noExplicitAny: test helpers accept any prepared result
 type Prepared = any;
 
@@ -130,7 +123,6 @@ export function planTargets(result: Prepared): string[] {
   );
 }
 
-/** Decoded function name of every step, using the supplied ABI. */
 export function planFunctions(result: Prepared, abi: Prepared): string[] {
   return planTransactions(result).map(
     (transaction: Prepared) =>
@@ -138,7 +130,6 @@ export function planFunctions(result: Prepared, abi: Prepared): string[] {
   );
 }
 
-/** Decoded function name of one step. */
 export function planFunction(
   result: Prepared,
   index: number,
@@ -150,7 +141,6 @@ export function planFunction(
   }).functionName;
 }
 
-/** Decoded arguments of every step, using the supplied ABI. */
 export function planArgs(result: Prepared, abi: Prepared): readonly unknown[][] {
   return planTransactions(result).map(
     (transaction: Prepared) =>

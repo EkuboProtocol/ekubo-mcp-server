@@ -10,9 +10,6 @@ import {
 } from "../src/server.js";
 import { fakeArtifactStore } from "./fake-r2.js";
 
-// tools/list converts each zod schema once per isolate (EKU-1160). The cache
-// must be invisible: every endpoint, origin and interleaving publishes what a
-// fresh conversion would, and request handling stays per request.
 
 const unused = {
   ZERO_X_API_KEY: "unused",
@@ -100,7 +97,6 @@ describe("tools/list schema cache", () => {
       const again = compactTool(name, { inputSchema, outputSchema });
       expect(again.inputSchema).toBe(first.inputSchema);
       expect(Object.isFrozen(first.inputSchema)).toBe(true);
-      // A clone is a distinct object, so it is converted afresh.
       const fresh = compactTool(name, {
         inputSchema: inputSchema.clone(),
         outputSchema: outputSchema?.clone(),

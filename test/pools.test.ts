@@ -227,8 +227,6 @@ describe("pool and position reads", () => {
     const summaries = result.positions.map(
       (position: any) => position.current_state,
     );
-    // Position rows carry only metadata plus a call-id link; the read
-    // machinery itself lives in one stored bundle per chain.
     for (const summary of summaries) {
       expect(summary).not.toHaveProperty("state_call");
       expect(summary).not.toHaveProperty("semantics");
@@ -241,7 +239,6 @@ describe("pool and position reads", () => {
     expect(bundle.read_calls.calls.map((call: any) => call.id)).toEqual(
       summaries.map((summary: any) => summary.state_call_id),
     );
-    // Each position still carries its own distinct aggregate call.
     expect(bundle.read_calls.calls[0].data).not.toBe(
       bundle.read_calls.calls[1].data,
     );
@@ -284,7 +281,6 @@ describe("pool and position reads", () => {
       }) as typeof fetch,
     );
 
-    // One request to the pool-key route; the old positions side channel is gone.
     expect(requested).toHaveLength(1);
     expect(requested[0]).toContain(`/poolKeys/4663/${core}/`);
     expect(requested[0]).not.toContain("positions");
@@ -297,8 +293,6 @@ describe("pool and position reads", () => {
       liquidity: "10",
     });
 
-    // Fresh-state read bundle: an exact wallet argument object targeting
-    // CoreDataFetcher.poolState, ready for the read-store walk.
     const query = result.current_state_query;
     if (query.available !== true) {
       throw new Error("expected an available current_state_query");
@@ -473,8 +467,6 @@ describe("pool and position reads", () => {
       next_after_pool_id: derivedB.pool_id,
       has_more: true,
     });
-    // PoolKeyIndex is deployed on Base, so on-chain verification metadata
-    // appears there and only there.
     expect(result.onchain_index?.address).toBe(
       "0x898956fc2Aed01D5F81F556FF5dcB10534285718",
     );

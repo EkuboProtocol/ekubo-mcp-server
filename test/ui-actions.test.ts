@@ -64,7 +64,6 @@ const poolKey = {
     size: 32,
   }),
 } as const;
-/** A boostable pool: its extension is a BoostedFees deployment. */
 const boostedPoolKey = {
   token0: native,
   token1,
@@ -181,11 +180,6 @@ describe("EVM interface action preparation", () => {
   });
 
   it("refuses to boost a pool that has no BoostedFees extension", () => {
-    // A boost forwards to the pool's own extension, so an extensionless pool
-    // sends the call to an address with no code and reverts as a bare
-    // CallFailed("0x") that re-preparing cannot fix. The extension is packed
-    // into the config the caller supplied, so it is decidable without the
-    // network.
     expect(() =>
       prepareManualPoolBoost({
         chainId: "1",
@@ -313,8 +307,6 @@ describe("EVM interface action preparation", () => {
       ],
     });
 
-    // A single order mints against a salt too, so its id is knowable before
-    // the transaction is sent rather than only from the receipt.
     expect(planFunctions(create, ALL_ABI)).toEqual([
       "approve",
       "mint",
@@ -324,14 +316,10 @@ describe("EVM interface action preparation", () => {
       "collectProceeds",
       "decreaseSaleRate",
     ]);
-    // collectProceeds and decreaseSaleRate are two decodable steps now.
     expect(planTransactions(stop)).toHaveLength(2);
   });
 
   it("funds each split order from its own step and preserves the total", () => {
-    // Splitting the multicall moved native value from one wrapper onto the
-    // individual payable calls. The sum must still be exactly what the user
-    // is selling, and `mint` must carry none of it.
     const native = "0x0000000000000000000000000000000000000000";
     const create = prepareTwammOrder({
       chainId: "1",
@@ -367,17 +355,11 @@ describe("EVM interface action preparation", () => {
         { fee: "1", startTime: "1024", endTime: "2048", amount: "10000" },
       ],
     });
-    // The salt-free mint() derives its salt from prevrandao() and gas(), so a
-    // simulated id can never be the minted one. Deriving the salt here makes
-    // the id knowable up front, which is the only way back to the order:
-    // collection and stop are keyed by it and nothing enumerates by owner.
     const tokenId = create.details?.token_id as string;
     expect(tokenId).toMatch(/^[0-9]+$/);
     expect(create.request.salt).toMatch(/^0x[0-9a-f]{64}$/);
     expect(create.request.salt_source).toBe("derived");
 
-    // The same request derives the same id, so a retry is detectable rather
-    // than silently minting a second order.
     const again = prepareTwammOrder({
       chainId: "1",
       sender,
@@ -390,7 +372,6 @@ describe("EVM interface action preparation", () => {
     });
     expect(again.details?.token_id).toBe(tokenId);
 
-    // A different amount is a different order and gets its own id.
     const other = prepareTwammOrder({
       chainId: "1",
       sender,
@@ -403,10 +384,6 @@ describe("EVM interface action preparation", () => {
     });
     expect(other.details?.token_id).not.toBe(tokenId);
 
-    // So does a different pair on an identical schedule and amount. The order
-    // config packs the fee, direction, and times but not the tokens, so a salt
-    // derived from the config alone would collide here and the mint would
-    // revert on an id that already exists.
     const otherPair = prepareTwammOrder({
       chainId: "1",
       sender,
@@ -431,10 +408,8 @@ describe("EVM interface action preparation", () => {
         orders: [{ fee: "1", startTime, endTime, amount: "10000" }],
       });
 
-    // Near the current time every boundary is a multiple of 256 seconds.
     expect(order("1010", "2048")).toThrow(/must be a multiple of 256 seconds/);
     expect(order("1024", "2000")).toThrow(/must be a multiple of 256 seconds/);
-    // An end time already behind pending_timestamp is OrderAlreadyEnded.
     expect(order("512", "768")).toThrow(/already passed/);
     expect(order("1024", "2048")).not.toThrow();
   });
@@ -533,7 +508,6 @@ describe("EVM interface action preparation", () => {
       rollTokens: [token1],
     });
 
-    // Step 0 is the approval; the raw byte route is the execution step.
     expect(planTransactions(unwrap)[1]?.data).toBe(
       "0x0001005a0300000001000501",
     );
@@ -545,7 +519,6 @@ describe("EVM interface action preparation", () => {
       "withdrawProtocolFees",
       "roll",
     ]);
-    // Each buyback call is its own decodable step now, not one multicall.
     expect(planTransactions(buybacks)).toHaveLength(3);
   });
 
@@ -678,9 +651,6 @@ describe("EVM interface action preparation", () => {
             {
               decode: {
                 kind: "function_result",
-                // poolState, not poolPrice: poolPrice returns the Q128
-                // sqrtRatioFixed, which overflows the uint96 the float codec
-                // and the resume argument both require.
                 function_name: "poolState",
                 semantic_codecs: [
                   {
@@ -705,10 +675,6 @@ describe("EVM interface action preparation", () => {
         },
       },
     });
-    // The value phase one hands back must be able to satisfy the argument
-    // phase two asks for. poolPrice returned a Q128 number that could never
-    // fit the uint96 pending_current_sqrt_ratio requires, so the two halves of
-    // the tool disagreed and the documented flow could not be completed.
     const priceCall = (
       read as typeof read & {
         current_price_query: {
@@ -766,12 +732,8 @@ describe("EVM interface action preparation", () => {
       execution_plan_ready: true,
       agent_confirmation_required: false,
     });
-    // The route call is opaque calldata from the quote provider, so only the
-    // approval decodes; the plan still states both steps.
     expect(planStepKinds(execute)).toEqual(["approval", "execution"]);
     expect(planTransactions(execute)).toHaveLength(2);
-    // The execution route carries a deadline right after its threshold: flag
-    // bit 1 set, no recipient, and a uint32 30 minutes after preparation.
     const route = planTransactions(execute)[1];
     expect(route.to).toBe("0x03c8B90854b90AA22448b11e885F692972DA441C");
     expect(hexToNumber(sliceHex(route.data, 0, 1))).toBe(2);

@@ -106,9 +106,6 @@ export function prepareAuctionCreate(input: {
     }),
   ];
   const nativeValue = sellToken === NATIVE_TOKEN ? sellAmount : 0n;
-  // One step per call. `mint` takes no value; `sellAmountByAuction` is the
-  // payable call that consumes the sell amount, so the value rides on it
-  // rather than on an opaque multicall wrapper.
   const transactions = calls.map((call, index) =>
     preparedTransaction(
       input.chainId,
@@ -211,8 +208,6 @@ export function prepareAuctionComplete(input: {
       args: [tokenId, auctionKey],
     }),
   ];
-  // One step per call, so the wallet decodes each rather than one opaque
-  // `bytes[]` payload; the atomic batch keeps them all-or-nothing.
   const transactions = calls.map((call) =>
     preparedTransaction(input.chainId, AUCTIONS_V3, call, 0n),
   );

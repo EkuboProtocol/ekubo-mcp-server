@@ -20,8 +20,6 @@ const indexedUniswap = z.looseObject({
   indexed_data: z.literal(true),
   partial: z.boolean(),
   errors: z.array(z.looseObject({ message: z.string() })),
-  // GraphQL roots differ by version and operation, and partial responses may
-  // contain nulls. The envelope, not those upstream fields, is our contract.
   data: z.unknown(),
 });
 const poolConfig = z.looseObject({

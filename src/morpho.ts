@@ -10,11 +10,9 @@ import {
   preparedUiAction,
 } from "./ui-actions.js";
 
-// package.json pins the SDK exactly, so this is the version that is bundled.
 export const MORPHO_SDK_VERSION: string =
   packageJson.dependencies["@morpho-org/morpho-sdk"];
 
-// Matches the SDK entity default for VaultBundlesV1 operations.
 const DEFAULT_DEPOSIT_DEADLINE_SECONDS = 2n * 60n * 60n;
 
 interface MorphoVaultDefinition {
@@ -326,10 +324,6 @@ function senderOnlyRecipient(sender: Address, recipient: string | undefined) {
   return resolved;
 }
 
-/**
- * VaultBundlesV1 reverts once block.timestamp passes the deadline, so a past
- * one turns the plan into a guaranteed revert.
- */
 function depositDeadline(value: string | undefined): bigint {
   const now = BigInt(Math.floor(Date.now() / 1000));
   if (value === undefined) return now + DEFAULT_DEPOSIT_DEADLINE_SECONDS;

@@ -8,10 +8,6 @@
 export const DEFAULT_SWAP_DEADLINE_MINUTES = 30;
 export const MAX_SWAP_DEADLINE_MINUTES = DEFAULT_SWAP_DEADLINE_MINUTES;
 
-/**
- * Last Unix second, inclusive, at which the router accepts the route. After it
- * the router reverts with DeadlineExpired() (0x1ab7da6b).
- */
 export function swapDeadline(
   deadlineMinutes: number = DEFAULT_SWAP_DEADLINE_MINUTES,
   nowMs: number = Date.now(),

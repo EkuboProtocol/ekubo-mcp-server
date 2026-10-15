@@ -261,20 +261,8 @@ const amount = z
   .regex(/^[0-9]*[1-9][0-9]*$/, "amount must be a positive base-unit integer")
   .describe("Base units");
 
-// Every list-token filter is optional so an agent can call the tool with no
-// arguments; the interface visibility threshold and a context-sized page are
-// applied here instead of in the published schema.
 const DEFAULT_TOKEN_PAGE_SIZE = 20;
-/**
- * How many entries an export carries when the caller names no limit.
- *
- * Set to what a wallet accepts in one import rather than to everything that
- * exists, because an export past the importer's limit is refused whole: a
- * larger default would turn "export mainnet" — over 5,000 tokens — from a
- * short list into a failed one.
- */
 const DEFAULT_TOKEN_EXPORT_SIZE = 1_000;
-/** Largest page the canonical token API will serve. */
 const UPSTREAM_MAX_TOKEN_PAGE_SIZE = 10_000;
 
 export const listTokensSchema = z.object({
@@ -319,24 +307,6 @@ export const listTokensSchema = z.object({
     ),
 });
 
-/**
- * Exporting is a different job from listing, so it is a different tool rather
- * than a flag on one.
- *
- * `list_tokens` answers a question the model reasons about — which
- * address is the USDC the user meant — and its search, paging, and full
- * metadata all serve that. Export answers no question: it hands a wallet a
- * list to hold. No entry ever reaches the model, so the knobs that shape what
- * the model reads would be noise, and the metadata that makes a record
- * readable is dead weight in a body only a wallet parses. What is left is the
- * whole surface: which chain, and how many at most.
- *
- * The visibility threshold is fixed at the interface's own, rather than
- * exposed. Reaching below it is how a caller asks for tokens the interface
- * deliberately hides, and a bulk export destined for the screen where an
- * owner grants names is the last place that should be reachable in one
- * argument.
- */
 export const exportTokensSchema = z.object({
   chain_id: chainId
     .optional()
@@ -1846,10 +1816,6 @@ export const prepareLidoWithdrawalClaimSchema = lidoActionSchema.extend({
   request_id: amount.describe("Finalized, unclaimed unstETH NFT request ID owned by sender"),
 });
 
-// Reads keep readOnlyHint even though storing a read bundle writes the
-// artifact bucket: the storage is incidental caching of the tool's own
-// result, not an observable state change a client must treat as a side
-// effect.
 const readerAnnotations = {
   readOnlyHint: true,
   destructiveHint: false,
@@ -1857,11 +1823,6 @@ const readerAnnotations = {
   openWorldHint: true,
 } as const;
 
-// These tools compute from arguments or checked-in constants only: pool IDs,
-// packed configs, and fixed Aave deployment discovery. No indexer, RPC, API,
-// or artifact bucket. openWorldHint exists
-// to say whether a call reaches entities outside this process, so these say
-// no; a client that avoids open-world calls can still use all of them.
 const localAnnotations = {
   ...readerAnnotations,
   openWorldHint: false,
@@ -1902,22 +1863,9 @@ function toolAnnotations(name: string) {
   return LOCAL_TOOLS.has(name) ? localAnnotations : readerAnnotations;
 }
 
-// Output schemas for handoff tools: loose shapes that pin where the
-// result's primary wallet handoff sits — the execution plan for a preparer,
-// the token list for an export, the read bundle a reader wants executed — so
-// typed clients can find it without the schema constraining anything else.
-// They are not an inventory of every envelope in a result: a preparation
-// tool's own validation reads travel under shapes that differ per tool, and
-// the plan is the handoff its schema names. Informational tool schemas live
-// separately and describe their stable result envelopes.
 const preparedPlanOutputSchema = z.looseObject({
   execution_plan_reference: artifactReferenceSchema.optional(),
 });
-// Export returns the envelope and the count it stands for, and nothing else.
-// The count is what lets an agent say "991 tokens from the Ekubo canonical
-// list" without fetching a body meant for the wallet; it travels beside the
-// envelope, never inside it, and is never handed on, so it cannot become
-// something a consumer cross-checks against the bytes.
 const exportedTokenListOutputSchema = z.looseObject({
   token_list_reference: artifactReferenceSchema,
   count: z.number().int(),
@@ -1958,10 +1906,6 @@ const quotesOutputSchema = z.looseObject({
     )
     .optional(),
 });
-// The swap phase is the one reinvest phase that carries swap plans, so it is
-// the one that must say inline which jurisdictions restrict them: once the
-// plan bodies are replaced by references, the inline copy is the only one an
-// agent reads.
 const ve33ReinvestOutputSchema = z
   .looseObject({
     phase: z.enum(["claim", "swap", "stake_all", "stake"]).optional(),
@@ -2041,9 +1985,6 @@ export function toolOutputSchema(name: string) {
       });
     case "get_liquidity_opportunities":
       return z.looseObject({
-        // Null is the answer, not the absence of one: a ranking that needed no
-        // wallet-local emission read says so by naming the slot and emptying
-        // it, the way the result's other inapplicable fields do.
         local_read_requirement: z
           .looseObject({
             read_calls_reference: artifactReferenceSchema.optional(),
@@ -2647,17 +2588,11 @@ export const publicToolCatalog = [
   },
 ] as const;
 
-/**
- * The HTTP discovery catalog served at /tools: registration metadata plus,
- * for handoff tools, the JSON Schema of the result shape that carries the
- * artifact-reference envelope.
- */
 export const hostedToolCatalog = [...publicToolCatalog, ...safeCatalog];
 export const publicToolCatalogWithOutputs = hostedToolCatalog.map((entry) => {
   const outputSchema = toolOutputSchema(entry.name);
   return {
     ...entry,
-    // Which /mcp/<slug> endpoint serves this tool. Safe is standalone-only.
     protocol: toolProtocol(entry.name),
     annotations: toolAnnotations(entry.name),
     ...(outputSchema === undefined
@@ -2666,14 +2601,6 @@ export const publicToolCatalogWithOutputs = hostedToolCatalog.map((entry) => {
   };
 });
 
-/**
- * One catalog entry by name.
- *
- * Registration used to index into the catalog by position, which quietly made
- * every tool's identity depend on how many tools happened to be declared above
- * it: adding or retiring one silently re-pointed every later registration at
- * the wrong entry. Names do not move when the list does.
- */
 function catalogEntry(name: string) {
   const entry = hostedToolCatalog.find((tool) => tool.name === name);
   if (entry === undefined) {
@@ -2682,28 +2609,10 @@ function catalogEntry(name: string) {
   return entry;
 }
 
-/**
- * The MCP server for one endpoint.
- *
- * `protocols` is the set of protocols this endpoint serves: every protocol for
- * `/mcp`, exactly one for `/mcp/<slug>`. Everything scoped to a protocol — the
- * tools, the skill resources, the instruction paragraphs — is filtered through
- * it, so a single-protocol server never advertises a tool it does not have.
- */
-/**
- * The one resource every endpoint serves whatever protocols it carries: the
- * plan-handoff contract, which describes how a prepared plan reaches a wallet
- * and is the same contract for a Lido stake as for an Ekubo swap.
- */
 const UNIVERSAL_RESOURCES: ReadonlySet<string> = new Set([
   "ekubo-execution-plan",
 ]);
 
-/**
- * Ekubo documentation `/mcp/ekubo-advanced` also needs: the LP workflow covers
- * pool initialization and price fixes, and the contract directory names the
- * deployments its tools act on.
- */
 const ADVANCED_RESOURCES: ReadonlySet<string> = new Set([
   "ekubo-lp-position-workflow",
   "ekubo-evm-contract-directory",
@@ -2713,15 +2622,6 @@ const ADVANCED_RESOURCES: ReadonlySet<string> = new Set([
 
 const SKILL_RESOURCE_PREFIX = "protocol-skill-";
 
-/**
- * Whether a resource belongs on a server serving `protocols`.
- *
- * Skill resources are named `protocol-skill-use-<slug>` and
- * `protocol-skill-use-<slug>-discovery`, so one prefix strip identifies the
- * skill both registrations belong to. Everything else that is not universal is
- * Ekubo's own documentation — the swap workflow, the LP and ve(3,3) workflows,
- * the quoter contract, the EVM contract directory — and rides with `ekubo`.
- */
 function resourceEnabled(
   name: string,
   protocols: ReadonlySet<ProtocolSlug>,
@@ -2743,12 +2643,6 @@ export function createEkuboServer(
   origin = "https://mcp.ekubo.org",
   protocols: ReadonlySet<ProtocolSlug> = ALL_PROTOCOLS,
 ) {
-  // A single-protocol endpoint identifies itself as that protocol so a harness
-  // showing seven Ekubo-hosted servers side by side names them apart. `/mcp`
-  // keeps the plain `ekubo` identity every configured client already holds,
-  // and so does `/mcp/ekubo`: it serves Ekubo's own protocol, and
-  // `ekubo-ekubo` would be a name nobody chose. `/mcp/ekubo-advanced` is
-  // named by its slug for the same reason.
   const only =
     protocols.size === 1
       ? protocolBySlug([...protocols][0] as string)
@@ -2771,8 +2665,6 @@ export function createEkuboServer(
         "tools/list": { ttlMs: 300_000, cacheScope: "public" },
         "resources/list": { ttlMs: 300_000, cacheScope: "public" },
         "resources/templates/list": { ttlMs: 300_000, cacheScope: "public" },
-        // Resources are bundled, public documentation/ABIs. The externally
-        // fetched OpenAPI resource overrides this policy below.
         "resources/read": { ttlMs: 3_600_000, cacheScope: "public" },
       },
       instructions:
@@ -2930,8 +2822,6 @@ export function createEkuboServer(
           minVisibilityPriority: 0,
           pageSize: Math.min(limit + 1, UPSTREAM_MAX_TOKEN_PAGE_SIZE),
         });
-        // At the upstream ceiling there is no probe left to take, so a full
-        // page cannot be proven complete and is reported as incomplete.
         const complete = tokens.length <= limit;
         const entries = tokenListEntries(tokens.slice(0, limit));
         return {
@@ -3647,9 +3537,6 @@ export function createEkuboServer(
         }
       }),
     });
-    // Sending a Stock Token away is labeled like a sale. An unclassified
-    // ERC-20 on a covered chain is labeled too, so a newly listed Stock Token
-    // is reported as coverage=unknown rather than omitted.
     const labeled = [...new Set(input.transfers.flatMap((transfer) => {
       if (transfer.kind === "native") return [];
       const { classification } = classifyAsset(chainId, transfer.token);
@@ -3807,7 +3694,6 @@ export function createEkuboServer(
 
   registerCatalogTool("prepare_oracle_capacity_expansion", prepareOracleCapacityExpansionSchema, (input) => {
     const chainId = canonicalChainId(input.chain_id);
-    // Extending an oracle's capacity supports holding the asset: labeled buy.
     return withJurisdiction(prepareOracleCapacityExpansion({
       chainId,
       sender: input.sender,
@@ -4704,56 +4590,14 @@ async function fetchDocumentation(url: string): Promise<string> {
   return response.text();
 }
 
-/**
- * The server instructions, one paragraph per entry, each scoped to the
- * protocols it speaks about.
- *
- * A single-protocol endpoint composes only its own paragraphs plus the ones
- * scoped `null` — the catalog revision, the jurisdiction contract, and the
- * plan and read-bundle handoff rules that hold whatever tools are on the
- * server. Without this an agent connected to `/mcp/lido` would be told to
- * start every swap with `get_quotes_with_plans`, a tool that endpoint does
- * not register.
- */
 type InstructionSection = {
-  /** `null` means every endpoint; otherwise the protocols this applies to. */
   readonly protocols: readonly ProtocolSlug[] | null;
-  /**
-   * Stored prose, or the generator that composes this paragraph for the
-   * endpoint being built.
-   *
-   * A generated paragraph is an entry in the list rather than something
-   * spliced in at a remembered index. The position it belongs at is the
-   * position it occupies, so inserting or reordering a section above it moves
-   * it correctly instead of silently relocating it — which would change the
-   * text `/mcp` serves while every test that compares the generator against
-   * itself still passed.
-   */
   readonly text:
     | string
     | ((protocols: ReadonlySet<ProtocolSlug>) => string | null);
-  /**
-   * A closing sentence that only holds where Ekubo's own tools are registered.
-   *
-   * It exists for the one case where a paragraph that applies to every
-   * endpoint ends by directing the agent at a specific Ekubo tool. Dropping
-   * that sentence on `/mcp/sky` is the whole point: an instruction to reach
-   * for a tool the endpoint does not serve is worse than silence. Keeping it
-   * a suffix rather than its own paragraph is what leaves `/mcp` byte-identical
-   * to the text it served before the split.
-   */
   readonly ekuboOnlyTail?: string;
 };
 
-/**
- * The direct-discovery paragraph, built for exactly the skill-bearing
- * protocols on this endpoint.
- *
- * It is generated rather than stored because it names each protocol, each
- * skill URI, and each intersection tool in one sentence: a stored copy would
- * send a `/mcp/sky` client to `ekubo://skills/use-morpho`, a resource that
- * endpoint does not serve.
- */
 const DIRECT_DISCOVERY_PROTOCOLS = [
   {
     slug: "morpho",
@@ -4774,8 +4618,6 @@ const DIRECT_DISCOVERY_PROTOCOLS = [
     gate: "Lido protocol withdrawals are irreversible asynchronous unstETH NFT requests, not immediate swaps; verify bounds, ownership, finalization, and consequences before preparation.",
   },
   { slug: "merkl", label: "Merkl", intersect: "get_merkl_deployment", gate: null },
-  // Aerodrome's own paragraph below carries its cross-check against
-  // get_aerodrome_deployment, so naming it here too would only repeat it.
   { slug: "aerodrome", label: "Aerodrome", intersect: null, gate: null },
 ] as const satisfies readonly {
   slug: ProtocolSlug;
@@ -4784,7 +4626,6 @@ const DIRECT_DISCOVERY_PROTOCOLS = [
   gate: string | null;
 }[];
 
-/** `a`, `a and b`, `a, b, and c` — the serial comma the prose already uses. */
 function joinList(items: readonly string[], conjunction: string): string {
   if (items.length <= 1) return items[0] ?? "";
   if (items.length === 2) return `${items[0]} ${conjunction} ${items[1]}`;
@@ -4850,8 +4691,6 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
     text: `Multi-step workflows: ekubo://docs/agent-workflow, ekubo://docs/lp-position-workflow, ekubo://docs/ve33-workflow. Use the connected wallet or ask; do not infer it from the machine, repository, or keystore.`,
   },
   {
-    // Wherever the core tools are also served, their workflow paragraph above
-    // already covers this, which keeps `/mcp` unchanged by the split.
     protocols: ["ekubo-advanced"],
     text: (protocols) =>
       protocols.has("ekubo")
@@ -4876,12 +4715,6 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
   },
 ];
 
-/**
- * Compose the instructions an endpoint serving `protocols` should present.
- *
- * `/mcp` passes every protocol and gets the full text unchanged, which is
- * what keeps the pre-split endpoint behaving exactly as it did.
- */
 export function serverInstructions(
   protocols: ReadonlySet<ProtocolSlug>,
   origin = "https://mcp.ekubo.org",
@@ -4905,8 +4738,6 @@ function bundledServerInstructions(protocols: ReadonlySet<ProtocolSlug>, origin:
       typeof section.text === "string"
         ? section.text
         : section.text(protocols);
-    // A generator returns null when its subject is absent from this endpoint,
-    // which is how the direct-discovery paragraph disappears from `/mcp/ekubo`.
     if (text === null) continue;
     const tail =
       section.ekuboOnlyTail !== undefined && protocols.has("ekubo")
@@ -4919,17 +4750,6 @@ function bundledServerInstructions(protocols: ReadonlySet<ProtocolSlug>, origin:
   return sections.join("\n\n");
 }
 
-/**
- * On a single-protocol endpoint, say so and say where the rest are.
- *
- * The protocol paragraphs contrast their own tools against Ekubo's —
- * prepare_merkl_claim against prepare_rewards_claim, an Aerodrome gauge claim
- * against get_quotes_with_plans — because that contrast is what stops an agent
- * using the wrong one. Those sentences stay, and this paragraph is what keeps
- * them honest: it tells the agent that a tool named but not listed lives on
- * another endpoint, rather than leaving it to conclude the tool is missing and
- * improvise calldata for it.
- */
 function endpointScopeSection(
   protocols: ReadonlySet<ProtocolSlug>,
   origin: string,

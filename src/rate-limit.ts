@@ -42,24 +42,9 @@ export interface RateLimitBindings {
   RATE_LIMITER_METERED?: RateLimit;
 }
 
-/** Matches `simple.period` on the `RATE_LIMITER_BURST` binding. */
 export const BURST_WINDOW_SECONDS = 10;
-/** Matches `simple.period` on every other binding. */
 export const SUSTAINED_WINDOW_SECONDS = 60;
 
-/**
- * The most one request may ask for. Units are spent by calling `limit()` once
- * per unit — the binding takes no weight argument — so without a ceiling a
- * long batch of expensive calls would fan one request out into hundreds of
- * binding calls.
- *
- * The ceiling is a refusal rather than a clamp. Clamping would mean a batch
- * that costs 160 units is charged 40 and served, which is exactly the hole a
- * cost model is meant to close; refusing means an over-large ask is split into
- * requests that are each priced honestly. It sits above the most expensive
- * single tool, so no individual call can ever be refused by it — a test pins
- * that against the live catalog.
- */
 export const MAX_UNITS_PER_REQUEST = 40;
 
 /**
@@ -70,26 +55,11 @@ export const MAX_UNITS_PER_REQUEST = 40;
  */
 export const MAX_MCP_BODY_BYTES = 2 * 1024 * 1024;
 
-/**
- * JSON-RPC batching was removed in protocol revision 2025-06-18, but older
- * clients still send arrays. Accept small ones and reject the rest rather than
- * letting one request carry an arbitrary number of billable tool calls.
- */
 export const MAX_BATCH_LENGTH = 20;
 
-/**
- * Tools that spend metered third-party credit on every call. These are the
- * calls that show up on an invoice, so they draw from `RATE_LIMITER_METERED`
- * in addition to their unit cost.
- */
 const METERED_TOOLS = new Set([
-  // 0x Swap API for the comparison leg, and Across, LayerZero, and LI.FI for
-  // any cross-chain leg.
   "get_quotes_with_plans",
-  // One authenticated LayerZero or LI.FI read per call, and it is polled in a
-  // loop while a transfer is in flight.
   "get_value_transfer_status",
-  // Dune, plus a refresh this Worker awaits for up to twenty seconds.
   "get_stonx_allocation_recommendation",
 ]);
 
@@ -105,8 +75,6 @@ const METERED_TOOLS = new Set([
  * over-charged, not under-charged.
  */
 const TOOL_COST: Record<string, number> = {
-  // Pure local derivation. No network, no storage; the request-level budgets
-  // already bound how often it can be called at all.
   derive_pool_id: 0,
   decode_pool_config: 0,
   get_aave_v3_markets: 0,
@@ -115,7 +83,6 @@ const TOOL_COST: Record<string, number> = {
   get_lido_deployment: 0,
   get_merkl_deployment: 0,
 
-  // One upstream read.
   get_token: 1,
   get_pool: 1,
   get_pool_liquidity: 1,
@@ -124,8 +91,6 @@ const TOOL_COST: Record<string, number> = {
   get_positions_by_owner: 1,
   get_rewards_claims_by_owner: 1,
 
-  // Reads that fan out across several upstream calls, join metadata and USD
-  // prices, or walk a whole chain's catalog. These are the scraping surface.
   get_tokens: 4,
   export_tokens: 4,
   get_position: 3,
@@ -133,26 +98,15 @@ const TOOL_COST: Record<string, number> = {
   get_ve33_allocations: 3,
   get_liquidity_opportunities: 4,
 
-  // Metered third parties. Priced so that a caller who does nothing else still
-  // runs out of units at a rate a person driving an agent will not reach.
   get_quotes_with_plans: 10,
   get_stonx_allocation_recommendation: 20,
-  // Polled repeatedly by design, so it is priced to stay affordable across a
-  // transfer's lifetime while still drawing on the metered budget.
   get_value_transfer_status: 2,
 
-  // Preparations that fan out over every position, vote, or fee balance an
-  // owner holds before they can produce a plan.
   prepare_ve33_reinvest: 8,
   prepare_ve33_claim_all_fees: 6,
   prepare_ve33_reallocation: 6,
 };
 
-/**
- * A tool with no table entry. Preparations write an artifact body to R2 and
- * usually read chain and index state first, so they are charged as if they
- * did; anything else is charged as a small fan-out read.
- */
 function defaultToolCost(name: string): number {
   return name.startsWith("prepare_") ? 3 : 2;
 }
@@ -162,18 +116,11 @@ export function toolCost(name: string): number {
   return configured === undefined ? defaultToolCost(name) : configured;
 }
 
-/** What one MCP request will draw from each budget if it is admitted. */
 export interface RequestCharge {
   units: number;
   meteredCalls: number;
 }
 
-/**
- * Which budget rejected a request, and how long the caller should wait. The
- * scope travels in the error body so an agent reading it can tell "you are
- * asking too fast" apart from "you have used this hour's paid quotes", which
- * are different things for it to do next.
- */
 export interface RateLimitRejection {
   scope: "burst" | "sustained" | "tool_units" | "metered_providers";
   retryAfterSeconds: number;
@@ -220,17 +167,6 @@ export type McpBodyCharge =
   | { ok: true; charge: RequestCharge; id: string | number | null }
   | { ok: false; reason: "unparseable" | "too_many_calls" | "too_expensive" };
 
-/**
- * Read the JSON-RPC body of an MCP POST and price it.
- *
- * A body we will not serve at all — unparseable, or an over-long batch — is
- * rejected here, before the MCP handler allocates anything for it. A body that
- * parses but contains no `tools/call` prices to zero: `initialize`,
- * `tools/list`, and notifications are covered by the request-level budgets
- * alone. The id comes back so a rejection can be answered as a JSON-RPC error
- * the client will attach to the call it made, rather than as a bare HTTP
- * status it has to correlate itself.
- */
 export function chargeForMcpBody(body: string): McpBodyCharge {
   let parsed: unknown;
   try {
@@ -257,8 +193,6 @@ export function chargeForMcpBody(body: string): McpBodyCharge {
   return {
     ok: true,
     charge: { units, meteredCalls },
-    // Only a lone message has an id worth echoing; a batch has several, and
-    // the error that replaces it belongs to none of them in particular.
     id: messages.length === 1 ? jsonRpcId(messages[0]) : null,
   };
 }
@@ -275,8 +209,6 @@ function toolCallName(message: unknown): string | null {
   if (method !== "tools/call") return null;
   if (typeof params !== "object" || params === null) return null;
   const { name } = params as { name?: unknown };
-  // An unnamed tools/call will fail downstream, but it still cost us the parse
-  // and the dispatch, so price it as an average tool rather than as free.
   return typeof name === "string" && name.length > 0 ? name : "";
 }
 
@@ -327,11 +259,6 @@ export async function enforceRequestRate(
   return null;
 }
 
-/**
- * Draw a priced tool call from the two per-tool budgets. Called only after
- * `enforceRequestRate` has admitted the request, so a caller who is already
- * being throttled does not also burn their paid-provider headroom.
- */
 export async function enforceToolRate(
   bindings: RateLimitBindings,
   actor: string,
@@ -382,8 +309,6 @@ async function draw(
   units: number,
 ): Promise<boolean> {
   if (limiter === undefined || units <= 0) return true;
-  // Pricing already refuses anything above this, so the clamp is a backstop
-  // against a future caller that draws without going through it.
   const draws = Math.min(units, MAX_UNITS_PER_REQUEST);
   try {
     const outcomes = await Promise.all(

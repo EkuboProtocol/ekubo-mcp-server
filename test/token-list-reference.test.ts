@@ -24,11 +24,6 @@ const headers = {
   "mcp-protocol-version": "2025-11-25",
 };
 
-/**
- * A canonical-shaped response: the five fields a wallet acts on, buried in the
- * display metadata that makes the real list 483 KB, plus the Starknet row
- * whose chain ID does not survive a round trip through a JSON number.
- */
 const upstreamTokens = [
   {
     chain_id: "0x1",
@@ -94,7 +89,6 @@ async function callTool(name: string, args: Record<string, unknown>) {
   );
   expect(response.status).toBe(200);
   const text = await response.text();
-  // The endpoint may answer as SSE; take the last data frame either way.
   const payload = text.startsWith("event:")
     ? text
         .split("\n")
@@ -108,8 +102,6 @@ async function callTool(name: string, args: Record<string, unknown>) {
 }
 
 describe("export_tokens", () => {
-  /// Listing and exporting are different jobs: the reader keeps returning
-  /// entries the model reasons about, and never an envelope.
   it("leaves list_tokens returning entries", async () => {
     const content = await withStubbedUpstream(() =>
       callTool("list_tokens", {}),
@@ -118,8 +110,6 @@ describe("export_tokens", () => {
     expect(content.token_list_reference).toBeUndefined();
   });
 
-  /// The export returns the envelope and the count it stands for, and
-  /// nothing else — no entry may reach the model on this path.
   it("returns only a reference and a count", async () => {
     const content = await withStubbedUpstream(() =>
       callTool("export_tokens", {}),
@@ -131,9 +121,6 @@ describe("export_tokens", () => {
     ]);
   });
 
-  /// An export the agent never reads is one it cannot notice is short, so a
-  /// prefix has to say so. Two upstream tokens with max_tokens=1 is the
-  /// smallest case that distinguishes a full page from a finished list.
   it("reports a truncated export rather than passing a prefix off as the list", async () => {
     const truncated = await withStubbedUpstream(() =>
       callTool("export_tokens", { max_tokens: 1 }),
@@ -167,8 +154,6 @@ describe("export_tokens", () => {
     expect(content.count).toBe(2);
     expect(content.complete).toBe(true);
 
-    // The wallet's side of the handoff: fetch the URL, recompute the digest
-    // and the byte count, and refuse anything that disagrees.
     const fetched = await worker.fetch(
       new Request(reference.url),
       env as never,
@@ -191,8 +176,6 @@ describe("export_tokens", () => {
       name: "USD Coin",
       decimals: 6,
     });
-    // Display metadata is the bulk of the canonical list and none of it is
-    // something a wallet acts on, so the stored body must not carry it.
     for (const dropped of [
       "logo_url",
       "usd_price",
@@ -202,7 +185,6 @@ describe("export_tokens", () => {
     ]) {
       expect(list.tokens[0][dropped]).toBeUndefined();
     }
-    // The Starknet chain ID survives exactly; as a JSON number it would not.
     expect(list.tokens[1].chain_id).toBe("23448594291968334");
     expect(Number(list.tokens[1].chain_id as string)).toBeGreaterThan(
       Number.MAX_SAFE_INTEGER,
