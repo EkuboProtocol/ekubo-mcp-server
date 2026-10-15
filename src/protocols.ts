@@ -13,12 +13,13 @@ export const PROTOCOL_SLUGS = [
   "uniswap",
   "safe",
   "moonpay",
+  "coinbase",
 ] as const;
 
 export type ProtocolSlug = (typeof PROTOCOL_SLUGS)[number];
 
 /** Served only at their own /mcp/<slug>; never bundled into /mcp or combinable in a facet. */
-export const STANDALONE_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(["safe", "moonpay"]);
+export const STANDALONE_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(["safe", "moonpay", "coinbase"]);
 
 export type ProtocolDescriptor = {
   readonly slug: ProtocolSlug;
@@ -207,6 +208,13 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
     description: "Signed MoonPay sandbox checkout links to buy ETH or USDC with a card; test mode only, no real payments; separate endpoint only, excluded from /mcp",
     skill: null,
     tools: ["create_moonpay_buy_link"],
+  },
+  {
+    slug: "coinbase",
+    title: "Coinbase Onramp (sandbox)",
+    description: "Single-use Coinbase Onramp sandbox checkout links to buy ETH or USDC with a card or Apple Pay; no real payments; separate endpoint only, excluded from /mcp",
+    skill: null,
+    tools: ["create_coinbase_onramp_link"],
   },
 ];
 

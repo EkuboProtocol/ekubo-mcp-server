@@ -109,14 +109,14 @@ describe("tools/list schema cache", () => {
   it("publishes the same catalog for every endpoint across deployments and repeats", async () => {
     const full = (await toolsList(deployments[0]!, "/mcp")).result!.tools!;
     expect(full.some((tool) => tool.name.startsWith("prepare_safe_"))).toBe(false);
-    expect(full.some((tool) => tool.name.includes("moonpay"))).toBe(false);
+    expect(full.some((tool) => tool.name.includes("moonpay") || tool.name.includes("coinbase"))).toBe(false);
     for (const path of ENDPOINTS) {
       const seen = new Set<string>();
       for (const deployment of [...deployments, ...deployments]) {
         seen.add(JSON.stringify((await toolsList(deployment, path)).result));
       }
       expect(seen.size).toBe(1);
-      if (path === "/mcp/safe" || path === "/mcp/moonpay") continue;
+      if (path === "/mcp/safe" || path === "/mcp/moonpay" || path === "/mcp/coinbase") continue;
       for (const tool of JSON.parse([...seen][0]!).tools as { name: string }[]) {
         expect(tool).toEqual(full.find((entry) => entry.name === tool.name)!);
       }
