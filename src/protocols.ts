@@ -12,9 +12,14 @@ export const PROTOCOL_SLUGS = [
   "sky",
   "uniswap",
   "safe",
+  "moonpay",
+  "coinbase",
 ] as const;
 
 export type ProtocolSlug = (typeof PROTOCOL_SLUGS)[number];
+
+/** Served only at their own /mcp/<slug>; never bundled into /mcp or combinable in a facet. */
+export const STANDALONE_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(["safe", "moonpay", "coinbase"]);
 
 export type ProtocolDescriptor = {
   readonly slug: ProtocolSlug;
@@ -197,9 +202,23 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
     skill: null,
     tools: safeTools.map((tool) => tool.name),
   },
+  {
+    slug: "moonpay",
+    title: "MoonPay (sandbox)",
+    description: "Signed MoonPay sandbox checkout links to buy ETH or USDC with a card; test mode only, no real payments; separate endpoint only, excluded from /mcp",
+    skill: null,
+    tools: ["create_moonpay_buy_link"],
+  },
+  {
+    slug: "coinbase",
+    title: "Coinbase Onramp (sandbox)",
+    description: "Single-use Coinbase Onramp sandbox checkout links to buy ETH or USDC with a card or Apple Pay; no real payments; separate endpoint only, excluded from /mcp",
+    skill: null,
+    tools: ["create_coinbase_onramp_link"],
+  },
 ];
 
-export const ALL_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(PROTOCOL_SLUGS.filter((slug) => slug !== "safe"));
+export const ALL_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(PROTOCOL_SLUGS.filter((slug) => !STANDALONE_PROTOCOLS.has(slug)));
 
 const TOOL_PROTOCOLS: ReadonlyMap<string, ProtocolSlug> = new Map(
   PROTOCOLS.flatMap((protocol) =>
@@ -291,10 +310,10 @@ export function parseProtocolFacet(query: URLSearchParams): FacetSelection | nul
   }
   const protocols = new Set<ProtocolSlug>();
   for (const name of names) {
-    if (name === "safe") {
-      return { error: "Safe is served only at /mcp/safe and cannot be combined with other protocols." };
-    }
     const protocol = protocolBySlug(name);
+    if (protocol !== undefined && STANDALONE_PROTOCOLS.has(protocol.slug)) {
+      return { error: `${protocol.title} is served only at /mcp/${protocol.slug} and cannot be combined with other protocols.` };
+    }
     if (protocol === undefined) {
       return { error: `Unknown protocol. Known protocols: ${bundled}.` };
     }
