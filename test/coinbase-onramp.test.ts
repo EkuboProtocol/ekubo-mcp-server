@@ -58,6 +58,16 @@ function mockCoinbase(respond: (request: Request) => Response | Promise<Response
   return { seen, spy };
 }
 
+function follow(link: string, headers: Record<string, string> = { "cf-connecting-ip": "203.0.113.42" }) {
+  return worker.fetch(new Request(link, { headers }), configured as never, context);
+}
+
+async function linkFor(args: Record<string, unknown>) {
+  const json = await onramp(args);
+  expect(json.result.isError).not.toBe(true);
+  return json.result.structuredContent.checkout_url as string;
+}
+
 const ok = () => Response.json({ session: { onrampUrl: SESSION_URL } }, { status: 201 });
 
 afterEach(() => {
@@ -75,10 +85,31 @@ describe("Coinbase Onramp sandbox endpoint", () => {
     }
   });
 
-  it("creates a sandbox session with a CDP JWT that verifies independently", async () => {
-    const { seen } = mockCoinbase(ok);
+  it("returns a link to this server without calling Coinbase", async () => {
+    const { spy } = mockCoinbase(ok);
     const json = await onramp({ wallet_address: wallet, asset: "USDC", payment_amount: "49.99" });
-    expect(json.result.isError).not.toBe(true);
+    expect(spy).not.toHaveBeenCalled();
+    const result = json.result.structuredContent;
+    expect(result).toMatchObject({ provider: "coinbase", environment: "sandbox" });
+    const url = new URL(result.checkout_url);
+    expect(`${url.origin}${url.pathname}`).toBe("https://mcp.ekubo.org/onramp/coinbase");
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      wallet_address: "0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe",
+      asset: "USDC",
+      network: "base",
+      payment_currency: "USD",
+      payment_amount: "49.99",
+    });
+    expect(JSON.stringify(json)).not.toContain(SECRET);
+  });
+
+  it("opening the link creates an IP-bound sandbox session with a CDP JWT that verifies independently", async () => {
+    const link = await linkFor({ wallet_address: wallet, asset: "USDC", payment_amount: "49.99" });
+    const { seen } = mockCoinbase(ok);
+    const response = await follow(link);
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(SESSION_URL);
+    expect(response.headers.get("cache-control")).toBe("no-store");
     expect(seen).toHaveLength(1);
     const request = seen[0]!;
     expect(request.method).toBe("POST");
@@ -91,6 +122,7 @@ describe("Coinbase Onramp sandbox endpoint", () => {
       paymentCurrency: "USD",
       paymentAmount: "49.99",
       partnerUserRef: expect.stringMatching(/^sandbox-[0-9a-f-]{36}$/),
+      clientIp: "203.0.113.42",
     });
     const jwt = request.headers.get("authorization")!.replace(/^Bearer /, "");
     const [encodedHeader, encodedPayload, encodedSignature] = jwt.split(".") as [string, string, string];
@@ -103,21 +135,18 @@ describe("Coinbase Onramp sandbox endpoint", () => {
     expect(payload).toMatchObject({ iss: "cdp", sub: KEY_ID, uris: ["POST api.cdp.coinbase.com/platform/v2/onramp/sessions"] });
     expect(payload.exp - payload.nbf).toBe(120);
     expect(Math.abs(payload.iat - Date.now() / 1000)).toBeLessThan(5);
-
-    const result = json.result.structuredContent;
-    expect(result).toMatchObject({ provider: "coinbase", environment: "sandbox", checkout_url: SESSION_URL, single_use: true });
-    expect(result.request.partner_user_ref).toBe(body.partnerUserRef);
-    expect(JSON.stringify(json)).not.toContain(SECRET);
   });
 
-  it("uses a fresh sandbox reference per session and omits an unset amount", async () => {
+  it("uses a fresh sandbox reference per opening and omits an unset amount or unknown IP", async () => {
+    const link = await linkFor({ wallet_address: wallet, asset: "ETH", network: "ethereum" });
     const { seen } = mockCoinbase(ok);
-    await onramp({ wallet_address: wallet, asset: "ETH", network: "ethereum" });
-    await onramp({ wallet_address: wallet, asset: "ETH", network: "ethereum" });
+    await follow(link);
+    await follow(link, {});
     const [first, second] = (await Promise.all(seen.map((request) => request.json()))) as Record<string, unknown>[];
     expect(first.partnerUserRef).not.toBe(second.partnerUserRef);
     expect(first).not.toHaveProperty("paymentAmount");
     expect(first.destinationNetwork).toBe("ethereum");
+    expect(second).not.toHaveProperty("clientIp");
   });
 
   it("names the bad argument before calling Coinbase", async () => {
@@ -148,7 +177,7 @@ describe("Coinbase Onramp sandbox endpoint", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("maps Coinbase failures to structured errors without leaking credentials", async () => {
+  it("turns Coinbase failures into error pages without leaking credentials", async () => {
     const cases: [() => Response | Promise<Response>, string][] = [
       [() => Response.json({ errorType: "invalid_request", errorMessage: "bad address", correlationId: "c-1" }, { status: 400 }), "coinbase_invalid_request"],
       [() => Response.json({ errorType: "internal_server_error" }, { status: 500 }), "upstream_error"],
@@ -158,14 +187,19 @@ describe("Coinbase Onramp sandbox endpoint", () => {
       [() => Response.json({}, { status: 201 }), "invalid_upstream_response"],
       [() => Promise.reject(new DOMException("timed out", "TimeoutError")), "upstream_timeout"],
     ];
+    const link = await linkFor({ wallet_address: wallet, asset: "ETH" });
     for (const [respond, code] of cases) {
       mockCoinbase(respond);
-      const json = await onramp({ wallet_address: wallet, asset: "ETH" });
-      expect(json.result.isError).toBe(true);
-      expect(json.result.structuredContent.error.code).toBe(code);
-      expect(JSON.stringify(json)).not.toContain(SECRET);
-      expect(JSON.stringify(json)).not.toContain("Bearer");
+      const response = await follow(link);
+      expect(response.status).toBe(502);
+      expect(response.headers.get("location")).toBeNull();
+      const body = await response.text();
+      expect(body).toContain(`Error code: ${code}`);
+      expect(body).not.toContain(SECRET);
+      expect(body).not.toContain("Bearer");
       (globalThis.fetch as { mockRestore?: () => void }).mockRestore?.();
     }
+    const bad = await follow("https://mcp.ekubo.org/onramp/coinbase?wallet_address=" + wallet + "&asset=BTC");
+    expect(bad.status).toBe(400);
   });
 });

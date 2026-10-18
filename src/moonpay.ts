@@ -33,27 +33,33 @@ export const createMoonPayBuyLinkSchema = z.strictObject({
     .describe("Whole fiat amount to pre-fill, 1 to 999999; MoonPay enforces its own minimum and maximum. Omit to let the user choose"),
 });
 
-export async function createMoonPayBuyLink(
+export const MOONPAY_REDIRECT_PATH = "/onramp/moonpay";
+
+/**
+ * Returns a link to this server's redirect, not to MoonPay. MoonPay binds each
+ * signed widget URL to the IP address that will open it, and an MCP call comes
+ * from the agent platform rather than the user's browser, so the widget URL is
+ * signed only when the user's browser follows the link.
+ */
+export function createMoonPayBuyLink(
   keys: MoonPayKeys,
   input: z.output<typeof createMoonPayBuyLinkSchema>,
+  origin: string,
 ) {
-  const { publishable, secret } = sandboxKeys(keys);
+  sandboxKeys(keys);
   const walletAddress = getAddress(input.wallet_address);
   const query = new URLSearchParams({
-    apiKey: publishable,
-    currencyCode: input.currency_code,
-    baseCurrencyCode: input.base_currency_code,
+    wallet_address: walletAddress,
+    currency_code: input.currency_code,
+    base_currency_code: input.base_currency_code,
     ...(input.base_currency_amount === undefined
       ? {}
-      : { baseCurrencyAmount: input.base_currency_amount }),
-    walletAddress,
+      : { base_currency_amount: input.base_currency_amount }),
   });
-  const search = `?${query.toString()}`;
-  const signature = await moonPaySignature(secret, search);
   return {
     provider: "moonpay",
     environment: "sandbox",
-    checkout_url: `${MOONPAY_SANDBOX_WIDGET_URL}/${search}&signature=${encodeURIComponent(signature)}`,
+    checkout_url: `${origin}${MOONPAY_REDIRECT_PATH}?${query.toString()}`,
     request: {
       wallet_address: walletAddress,
       currency_code: input.currency_code,
@@ -69,7 +75,36 @@ export async function createMoonPayBuyLink(
       "Show checkout_url to the user to open in a browser. MoonPay collects identity (KYC) and payment on its own page; this server never sees card details or funds. In sandbox only MoonPay's published test cards work and no real money moves.",
     real_payment:
       "Not available. This endpoint signs sandbox links only and refuses live MoonPay keys.",
+    link_behavior:
+      "Opening checkout_url redirects to MoonPay with a widget URL signed for the opening browser's IP address. If MoonPay reports an unverified connection (for example after switching networks or VPNs), open checkout_url again.",
   };
+}
+
+/**
+ * The signed MoonPay widget URL for a redirect request. With the browser's IP
+ * it adds allowedIpAddress (HMAC-SHA256 of the IP under the secret key) inside
+ * the signed query, so the URL only loads for that IP; without one MoonPay
+ * skips IP enforcement but still checks the signature.
+ */
+export async function moonPayWidgetUrl(
+  keys: MoonPayKeys,
+  input: z.output<typeof createMoonPayBuyLinkSchema>,
+  ip: string | null,
+): Promise<string> {
+  const { publishable, secret } = sandboxKeys(keys);
+  const query = new URLSearchParams({
+    apiKey: publishable,
+    currencyCode: input.currency_code,
+    baseCurrencyCode: input.base_currency_code,
+    ...(input.base_currency_amount === undefined
+      ? {}
+      : { baseCurrencyAmount: input.base_currency_amount }),
+    walletAddress: getAddress(input.wallet_address),
+  });
+  if (ip !== null) query.set("allowedIpAddress", await moonPaySignature(secret, ip));
+  const search = `?${query.toString()}`;
+  const signature = await moonPaySignature(secret, search);
+  return `${MOONPAY_SANDBOX_WIDGET_URL}/${search}&signature=${encodeURIComponent(signature)}`;
 }
 
 function sandboxKeys(keys: MoonPayKeys) {

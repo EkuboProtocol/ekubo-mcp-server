@@ -1,4 +1,5 @@
 import { createMcpHandler } from "agents/mcp/server";
+import { onrampRedirect } from "./onramp-redirect.js";
 import openapi from "../openapi.json";
 import type { Env } from "./core.js";
 import { ARTIFACT_TTL_SECONDS, loadArtifact } from "./artifact-store.js";
@@ -45,6 +46,9 @@ export default {
       const rejection = await enforceRequestRate(env, actor);
       if (rejection !== null) return rateLimited(rejection, null);
     }
+
+    const onramp = await onrampRedirect(request, env);
+    if (onramp !== null) return onramp;
 
     const mcpRoute = matchMcpRoute(url.pathname, url.searchParams);
     if (mcpRoute !== null && "error" in mcpRoute) {

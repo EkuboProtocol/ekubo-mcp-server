@@ -29,23 +29,62 @@ export const createCoinbaseOnrampLinkSchema = z.strictObject({
     .describe("Fiat amount to pre-fill including fees, e.g. 50 or 49.99. Omit to let the user choose"),
 });
 
+export const COINBASE_REDIRECT_PATH = "/onramp/coinbase";
+
+/**
+ * Returns a link to this server's redirect, not to Coinbase. The session is
+ * created when the user's browser follows the link, so it is bound to that
+ * browser's IP address, and link previews cannot use up a single-use session.
+ */
 export async function createCoinbaseOnrampLink(
   keys: CoinbaseKeys,
   input: z.output<typeof createCoinbaseOnrampLinkSchema>,
-  fetcher: typeof fetch = fetch,
+  origin: string,
 ) {
-  const { keyId, signingKey } = await coinbaseKey(keys);
+  await coinbaseKey(keys);
   const destinationAddress = getAddress(input.wallet_address);
+  const query = new URLSearchParams({
+    wallet_address: destinationAddress,
+    asset: input.asset,
+    network: input.network,
+    payment_currency: input.payment_currency,
+    ...(input.payment_amount === undefined ? {} : { payment_amount: input.payment_amount }),
+  });
+  return {
+    provider: "coinbase",
+    environment: "sandbox",
+    checkout_url: `${origin}${COINBASE_REDIRECT_PATH}?${query.toString()}`,
+    request: {
+      wallet_address: destinationAddress,
+      asset: input.asset,
+      network: input.network,
+      payment_currency: input.payment_currency,
+      payment_amount: input.payment_amount ?? null,
+    },
+    user_handoff:
+      "Show checkout_url to the user to open in a browser. Each opening starts a new Coinbase session for that browser. Coinbase collects identity and payment on its own page; this server never sees card details or funds. Sandbox sessions move no real money.",
+    real_payment: "Not available. This endpoint only creates Coinbase sandbox sessions.",
+  };
+}
+
+/** Creates a Coinbase sandbox session for a redirect request and returns its checkout URL. */
+export async function createCoinbaseSession(
+  keys: CoinbaseKeys,
+  input: z.output<typeof createCoinbaseOnrampLinkSchema>,
+  ip: string | null,
+  fetcher: typeof fetch = fetch,
+): Promise<string> {
+  const { keyId, signingKey } = await coinbaseKey(keys);
   // Coinbase runs a session as a test with no real funds when partnerUserRef
   // starts with "sandbox-"; this server never creates any other kind.
-  const partnerUserRef = `sandbox-${crypto.randomUUID()}`;
   const body = {
-    destinationAddress,
+    destinationAddress: getAddress(input.wallet_address),
     destinationNetwork: input.network,
     purchaseCurrency: input.asset,
     paymentCurrency: input.payment_currency,
     ...(input.payment_amount === undefined ? {} : { paymentAmount: input.payment_amount }),
-    partnerUserRef,
+    partnerUserRef: `sandbox-${crypto.randomUUID()}`,
+    ...(ip === null ? {} : { clientIp: ip }),
   };
   const jwt = await coinbaseJwt(keyId, signingKey, "POST", COINBASE_ONRAMP_HOST, COINBASE_ONRAMP_PATH);
   const response = await fetcher(`https://${COINBASE_ONRAMP_HOST}${COINBASE_ONRAMP_PATH}`, {
@@ -54,24 +93,7 @@ export async function createCoinbaseOnrampLink(
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(15_000),
   });
-  const onrampUrl = await sessionUrl(response);
-  return {
-    provider: "coinbase",
-    environment: "sandbox",
-    checkout_url: onrampUrl,
-    single_use: true,
-    request: {
-      wallet_address: destinationAddress,
-      asset: input.asset,
-      network: input.network,
-      payment_currency: input.payment_currency,
-      payment_amount: input.payment_amount ?? null,
-      partner_user_ref: partnerUserRef,
-    },
-    user_handoff:
-      "Show checkout_url to the user to open in a browser. It works once, for one person. Coinbase collects identity and payment on its own page; this server never sees card details or funds. Sandbox sessions move no real money.",
-    real_payment: "Not available. This endpoint only creates Coinbase sandbox sessions.",
-  };
+  return sessionUrl(response);
 }
 
 async function sessionUrl(response: Response): Promise<string> {
