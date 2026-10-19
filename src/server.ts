@@ -6,6 +6,13 @@ import {
 } from "./mcp-catalog.js";
 import { uniswapTools, uniswapCatalog } from "./uniswap/tools.js";
 import { safeTools, safeCatalog } from "./safe.js";
+import {
+  launchpadCatalog,
+  launchpadOutputSchemas,
+  launchpadResources,
+  launchpadTools,
+  type LaunchpadEnv,
+} from "./launchpad/zero-seed/tools.js";
 import { informationalOutputSchemas } from "./informational-output-schemas.js";
 import {
   McpServer,
@@ -1853,11 +1860,14 @@ const preparerAnnotations = {
   openWorldHint: true,
 } as const;
 
+const PREPARER_PREFIXES = ["prepare_", "launchpad_prepare_"];
+
+function isPreparer(name: string) {
+  return PREPARER_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
 function toolAnnotations(name: string) {
-  if (
-    name.startsWith("prepare_") ||
-    name === "get_quotes_with_plans"
-  ) {
+  if (isPreparer(name) || name === "get_quotes_with_plans") {
     return preparerAnnotations;
   }
   return LOCAL_TOOLS.has(name) ? localAnnotations : readerAnnotations;
@@ -1954,6 +1964,11 @@ function preparerOutputSchema(name: string) {
   return preparedPlanOutputSchema;
 }
 
+const namedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
+  ...informationalOutputSchemas,
+  ...launchpadOutputSchemas,
+};
+
 export function toolOutputSchema(name: string) {
   if (name === "get_quotes_with_plans") return quotesOutputSchema;
   if (name.startsWith("prepare_")) return preparerOutputSchema(name);
@@ -1992,7 +2007,7 @@ export function toolOutputSchema(name: string) {
           .nullish(),
       });
     default:
-      return informationalOutputSchemas[name];
+      return namedOutputSchemas[name];
   }
 }
 
@@ -2544,6 +2559,7 @@ export const publicToolCatalog = [
     inputSchema: z.toJSONSchema(prepareAerodromeIncentiveClaimSchema),
   },
   ...uniswapCatalog,
+  ...launchpadCatalog,
   {
     name: "get_lido_deployment",
     title: "Get the fixed Lido mainnet deployment",
@@ -2628,6 +2644,7 @@ function resourceEnabled(
   skills: ReadonlySet<string>,
 ): boolean {
   if (UNIVERSAL_RESOURCES.has(name)) return true;
+  if (name.startsWith("launchpad-")) return protocols.has("ekubo");
   if (name.startsWith(SKILL_RESOURCE_PREFIX)) {
     const skill = name.slice(SKILL_RESOURCE_PREFIX.length);
     return skills.has(skill) || skills.has(skill.replace(/-discovery$/, ""));
@@ -4156,6 +4173,11 @@ export function createEkuboServer(
   for (const tool of [...uniswapTools, ...safeTools]) {
     registerCatalogTool(tool.name, tool.schema, tool.handler);
   }
+  for (const tool of launchpadTools) {
+    registerCatalogTool(tool.name, tool.schema, (input) =>
+      tool.handler(env as Env & LaunchpadEnv, input as never),
+    );
+  }
 
   registerCatalogTool("get_lido_deployment", getLidoDeploymentSchema, () =>
     getLidoDeployment(),
@@ -4203,6 +4225,17 @@ export function createEkuboServer(
         requestId: input.request_id,
       }),
   );
+
+  for (const resource of launchpadResources) {
+    server.registerResource(
+      resource.name,
+      resource.uri,
+      { title: resource.title, description: resource.description, mimeType: resource.mimeType },
+      async (uri) => ({
+        contents: [{ uri: uri.href, mimeType: resource.mimeType, text: resource.text() }],
+      }),
+    );
+  }
 
   server.registerResource(
     "ekubo-agent-workflow",

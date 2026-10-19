@@ -1,3 +1,4 @@
+import { launchpadTools } from "../src/launchpad/zero-seed/tools.js";
 import { uniswapTools } from "../src/uniswap/tools.js";
 import { fakeArtifactStore } from "./fake-r2.js";
 import { describe, expect, it } from "bun:test";
@@ -329,6 +330,7 @@ describe("Worker discovery", () => {
       "prepare_aerodrome_vote",
       "prepare_aerodrome_incentive_claim",
       ...uniswapTools.map(t => t.name),
+      ...launchpadTools.map((t) => t.name),
       "get_lido_deployment",
       "prepare_lido_stake",
       "prepare_lido_wrap",

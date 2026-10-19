@@ -109,6 +109,7 @@ describe("tools/list schema cache", () => {
   it("publishes the same catalog for every endpoint across deployments and repeats", async () => {
     const full = (await toolsList(deployments[0]!, "/mcp")).result!.tools!;
     expect(full.some((tool) => tool.name.startsWith("prepare_safe_"))).toBe(false);
+    expect(full.filter((tool) => tool.name.startsWith("launchpad_"))).toHaveLength(7);
     for (const path of ENDPOINTS) {
       const seen = new Set<string>();
       for (const deployment of [...deployments, ...deployments]) {

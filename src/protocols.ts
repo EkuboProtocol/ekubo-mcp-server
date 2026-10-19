@@ -1,5 +1,6 @@
 import { uniswapTools } from "./uniswap/tools.js";
 import { safeTools } from "./safe.js";
+import { launchpadTools } from "./launchpad/zero-seed/tools.js";
 
 export const PROTOCOL_SLUGS = [
   "ekubo",
@@ -59,7 +60,8 @@ const EKUBO_TOOLS = [
   "prepare_ve33_merge",
   "prepare_ve33_withdraw",
   "get_liquidity_opportunities",
-] as const;
+  ...launchpadTools.map((tool) => tool.name),
+];
 
 const EKUBO_ADVANCED_TOOLS = [
   "list_pool_keys",
@@ -86,7 +88,7 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
     slug: "ekubo",
     title: "Ekubo Protocol",
     description:
-      "Ekubo swaps and bridges, tokens, pools, LP positions, transfers, rewards, and ve(3,3) STONX voting",
+      "Ekubo swaps and bridges, tokens, pools, LP positions, transfers, rewards, ve(3,3) STONX voting, and the zero-seed launchpad (support disabled)",
     skill: null,
     tools: EKUBO_TOOLS,
   },

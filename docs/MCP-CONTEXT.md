@@ -47,6 +47,10 @@ instructions budget grew by 550 characters (about 115 tokens) for the opening
 scope sentence, after agents read the handoff rules as a ban on the user's own
 cast/sncast work outside this server. Restrictive rules in this text are scoped
 to this server's tools and plans; do not write one as a blanket prohibition.
+Another: every endpoint serving `ekubo` grew by 7,500 tools characters and
+300 resources characters for the seven support-disabled `launchpad_*` tools
+and `launchpad://disclosures` (about 6,800 and 150 measured). Their refusal
+codes are stated in each tool description, so no instructions text was added.
 
 ## How the catalog is kept small
 
