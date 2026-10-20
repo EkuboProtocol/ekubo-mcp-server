@@ -5,6 +5,7 @@ import {
   coinbaseCheckoutSchema,
   createCoinbaseSession,
 } from "./coinbase-onramp.js";
+import { GUEST_PATHS } from "./coinbase-guest.js";
 import { failureCode, ServiceError } from "./core.js";
 import { MOONPAY_REDIRECT_PATH, type MoonPayKeys, moonPayCheckoutSchema, moonPayWidgetUrl } from "./moonpay.js";
 import { checkSignedLink, type OnrampProofEnv } from "./onramp-proof.js";
@@ -25,7 +26,7 @@ export async function onrampRedirect(
   if (request.method !== "GET" && request.method !== "HEAD") {
     return errorPage(405, provider.name, "method_not_allowed", { allow: "GET, HEAD" });
   }
-  const link = await checkSignedLink(keys, url);
+  const link = await checkSignedLink(keys, url, Date.now(), provider.signedPath);
   if (!link.ok) return errorPage(link.status, provider.name, link.code);
   const build = provider.parse(link.params);
   if (build === null) return errorPage(400, provider.name, "invalid_link");
@@ -44,16 +45,22 @@ export async function onrampRedirect(
 type Keys = MoonPayKeys & CoinbaseKeys & OnrampProofEnv;
 type Build = (keys: Keys, ip: string | null) => Promise<string>;
 
-const PROVIDERS: Record<string, { name: string; parse: (params: Record<string, string>) => Build | null }> = {
+type Provider = { name: string; signedPath: string; parse: (params: Record<string, string>) => Build | null };
+
+// The Coinbase link opens a page offering guest checkout or a Coinbase account
+// (coinbase-guest.ts); only the account choice redirects from here.
+const PROVIDERS: Record<string, Provider> = {
   [MOONPAY_REDIRECT_PATH]: {
     name: "MoonPay",
+    signedPath: MOONPAY_REDIRECT_PATH,
     parse(params) {
       const parsed = moonPayCheckoutSchema.safeParse(params);
       return parsed.success ? (keys, ip) => moonPayWidgetUrl(keys, parsed.data, ip) : null;
     },
   },
-  [COINBASE_REDIRECT_PATH]: {
+  [GUEST_PATHS.account]: {
     name: "Coinbase",
+    signedPath: COINBASE_REDIRECT_PATH,
     parse(params) {
       const parsed = coinbaseCheckoutSchema.safeParse(params);
       return parsed.success ? (keys, ip) => createCoinbaseSession(keys, parsed.data, ip) : null;

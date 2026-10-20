@@ -1,4 +1,5 @@
 import { createMcpHandler } from "agents/mcp/server";
+import { coinbaseGuest } from "./coinbase-guest.js";
 import { onrampRedirect } from "./onramp-redirect.js";
 import openapi from "../openapi.json";
 import type { Env } from "./core.js";
@@ -47,6 +48,8 @@ export default {
       if (rejection !== null) return rateLimited(rejection, null);
     }
 
+    const guest = await coinbaseGuest(request, env);
+    if (guest !== null) return guest;
     const onramp = await onrampRedirect(request, env);
     if (onramp !== null) return onramp;
 

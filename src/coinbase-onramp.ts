@@ -82,7 +82,7 @@ export async function createCoinbaseOnrampLink(
     ...(step.status === "verified"
       ? {
           user_handoff:
-            "Show checkout_url to the user to open in a browser before link_expires_at. Each opening starts a new Coinbase session for that browser. Coinbase collects identity and payment on its own page; this server never sees card details or funds. Sandbox sessions move no real money.",
+            "Show checkout_url to the user to open in a browser before link_expires_at. The page offers Apple Pay without a Coinbase account (US only; the user enters email and phone on the page, never in chat) or continuing with a Coinbase account. Coinbase collects identity and payment; this server never sees card details or funds. Sandbox sessions move no real money.",
         }
       : {}),
     real_payment: "Not available. This endpoint only creates Coinbase sandbox sessions.",
@@ -108,47 +108,66 @@ export async function createCoinbaseSession(
     partnerUserRef: `sandbox-${crypto.randomUUID()}`,
     ...(ip === null ? {} : { clientIp: ip }),
   };
-  const jwt = await coinbaseJwt(keyId, signingKey, "POST", COINBASE_ONRAMP_HOST, COINBASE_ONRAMP_PATH);
-  const response = await fetcher(`https://${COINBASE_ONRAMP_HOST}${COINBASE_ONRAMP_PATH}`, {
+  const parsed = await coinbasePost(keys, COINBASE_ONRAMP_PATH, body, fetcher, keyId, signingKey);
+  const url = (parsed as { session?: { onrampUrl?: unknown } }).session?.onrampUrl;
+  if (typeof url !== "string" || !url.startsWith("https://pay.coinbase.com/")) {
+    throw new ServiceError("invalid_upstream_response", "Coinbase returned no checkout URL; retry once, then report it");
+  }
+  return url;
+}
+
+/**
+ * POSTs to a CDP endpoint with a fresh API-key JWT and returns the parsed
+ * body. Failures become ServiceErrors carrying Coinbase's errorType, never
+ * the key or token.
+ */
+export async function coinbasePost(
+  keys: CoinbaseKeys,
+  path: string,
+  body: unknown,
+  fetcher: typeof fetch = fetch,
+  keyId?: string,
+  signingKey?: CryptoKey,
+): Promise<unknown> {
+  const key = keyId !== undefined && signingKey !== undefined ? { keyId, signingKey } : await coinbaseKey(keys);
+  const jwt = await coinbaseJwt(key.keyId, key.signingKey, "POST", COINBASE_ONRAMP_HOST, path);
+  const response = await fetcher(`https://${COINBASE_ONRAMP_HOST}${path}`, {
     method: "POST",
     headers: { authorization: `Bearer ${jwt}`, "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(15_000),
   });
-  return sessionUrl(response);
+  const parsed = await responseJson(response);
+  if (!response.ok) throw coinbaseError(response.status, parsed);
+  return parsed;
 }
 
-async function sessionUrl(response: Response): Promise<string> {
+async function responseJson(response: Response): Promise<unknown> {
   const raw = await response.text();
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    return JSON.parse(raw) as unknown;
   } catch {
     throw new ServiceError("invalid_upstream_response", "Coinbase returned a non-JSON response; retry once, then report it", {
       status: response.status,
     });
   }
-  if (!response.ok) {
-    const error = parsed as { errorType?: unknown; correlationId?: unknown };
-    throw new ServiceError(
-      response.status === 400 ? "coinbase_invalid_request" : "upstream_error",
-      response.status === 400
-        ? "Coinbase rejected the request; check wallet_address, asset and network, then change the request rather than retrying"
-        : "Coinbase could not create the session; retry later",
-      {
-        status: response.status,
-        error_type: typeof error.errorType === "string" ? error.errorType : null,
-        correlation_id: typeof error.correlationId === "string" ? error.correlationId : null,
-      },
-    );
-  }
-  const url = (parsed as { session?: { onrampUrl?: unknown } }).session?.onrampUrl;
-  if (typeof url !== "string" || !url.startsWith("https://pay.coinbase.com/")) {
-    throw new ServiceError("invalid_upstream_response", "Coinbase returned no checkout URL; retry once, then report it", {
-      status: response.status,
-    });
-  }
-  return url;
+}
+
+function coinbaseError(status: number, parsed: unknown): ServiceError {
+  const error = (parsed ?? {}) as { errorType?: unknown; errorMessage?: unknown; correlationId?: unknown };
+  const clientError = status === 400 || status === 404 || status === 429;
+  const [code, message] =
+    status === 400
+      ? ["coinbase_invalid_request", "Coinbase rejected the request; check wallet_address, asset and network, then change the request rather than retrying"]
+      : clientError
+        ? ["coinbase_refused", "Coinbase refused the request"]
+        : ["upstream_error", "Coinbase could not complete the request; retry later"];
+  return new ServiceError(code, message, {
+    status,
+    error_type: typeof error.errorType === "string" ? error.errorType : null,
+    error_message: clientError && typeof error.errorMessage === "string" ? error.errorMessage.slice(0, 300) : null,
+    correlation_id: typeof error.correlationId === "string" ? error.correlationId : null,
+  });
 }
 
 async function coinbaseKey(keys: CoinbaseKeys) {

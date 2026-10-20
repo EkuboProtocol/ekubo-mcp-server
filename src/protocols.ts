@@ -212,7 +212,7 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
   {
     slug: "coinbase",
     title: "Coinbase Onramp (sandbox)",
-    description: "Single-use Coinbase Onramp sandbox checkout links to buy ETH or USDC with a card or Apple Pay; no real payments; separate endpoint only, excluded from /mcp",
+    description: "Coinbase Onramp sandbox checkout links to buy ETH or USDC with Apple Pay (US, no account) or a Coinbase account, after the receiving wallet signs; no real payments; separate endpoint only, excluded from /mcp",
     skill: null,
     tools: ["create_coinbase_onramp_link"],
   },

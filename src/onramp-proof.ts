@@ -206,14 +206,17 @@ export type LinkCheck = { ok: true; params: Record<string, string> } | { ok: fal
  * without expires and proof when the link was issued by this server and is
  * still valid.
  */
-export async function checkSignedLink(env: OnrampProofEnv, url: URL, now = Date.now()): Promise<LinkCheck> {
+export async function checkSignedLink(
+  env: OnrampProofEnv,
+  url: URL,
+  now = Date.now(),
+  path = url.pathname,
+): Promise<LinkCheck> {
   const secret = env.ONRAMP_LINK_SECRET;
   if (!secret || secret.length < 32) return { ok: false, status: 503, code: "onramp_not_configured" };
-  const proof = url.searchParams.get("proof");
-  const expires = url.searchParams.get("expires");
-  if (proof === null || expires === null || !/^\d{1,12}$/.test(expires) || !/^[A-Za-z0-9_-]{43}$/.test(proof)) {
-    return { ok: false, status: 400, code: "invalid_link" };
-  }
+  const fields = linkFields(url);
+  if (fields === null) return { ok: false, status: 400, code: "invalid_link" };
+  const { proof, expires } = fields;
   const query = new URLSearchParams(url.searchParams);
   query.delete("proof");
   const mac = decodeBase64Url(proof);
@@ -221,12 +224,18 @@ export async function checkSignedLink(env: OnrampProofEnv, url: URL, now = Date.
     "HMAC",
     await hmacKey(secret),
     mac,
-    new TextEncoder().encode(`${url.pathname}?${query.toString()}`),
+    new TextEncoder().encode(`${path}?${query.toString()}`),
   );
   if (!valid) return { ok: false, status: 400, code: "invalid_link" };
   if (now > Number(expires) * 1000) return { ok: false, status: 410, code: "link_expired" };
   query.delete("expires");
   return { ok: true, params: Object.fromEntries(query) };
+}
+
+function linkFields(url: URL): { proof: string; expires: string } | null {
+  const proof = url.searchParams.get("proof") ?? "";
+  const expires = url.searchParams.get("expires") ?? "";
+  return /^\d{1,12}$/.test(expires) && /^[A-Za-z0-9_-]{43}$/.test(proof) ? { proof, expires } : null;
 }
 
 function hmacKey(secret: string) {

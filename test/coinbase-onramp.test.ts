@@ -59,8 +59,10 @@ function mockCoinbase(respond: (request: Request) => Response | Promise<Response
   return { seen, spy };
 }
 
+/** Takes the page's "Continue with Coinbase" choice for a checkout link. */
 function follow(link: string, headers: Record<string, string> = { "cf-connecting-ip": "203.0.113.42" }) {
-  return worker.fetch(new Request(link, { headers }), configured as never, context);
+  const account = link.replace("/onramp/coinbase?", "/onramp/coinbase/account?");
+  return worker.fetch(new Request(account, { headers }), configured as never, context);
 }
 
 async function linkFor(args: Record<string, unknown>) {
