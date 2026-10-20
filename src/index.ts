@@ -1,4 +1,6 @@
 import { createMcpHandler } from "agents/mcp/server";
+import { coinbaseGuest } from "./coinbase-guest.js";
+import { onrampRedirect } from "./onramp-redirect.js";
 import openapi from "../openapi.json";
 import type { Env } from "./core.js";
 import { ARTIFACT_TTL_SECONDS, loadArtifact } from "./artifact-store.js";
@@ -45,6 +47,11 @@ export default {
       const rejection = await enforceRequestRate(env, actor);
       if (rejection !== null) return rateLimited(rejection, null);
     }
+
+    const guest = await coinbaseGuest(request, env);
+    if (guest !== null) return guest;
+    const onramp = await onrampRedirect(request, env);
+    if (onramp !== null) return onramp;
 
     const mcpRoute = matchMcpRoute(url.pathname, url.searchParams);
     if (mcpRoute !== null && "error" in mcpRoute) {
@@ -175,13 +182,13 @@ export default {
                 url: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}`,
                 protocols: [...ALL_PROTOCOLS],
                 tool_count: publicToolCatalog.length,
-                note: "Bundled protocols. Safe is available only at /mcp/safe.",
+                note: "Bundled protocols. Safe, MoonPay sandbox and Coinbase Onramp sandbox are available only at /mcp/safe, /mcp/moonpay and /mcp/coinbase.",
               },
               combined: {
                 url_template: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}?protocols=<slug>+<slug>`,
                 example: facetMcpUrl(url.origin, new Set(["ekubo", "ekubo-advanced"])),
                 tools_url_template: `${url.origin}/tools?protocols=<slug>+<slug>`,
-                note: "Union of the named protocols' tools and resources, with shared instructions stated once. Write slugs in by_protocol order. Safe cannot be combined.",
+                note: "Union of the named protocols' tools and resources, with shared instructions stated once. Write slugs in by_protocol order. Safe, MoonPay and Coinbase cannot be combined.",
               },
               by_protocol: PROTOCOLS.map((protocol) => ({
                 protocol: protocol.slug,
@@ -703,12 +710,12 @@ Authentication: none
 Server version: ${MCP_SERVER_VERSION}
 Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}
 Tool catalog: ${origin}/tools
-Per-protocol endpoints (each serves one protocol's tools; ${origin}${ALL_PROTOCOLS_MCP_PATH} bundles all except Safe, which is available only at /mcp/safe):
+Per-protocol endpoints (each serves one protocol's tools; ${origin}${ALL_PROTOCOLS_MCP_PATH} bundles all except Safe, MoonPay and Coinbase, available only at /mcp/safe, /mcp/moonpay and /mcp/coinbase):
 ${PROTOCOLS.map(
   (protocol) =>
     `- ${protocol.slug}: ${origin}${protocolMcpPath(protocol.slug)} (${protocol.tools.length} tools, catalog at ${origin}/tools?protocol=${protocol.slug})`,
 ).join("\n")}
-Combined endpoint: ${origin}${ALL_PROTOCOLS_MCP_PATH}?protocols=<slug>+<slug> serves several protocols on one connection, with shared instructions stated once (catalog at ${origin}/tools?protocols=<slug>+<slug>). Write slugs in the order listed above; Safe cannot be combined.
+Combined endpoint: ${origin}${ALL_PROTOCOLS_MCP_PATH}?protocols=<slug>+<slug> serves several protocols on one connection, with shared instructions stated once (catalog at ${origin}/tools?protocols=<slug>+<slug>). Write slugs in the order listed above; Safe, MoonPay and Coinbase cannot be combined.
 OpenAPI: ${origin}/openapi.json
 Canonical data API OpenAPI: https://prod-api.ekubo.org/openapi.json
 Aggregated quote resource: ekubo://docs/quoter-api
