@@ -1,11 +1,13 @@
 import { getAddress } from "viem";
 import { z } from "zod";
 import { ServiceError } from "./core.js";
+import { ownershipProofFields, ownershipStep, type OnrampProofEnv } from "./onramp-proof.js";
 
 export const COINBASE_ONRAMP_HOST = "api.cdp.coinbase.com";
 export const COINBASE_ONRAMP_PATH = "/platform/v2/onramp/sessions";
 
 const NETWORKS = ["base", "ethereum", "arbitrum", "optimism"] as const;
+const NETWORK_CHAIN_IDS: Record<(typeof NETWORKS)[number], number> = { base: 8453, ethereum: 1, arbitrum: 42161, optimism: 10 };
 const ASSETS = ["ETH", "USDC"] as const;
 const FIAT_CURRENCIES = ["USD", "EUR", "GBP", "CAD"] as const;
 
@@ -14,7 +16,7 @@ export type CoinbaseKeys = {
   COINBASE_CDP_API_KEY_SECRET?: string;
 };
 
-export const createCoinbaseOnrampLinkSchema = z.strictObject({
+export const coinbaseCheckoutSchema = z.strictObject({
   wallet_address: z
     .string()
     .regex(/^0x[0-9a-fA-F]{40}$/)
@@ -29,15 +31,19 @@ export const createCoinbaseOnrampLinkSchema = z.strictObject({
     .describe("Fiat amount to pre-fill including fees, e.g. 50 or 49.99. Omit to let the user choose"),
 });
 
+export const createCoinbaseOnrampLinkSchema = coinbaseCheckoutSchema.extend(ownershipProofFields);
+
 export const COINBASE_REDIRECT_PATH = "/onramp/coinbase";
 
 /**
- * Returns a link to this server's redirect, not to Coinbase. The session is
- * created when the user's browser follows the link, so it is bound to that
- * browser's IP address, and link previews cannot use up a single-use session.
+ * Returns a link to this server's redirect, not to Coinbase, once the
+ * requester proves control of wallet_address on the delivery network. The
+ * session is created when the user's browser follows the link, so it is bound
+ * to that browser's IP address, and link previews cannot use up a single-use
+ * session.
  */
 export async function createCoinbaseOnrampLink(
-  keys: CoinbaseKeys,
+  keys: CoinbaseKeys & OnrampProofEnv,
   input: z.output<typeof createCoinbaseOnrampLinkSchema>,
   origin: string,
 ) {
@@ -50,10 +56,22 @@ export async function createCoinbaseOnrampLink(
     payment_currency: input.payment_currency,
     ...(input.payment_amount === undefined ? {} : { payment_amount: input.payment_amount }),
   });
+  const amount = input.payment_amount === undefined ? "" : ` for ${input.payment_amount} ${input.payment_currency}`;
+  const step = await ownershipStep(keys, origin, {
+    provider: "coinbase",
+    providerName: "Coinbase",
+    redirectPath: COINBASE_REDIRECT_PATH,
+    query,
+    address: destinationAddress,
+    chainId: NETWORK_CHAIN_IDS[input.network],
+    summary: `${input.asset} on ${input.network}${amount}`,
+    issuedAt: input.issued_at,
+    signature: input.signature,
+  });
   return {
     provider: "coinbase",
     environment: "sandbox",
-    checkout_url: `${origin}${COINBASE_REDIRECT_PATH}?${query.toString()}`,
+    ...step,
     request: {
       wallet_address: destinationAddress,
       asset: input.asset,
@@ -61,8 +79,12 @@ export async function createCoinbaseOnrampLink(
       payment_currency: input.payment_currency,
       payment_amount: input.payment_amount ?? null,
     },
-    user_handoff:
-      "Show checkout_url to the user to open in a browser. Each opening starts a new Coinbase session for that browser. Coinbase collects identity and payment on its own page; this server never sees card details or funds. Sandbox sessions move no real money.",
+    ...(step.status === "verified"
+      ? {
+          user_handoff:
+            "Show checkout_url to the user to open in a browser before link_expires_at. Each opening starts a new Coinbase session for that browser. Coinbase collects identity and payment on its own page; this server never sees card details or funds. Sandbox sessions move no real money.",
+        }
+      : {}),
     real_payment: "Not available. This endpoint only creates Coinbase sandbox sessions.",
   };
 }
@@ -70,7 +92,7 @@ export async function createCoinbaseOnrampLink(
 /** Creates a Coinbase sandbox session for a redirect request and returns its checkout URL. */
 export async function createCoinbaseSession(
   keys: CoinbaseKeys,
-  input: z.output<typeof createCoinbaseOnrampLinkSchema>,
+  input: z.output<typeof coinbaseCheckoutSchema>,
   ip: string | null,
   fetcher: typeof fetch = fetch,
 ): Promise<string> {

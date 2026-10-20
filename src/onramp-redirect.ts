@@ -2,11 +2,12 @@ import { clientIp } from "./client-ip.js";
 import {
   COINBASE_REDIRECT_PATH,
   type CoinbaseKeys,
-  createCoinbaseOnrampLinkSchema,
+  coinbaseCheckoutSchema,
   createCoinbaseSession,
 } from "./coinbase-onramp.js";
 import { failureCode, ServiceError } from "./core.js";
-import { createMoonPayBuyLinkSchema, MOONPAY_REDIRECT_PATH, type MoonPayKeys, moonPayWidgetUrl } from "./moonpay.js";
+import { MOONPAY_REDIRECT_PATH, type MoonPayKeys, moonPayCheckoutSchema, moonPayWidgetUrl } from "./moonpay.js";
+import { checkSignedLink, type OnrampProofEnv } from "./onramp-proof.js";
 
 /**
  * Follows a checkout_url returned by create_moonpay_buy_link or
@@ -16,7 +17,7 @@ import { createMoonPayBuyLinkSchema, MOONPAY_REDIRECT_PATH, type MoonPayKeys, mo
  */
 export async function onrampRedirect(
   request: Request,
-  keys: MoonPayKeys & CoinbaseKeys,
+  keys: Keys,
 ): Promise<Response | null> {
   const url = new URL(request.url);
   const provider = PROVIDERS[url.pathname];
@@ -24,7 +25,9 @@ export async function onrampRedirect(
   if (request.method !== "GET" && request.method !== "HEAD") {
     return errorPage(405, provider.name, "method_not_allowed", { allow: "GET, HEAD" });
   }
-  const build = provider.parse(Object.fromEntries(url.searchParams));
+  const link = await checkSignedLink(keys, url);
+  if (!link.ok) return errorPage(link.status, provider.name, link.code);
+  const build = provider.parse(link.params);
   if (build === null) return errorPage(400, provider.name, "invalid_link");
   // A HEAD request (link previews, crawlers) never signs or creates a session.
   if (request.method === "HEAD") return new Response(null, { status: 204, headers: baseHeaders() });
@@ -38,21 +41,21 @@ export async function onrampRedirect(
   }
 }
 
-type Keys = MoonPayKeys & CoinbaseKeys;
+type Keys = MoonPayKeys & CoinbaseKeys & OnrampProofEnv;
 type Build = (keys: Keys, ip: string | null) => Promise<string>;
 
 const PROVIDERS: Record<string, { name: string; parse: (params: Record<string, string>) => Build | null }> = {
   [MOONPAY_REDIRECT_PATH]: {
     name: "MoonPay",
     parse(params) {
-      const parsed = createMoonPayBuyLinkSchema.safeParse(params);
+      const parsed = moonPayCheckoutSchema.safeParse(params);
       return parsed.success ? (keys, ip) => moonPayWidgetUrl(keys, parsed.data, ip) : null;
     },
   },
   [COINBASE_REDIRECT_PATH]: {
     name: "Coinbase",
     parse(params) {
-      const parsed = createCoinbaseOnrampLinkSchema.safeParse(params);
+      const parsed = coinbaseCheckoutSchema.safeParse(params);
       return parsed.success ? (keys, ip) => createCoinbaseSession(keys, parsed.data, ip) : null;
     },
   },
@@ -66,15 +69,16 @@ function baseHeaders(): Record<string, string> {
   };
 }
 
+const ERROR_REASONS: Record<number, (provider: string) => string> = {
+  400: () => "This checkout link is incomplete, altered or was not issued by this server. Ask your assistant for a new link.",
+  405: () => "Open this link in a browser.",
+  410: () => "This checkout link has expired. Ask your assistant for a new link.",
+  503: (provider) => `${provider} checkout is not available on this server yet.`,
+};
+
 function errorPage(status: number, provider: string, code: string, extra: Record<string, string> = {}): Response {
   const reason =
-    status === 400
-      ? "This checkout link is incomplete or malformed. Ask your assistant for a new link."
-      : status === 503
-        ? `${provider} checkout is not available on this server yet.`
-        : status === 405
-          ? "Open this link in a browser."
-          : `${provider} could not start the checkout. Try opening the link again in a minute.`;
+    ERROR_REASONS[status]?.(provider) ?? `${provider} could not start the checkout. Try opening the link again in a minute.`;
   return new Response(`${reason}\n\nError code: ${code}\n`, {
     status,
     headers: { ...baseHeaders(), "content-type": "text/plain; charset=utf-8", ...extra },

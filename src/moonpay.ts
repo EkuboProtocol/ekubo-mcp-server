@@ -1,6 +1,7 @@
 import { getAddress } from "viem";
 import { z } from "zod";
 import { ServiceError } from "./core.js";
+import { ownershipProofFields, ownershipStep, type OnrampProofEnv } from "./onramp-proof.js";
 
 export const MOONPAY_SANDBOX_WIDGET_URL = "https://buy-sandbox.moonpay.com";
 
@@ -14,7 +15,7 @@ export type MoonPayKeys = {
   MOONPAY_SECRET_KEY?: string;
 };
 
-export const createMoonPayBuyLinkSchema = z.strictObject({
+export const moonPayCheckoutSchema = z.strictObject({
   wallet_address: z
     .string()
     .regex(/^0x[0-9a-fA-F]{40}$/)
@@ -33,16 +34,20 @@ export const createMoonPayBuyLinkSchema = z.strictObject({
     .describe("Whole fiat amount to pre-fill, 1 to 999999; MoonPay enforces its own minimum and maximum. Omit to let the user choose"),
 });
 
+export const createMoonPayBuyLinkSchema = moonPayCheckoutSchema.extend(ownershipProofFields);
+
 export const MOONPAY_REDIRECT_PATH = "/onramp/moonpay";
+const SANDBOX_CHAIN_ID = 11155111;
 
 /**
- * Returns a link to this server's redirect, not to MoonPay. MoonPay binds each
- * signed widget URL to the IP address that will open it, and an MCP call comes
- * from the agent platform rather than the user's browser, so the widget URL is
- * signed only when the user's browser follows the link.
+ * Returns a link to this server's redirect, not to MoonPay, once the requester
+ * proves control of wallet_address. MoonPay binds each signed widget URL to
+ * the IP address that will open it, and an MCP call comes from the agent
+ * platform rather than the user's browser, so the widget URL is signed only
+ * when the user's browser follows the link.
  */
-export function createMoonPayBuyLink(
-  keys: MoonPayKeys,
+export async function createMoonPayBuyLink(
+  keys: MoonPayKeys & OnrampProofEnv,
   input: z.output<typeof createMoonPayBuyLinkSchema>,
   origin: string,
 ) {
@@ -56,10 +61,22 @@ export function createMoonPayBuyLink(
       ? {}
       : { base_currency_amount: input.base_currency_amount }),
   });
+  const amount = input.base_currency_amount === undefined ? "" : ` for ${input.base_currency_amount} ${input.base_currency_code.toUpperCase()}`;
+  const step = await ownershipStep(keys, origin, {
+    provider: "moonpay",
+    providerName: "MoonPay",
+    redirectPath: MOONPAY_REDIRECT_PATH,
+    query,
+    address: walletAddress,
+    chainId: SANDBOX_CHAIN_ID,
+    summary: `${input.currency_code.toUpperCase()} on Ethereum Sepolia (sandbox)${amount}`,
+    issuedAt: input.issued_at,
+    signature: input.signature,
+  });
   return {
     provider: "moonpay",
     environment: "sandbox",
-    checkout_url: `${origin}${MOONPAY_REDIRECT_PATH}?${query.toString()}`,
+    ...step,
     request: {
       wallet_address: walletAddress,
       currency_code: input.currency_code,
@@ -68,15 +85,19 @@ export function createMoonPayBuyLink(
     },
     delivery: {
       network: "Ethereum Sepolia testnet",
-      chain_id: "11155111",
+      chain_id: String(SANDBOX_CHAIN_ID),
       note: "Sandbox delivers 1/100th of the quoted amount; ERC-20 purchases deliver MoonPay's Sepolia test token, not real USDC",
     },
-    user_handoff:
-      "Show checkout_url to the user to open in a browser. MoonPay collects identity (KYC) and payment on its own page; this server never sees card details or funds. In sandbox only MoonPay's published test cards work and no real money moves.",
+    ...(step.status === "verified"
+      ? {
+          user_handoff:
+            "Show checkout_url to the user to open in a browser before link_expires_at. MoonPay collects identity (KYC) and payment on its own page; this server never sees card details or funds. In sandbox only MoonPay's published test cards work and no real money moves.",
+          link_behavior:
+            "Opening checkout_url redirects to MoonPay with a widget URL signed for the opening browser's IP address. If MoonPay reports an unverified connection (for example after switching networks or VPNs), open checkout_url again.",
+        }
+      : {}),
     real_payment:
       "Not available. This endpoint signs sandbox links only and refuses live MoonPay keys.",
-    link_behavior:
-      "Opening checkout_url redirects to MoonPay with a widget URL signed for the opening browser's IP address. If MoonPay reports an unverified connection (for example after switching networks or VPNs), open checkout_url again.",
   };
 }
 
@@ -88,7 +109,7 @@ export function createMoonPayBuyLink(
  */
 export async function moonPayWidgetUrl(
   keys: MoonPayKeys,
-  input: z.output<typeof createMoonPayBuyLinkSchema>,
+  input: z.output<typeof moonPayCheckoutSchema>,
   ip: string | null,
 ): Promise<string> {
   const { publishable, secret } = sandboxKeys(keys);

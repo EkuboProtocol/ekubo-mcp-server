@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import { fakeArtifactStore } from "./fake-r2.js";
 import worker from "../src/index.js";
 import { parseProtocolFacet } from "../src/protocols.js";
+import { LINK_SECRET, owner, withProof } from "./onramp-helpers.js";
 
 const SECRET = "sk_test_fixture-secret";
 const baseEnv = {
@@ -17,9 +18,9 @@ const baseEnv = {
   DUNE_API_KEY: "unused",
   ALLOWED_ORIGINS: "https://mcp.ekubo.org",
 };
-const sandboxEnv = { ...baseEnv, MOONPAY_PUBLISHABLE_KEY: "pk_test_fixture", MOONPAY_SECRET_KEY: SECRET };
+const sandboxEnv = { ...baseEnv, MOONPAY_PUBLISHABLE_KEY: "pk_test_fixture", MOONPAY_SECRET_KEY: SECRET, ONRAMP_LINK_SECRET: LINK_SECRET };
 const context = {} as unknown as ExecutionContext;
-const wallet = "0xde0b295669a9fd93d5f28d9ec85e40f4cb697bae";
+const wallet = owner.address.toLowerCase();
 
 type ToolResponse = { result: { isError?: boolean; structuredContent: Record<string, any>; tools?: { name: string }[] } };
 
@@ -49,6 +50,12 @@ async function mcp(path: string, method: string, params: Record<string, unknown>
 const buy = (args: Record<string, unknown>, env?: Record<string, unknown>) =>
   mcp("/mcp/moonpay", "tools/call", { name: "create_moonpay_buy_link", arguments: args }, env);
 
+async function linkFor(args: Record<string, unknown>, env: Record<string, unknown> = sandboxEnv) {
+  const { result } = await withProof(async (a) => (await buy(a, env)).json, args);
+  expect(result.isError).not.toBe(true);
+  return result.structuredContent.checkout_url as string;
+}
+
 function open(link: string, headers: Record<string, string>, env: Record<string, unknown> = sandboxEnv) {
   return worker.fetch(new Request(link, { headers }), env as never, context);
 }
@@ -68,30 +75,42 @@ describe("MoonPay sandbox endpoint", () => {
     }
   });
 
-  it("returns a link to this server that carries the request but no key or signature", async () => {
+  it("asks wallet_address to sign before returning a link, then links to this server without keys", async () => {
     const fetchSpy = spyOn(globalThis, "fetch");
-    const { json } = await buy({ wallet_address: wallet, currency_code: "usdc", base_currency_amount: "50" });
-    expect(json.result.isError).not.toBe(true);
+    const args = { wallet_address: wallet, currency_code: "usdc", base_currency_amount: "50" };
+    const { json: first } = await buy(args);
+    const challenge = first.result.structuredContent;
+    expect(challenge.status).toBe("signature_required");
+    expect(challenge).not.toHaveProperty("checkout_url");
+    expect(challenge.ownership_proof).toMatchObject({ signer: owner.address, chain_id: "11155111" });
+    expect(challenge.ownership_proof.message).toContain(`mcp.ekubo.org wants you to sign in with your Ethereum account:\n${owner.address}`);
+    expect(challenge.ownership_proof.message).toContain("USDC on Ethereum Sepolia (sandbox) for 50 USD");
+    expect(challenge.ownership_proof.message).toContain("Chain ID: 11155111");
+    const json = await withProof(async (a) => (await buy(a)).json, args);
     expect(fetchSpy).not.toHaveBeenCalled();
     const result = json.result.structuredContent;
-    expect(result).toMatchObject({ provider: "moonpay", environment: "sandbox" });
+    expect(result).toMatchObject({ provider: "moonpay", environment: "sandbox", status: "verified" });
     expect(result.delivery.chain_id).toBe("11155111");
     const url = new URL(result.checkout_url);
     expect(`${url.origin}${url.pathname}`).toBe("https://mcp.ekubo.org/onramp/moonpay");
     expect(Object.fromEntries(url.searchParams)).toEqual({
-      wallet_address: "0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe",
+      wallet_address: owner.address,
       currency_code: "usdc",
       base_currency_code: "usd",
       base_currency_amount: "50",
+      expires: expect.stringMatching(/^\d+$/),
+      proof: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
     });
+    expect(Number(url.searchParams.get("expires")) * 1000 - Date.now()).toBeGreaterThan(29 * 60_000);
     expect(JSON.stringify(json)).not.toContain(SECRET);
+    expect(JSON.stringify(json)).not.toContain(LINK_SECRET);
     expect(JSON.stringify(json)).not.toContain("pk_test_fixture");
   });
 
   it("redirects the browser to a MoonPay URL signed for its IP address", async () => {
     const fetchSpy = spyOn(globalThis, "fetch");
-    const { json } = await buy({ wallet_address: wallet, currency_code: "usdc", base_currency_amount: "50" });
-    const response = await open(json.result.structuredContent.checkout_url, { "cf-connecting-ip": "203.0.113.42" });
+    const link = await linkFor({ wallet_address: wallet, currency_code: "usdc", base_currency_amount: "50" });
+    const response = await open(link, { "cf-connecting-ip": "203.0.113.42" });
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(response.status).toBe(302);
     expect(response.headers.get("cache-control")).toBe("no-store");
@@ -103,7 +122,7 @@ describe("MoonPay sandbox endpoint", () => {
       currencyCode: "usdc",
       baseCurrencyCode: "usd",
       baseCurrencyAmount: "50",
-      walletAddress: "0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe",
+      walletAddress: owner.address,
       allowedIpAddress: createHmac("sha256", SECRET).update("203.0.113.42").digest("base64"),
     });
     const signature = url.searchParams.get("signature")!;
@@ -113,7 +132,7 @@ describe("MoonPay sandbox endpoint", () => {
   });
 
   it("hashes the IP in canonical form and prefers True-Client-IP", async () => {
-    const link = "https://mcp.ekubo.org/onramp/moonpay?wallet_address=" + wallet + "&currency_code=eth";
+    const link = await linkFor({ wallet_address: wallet, currency_code: "eth" });
     for (const [headers, ip] of [
       [{ "cf-connecting-ip": "2001:0DB8:0000:0000:0000:0000:0000:0001" }, "2001:db8::1"],
       [{ "cf-connecting-ip": "::ffff:203.0.113.42" }, "203.0.113.42"],
@@ -129,19 +148,19 @@ describe("MoonPay sandbox endpoint", () => {
   });
 
   it("answers bad, previewed or unconfigured redirects without signing or leaking keys", async () => {
-    const good = "https://mcp.ekubo.org/onramp/moonpay?wallet_address=" + wallet + "&currency_code=eth";
-    const bad = await open("https://mcp.ekubo.org/onramp/moonpay?wallet_address=0x12&currency_code=eth", {});
-    expect(bad.status).toBe(400);
-    expect(await bad.text()).toContain("invalid_link");
+    const good = await linkFor({ wallet_address: wallet, currency_code: "eth" });
+    const unsigned = await open("https://mcp.ekubo.org/onramp/moonpay?wallet_address=" + wallet + "&currency_code=eth", {});
+    expect(unsigned.status).toBe(400);
+    expect(await unsigned.text()).toContain("invalid_link");
     const head = await worker.fetch(new Request(good, { method: "HEAD" }), sandboxEnv as never, context);
     expect(head.status).toBe(204);
     expect(head.headers.get("location")).toBeNull();
     const post = await worker.fetch(new Request(good, { method: "POST" }), sandboxEnv as never, context);
     expect(post.status).toBe(405);
-    const unconfigured = await open(good, {}, baseEnv);
+    const unconfigured = await open(good, {}, { ...baseEnv, ONRAMP_LINK_SECRET: LINK_SECRET });
     expect(unconfigured.status).toBe(503);
     expect(await unconfigured.text()).toContain("moonpay_not_configured");
-    const live = await open(good, {}, { ...baseEnv, MOONPAY_PUBLISHABLE_KEY: "pk_live_fixture", MOONPAY_SECRET_KEY: "sk_live_x" });
+    const live = await open(good, {}, { ...sandboxEnv, MOONPAY_PUBLISHABLE_KEY: "pk_live_fixture", MOONPAY_SECRET_KEY: "sk_live_x" });
     expect(live.status).toBe(502);
     const body = await live.text();
     expect(body).toContain("moonpay_live_keys_refused");

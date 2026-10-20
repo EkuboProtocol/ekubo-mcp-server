@@ -3,6 +3,7 @@ import { generateKeyPairSync, verify } from "node:crypto";
 import { fakeArtifactStore } from "./fake-r2.js";
 import worker from "../src/index.js";
 import { parseProtocolFacet } from "../src/protocols.js";
+import { LINK_SECRET, owner, withProof } from "./onramp-helpers.js";
 
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
 const privateJwk = privateKey.export({ format: "jwk" }) as { d: string; x: string };
@@ -15,9 +16,9 @@ const baseEnv = {
   EKUBO_QUOTER_URL: "https://quoter.test",
   ALLOWED_ORIGINS: "https://mcp.ekubo.org",
 };
-const configured = { ...baseEnv, COINBASE_CDP_API_KEY_ID: KEY_ID, COINBASE_CDP_API_KEY_SECRET: SECRET };
+const configured = { ...baseEnv, COINBASE_CDP_API_KEY_ID: KEY_ID, COINBASE_CDP_API_KEY_SECRET: SECRET, ONRAMP_LINK_SECRET: LINK_SECRET };
 const context = {} as unknown as ExecutionContext;
-const wallet = "0xde0b295669a9fd93d5f28d9ec85e40f4cb697bae";
+const wallet = owner.address.toLowerCase();
 const SESSION_URL = "https://pay.coinbase.com/buy?sessionToken=fixture-token";
 
 type ToolResponse = { result: { isError?: boolean; structuredContent: Record<string, any>; tools?: { name: string }[] } };
@@ -63,7 +64,7 @@ function follow(link: string, headers: Record<string, string> = { "cf-connecting
 }
 
 async function linkFor(args: Record<string, unknown>) {
-  const json = await onramp(args);
+  const json = await withProof((a) => onramp(a), args);
   expect(json.result.isError).not.toBe(true);
   return json.result.structuredContent.checkout_url as string;
 }
@@ -85,22 +86,29 @@ describe("Coinbase Onramp sandbox endpoint", () => {
     }
   });
 
-  it("returns a link to this server without calling Coinbase", async () => {
+  it("asks for a signature verified on the delivery network, then links to this server without calling Coinbase", async () => {
     const { spy } = mockCoinbase(ok);
-    const json = await onramp({ wallet_address: wallet, asset: "USDC", payment_amount: "49.99" });
+    const challenge = (await onramp({ wallet_address: wallet, asset: "ETH", network: "arbitrum" })).result.structuredContent;
+    expect(challenge.status).toBe("signature_required");
+    expect(challenge.ownership_proof.chain_id).toBe("42161");
+    expect(challenge.ownership_proof.message).toContain("ETH on arbitrum");
+    const json = await withProof((a) => onramp(a), { wallet_address: wallet, asset: "USDC", payment_amount: "49.99" });
     expect(spy).not.toHaveBeenCalled();
     const result = json.result.structuredContent;
-    expect(result).toMatchObject({ provider: "coinbase", environment: "sandbox" });
+    expect(result).toMatchObject({ provider: "coinbase", environment: "sandbox", status: "verified" });
     const url = new URL(result.checkout_url);
     expect(`${url.origin}${url.pathname}`).toBe("https://mcp.ekubo.org/onramp/coinbase");
     expect(Object.fromEntries(url.searchParams)).toEqual({
-      wallet_address: "0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe",
+      wallet_address: owner.address,
       asset: "USDC",
       network: "base",
       payment_currency: "USD",
       payment_amount: "49.99",
+      expires: expect.stringMatching(/^\d+$/),
+      proof: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
     });
     expect(JSON.stringify(json)).not.toContain(SECRET);
+    expect(JSON.stringify(json)).not.toContain(LINK_SECRET);
   });
 
   it("opening the link creates an IP-bound sandbox session with a CDP JWT that verifies independently", async () => {
@@ -116,7 +124,7 @@ describe("Coinbase Onramp sandbox endpoint", () => {
     expect(request.url).toBe("https://api.cdp.coinbase.com/platform/v2/onramp/sessions");
     const body = (await request.json()) as Record<string, unknown>;
     expect(body).toEqual({
-      destinationAddress: "0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe",
+      destinationAddress: owner.address,
       destinationNetwork: "base",
       purchaseCurrency: "USDC",
       paymentCurrency: "USD",

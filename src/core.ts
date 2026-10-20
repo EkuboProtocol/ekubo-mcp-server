@@ -53,6 +53,8 @@ export type Env = Omit<Cloudflare.Env, OptionalBindings> &
     MOONPAY_SECRET_KEY?: string;
     COINBASE_CDP_API_KEY_ID?: string;
     COINBASE_CDP_API_KEY_SECRET?: string;
+    ONRAMP_LINK_SECRET?: string;
+    ONRAMP_RPC_URLS?: string;
   };
 
 export type QuoteSource = "ekubo" | "0x" | "across" | "layerzero" | "lifi";
