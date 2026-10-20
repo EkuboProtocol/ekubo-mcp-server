@@ -39,7 +39,7 @@ connection instead of once per protocol (0.50.0 measurements):
 | `ekubo+ekubo-advanced`                      |               19,026 |            17,818 | 1,208 |
 | `ekubo+uniswap`                             |               18,914 |            17,941 |   973 |
 
-Every endpoint except `/mcp/safe` carries the CLO jurisdiction notice and the
+Every endpoint except `/mcp/safe` and `/mcp/launchpad-testing` carries the CLO jurisdiction notice and the
 jurisdiction-metadata paragraph verbatim, about 480 tokens, and
 `get_quotes_with_plans` carries the notice again in its description. Raise a
 budget only with a reason the extra tokens buy. One such raise: every non-Safe
@@ -47,10 +47,13 @@ instructions budget grew by 550 characters (about 115 tokens) for the opening
 scope sentence, after agents read the handoff rules as a ban on the user's own
 cast/sncast work outside this server. Restrictive rules in this text are scoped
 to this server's tools and plans; do not write one as a blanket prohibition.
-Another: every endpoint serving `ekubo` grew by 7,500 tools characters and
-300 resources characters for the seven support-disabled `launchpad_*` tools
-and `launchpad://disclosures` (about 6,800 and 150 measured). Their refusal
-codes are stated in each tool description, so no instructions text was added.
+
+The seven support-disabled `launchpad_*` tools and `launchpad://disclosures`
+are served only at `/mcp/launchpad-testing`, so no other endpoint's budget
+grows for them. Placed in the Ekubo Protocol catalog they would cost every
+`/mcp` and `/mcp/ekubo` session about 1,830 o200k tokens (7,166 tools and 251
+resources characters) for tools that refuse every call. The testing endpoint
+itself is about 2,040 tokens (148 instructions, 1,785 tools, 109 resources).
 
 ## How the catalog is kept small
 

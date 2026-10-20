@@ -3,6 +3,8 @@ import worker from "../../src/index.js";
 import { DISCLOSURE_CODES } from "../../src/launchpad/zero-seed/disclosures.js";
 import { LIVE_INSTANCE_PINS, LOCAL_INSTANCE_PINS } from "../../src/launchpad/zero-seed/policy.js";
 import { fakeArtifactStore } from "../fake-r2.js";
+import { PROTOCOLS, protocolMcpPath } from "../../src/protocols.js";
+import { MCP_SERVER_VERSION, MCP_TOOL_CATALOG_REVISION } from "../../src/version.js";
 
 type Json = any;
 
@@ -54,11 +56,20 @@ async function mcp(environment: Json, path: string, method: string, params: Reco
   return JSON.parse(data);
 }
 
-const DISCOVERY = ["/mcp/ekubo", "/mcp", "/mcp?protocols=ekubo+ekubo-advanced"];
-const WITHOUT = ["/mcp/ekubo-advanced", "/mcp/uniswap", "/mcp/safe", "/mcp?protocols=ekubo-advanced+uniswap"];
+const TESTING = "/mcp/launchpad-testing";
+const DEFAULT = [
+  "/mcp",
+  ...PROTOCOLS.filter((protocol) => protocol.slug !== "launchpad-testing").map((protocol) => protocolMcpPath(protocol.slug)),
+  "/mcp?protocols=ekubo+ekubo-advanced",
+  "/mcp?protocols=ekubo+aave+aerodrome+lido+merkl+morpho+sky+uniswap",
+];
 
-const call = (environment: Json, name: string, args: Record<string, unknown>, path = "/mcp/ekubo") =>
+const call = (environment: Json, name: string, args: Record<string, unknown>, path = TESTING) =>
   mcp(environment, path, "tools/call", { name, arguments: args });
+
+async function get(path: string): Promise<Response> {
+  return worker.fetch(new Request(`https://mcp.ekubo.org${path}`, { headers: { host: "mcp.ekubo.org" } }), workerEnv() as Json, context);
+}
 
 let requests: string[] = [];
 const realFetch = globalThis.fetch;
@@ -74,42 +85,89 @@ afterEach(() => {
 });
 
 describe("hosted zero-seed launchpad tools (support disabled)", () => {
-  for (const path of DISCOVERY) {
-    it(`${path} lists the zero-seed tools and disclosures`, async () => {
+  it(`${TESTING} lists exactly the zero-seed tools and disclosures`, async () => {
+    const e = workerEnv();
+    const tools = (await mcp(e, TESTING, "tools/list")).result.tools as Json[];
+    expect(tools.map((t) => t.name).sort()).toEqual(TOOLS);
+    for (const tool of tools) {
+      expect(tool.description).toStartWith("Zero-seed launchpad, support disabled:");
+      expect(JSON.stringify(tool.outputSchema ?? {})).not.toContain("_reference");
+    }
+    const resources = (await mcp(e, TESTING, "resources/list")).result.resources.map((r: Json) => r.uri);
+    expect(resources).toContain("launchpad://disclosures");
+    expect(resources).not.toContain("launchpad://onboarding");
+    const init = (await mcp(e, TESTING, "initialize", {
+      protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1" },
+    })).result;
+    expect(init.serverInfo).toMatchObject({ name: "ekubo-launchpad-testing", version: MCP_SERVER_VERSION });
+    expect(init.instructions).toStartWith(`Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}`);
+    expect(init.instructions).toContain("launch_support_disabled");
+    expect(requests).toEqual([]);
+  });
+
+  for (const path of DEFAULT) {
+    it(`${path} serves no zero-seed tool, resource or instructions`, async () => {
       const e = workerEnv();
-      const tools = (await mcp(e, path, "tools/list")).result.tools as Json[];
-      const names = tools.map((t) => t.name);
-      expect(names.filter((name: string) => name.startsWith("launchpad_")).sort()).toEqual(TOOLS);
-      for (const name of OBSOLETE) expect(names).not.toContain(name);
-      for (const tool of tools.filter((t) => t.name.startsWith("launchpad_"))) {
-        expect(tool.description).toStartWith("Zero-seed launchpad, support disabled:");
-        expect(JSON.stringify(tool.outputSchema ?? {})).not.toContain("_reference");
+      const names = (await mcp(e, path, "tools/list")).result.tools.map((t: Json) => t.name as string);
+      expect(names.filter((name: string) => name.startsWith("launchpad_"))).toEqual([]);
+      const resources = (await mcp(e, path, "resources/list")).result.resources.map((r: Json) => r.uri as string);
+      expect(resources.filter((uri: string) => uri.startsWith("launchpad://"))).toEqual([]);
+      const read = await mcp(e, path, "resources/read", { uri: "launchpad://disclosures" });
+      expect(read.result).toBeUndefined();
+      const init = (await mcp(e, path, "initialize", {
+        protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1" },
+      })).result;
+      expect(init.instructions.replaceAll(MCP_TOOL_CATALOG_REVISION, "")).not.toContain("launchpad");
+      for (const name of TOOLS) {
+        const reply = await call(e, name, {}, path);
+        expect(reply.result?.structuredContent).toBeUndefined();
+        expect(JSON.stringify(reply)).toContain(`Tool ${name} not found`);
       }
-      const resources = (await mcp(e, path, "resources/list")).result.resources.map((r: Json) => r.uri);
-      expect(resources).toContain("launchpad://disclosures");
-      expect(resources).not.toContain("launchpad://onboarding");
       expect(requests).toEqual([]);
     });
   }
 
-  it("keeps every non-launchpad tool on /mcp and /mcp/ekubo", async () => {
+  it("keeps /mcp and /mcp/ekubo at their pre-launchpad tool counts", async () => {
     const e = workerEnv();
-    const others = async (path: string) =>
-      ((await mcp(e, path, "tools/list")).result.tools as Json[])
-        .map((t) => t.name as string)
-        .filter((name) => !name.startsWith("launchpad_"));
-    expect(await others("/mcp")).toHaveLength(100);
-    expect(await others("/mcp/ekubo")).toHaveLength(34);
-    expect(await others("/mcp/ekubo")).toContain("get_quotes_with_plans");
+    const count = async (path: string) => (await mcp(e, path, "tools/list")).result.tools.length;
+    expect(await count("/mcp")).toBe(100);
+    expect(await count("/mcp/ekubo")).toBe(34);
   });
 
-  for (const path of WITHOUT) {
-    it(`${path} does not serve the zero-seed tools`, async () => {
-      const e = workerEnv();
-      const names = (await mcp(e, path, "tools/list")).result.tools.map((t: Json) => t.name);
-      expect(names.filter((name: string) => name.startsWith("launchpad_"))).toEqual([]);
-      const resources = (await mcp(e, path, "resources/list")).result.resources.map((r: Json) => r.uri);
-      expect(resources).not.toContain("launchpad://disclosures");
+  it("advertises the testing endpoint only as a standalone protocol", async () => {
+    const root = await (await get("/")).json() as Json;
+    expect(root.tool_count).toBe(100);
+    expect(root.mcp_endpoints.all.protocols).not.toContain("launchpad-testing");
+    const entry = root.mcp_endpoints.by_protocol.find((p: Json) => p.protocol === "launchpad-testing");
+    expect(entry).toMatchObject({ url: `https://mcp.ekubo.org${TESTING}`, tool_count: 7 });
+    expect([...entry.tools].sort()).toEqual(TOOLS);
+    const ekubo = root.mcp_endpoints.by_protocol.find((p: Json) => p.protocol === "ekubo");
+    expect(ekubo.tools.filter((name: string) => name.startsWith("launchpad_"))).toEqual([]);
+    expect(ekubo.description).not.toContain("launchpad");
+
+    const all = await (await get("/tools")).json() as Json;
+    expect(all.tools.filter((t: Json) => t.name.startsWith("launchpad_"))).toEqual([]);
+    const ekuboTools = await (await get("/tools?protocol=ekubo")).json() as Json;
+    expect(ekuboTools.tools.filter((t: Json) => t.name.startsWith("launchpad_"))).toEqual([]);
+    const testing = await (await get("/tools?protocol=launchpad-testing")).json() as Json;
+    expect(testing.mcp_endpoint).toBe(`https://mcp.ekubo.org${TESTING}`);
+    expect(testing.tools.map((t: Json) => t.name).sort()).toEqual(TOOLS);
+    expect(testing.tools.every((t: Json) => t.protocol === "launchpad-testing")).toBe(true);
+  });
+
+  for (const query of ["ekubo+launchpad-testing", "launchpad-testing"]) {
+    it(`refuses ?protocols=${query}: the testing tools cannot be combined`, async () => {
+      for (const path of [`/mcp?protocols=${query}`, `/tools?protocols=${query}`]) {
+        const response = path.startsWith("/mcp")
+          ? await worker.fetch(new Request(`https://mcp.ekubo.org${path}`, {
+            method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+          }), workerEnv() as Json, context)
+          : await get(path);
+        expect(response.status).toBeGreaterThanOrEqual(400);
+        const body = await response.json() as Json;
+        expect(body.error.code).toBe("unknown_protocol");
+        expect(JSON.stringify(body)).toContain("/mcp/launchpad-testing");
+      }
     });
   }
 
@@ -118,7 +176,7 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
     expect(Object.isFrozen(LIVE_INSTANCE_PINS)).toBe(true);
   });
 
-  it("has no separate launchpad endpoint", async () => {
+  it("serves nothing at the retired /mcp/launchpad path", async () => {
     const response = await worker.fetch(
       new Request("https://mcp.ekubo.org/mcp/launchpad", {
         method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
@@ -131,10 +189,8 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
 
   it("lists nothing on the local harness chain or any other, without a request", async () => {
     for (const chain of ["31337", "1", "8453"]) {
-      for (const path of ["/mcp/ekubo", "/mcp"]) {
-        const reply = await call(workerEnv(), "launchpad_list_launches", { chain_id: chain }, path);
-        expect(reply.result.structuredContent).toEqual({ data: [], next_cursor: null, launch_support: "disabled" });
-      }
+      const reply = await call(workerEnv(), "launchpad_list_launches", { chain_id: chain });
+      expect(reply.result.structuredContent).toEqual({ data: [], next_cursor: null, launch_support: "disabled" });
     }
     expect(requests).toEqual([]);
   });
@@ -147,23 +203,21 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
     ["launchpad_prepare_claim_fees", { chain_id: pin.chainId, sender, pool_id: poolId, recipient: `0x${"55".repeat(20)}` }, "launch_support_disabled"],
     ["launchpad_prepare_trade", { chain_id: pin.chainId, sender, pool_id: poolId, side: "buy", amount: "1", slippage_bps: 100 }, "executable_budget_not_proven"],
   ];
-  for (const path of ["/mcp/ekubo", "/mcp"]) {
-    for (const [name, args, code] of refusals) {
-      it(`${name} fails closed with ${code} on ${path}, storing no reference`, async () => {
-        const e = workerEnv();
-        const reply = await call(e, name, args, path);
-        expect(reply.result.isError).toBe(true);
-        expect(reply.result.structuredContent.error.code).toBe(code);
-        expect(JSON.stringify(reply)).not.toContain("execution_plan_reference");
-        expect(e.ARTIFACT_STORE.entries.size).toBe(0);
-        expect(requests).toEqual([]);
-      });
-    }
+  for (const [name, args, code] of refusals) {
+    it(`${name} fails closed with ${code} on ${TESTING}, storing no reference`, async () => {
+      const e = workerEnv();
+      const reply = await call(e, name, args);
+      expect(reply.result.isError).toBe(true);
+      expect(reply.result.structuredContent.error.code).toBe(code);
+      expect(JSON.stringify(reply)).not.toContain("execution_plan_reference");
+      expect(e.ARTIFACT_STORE.entries.size).toBe(0);
+      expect(requests).toEqual([]);
+    });
   }
 
   it("prepare_create takes the literal decay factor and refuses a missing one before anything else", async () => {
     const e = workerEnv();
-    const tools = (await mcp(e, "/mcp/ekubo", "tools/list")).result.tools as Json[];
+    const tools = (await mcp(e, TESTING, "tools/list")).result.tools as Json[];
     const create = tools.find((t) => t.name === "launchpad_prepare_create");
     expect(create.inputSchema.properties.parameters.required).toContain("decayFactor");
     expect(create.inputSchema.properties.parameters.properties.decayFactor.description).toContain("not a half-life");
@@ -183,7 +237,7 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
   });
 
   it("serves the eight versioned draft mechanism disclosures", async () => {
-    const reply = await mcp(workerEnv(), "/mcp/ekubo", "resources/read", { uri: "launchpad://disclosures" });
+    const reply = await mcp(workerEnv(), TESTING, "resources/read", { uri: "launchpad://disclosures" });
     const document = JSON.parse(reply.result.contents[0].text);
     expect(document).toMatchObject({ version: 3, status: "draft_not_approved" });
     expect(document.disclosures.map((entry: Json) => entry.code)).toEqual([

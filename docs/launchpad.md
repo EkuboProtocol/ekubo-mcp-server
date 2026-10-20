@@ -2,13 +2,28 @@
 
 The launchpad targets the **draft** exponential creator-fee decay of the
 zero-seed launch contract at evm-contracts `b1cbb1c` (ABI SHA-256
-`bc51b392…3792bb`), which is not released, audited or a selected parameter
-set. It replaced the linear decay of `d6aeb58` (ABI `189ff93c…ced215`). The tools are
-part of the Ekubo Protocol catalog: they are served by `/mcp/ekubo`, by any
-`/mcp?protocols=` selection that includes `ekubo`, and by the root `/mcp`
-bundle, and are listed at `/tools?protocol=ekubo`. There is no separate
-launchpad endpoint. Discovery does not enable execution: every tool still
-fails closed as described below.
+`bc51b392…3792bb`), which is not released, externally reviewed or a selected
+parameter set. It replaced the linear decay of `d6aeb58` (ABI `189ff93c…ced215`).
+
+## Where the tools are served
+
+The seven `launchpad_*` tools and `launchpad://disclosures` belong to the
+standalone `launchpad-testing` protocol. They are served only at
+`/mcp/launchpad-testing` and listed only at `/tools?protocol=launchpad-testing`.
+Like Safe, that protocol is not part of the root `/mcp` bundle and cannot be
+combined through `?protocols=` (`/mcp?protocols=ekubo+launchpad-testing` is
+refused with `unknown_protocol`). `/mcp`, `/mcp/ekubo`, every other
+`/mcp/<protocol>`, every `?protocols=` selection and unfiltered `/tools` list
+none of these tools or the resource, and calling one there fails as an unknown
+tool. `/mcp/launchpad` does not exist.
+
+While support is disabled the tools refuse every call, so they stay out of the
+default catalogs, whose `initialize`, `tools/list` and `resources/list` are
+loaded into every agent session (about 1,830 o200k tokens on `/mcp` and
+`/mcp/ekubo`; see [MCP-CONTEXT.md](MCP-CONTEXT.md)). Placing them in the
+Ekubo Protocol catalog is part of a later live-enablement change, together
+with non-empty live pins and a hosted producer. Discovery on the testing
+endpoint does not enable execution: every tool fails closed as described below.
 
 No launch instance is supported on any hosted or live chain. The live pin list
 in `src/launchpad/zero-seed/policy.ts` is empty, and no environment variable,
@@ -67,16 +82,17 @@ supported chain, so the hosted server never contacts it.
 
 ## Release
 
-Registering the seven tools and the disclosures resource in the Ekubo Protocol
-catalog deliberately left the catalog identifiers unchanged while it is
-unreleased. The release that first serves them must bump, in the same commit:
+This unpublished candidate bumps, in the same commit:
 
 - `MCP_TOOL_CATALOG_REVISION` in `src/version.ts`, from
-  `2026-10-12.usability-acceptance` to `<release date>.launchpad-zero-seed-hold`;
+  `2026-10-12.usability-acceptance` to `2026-10-20.launchpad-zero-seed-hold`
+  (the date is the candidate's; set it to the actual release date if it ships
+  later);
 - `MCP_SERVER_VERSION` in `src/version.ts` and `version` in `package.json`, from
   `0.52.0` to `0.53.0`.
 
-`script/smoke.mjs` reads both from `src/version.ts`, so it needs no edit.
+`script/smoke.mjs` reads both from `src/version.ts` and checks that the testing
+endpoint serves exactly its seven tools and stays out of the root bundle.
 Enabling execution is a separate change: it requires a non-empty
 `LIVE_INSTANCE_PINS` and replacing the refusals, neither of which this
-catalog registration does.
+change does.

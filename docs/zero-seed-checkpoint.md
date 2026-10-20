@@ -1,8 +1,6 @@
 # Zero-seed MCP checkpoint — not a handoff
 
-Origin: [board launchpad feature](/EKU/issues/EKU-637),
-delivery [EKU-1524](/EKU/issues/EKU-1524), coordinated under
-[EKU-822](/EKU/issues/EKU-822). Draft/local only, Cloud Wallet first. Release HOLD.
+Draft/local only, Cloud Wallet first. Release HOLD.
 
 ## Implemented in this checkpoint
 
@@ -22,7 +20,7 @@ untouched.
 
 ## Assembly continuation: single synthetic read
 
-[EKU-1574](/EKU/issues/EKU-1574) adds unregistered `abi.ts`, `installation.ts`
+This continuation adds unregistered `abi.ts`, `installation.ts`
 and `preview.ts` under `src/launchpad/zero-seed/`. These are still not the
 registered producer or opaque owner decoder. `localInstallationPreview` uses
 one `read_calls` bundle and passes its stored reference unchanged to a
@@ -54,12 +52,13 @@ closure is claimed by this continuation.
 
 The staged ScheduledLaunch/LaunchRouter/LockedLaunchLiquidity tools, ABIs,
 advance/migrate/fund paths, onboarding copy and their tests are deleted. The
-`/mcp/launchpad` catalog (revision `2026-10-11.launchpad-zero-seed-hold`) is
-now `src/launchpad/zero-seed/tools.ts`: list returns empty without a request;
+launchpad catalog is now `src/launchpad/zero-seed/tools.ts`, served only at the
+standalone testing endpoint `/mcp/launchpad-testing` (see
+[launchpad.md](launchpad.md#where-the-tools-are-served)): list returns empty without a request;
 detail, swaps, claims, create and claim preparation refuse with
 `launch_support_disabled`; trade preparation refuses with
 `executable_budget_not_proven`. No tool returns or stores a reference.
-`launchpad://disclosures` carries the five mechanism disclosures (draft).
+`launchpad://disclosures` carries the eight version-3 mechanism disclosures (draft).
 `test/launchpad/zero-seed-endpoint.test.ts` drives the real worker.
 
 The shared swap path (`src/yul-router.ts`, `src/core.ts`) no longer accepts
@@ -71,7 +70,6 @@ equal the request exactly. The ScheduledLaunch partial-fill fixture is deleted.
 
 | Input | Head / hash |
 | --- | --- |
-| Freeze revision | `ceebe872-8deb-4858-a192-8c013516def1` |
 | Policy SHA256 | `7864a2d33a0fa8964922a5225653ed19842c590091f289eb4e29306feac6f6e1` |
 | Protocol head | `d6aeb58d845aa29454f3ed8df15e84a306a6f26d` |
 | Protocol ABI SHA256 | `189ff93c0f6fb64f6e7dd0675872bf6686692f8303e6218b8c2521bfa5ced215` |
@@ -84,9 +82,7 @@ equal the request exactly. The ScheduledLaunch partial-fill fixture is deleted.
 | Quoter implementation base | `f66fe706a64c9717ca4c4f74bb8b849b014fc48b` |
 | Quoter accepted manifest SHA256 | `468b41c448c752dac171fcb88e95061b8601b12956189d5bc80b1e3bab7c65d8` |
 
-Quoter request acceptance additionally binds the CTO request disposition on
-[EKU-1550](/EKU/issues/EKU-1550) and gas disposition on
-[EKU-1566](/EKU/issues/EKU-1566). `estimated_gas_cost` **must not** become a
+`estimated_gas_cost` **must not** become a
 transaction gas limit, UserOp budget, execution affordability decision or owner
 assurance. Frame estimate `50650` is below measured cold-router gas
 `120773–121931`; neither is a general bound. The executable-use refusal helper
@@ -95,7 +91,7 @@ simulation or live call is authorized to close this gap.
 
 ## Reproduce the smallest verification
 
-From the task worktree:
+From the repository root:
 
 ```sh
 bun test test/launchpad/zero-seed-policy.test.ts
@@ -126,7 +122,7 @@ canonical bytes, the exact local pin, target, creator and requested intent,
 re-derive the installed pair and geometry, require canonical calldata equal to
 the summary, and enforce fresh time in `[build, expiry)`. They emit
 `zero-seed-launch-owner-summary/v1` with the frozen selectors and the five
-create / two claim statements matching the EKU-1513 examples byte for byte;
+create / two claim statements matching the reference examples byte for byte;
 rates are Q0.64 plus four-decimal half-up percentages. Additive `fields.binding`
 (requested vs installed supply/L, token, pool key, position, expiry) and
 `fields.rounding` (upper launch-token residue separate from per-asset Core
@@ -182,7 +178,7 @@ rollback cannot refund, withdraw, rebalance or migrate immutable principal.
 Same-blockhash API/quoter parity (the runs share time and state only), l1 tick
 parity at the quoter time, mined UserOps, executable budgets, wallet simulation,
 live provenance/registration/assets, mined UserOps, full WETH metadata,
-hosting/retention/oncall/costs, external audit, final QA/Sage and release are
+hosting/retention/oncall/costs, external security review, final QA and release are
 NOT PROVEN. No merge/deploy/signing/issuance/provider/credential/live-wallet,
 policy/authority/permissions/model, spend or publication action is authorized.
 
@@ -193,8 +189,9 @@ The modules now consume the draft fee interface at evm-contracts `b1cbb1c`
 `create` `0xd5f50468`, `previewInstallation` `0x5283ac38`; `claimFees` is
 unchanged). The local pins are the constructor-executed draft instances
 `0x5142e167…` (high WETH) and `0x51174b5d…` (low WETH). The live pin list is
-still empty and every hosted tool still refuses; the catalog revision and
-server version are not bumped.
+still empty and every hosted tool still refuses. The catalog revision and
+server version are bumped for this unpublished candidate (see
+[launchpad.md](launchpad.md#release)).
 
 - `fee.ts` mirrors `powQ64`, the endpoint-normalized schedule, the exact-input
   fee, the exact-output gross-up and the distinct uint128 helper and int128
@@ -216,5 +213,5 @@ server version are not bumped.
   is NOT re-covered.
 
 NOT PROVEN: live or fork execution, wallet simulation, executable budgets,
-audit, parameter selection, approved disclosure copy, and any Rust/Solidity
+external security review, parameter selection, approved disclosure copy, and any Rust/Solidity
 parity beyond the consumed vectors.

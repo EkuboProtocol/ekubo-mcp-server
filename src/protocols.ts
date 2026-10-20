@@ -13,6 +13,7 @@ export const PROTOCOL_SLUGS = [
   "sky",
   "uniswap",
   "safe",
+  "launchpad-testing",
 ] as const;
 
 export type ProtocolSlug = (typeof PROTOCOL_SLUGS)[number];
@@ -60,8 +61,7 @@ const EKUBO_TOOLS = [
   "prepare_ve33_merge",
   "prepare_ve33_withdraw",
   "get_liquidity_opportunities",
-  ...launchpadTools.map((tool) => tool.name),
-];
+] as const;
 
 const EKUBO_ADVANCED_TOOLS = [
   "list_pool_keys",
@@ -88,7 +88,7 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
     slug: "ekubo",
     title: "Ekubo Protocol",
     description:
-      "Ekubo swaps and bridges, tokens, pools, LP positions, transfers, rewards, ve(3,3) STONX voting, and the zero-seed launchpad (support disabled)",
+      "Ekubo swaps and bridges, tokens, pools, LP positions, transfers, rewards, and ve(3,3) STONX voting",
     skill: null,
     tools: EKUBO_TOOLS,
   },
@@ -199,9 +199,25 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
     skill: null,
     tools: safeTools.map((tool) => tool.name),
   },
+  {
+    slug: "launchpad-testing",
+    title: "Ekubo zero-seed launchpad (testing)",
+    description:
+      "Testing only: zero-seed launchpad tools with launch support disabled, so every call is refused; separate endpoint only, excluded from /mcp",
+    skill: null,
+    tools: launchpadTools.map((tool) => tool.name),
+  },
 ];
 
-export const ALL_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(PROTOCOL_SLUGS.filter((slug) => slug !== "safe"));
+/**
+ * Protocols served only at their own `/mcp/<slug>` endpoint: never bundled
+ * into `/mcp` and never combinable through `?protocols=`.
+ */
+export const STANDALONE_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(["safe", "launchpad-testing"]);
+
+export const ALL_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(
+  PROTOCOL_SLUGS.filter((slug) => !STANDALONE_PROTOCOLS.has(slug)),
+);
 
 const TOOL_PROTOCOLS: ReadonlyMap<string, ProtocolSlug> = new Map(
   PROTOCOLS.flatMap((protocol) =>
@@ -293,8 +309,9 @@ export function parseProtocolFacet(query: URLSearchParams): FacetSelection | nul
   }
   const protocols = new Set<ProtocolSlug>();
   for (const name of names) {
-    if (name === "safe") {
-      return { error: "Safe is served only at /mcp/safe and cannot be combined with other protocols." };
+    if (STANDALONE_PROTOCOLS.has(name as ProtocolSlug)) {
+      const title = protocolBySlug(name)!.title;
+      return { error: `${title} is served only at /mcp/${name} and cannot be combined with other protocols.` };
     }
     const protocol = protocolBySlug(name);
     if (protocol === undefined) {
