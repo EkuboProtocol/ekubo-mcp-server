@@ -1,4 +1,6 @@
+import type { Hex } from "viem";
 import { z } from "zod";
+import { ZeroSeedApi } from "./api.js";
 import { disclosuresDocument } from "./disclosures.js";
 import { address, bytes32, decimal, Parameters } from "./installation.js";
 import { LIVE_INSTANCE_PINS, refuseExecutableUse, ZeroSeedError } from "./policy.js";
@@ -39,17 +41,15 @@ const tradeSchema = z.strictObject({
 const HOLD =
   "Zero-seed launchpad, support disabled: no launch instance is supported on any hosted or live chain, so this tool fails closed.";
 
-/** The hosted producer is not wired: it refuses even if a live pin were ever added. */
+/** Live support needs a live pin; there is none, so a hosted read never reaches the API. */
 const live = (chain: string) => LIVE_INSTANCE_PINS.some((pin) => pin.chainId === chain);
 
-/**
- * Support is checked before configuration, so a disabled chain never reaches the API. The indexed launch API for
- * the periphery/native contract version is not consumed yet, so even a supported chain is refused.
- */
-function hosted(env: LaunchpadEnv, chain: string): never {
+/** Support is checked before configuration, so a disabled chain never reaches the API. */
+function hosted(env: LaunchpadEnv, chain: string): ZeroSeedApi {
   if (!live(chain)) throw new ZeroSeedError("launch_support_disabled");
-  if (!(env.LAUNCHPAD_API_URL || env.EKUBO_API_URL)) throw new ZeroSeedError("launchpad_not_configured");
-  throw new ZeroSeedError("api_schema_pending");
+  const base = env.LAUNCHPAD_API_URL || env.EKUBO_API_URL;
+  if (!base) throw new ZeroSeedError("launchpad_not_configured");
+  return new ZeroSeedApi(base, fetch);
 }
 
 function disabled(): never {
@@ -57,26 +57,31 @@ function disabled(): never {
 }
 
 async function listLaunches(env: LaunchpadEnv, input: z.input<typeof listSchema>) {
-  const { chain_id: chain } = listSchema.parse(input);
+  const { chain_id: chain, owner, ...page } = listSchema.parse(input);
   if (!live(chain)) {
     return { data: [], next_cursor: null, launch_support: "disabled" };
   }
-  return hosted(env, chain);
+  return hosted(env, chain).list(chain, { ...page, owner });
 }
 
 async function getLaunch(env: LaunchpadEnv, input: z.input<typeof launchSchema>) {
-  const { chain_id: chain } = launchSchema.parse(input);
-  return hosted(env, chain);
+  const { chain_id: chain, pool_id: id } = launchSchema.parse(input);
+  return hosted(env, chain).detail(chain, id as Hex);
 }
 
 async function getSwaps(env: LaunchpadEnv, input: z.input<typeof historySchema>) {
-  const { chain_id: chain } = historySchema.parse(input);
-  return hosted(env, chain);
+  const { chain_id: chain, pool_id: id, ...page } = historySchema.parse(input);
+  return hosted(env, chain).swaps(chain, id as Hex, page);
 }
 
 async function getClaims(env: LaunchpadEnv, input: z.input<typeof historySchema>) {
-  const { chain_id: chain } = historySchema.parse(input);
-  return hosted(env, chain);
+  const { chain_id: chain, pool_id: id, ...page } = historySchema.parse(input);
+  return hosted(env, chain).claims(chain, id as Hex, page);
+}
+
+async function getOwners(env: LaunchpadEnv, input: z.input<typeof historySchema>) {
+  const { chain_id: chain, pool_id: id, ...page } = historySchema.parse(input);
+  return hosted(env, chain).owners(chain, id as Hex, page);
 }
 
 async function prepareCreate(_env: LaunchpadEnv, input: z.input<typeof createSchema>) {
@@ -114,6 +119,8 @@ export const launchpadTools: LaunchpadTool[] = [
     `${HOLD} Refuses with launch_support_disabled.`, historySchema, getSwaps),
   tool("launchpad_get_claims", "List zero-seed launch fee claims",
     `${HOLD} Refuses with launch_support_disabled.`, historySchema, getClaims),
+  tool("launchpad_get_owners", "List zero-seed launch owners",
+    `${HOLD} Refuses with launch_support_disabled. The creation owner, then every ownership transfer.`, historySchema, getOwners),
   tool("launchpad_prepare_create", "Prepare a zero-seed launch",
     `${HOLD} Refuses with launch_support_disabled; returns no plan or reference.`, createSchema, prepareCreate),
   tool("launchpad_prepare_claim_fees", "Prepare a zero-seed launch fee claim",
@@ -139,6 +146,7 @@ export const launchpadOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   launchpad_get_launch: z.looseObject({ chain_id: z.string(), pool_id: z.string() }),
   launchpad_get_swaps: page,
   launchpad_get_claims: page,
+  launchpad_get_owners: page,
   launchpad_prepare_create: refusalOnly,
   launchpad_prepare_claim_fees: refusalOnly,
   launchpad_prepare_trade: refusalOnly,

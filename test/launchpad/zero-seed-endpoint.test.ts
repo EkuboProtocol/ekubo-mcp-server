@@ -11,6 +11,7 @@ type Json = any;
 const TOOLS = [
   "launchpad_get_claims",
   "launchpad_get_launch",
+  "launchpad_get_owners",
   "launchpad_get_swaps",
   "launchpad_list_launches",
   "launchpad_prepare_claim_fees",
@@ -139,7 +140,7 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
     expect(root.tool_count).toBe(100);
     expect(root.mcp_endpoints.all.protocols).not.toContain("launchpad-testing");
     const entry = root.mcp_endpoints.by_protocol.find((p: Json) => p.protocol === "launchpad-testing");
-    expect(entry).toMatchObject({ url: `https://mcp.ekubo.org${TESTING}`, tool_count: 7 });
+    expect(entry).toMatchObject({ url: `https://mcp.ekubo.org${TESTING}`, tool_count: 8 });
     expect([...entry.tools].sort()).toEqual(TOOLS);
     const ekubo = root.mcp_endpoints.by_protocol.find((p: Json) => p.protocol === "ekubo");
     expect(ekubo.tools.filter((name: string) => name.startsWith("launchpad_"))).toEqual([]);
@@ -199,6 +200,7 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
     ["launchpad_get_launch", { chain_id: pin.chainId, pool_id: poolId }, "launch_support_disabled"],
     ["launchpad_get_swaps", { chain_id: pin.chainId, pool_id: poolId }, "launch_support_disabled"],
     ["launchpad_get_claims", { chain_id: pin.chainId, pool_id: poolId }, "launch_support_disabled"],
+    ["launchpad_get_owners", { chain_id: pin.chainId, pool_id: poolId }, "launch_support_disabled"],
     ["launchpad_prepare_create", { chain_id: pin.chainId, sender, parameters }, "launch_support_disabled"],
     ["launchpad_prepare_claim_fees", { chain_id: pin.chainId, sender, pool_id: poolId, recipient: `0x${"55".repeat(20)}` }, "launch_support_disabled"],
     ["launchpad_prepare_trade", { chain_id: pin.chainId, sender, pool_id: poolId, side: "buy", amount: "1", slippage_bps: 100 }, "executable_budget_not_proven"],

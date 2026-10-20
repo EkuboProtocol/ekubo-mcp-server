@@ -66,6 +66,16 @@ export const LOCAL_INSTANCE_PINS: readonly Readonly<InstancePin>[] = Object.free
   } as const),
 ]);
 
+// The same two instances deployed separately by the indexer's replay fixture generator (indexer 2006846,
+// scripts/zeroSeedLaunchFixture.ts), whose chain the backend API golden and the quoter router probes read. Only the
+// peripheries' addresses differ; every runtime is identical. Local only, like the pins above.
+export const BACKEND_REPLAY_PINS: readonly Readonly<InstancePin>[] = Object.freeze([
+  Object.freeze({ ...LOCAL_INSTANCE_PINS[0], periphery: "0xb27e16c3d01850191c1e027f7a3372cd2e1fb324" }),
+  Object.freeze({ ...LOCAL_INSTANCE_PINS[1], periphery: "0x94e1b338def908449e6ea7c7d254630b45d27562" }),
+]);
+
+const LOCAL_HARNESS_PINS = [...LOCAL_INSTANCE_PINS, ...BACKEND_REPLAY_PINS];
+
 /** No env switch, provider read, or caller-supplied address can enable live support. */
 export const LIVE_INSTANCE_PINS: readonly InstancePin[] = Object.freeze([]);
 
@@ -115,7 +125,7 @@ export function samePin(a: InstancePin, b: InstancePin): boolean {
 
 export function supportedInstances(requested: readonly InstancePin[], localHarness: boolean): readonly InstancePin[] {
   if (!localHarness) return LIVE_INSTANCE_PINS;
-  return requested.filter((request) => wellFormedPin(request) && LOCAL_INSTANCE_PINS.some((pin) => samePin(pin, request)))
+  return requested.filter((request) => wellFormedPin(request) && LOCAL_HARNESS_PINS.some((pin) => samePin(pin, request)))
     .map((pin) => Object.freeze({ ...pin }));
 }
 

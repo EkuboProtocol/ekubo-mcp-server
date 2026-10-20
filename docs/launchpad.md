@@ -8,7 +8,7 @@ own pair of contracts; nothing here assumes a canonical Ekubo instance.
 
 ## Where the tools are served
 
-The seven `launchpad_*` tools and `launchpad://disclosures` belong to the
+The eight `launchpad_*` tools and `launchpad://disclosures` belong to the
 standalone `launchpad-testing` protocol. They are served only at
 `/mcp/launchpad-testing` and listed only at `/tools?protocol=launchpad-testing`.
 Like Safe, that protocol is not part of the root `/mcp` bundle and cannot be
@@ -38,13 +38,17 @@ provider read or caller-supplied address can add one.
 | `launchpad_get_launch` | Refuses with `launch_support_disabled`. |
 | `launchpad_get_swaps` | Refuses with `launch_support_disabled`. |
 | `launchpad_get_claims` | Refuses with `launch_support_disabled`. |
+| `launchpad_get_owners` | Refuses with `launch_support_disabled`. |
 | `launchpad_prepare_create` | Refuses with `launch_support_disabled`; no plan or reference. |
 | `launchpad_prepare_claim_fees` | Refuses with `launch_support_disabled`; no plan or reference. |
 | `launchpad_prepare_trade` | Refuses with `executable_budget_not_proven`; no plan or reference. |
 
-Were a live pin ever added, the read tools would still refuse with
-`api_schema_pending`: the indexed launch API for this contract version is not
-consumed yet.
+The read tools consume the indexed launch API `zero-seed-launch-api/v3`
+(`src/launchpad/zero-seed/api.ts`) only for a chain with a live pin, of which
+there is none, so no hosted call reaches the API. The client re-derives the
+pool, the instance, the quote kind, the fee rate and the owner and ledger
+totals from each response; see
+[zero-seed-checkpoint.md](zero-seed-checkpoint.md).
 
 `launchpad://disclosures` serves the nine mechanism disclosures (version 4)
 every owner summary carries: zero initial bid, buyer-funded quote reserve,
@@ -123,14 +127,14 @@ This unpublished candidate bumps, in the same commit:
 
 - `MCP_TOOL_CATALOG_REVISION` in `src/version.ts`, from
   `2026-10-20.launchpad-zero-seed-hold` to
-  `2026-10-20.launchpad-zero-seed-native-periphery` (the create tool's
-  parameters changed; set the date to the actual release date if it ships
-  later);
+  `2026-10-20.launchpad-zero-seed-api-v3` (the create tool's parameters
+  changed and `launchpad_get_owners` was added; set the date to the actual
+  release date if it ships later);
 - `MCP_SERVER_VERSION` in `src/version.ts` and `version` in `package.json`, from
   `0.53.0` to `0.54.0`.
 
 `script/smoke.mjs` reads both from `src/version.ts` and checks that the testing
-endpoint serves exactly its seven tools and stays out of the root bundle.
+endpoint serves exactly its eight tools and stays out of the root bundle.
 Enabling execution is a separate change: it requires a non-empty
 `LIVE_INSTANCE_PINS`, the indexed API and replacing the refusals, none of
 which this change does.

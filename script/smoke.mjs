@@ -388,7 +388,7 @@ assert(safeEndpoint?.tool_count === 6, "standalone Safe endpoint is missing tool
 assert(!advertised.all.protocols.includes("safe"), "Safe leaked into the root protocol bundle");
 assert(safeEndpoint.tools.every((name) => !expectedTools.includes(name)), "Safe leaked into the root tool catalog");
 const launchpadEndpoint = advertised.by_protocol.find((entry) => entry.protocol === "launchpad-testing");
-assert(launchpadEndpoint?.tool_count === 7, "standalone launchpad testing endpoint is missing tools");
+assert(launchpadEndpoint?.tool_count === 8, "standalone launchpad testing endpoint is missing tools");
 assert(!advertised.all.protocols.includes("launchpad-testing"), "launchpad testing leaked into the root protocol bundle");
 assert(
   launchpadEndpoint.tools.every((name) => !expectedTools.includes(name)),

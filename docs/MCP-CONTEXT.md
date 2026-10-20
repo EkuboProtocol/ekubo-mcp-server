@@ -48,13 +48,15 @@ scope sentence, after agents read the handoff rules as a ban on the user's own
 cast/sncast work outside this server. Restrictive rules in this text are scoped
 to this server's tools and plans; do not write one as a blanket prohibition.
 
-The seven support-disabled `launchpad_*` tools and `launchpad://disclosures`
+The eight support-disabled `launchpad_*` tools and `launchpad://disclosures`
 are served only at `/mcp/launchpad-testing`, so no other endpoint's budget
 grows for them. Placed in the Ekubo Protocol catalog they would cost every
-`/mcp` and `/mcp/ekubo` session about 1,810 o200k tokens (7,145 tools and 252
-resources characters, 0.54.0) for tools that refuse every call. The testing
-endpoint itself is about 2,010 tokens (149 instructions, 1,752 tools, 109
-resources).
+`/mcp` and `/mcp/ekubo` session roughly 2,000 o200k tokens (about 8,100 tools
+characters plus the disclosures resource, 0.54.0) for tools that refuse every
+call. The
+testing endpoint's tools budget was raised from 7,500 to 8,500 characters for
+`launchpad_get_owners`, which reads the API v3 ownership history; it is
+measured at 663 instructions, 8,098 tools and 523 resources characters.
 
 ## How the catalog is kept small
 
