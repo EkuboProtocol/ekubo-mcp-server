@@ -1,6 +1,7 @@
 import { type Address, encodeFunctionData, type Hex } from "viem";
 import { z } from "zod";
 import { zeroSeedAbi } from "./abi.js";
+import { MAX_CREATOR_FEE } from "./fee.js";
 import { type InstancePin, supportedInstances, unsigned, validateCreationTiming, validateMetadata, ZeroSeedError } from "./policy.js";
 
 export const decimal = z.string().regex(/^(0|[1-9][0-9]*)$/);
@@ -12,7 +13,8 @@ export const Parameters = z.strictObject({
   askTick: z.number().int().min(-88722835).max(88722835),
   upperTick: z.number().int().min(-88722835).max(88722835),
   tickSpacing: z.number().int().min(1).max(698605), tradingStart: decimal,
-  feeDuration: z.number().int().min(1).max(4294967295), initialFee: decimal, finalFee: decimal, salt: bytes32,
+  feeDuration: z.number().int().min(1).max(4294967295), initialFee: decimal, finalFee: decimal,
+  decayFactor: decimal.describe("Literal Q0.64 per-second multiplier in (0, 2^64), not a half-life"), salt: bytes32,
 });
 export type ParametersInput = z.infer<typeof Parameters>;
 export const BuildContext = z.strictObject({
@@ -40,10 +42,13 @@ export function validateParameters(input: ParametersInput, pin: InstancePin): vo
   validateFees(input);
 }
 
+/** Creation validation of the draft contract: FeeTooHigh above the 99% cap, InvalidFeeSchedule otherwise. */
 function validateFees(input: ParametersInput): void {
   const initial = unsigned(BigInt(input.initialFee), 64);
   const final = unsigned(BigInt(input.finalFee), 64);
-  if (initial > 1844674407370955161n || final > initial) throw new ZeroSeedError("invalid_fee_schedule");
+  const factor = unsigned(BigInt(input.decayFactor), 64);
+  if (initial > MAX_CREATOR_FEE) throw new ZeroSeedError("fee_too_high");
+  if (final > initial || factor === 0n) throw new ZeroSeedError("invalid_fee_schedule");
   unsigned(BigInt(input.tradingStart) + BigInt(input.feeDuration), 64);
 }
 
@@ -63,6 +68,7 @@ export function abiParameters(input: ParametersInput) {
     ...input, quoteToken: input.quoteToken as Address, salt: input.salt as Hex,
     supply: BigInt(input.supply), liquidity: BigInt(input.liquidity),
     tradingStart: BigInt(input.tradingStart), initialFee: BigInt(input.initialFee), finalFee: BigInt(input.finalFee),
+    decayFactor: BigInt(input.decayFactor),
   };
 }
 

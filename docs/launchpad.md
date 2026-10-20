@@ -1,7 +1,9 @@
 # Launchpad (zero-seed, support disabled)
 
-The launchpad targets the zero-seed launch contract frozen at evm-contracts
-`d6aeb58` (ABI SHA-256 `189ff93c…ced215`, freeze `ceebe872`). The tools are
+The launchpad targets the **draft** exponential creator-fee decay of the
+zero-seed launch contract at evm-contracts `b1cbb1c` (ABI SHA-256
+`bc51b392…3792bb`), which is not released, audited or a selected parameter
+set. It replaced the linear decay of `d6aeb58` (ABI `189ff93c…ced215`). The tools are
 part of the Ekubo Protocol catalog: they are served by `/mcp/ekubo`, by any
 `/mcp?protocols=` selection that includes `ekubo`, and by the root `/mcp`
 bundle, and are listed at `/tools?protocol=ekubo`. There is no separate
@@ -24,10 +26,27 @@ provider read or caller-supplied address can add one.
 | `launchpad_prepare_claim_fees` | Refuses with `launch_support_disabled`; no plan or reference. |
 | `launchpad_prepare_trade` | Refuses with `executable_budget_not_proven`; no plan or reference. |
 
-`launchpad://disclosures` serves the five mechanism disclosures every owner
-summary carries: zero initial bid, buyer-funded quote reserve, permanent
-principal lock, creator fee recipient and rate, and no exit guarantee. The
+`launchpad://disclosures` serves the eight mechanism disclosures (version 3)
+every owner summary carries: zero initial bid, buyer-funded quote reserve,
+permanent principal lock, creator fee recipient and rate, creator fee
+recapture, high initial fee, exact-output gross-up and no exit guarantee. The
 wording is a draft and not approved.
+
+## Creator fee schedule (draft)
+
+`decayFactor` (`uint64`, after `finalFee`, before `salt`) is a literal Q0.64
+per-second multiplier `b` in `(0, 2^64)`, not a half-life. With
+`E = powQ64(b, D)`, the fee is `initialFee` at or before trading start,
+`finalFee + floor((initialFee - finalFee) * (powQ64(b, t) - E) / (2^64 - E))`
+inside the window and `finalFee` from `D` on. `powQ64` is square-and-multiply,
+flooring after every multiply (`src/launchpad/zero-seed/fee.ts`, BigInt only).
+The initial fee is capped at the draft `floor(99 * 2^64 / 100)` and a zero
+factor is refused. Owner summaries (`zero-seed-launch-owner-summary/v2`) show
+the encoded factor, the exact schedule at sample times and the first second
+at which the excess fee has halved, computed from the integer schedule. The
+API contract consumed is `zero-seed-launch-api/v2` (`fee_schedule.decay_factor`);
+v1 bodies are refused. Sealed local create bodies are
+`zero-seed-local-create/v2` and bind the disclosure version.
 
 The quoter's `estimated_gas_cost` is never a gas limit, UserOp budget,
 affordability decision or owner assurance. Trade preparation stays refused

@@ -1,5 +1,6 @@
 import { type Address, encodeAbiParameters, type Hex, keccak256, numberToHex } from "viem";
 import { z } from "zod";
+import { feeAt, feePhase } from "./fee.js";
 import { type InstancePin, supportedInstances, unsigned, ZeroSeedError } from "./policy.js";
 import { BlockRef, ClaimPage, LaunchDetail, LaunchList, LaunchSummary, SwapPage } from "./schema.js";
 
@@ -36,17 +37,19 @@ function validatePool(row: Summary): void {
   }
 }
 
+/** Recomputes the served rate from the indexed schedule with the contract's exact integer formula. */
 function validateFee(row: Summary): void {
   const fee = row.fee_schedule;
-  const [start, duration, end, initial, final, time] = [fee.trading_start, fee.fee_duration, fee.fee_end,
-    fee.initial_fee, fee.final_fee, fee.evaluated_at].map((value) => unsigned(BigInt(value), 64));
-  if (start + duration !== end || final > initial || fee.evaluated_at !== row.as_of.block_time) {
+  const [start, duration, end, initial, final, factor, time] = [fee.trading_start, fee.fee_duration, fee.fee_end,
+    fee.initial_fee, fee.final_fee, fee.decay_factor, fee.evaluated_at].map((value) => unsigned(BigInt(value), 64));
+  if (start + duration !== end || final > initial || factor === 0n || duration >= 1n << 32n ||
+    fee.evaluated_at !== row.as_of.block_time) {
     throw new ZeroSeedError("api_fee_identity_mismatch");
   }
-  const phase = time < start ? "before_trading_start" : time < end ? "fee_decay" : "final_fee";
-  const elapsed = time > start ? time - start : 0n;
-  const rate = time >= end ? final : initial - ((initial - final) * elapsed) / duration;
-  if (fee.phase !== phase || fee.fee_rate !== rate.toString()) throw new ZeroSeedError("api_fee_identity_mismatch");
+  const schedule = { tradingStart: start, feeDuration: duration, initialFee: initial, finalFee: final, decayFactor: factor };
+  if (fee.phase !== feePhase(schedule, time) || fee.fee_rate !== feeAt(schedule, time).toString()) {
+    throw new ZeroSeedError("api_fee_identity_mismatch");
+  }
 }
 
 function validateRow(row: Summary): void {

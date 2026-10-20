@@ -1,9 +1,32 @@
 {
-  "source": "artifacts/eku-1522/final-router/router-vectors.json",
-  "source_sha256": "672177cb8b8d4bcf8515755408489c69240eb158d88f75af4d4ecdb33d8cc0d7",
+  "source": "draft exponential-fee local router run (evm-contracts b1cbb1c)",
+  "source_sha256": "681350f30477c46b68cb539d3abf9a2200de6cfb420e1b51c95b67e134d1a08f",
+  "chain_sha256": "b4026beee434641d3420de7db672d9424d79bad3a3ed86f44f50cf2bd5ca16fd",
   "scope": "Fork-free LOCAL runtime evidence only. No UserOp/bundler cost or launch acceptance.",
   "recipient": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
   "router": "0x03c8b90854b90aa22448b11e885f692972da441c",
+  "launches": {
+    "l1": {
+      "pool_id": "0x4f55077f0c8d8f845157b4f66a8807f78ed083c62823682a77bb66b778adc0d5",
+      "extension": "0x5142e167b32877ca3cf3060010a0a1418e3ef1b9",
+      "token": "0x4845fa093a3bf10b31a943a81e230aac5d201ff7",
+      "trading_start": "1800001000",
+      "fee_duration": "3600",
+      "initial_fee": "922337203685477580",
+      "final_fee": "55340232221128654",
+      "decay_factor": "18425445863997925462"
+    },
+    "l3": {
+      "pool_id": "0x04764f7b34d0ca6090f0349daccbbb8569f95cb4f816cab45a4ab3c3de447efa",
+      "extension": "0x51174b5db84c81a906ec55445070fd84c8c8e655",
+      "token": "0xd0fd0e218e2a98d1ce1bae8bf49d5d80d0b956b6",
+      "trading_start": "1800001300",
+      "fee_duration": "3600",
+      "initial_fee": "922337203685477580",
+      "final_fee": "55340232221128654",
+      "decay_factor": "18425445863997925462"
+    }
+  },
   "vectors": [
     {
       "label": "l1",
@@ -14,26 +37,26 @@
         "amount": "1000000000000000000",
         "specified_token": "0xffffffffffffffffffffffffffffffffffffffff",
         "block_number": 13,
-        "block_hash": "0x9e3c3e30702769cf79e899d629c7a2987b1bdfbb5430447a038c69ad0c4389e2",
+        "block_hash": "0xee779abb4704a635d9416b73c2313c5246c15eeadec49790ce9fd63d1ade5962",
         "time": 1800001420,
         "state_word": "0x4010a34d4f4c534d5eb2720dff2da946000000000000eb49e35282142e76d38e"
       },
       "response": {
-        "block_hash": "0x9e3c3e30702769cf79e899d629c7a2987b1bdfbb5430447a038c69ad0c4389e2",
+        "block_hash": "0xee779abb4704a635d9416b73c2313c5246c15eeadec49790ce9fd63d1ade5962",
         "block_number": 13,
         "estimated_gas_cost": 50650,
         "price_impact": null,
         "splits": [
           {
-            "amount_calculated": "925723591135734814937257",
+            "amount_calculated": "938194258081090440239060",
             "amount_specified": "1000000000000000000",
             "route": [
               {
                 "swap": {
-                  "forwardee": "0x510d7C117ADeEB89bb33B9ACB53995f3280EAA3a",
+                  "forwardee": "0x5142E167b32877cA3cf3060010A0A1418e3eF1B9",
                   "pool_key": {
-                    "config": "0x510d7c117adeeb89bb33b9acb53995f3280eaa3a000000000000000080000064",
-                    "token0": "0x89738A97983F78BAF6A68aB69B520851E24DA09b",
+                    "config": "0x5142e167b32877ca3cf3060010a0a1418e3ef1b9000000000000000080000064",
+                    "token0": "0x4845fa093A3bf10b31a943A81E230AaC5D201ff7",
                     "token1": "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF"
                   },
                   "skip_ahead": 0,
@@ -44,13 +67,20 @@
             ]
           }
         ],
-        "total_calculated": "925723591135734814937257"
+        "total_calculated": "938194258081090440239060"
       },
-      "calldata": "0x0300ffffffffffffffffffffffffffffffffffffffff89738A97983F78BAF6A68aB69B520851E24DA09b000000000000c40793910428c73b10a9f39Fd6e51aad88F6F4ce6aB8827279cffFb922666b49d78c00000000000000000de0b6b3a76400000001510d7C117ADeEB89bb33B9ACB53995f3280EAA3a89738A97983F78BAF6A68aB69B520851E24DA09bFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF510d7c117adeeb89bb33b9acb53995f3280eaa3a000000000000000080000064ffff9a5889f795069a41a8a300000000",
-      "calldataKeccak": "0x58ec841a444850b347dce527ecd659d698d7d4d2133ee27cb3b89049c84b5107",
+      "calldata": "0x0300ffffffffffffffffffffffffffffffffffffffff4845fa093A3bf10b31a943A81E230AaC5D201ff7000000000000c6ab9cd60e88f6f797d4f39Fd6e51aad88F6F4ce6aB8827279cffFb922666b49d78c00000000000000000de0b6b3a764000000015142E167b32877cA3cf3060010A0A1418e3eF1B94845fa093A3bf10b31a943A81E230AaC5D201ff7FFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF5142e167b32877ca3cf3060010a0a1418e3ef1b9000000000000000080000064ffff9a5889f795069a41a8a300000000",
+      "calldataKeccak": "0xf93185bfc51c3c871dcbf89bd579b05aade3ae15402b6b158db1e21f8ce6573d",
       "executionBlockNumber": 14,
-      "executionBlockHash": "0xbb8ad06c46a8ecfee634d266f1dc4288c3557046169da9310f337d222815f42e",
-      "transactionGasUsed": "121233"
+      "executionBlockHash": "0x39a5949c0ac253b674724a93c512d1d9eaa37533b5ef384750807d4076c42649",
+      "transactionGasUsed": "123942",
+      "launchSwapped": {
+        "delta0": "-938194258081090440239060",
+        "delta1": "1000000000000000000",
+        "rate": "583749030924384049",
+        "feeAmount": "30659471587037189648114",
+        "feeIsToken1": false
+      }
     },
     {
       "label": "l1",
@@ -59,28 +89,28 @@
       "input": {
         "label": "l1",
         "amount": "-100000000000000000000000",
-        "specified_token": "0x89738A97983F78BAF6A68aB69B520851E24DA09b",
+        "specified_token": "0x4845fa093A3bf10b31a943A81E230AaC5D201ff7",
         "block_number": 13,
-        "block_hash": "0x9e3c3e30702769cf79e899d629c7a2987b1bdfbb5430447a038c69ad0c4389e2",
+        "block_hash": "0xee779abb4704a635d9416b73c2313c5246c15eeadec49790ce9fd63d1ade5962",
         "time": 1800001420,
         "state_word": "0x4010a34d4f4c534d5eb2720dff2da946000000000000eb49e35282142e76d38e"
       },
       "response": {
-        "block_hash": "0x9e3c3e30702769cf79e899d629c7a2987b1bdfbb5430447a038c69ad0c4389e2",
+        "block_hash": "0xee779abb4704a635d9416b73c2313c5246c15eeadec49790ce9fd63d1ade5962",
         "block_number": 13,
         "estimated_gas_cost": 50650,
         "price_impact": null,
         "splits": [
           {
-            "amount_calculated": "107937818199705651",
+            "amount_calculated": "106503086991341624",
             "amount_specified": "-100000000000000000000000",
             "route": [
               {
                 "swap": {
-                  "forwardee": "0x510d7C117ADeEB89bb33B9ACB53995f3280EAA3a",
+                  "forwardee": "0x5142E167b32877cA3cf3060010A0A1418e3eF1B9",
                   "pool_key": {
-                    "config": "0x510d7c117adeeb89bb33b9acb53995f3280eaa3a000000000000000080000064",
-                    "token0": "0x89738A97983F78BAF6A68aB69B520851E24DA09b",
+                    "config": "0x5142e167b32877ca3cf3060010a0a1418e3ef1b9000000000000000080000064",
+                    "token0": "0x4845fa093A3bf10b31a943A81E230AaC5D201ff7",
                     "token1": "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF"
                   },
                   "skip_ahead": 0,
@@ -91,13 +121,20 @@
             ]
           }
         ],
-        "total_calculated": "107937818199705651"
+        "total_calculated": "106503086991341624"
       },
-      "calldata": "0x030089738A97983F78BAF6A68aB69B520851E24DA09bFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfFfffffffffffffffffe808720506037cdf39Fd6e51aad88F6F4ce6aB8827279cffFb922666b49d78cffffffffffffead2fd381eb5098000000001510d7C117ADeEB89bb33B9ACB53995f3280EAA3a89738A97983F78BAF6A68aB69B520851E24DA09bFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF510d7c117adeeb89bb33b9acb53995f3280eaa3a000000000000000080000064ffff9a5889f795069a41a8a300000000",
-      "calldataKeccak": "0xb8e5c81080e1218e7b9dbbdb926459da6787176a6d68f0330e0f102e7b84ec3f",
+      "calldata": "0x03004845fa093A3bf10b31a943A81E230AaC5D201ff7FFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfFfffffffffffffffffe85a001b46607c8f39Fd6e51aad88F6F4ce6aB8827279cffFb922666b49d78cffffffffffffead2fd381eb50980000000015142E167b32877cA3cf3060010A0A1418e3eF1B94845fa093A3bf10b31a943A81E230AaC5D201ff7FFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF5142e167b32877ca3cf3060010a0a1418e3ef1b9000000000000000080000064ffff9a5889f795069a41a8a300000000",
+      "calldataKeccak": "0x03295e3834c584ce863a8f45e9dbace33e307273b9863b6c2d8f7868918931fe",
       "executionBlockNumber": 14,
-      "executionBlockHash": "0x76cd24a0eb8bfcb9f2001dd3b6f0e146fb39e2b7dbfd6c5813d9b3cc8efe3033",
-      "transactionGasUsed": "121897"
+      "executionBlockHash": "0x407a1a292340408b810705de6706db2da106b1378ee954042b7dd368c2b61366",
+      "transactionGasUsed": "124606",
+      "launchSwapped": {
+        "delta0": "-100000000000000000000000",
+        "delta1": "106503086991341624",
+        "rate": "583749030924384049",
+        "feeAmount": "3370300665159537",
+        "feeIsToken1": true
+      }
     },
     {
       "label": "l1",
@@ -106,28 +143,28 @@
       "input": {
         "label": "l1",
         "amount": "100000000000000000000000",
-        "specified_token": "0x89738A97983F78BAF6A68aB69B520851E24DA09b",
+        "specified_token": "0x4845fa093A3bf10b31a943A81E230AaC5D201ff7",
         "block_number": 13,
-        "block_hash": "0x9e3c3e30702769cf79e899d629c7a2987b1bdfbb5430447a038c69ad0c4389e2",
+        "block_hash": "0xee779abb4704a635d9416b73c2313c5246c15eeadec49790ce9fd63d1ade5962",
         "time": 1800001420,
         "state_word": "0x4010a34d4f4c534d5eb2720dff2da946000000000000eb49e35282142e76d38e"
       },
       "response": {
-        "block_hash": "0x9e3c3e30702769cf79e899d629c7a2987b1bdfbb5430447a038c69ad0c4389e2",
+        "block_hash": "0xee779abb4704a635d9416b73c2313c5246c15eeadec49790ce9fd63d1ade5962",
         "block_number": 13,
         "estimated_gas_cost": 50650,
         "price_impact": null,
         "splits": [
           {
-            "amount_calculated": "98523647859000389",
+            "amount_calculated": "99850885935739584",
             "amount_specified": "100000000000000000000000",
             "route": [
               {
                 "swap": {
-                  "forwardee": "0x510d7C117ADeEB89bb33B9ACB53995f3280EAA3a",
+                  "forwardee": "0x5142E167b32877cA3cf3060010A0A1418e3eF1B9",
                   "pool_key": {
-                    "config": "0x510d7c117adeeb89bb33b9acb53995f3280eaa3a000000000000000080000064",
-                    "token0": "0x89738A97983F78BAF6A68aB69B520851E24DA09b",
+                    "config": "0x5142e167b32877ca3cf3060010a0a1418e3ef1b9000000000000000080000064",
+                    "token0": "0x4845fa093A3bf10b31a943A81E230AaC5D201ff7",
                     "token1": "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF"
                   },
                   "skip_ahead": 0,
@@ -138,13 +175,20 @@
             ]
           }
         ],
-        "total_calculated": "98523647859000389"
+        "total_calculated": "99850885935739584"
       },
-      "calldata": "0x030089738A97983F78BAF6A68aB69B520851E24DA09bFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF0000000000000000015e06bc589c8445f39Fd6e51aad88F6F4ce6aB8827279cffFb922666b49d78c000000000000152d02c7e14af68000000001510d7C117ADeEB89bb33B9ACB53995f3280EAA3a89738A97983F78BAF6A68aB69B520851E24DA09bFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF510d7c117adeeb89bb33b9acb53995f3280eaa3a00000000000000008000006400000000400065a8177fae2700000000",
-      "calldataKeccak": "0x58ef939bb75cbe5f485e4954d34f113d8503982d0987f8548a02dbf00b6ab192",
+      "calldata": "0x03004845fa093A3bf10b31a943A81E230AaC5D201ff7FFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF00000000000000000162bdda0ab532c0f39Fd6e51aad88F6F4ce6aB8827279cffFb922666b49d78c000000000000152d02c7e14af680000000015142E167b32877cA3cf3060010A0A1418e3eF1B94845fa093A3bf10b31a943A81E230AaC5D201ff7FFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF5142e167b32877ca3cf3060010a0a1418e3ef1b900000000000000008000006400000000400065a8177fae2700000000",
+      "calldataKeccak": "0x5b8a796ca113d5b0c0fd3def1064fdf94c1ce1f75a5c426bd7d636361d9d5ad2",
       "executionBlockNumber": 14,
-      "executionBlockHash": "0x6fdb91e49dc28887d678c88487f7609b58c9fb5d83600ed7316340aaa6c8668c",
-      "transactionGasUsed": "121199"
+      "executionBlockHash": "0x46208f03c8342456f633791af0c776df3dfa328a8ecc6c1ec12b00ed6c7f9323",
+      "transactionGasUsed": "123908",
+      "launchSwapped": {
+        "delta0": "100000000000000000000000",
+        "delta1": "-99850885935739584",
+        "rate": "583749030924384049",
+        "feeAmount": "3263050667725039",
+        "feeIsToken1": true
+      }
     },
     {
       "label": "l1",
@@ -155,26 +199,26 @@
         "amount": "-1000000000000000",
         "specified_token": "0xffffffffffffffffffffffffffffffffffffffff",
         "block_number": 13,
-        "block_hash": "0x9e3c3e30702769cf79e899d629c7a2987b1bdfbb5430447a038c69ad0c4389e2",
+        "block_hash": "0xee779abb4704a635d9416b73c2313c5246c15eeadec49790ce9fd63d1ade5962",
         "time": 1800001420,
         "state_word": "0x4010a34d4f4c534d5eb2720dff2da946000000000000eb49e35282142e76d38e"
       },
       "response": {
-        "block_hash": "0x9e3c3e30702769cf79e899d629c7a2987b1bdfbb5430447a038c69ad0c4389e2",
+        "block_hash": "0xee779abb4704a635d9416b73c2313c5246c15eeadec49790ce9fd63d1ade5962",
         "block_number": 13,
         "estimated_gas_cost": 50650,
         "price_impact": null,
         "splits": [
           {
-            "amount_calculated": "1014892893445393157853",
+            "amount_calculated": "1001402732798650135320",
             "amount_specified": "-1000000000000000",
             "route": [
               {
                 "swap": {
-                  "forwardee": "0x510d7C117ADeEB89bb33B9ACB53995f3280EAA3a",
+                  "forwardee": "0x5142E167b32877cA3cf3060010A0A1418e3eF1B9",
                   "pool_key": {
-                    "config": "0x510d7c117adeeb89bb33b9acb53995f3280eaa3a000000000000000080000064",
-                    "token0": "0x89738A97983F78BAF6A68aB69B520851E24DA09b",
+                    "config": "0x5142e167b32877ca3cf3060010a0a1418e3ef1b9000000000000000080000064",
+                    "token0": "0x4845fa093A3bf10b31a943A81E230AaC5D201ff7",
                     "token1": "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF"
                   },
                   "skip_ahead": 0,
@@ -185,13 +229,20 @@
             ]
           }
         ],
-        "total_calculated": "1014892893445393157853"
+        "total_calculated": "1001402732798650135320"
       },
-      "calldata": "0x0300ffffffffffffffffffffffffffffffffffffffff89738A97983F78BAF6A68aB69B520851E24DA09bffffffffffffffc8fb88228b5ef8f123f39Fd6e51aad88F6F4ce6aB8827279cffFb922666b49d78cfffffffffffffffffffc72815b3980000001510d7C117ADeEB89bb33B9ACB53995f3280EAA3a89738A97983F78BAF6A68aB69B520851E24DA09bFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF510d7c117adeeb89bb33b9acb53995f3280eaa3a00000000000000008000006400000000400065a8177fae2700000000",
-      "calldataKeccak": "0x33bc6d89ffeaf2c7e20c2f6aba66e8040ebd786f845dddffc269c5f6509b3bc9",
+      "calldata": "0x0300ffffffffffffffffffffffffffffffffffffffff4845fa093A3bf10b31a943A81E230AaC5D201ff7ffffffffffffffc9b6bed02dbf0b4ce8f39Fd6e51aad88F6F4ce6aB8827279cffFb922666b49d78cfffffffffffffffffffc72815b39800000015142E167b32877cA3cf3060010A0A1418e3eF1B94845fa093A3bf10b31a943A81E230AaC5D201ff7FFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF5142e167b32877ca3cf3060010a0a1418e3ef1b900000000000000008000006400000000400065a8177fae2700000000",
+      "calldataKeccak": "0x4233e2f96caadb720eae6734d4a1b48b3a37d9f36777582915e0dae7da140c90",
       "executionBlockNumber": 14,
-      "executionBlockHash": "0x6649c70a21112ded4254b7556a7b10bf9efb000725ce9421222a0cf0ca2b1275",
-      "transactionGasUsed": "121931"
+      "executionBlockHash": "0x0c664b3b1cd15de234a72f54816eb35b8d89bee3d788dd5f563d99dfd69ad78b",
+      "transactionGasUsed": "124640",
+      "launchSwapped": {
+        "delta0": "1001402732798650135320",
+        "delta1": "-1000000000000000",
+        "rate": "583749030924384049",
+        "feeAmount": "31689487993134396169",
+        "feeIsToken1": false
+      }
     },
     {
       "label": "l3",
@@ -202,27 +253,27 @@
         "amount": "1000000000000000000",
         "specified_token": "0x0000000000000000000000000000000000010000",
         "block_number": 13,
-        "block_hash": "0x9e3c3e30702769cf79e899d629c7a2987b1bdfbb5430447a038c69ad0c4389e2",
+        "block_hash": "0xee779abb4704a635d9416b73c2313c5246c15eeadec49790ce9fd63d1ade5962",
         "time": 1800001420,
         "state_word": "0x800000f9531c5364d01fa30600d2b9bb000000000000eb49e35282142e76d3f4"
       },
       "response": {
-        "block_hash": "0x9e3c3e30702769cf79e899d629c7a2987b1bdfbb5430447a038c69ad0c4389e2",
+        "block_hash": "0xee779abb4704a635d9416b73c2313c5246c15eeadec49790ce9fd63d1ade5962",
         "block_number": 13,
         "estimated_gas_cost": 50650,
         "price_impact": null,
         "splits": [
           {
-            "amount_calculated": "945583773411490044532546",
+            "amount_calculated": "950168793342401137135677",
             "amount_specified": "1000000000000000000",
             "route": [
               {
                 "swap": {
-                  "forwardee": "0x5195C03D30C11BE73485AB76a35Eb6F59FC52072",
+                  "forwardee": "0x51174b5DB84C81A906Ec55445070FD84c8c8e655",
                   "pool_key": {
-                    "config": "0x5195c03d30c11be73485ab76a35eb6f59fc52072000000000000000080000064",
+                    "config": "0x51174b5db84c81a906ec55445070fd84c8c8e655000000000000000080000064",
                     "token0": "0x0000000000000000000000000000000000010000",
-                    "token1": "0x66b53575a5DfCB1d6D40E8E3e6cCFa9a8E7e64e4"
+                    "token1": "0xd0fD0e218e2A98d1ce1bAE8bF49D5d80d0B956b6"
                   },
                   "skip_ahead": 0,
                   "sqrt_ratio_limit": "0x400065a8177fae27",
@@ -232,13 +283,20 @@
             ]
           }
         ],
-        "total_calculated": "945583773411490044532546"
+        "total_calculated": "950168793342401137135677"
       },
-      "calldata": "0x0300000000000000000000000000000000000001000066b53575a5DfCB1d6D40E8E3e6cCFa9a8E7e64e4000000000000c83c32f640340aab5742f39Fd6e51aad88F6F4ce6aB8827279cffFb922666b49d78c00000000000000000de0b6b3a764000000015195C03D30C11BE73485AB76a35Eb6F59FC52072000000000000000000000000000000000001000066b53575a5DfCB1d6D40E8E3e6cCFa9a8E7e64e45195c03d30c11be73485ab76a35eb6f59fc5207200000000000000008000006400000000400065a8177fae2700000000",
-      "calldataKeccak": "0x6a5ee602a092660c585e0cec14a2a1e9023734f483d35b848928ba8512c6fd1e",
+      "calldata": "0x03000000000000000000000000000000000000010000d0fD0e218e2A98d1ce1bAE8bF49D5d80d0B956b6000000000000c934c0e546e3e468d03df39Fd6e51aad88F6F4ce6aB8827279cffFb922666b49d78c00000000000000000de0b6b3a7640000000151174b5DB84C81A906Ec55445070FD84c8c8e6550000000000000000000000000000000000010000d0fD0e218e2A98d1ce1bAE8bF49D5d80d0B956b651174b5db84c81a906ec55445070fd84c8c8e65500000000000000008000006400000000400065a8177fae2700000000",
+      "calldataKeccak": "0xe814a85bed4cba1b50bd83f8e0dacb15aa81d6eb6563259e8d10814ac0621637",
       "executionBlockNumber": 14,
-      "executionBlockHash": "0x22cdb21e21bcdfc632ce4e601bee06b8dc508e495157a7986950e7c6a3dc9181",
-      "transactionGasUsed": "120773"
+      "executionBlockHash": "0x328103d25915c777dcaf5f754c95514d51528090d2e5ceae7fefff132b4fd54e",
+      "transactionGasUsed": "123292",
+      "launchSwapped": {
+        "delta0": "1000000000000000000",
+        "delta1": "-950168793342401137135677",
+        "rate": "808323469508942919",
+        "feeAmount": "43543793000987006489977",
+        "feeIsToken1": true
+      }
     },
     {
       "label": "l3",
@@ -247,29 +305,29 @@
       "input": {
         "label": "l3",
         "amount": "-100000000000000000000000",
-        "specified_token": "0x66b53575a5DfCB1d6D40E8E3e6cCFa9a8E7e64e4",
+        "specified_token": "0xd0fD0e218e2A98d1ce1bAE8bF49D5d80d0B956b6",
         "block_number": 13,
-        "block_hash": "0x9e3c3e30702769cf79e899d629c7a2987b1bdfbb5430447a038c69ad0c4389e2",
+        "block_hash": "0xee779abb4704a635d9416b73c2313c5246c15eeadec49790ce9fd63d1ade5962",
         "time": 1800001420,
         "state_word": "0x800000f9531c5364d01fa30600d2b9bb000000000000eb49e35282142e76d3f4"
       },
       "response": {
-        "block_hash": "0x9e3c3e30702769cf79e899d629c7a2987b1bdfbb5430447a038c69ad0c4389e2",
+        "block_hash": "0xee779abb4704a635d9416b73c2313c5246c15eeadec49790ce9fd63d1ade5962",
         "block_number": 13,
         "estimated_gas_cost": 50650,
         "price_impact": null,
         "splits": [
           {
-            "amount_calculated": "105669475413986433",
+            "amount_calculated": "105159569538044394",
             "amount_specified": "-100000000000000000000000",
             "route": [
               {
                 "swap": {
-                  "forwardee": "0x5195C03D30C11BE73485AB76a35Eb6F59FC52072",
+                  "forwardee": "0x51174b5DB84C81A906Ec55445070FD84c8c8e655",
                   "pool_key": {
-                    "config": "0x5195c03d30c11be73485ab76a35eb6f59fc52072000000000000000080000064",
+                    "config": "0x51174b5db84c81a906ec55445070fd84c8c8e655000000000000000080000064",
                     "token0": "0x0000000000000000000000000000000000010000",
-                    "token1": "0x66b53575a5DfCB1d6D40E8E3e6cCFa9a8E7e64e4"
+                    "token1": "0xd0fD0e218e2A98d1ce1bAE8bF49D5d80d0B956b6"
                   },
                   "skip_ahead": 0,
                   "sqrt_ratio_limit": "0x400065a8177fae27",
@@ -279,13 +337,20 @@
             ]
           }
         ],
-        "total_calculated": "105669475413986433"
+        "total_calculated": "105159569538044394"
       },
-      "calldata": "0x030066b53575a5DfCB1d6D40E8E3e6cCFa9a8E7e64e40000000000000000000000000000000000010000fffffffffffffffffe88962c0658f37ff39Fd6e51aad88F6F4ce6aB8827279cffFb922666b49d78cffffffffffffead2fd381eb50980000000015195C03D30C11BE73485AB76a35Eb6F59FC52072000000000000000000000000000000000001000066b53575a5DfCB1d6D40E8E3e6cCFa9a8E7e64e45195c03d30c11be73485ab76a35eb6f59fc5207200000000000000008000006400000000400065a8177fae2700000000",
-      "calldataKeccak": "0x1fc106896ff17484429bdad16de71f9d19bbe657bd6edafa649a54a22ae41576",
+      "calldata": "0x0300d0fD0e218e2A98d1ce1bAE8bF49D5d80d0B956b60000000000000000000000000000000000010000fffffffffffffffffe8a65edbcf3ae16f39Fd6e51aad88F6F4ce6aB8827279cffFb922666b49d78cffffffffffffead2fd381eb509800000000151174b5DB84C81A906Ec55445070FD84c8c8e6550000000000000000000000000000000000010000d0fD0e218e2A98d1ce1bAE8bF49D5d80d0B956b651174b5db84c81a906ec55445070fd84c8c8e65500000000000000008000006400000000400065a8177fae2700000000",
+      "calldataKeccak": "0x437d54f8acade289a21afba7f5d3e37e48423843bd0c9a95b64950ee7af3d96c",
       "executionBlockNumber": 14,
-      "executionBlockHash": "0xd1c2583e087a8cb2ced8bcef33dfe6a178475d9e82adc5b920efd08a8621c559",
-      "transactionGasUsed": "121482"
+      "executionBlockHash": "0x73a34dc19c27fd1ed8cdeec98a8b875af100bfa59428e0d6676975ea33a981e2",
+      "transactionGasUsed": "124001",
+      "launchSwapped": {
+        "delta0": "105159569538044394",
+        "delta1": "-100000000000000000000000",
+        "rate": "808323469508942919",
+        "feeAmount": "4608019049942038",
+        "feeIsToken1": false
+      }
     },
     {
       "label": "l3",
@@ -294,29 +359,29 @@
       "input": {
         "label": "l3",
         "amount": "100000000000000000000000",
-        "specified_token": "0x66b53575a5DfCB1d6D40E8E3e6cCFa9a8E7e64e4",
+        "specified_token": "0xd0fD0e218e2A98d1ce1bAE8bF49D5d80d0B956b6",
         "block_number": 13,
-        "block_hash": "0x9e3c3e30702769cf79e899d629c7a2987b1bdfbb5430447a038c69ad0c4389e2",
+        "block_hash": "0xee779abb4704a635d9416b73c2313c5246c15eeadec49790ce9fd63d1ade5962",
         "time": 1800001420,
         "state_word": "0x800000f9531c5364d01fa30600d2b9bb000000000000eb49e35282142e76d3f4"
       },
       "response": {
-        "block_hash": "0x9e3c3e30702769cf79e899d629c7a2987b1bdfbb5430447a038c69ad0c4389e2",
+        "block_hash": "0xee779abb4704a635d9416b73c2313c5246c15eeadec49790ce9fd63d1ade5962",
         "block_number": 13,
         "estimated_gas_cost": 50650,
         "price_impact": null,
         "splits": [
           {
-            "amount_calculated": "95664236086879840",
+            "amount_calculated": "96128100253617030",
             "amount_specified": "100000000000000000000000",
             "route": [
               {
                 "swap": {
-                  "forwardee": "0x5195C03D30C11BE73485AB76a35Eb6F59FC52072",
+                  "forwardee": "0x51174b5DB84C81A906Ec55445070FD84c8c8e655",
                   "pool_key": {
-                    "config": "0x5195c03d30c11be73485ab76a35eb6f59fc52072000000000000000080000064",
+                    "config": "0x51174b5db84c81a906ec55445070fd84c8c8e655000000000000000080000064",
                     "token0": "0x0000000000000000000000000000000000010000",
-                    "token1": "0x66b53575a5DfCB1d6D40E8E3e6cCFa9a8E7e64e4"
+                    "token1": "0xd0fD0e218e2A98d1ce1bAE8bF49D5d80d0B956b6"
                   },
                   "skip_ahead": 0,
                   "sqrt_ratio_limit": "0xffff9a5889f795069a41a8a3",
@@ -326,13 +391,20 @@
             ]
           }
         ],
-        "total_calculated": "95664236086879840"
+        "total_calculated": "96128100253617030"
       },
-      "calldata": "0x030066b53575a5DfCB1d6D40E8E3e6cCFa9a8E7e64e4000000000000000000000000000000000001000000000000000000000153de1da9aae660f39Fd6e51aad88F6F4ce6aB8827279cffFb922666b49d78c000000000000152d02c7e14af680000000015195C03D30C11BE73485AB76a35Eb6F59FC52072000000000000000000000000000000000001000066b53575a5DfCB1d6D40E8E3e6cCFa9a8E7e64e45195c03d30c11be73485ab76a35eb6f59fc52072000000000000000080000064ffff9a5889f795069a41a8a300000000",
-      "calldataKeccak": "0xb518c2746c5b5c0602e735969d7dc81ebe89f5d9d8ac6cf32ef6139d7cbf649f",
+      "calldata": "0x0300d0fD0e218e2A98d1ce1bAE8bF49D5d80d0B956b600000000000000000000000000000000000100000000000000000000015583ff748ccb86f39Fd6e51aad88F6F4ce6aB8827279cffFb922666b49d78c000000000000152d02c7e14af6800000000151174b5DB84C81A906Ec55445070FD84c8c8e6550000000000000000000000000000000000010000d0fD0e218e2A98d1ce1bAE8bF49D5d80d0B956b651174b5db84c81a906ec55445070fd84c8c8e655000000000000000080000064ffff9a5889f795069a41a8a300000000",
+      "calldataKeccak": "0xfef4ba4412cf9e1bb18356fadedf686c490b05ee721027b3c3ed726992e055a3",
       "executionBlockNumber": 14,
-      "executionBlockHash": "0x0126bd3ff3fd79b36a3f9be4bc097c5a1aff0303db68e231da529c2df4c76161",
-      "transactionGasUsed": "120930"
+      "executionBlockHash": "0xb8482398c10b683343bb0bd15ccbb132820b5add0003604705b1879824abd8e5",
+      "transactionGasUsed": "123449",
+      "launchSwapped": {
+        "delta0": "-96128100253617030",
+        "delta1": "100000000000000000000000",
+        "rate": "808323469508942919",
+        "feeAmount": "4405303697985423",
+        "feeIsToken1": false
+      }
     },
     {
       "label": "l3",
@@ -343,27 +415,27 @@
         "amount": "-1000000000000000",
         "specified_token": "0x0000000000000000000000000000000000010000",
         "block_number": 13,
-        "block_hash": "0x9e3c3e30702769cf79e899d629c7a2987b1bdfbb5430447a038c69ad0c4389e2",
+        "block_hash": "0xee779abb4704a635d9416b73c2313c5246c15eeadec49790ce9fd63d1ade5962",
         "time": 1800001420,
         "state_word": "0x800000f9531c5364d01fa30600d2b9bb000000000000eb49e35282142e76d3f4"
       },
       "response": {
-        "block_hash": "0x9e3c3e30702769cf79e899d629c7a2987b1bdfbb5430447a038c69ad0c4389e2",
+        "block_hash": "0xee779abb4704a635d9416b73c2313c5246c15eeadec49790ce9fd63d1ade5962",
         "block_number": 13,
         "estimated_gas_cost": 50650,
         "price_impact": null,
         "splits": [
           {
-            "amount_calculated": "1045229338979962280050",
+            "amount_calculated": "1040185606345113290799",
             "amount_specified": "-1000000000000000",
             "route": [
               {
                 "swap": {
-                  "forwardee": "0x5195C03D30C11BE73485AB76a35Eb6F59FC52072",
+                  "forwardee": "0x51174b5DB84C81A906Ec55445070FD84c8c8e655",
                   "pool_key": {
-                    "config": "0x5195c03d30c11be73485ab76a35eb6f59fc52072000000000000000080000064",
+                    "config": "0x51174b5db84c81a906ec55445070fd84c8c8e655000000000000000080000064",
                     "token0": "0x0000000000000000000000000000000000010000",
-                    "token1": "0x66b53575a5DfCB1d6D40E8E3e6cCFa9a8E7e64e4"
+                    "token1": "0xd0fD0e218e2A98d1ce1bAE8bF49D5d80d0B956b6"
                   },
                   "skip_ahead": 0,
                   "sqrt_ratio_limit": "0xffff9a5889f795069a41a8a3",
@@ -373,13 +445,20 @@
             ]
           }
         ],
-        "total_calculated": "1045229338979962280050"
+        "total_calculated": "1040185606345113290799"
       },
-      "calldata": "0x0300000000000000000000000000000000000001000066b53575a5DfCB1d6D40E8E3e6cCFa9a8E7e64e4ffffffffffffffc756876e0f62fea78ef39Fd6e51aad88F6F4ce6aB8827279cffFb922666b49d78cfffffffffffffffffffc72815b39800000015195C03D30C11BE73485AB76a35Eb6F59FC52072000000000000000000000000000000000001000066b53575a5DfCB1d6D40E8E3e6cCFa9a8E7e64e45195c03d30c11be73485ab76a35eb6f59fc52072000000000000000080000064ffff9a5889f795069a41a8a300000000",
-      "calldataKeccak": "0x4d23932565236371ece0a20cf40343e922196659ab206582038ea9130caf1915",
+      "calldata": "0x03000000000000000000000000000000000000010000d0fD0e218e2A98d1ce1bAE8bF49D5d80d0B956b6ffffffffffffffc79c865e2b2d36b7d1f39Fd6e51aad88F6F4ce6aB8827279cffFb922666b49d78cfffffffffffffffffffc72815b398000000151174b5DB84C81A906Ec55445070FD84c8c8e6550000000000000000000000000000000000010000d0fD0e218e2A98d1ce1bAE8bF49D5d80d0B956b651174b5db84c81a906ec55445070fd84c8c8e655000000000000000080000064ffff9a5889f795069a41a8a300000000",
+      "calldataKeccak": "0x27272490af7329104d9cee4ef2584bfec4bf6b051017cfbbe1f474a095c76159",
       "executionBlockNumber": 14,
-      "executionBlockHash": "0x2ef9db2632cd885474c948b1c1293eda9ba8671ce957edb730622bacf91f3e69",
-      "transactionGasUsed": "121617"
+      "executionBlockHash": "0xffe880c6066d7ebbf1a9d135b9810322d7d4431a9d06b2e5e2137796469d5c30",
+      "transactionGasUsed": "124136",
+      "launchSwapped": {
+        "delta0": "-1000000000000000",
+        "delta1": "1040185606345113290799",
+        "rate": "808323469508942919",
+        "feeAmount": "45580208349747183850",
+        "feeIsToken1": true
+      }
     }
   ]
 }

@@ -102,9 +102,8 @@ bun test test/launchpad/zero-seed-policy.test.ts
 bun test test/launchpad/zero-seed-preview.test.ts
 bun test test/launchpad/zero-seed-token.test.ts test/launchpad/zero-seed-swap.test.ts
 bun test test/launchpad/zero-seed-owner.test.ts test/launchpad/zero-seed-endpoint.test.ts test/discovery.test.ts test/protocols.test.ts test/mcp-modern.test.ts test/yul-router.test.ts
-bun script/zero-seed-abi-parity.ts /home/moody/Work/ekubo/artifacts/eku-1528/ZeroSeedLaunch.abi.json
-bun script/zero-seed-api-parity.ts /home/moody/Work/ekubo/artifacts/eku-1523/actual-handler-golden.json
-bun script/zero-seed-stack-parity.ts /home/moody/Work/ekubo/artifacts
+bun test test/launchpad/zero-seed-fee.test.ts test/launchpad/zero-seed-api.test.ts
+bun script/zero-seed-abi-parity.ts <jq -cS .abi of the b1cbb1c ZeroSeedLaunch artifact>
 bun run lint
 bun run build
 ```
@@ -186,3 +185,36 @@ live provenance/registration/assets, mined UserOps, full WETH metadata,
 hosting/retention/oncall/costs, external audit, final QA/Sage and release are
 NOT PROVEN. No merge/deploy/signing/issuance/provider/credential/live-wallet,
 policy/authority/permissions/model, spend or publication action is authorized.
+
+## Draft exponential creator-fee decay
+
+The modules now consume the draft fee interface at evm-contracts `b1cbb1c`
+(ABI SHA-256 `bc51b39284a5a2a0970d3a804420762ce291dc01f9c21ddf31840e354a3792bb`,
+`create` `0xd5f50468`, `previewInstallation` `0x5283ac38`; `claimFees` is
+unchanged). The local pins are the constructor-executed draft instances
+`0x5142e167…` (high WETH) and `0x51174b5d…` (low WETH). The live pin list is
+still empty and every hosted tool still refuses; the catalog revision and
+server version are not bumped.
+
+- `fee.ts` mirrors `powQ64`, the endpoint-normalized schedule, the exact-input
+  fee, the exact-output gross-up and the distinct uint128 helper and int128
+  signed-delta limits, in BigInt.
+- `zero-seed-fee.test.ts` checks, bit for bit, all 25,212 seconds of both
+  study durations at 5/50/75/90/99%/max (the protocol's 12 SHA-256 chain
+  digests), the 18 contract fee rows, the five integer-chord counterexamples
+  (reproduced, not corrected), the equal-half-life comparator, the executed
+  high-fee amount rows for both orders and 18/18 and 18/6, the helper and
+  signed limits at every rate, the 8 executed local router swaps' emitted rate
+  and fee, and `create`/`previewInstallation` bytes against independent `cast
+  calldata`.
+- `zero-seed-api.test.ts` consumes served API v2 bodies at two blocks, refuses
+  v1, missing/zero/foreign factors and a linear rate, and runs both orders'
+  preview → producer → owner decoder against the emitted `LaunchCreated`
+  parameters and the served detail.
+- The v1-pinned API and stack parity scripts are removed: their artifacts
+  predate `decayFactor`. The API tick versus quoter tick comparison they made
+  is NOT re-covered.
+
+NOT PROVEN: live or fork execution, wallet simulation, executable budgets,
+audit, parameter selection, approved disclosure copy, and any Rust/Solidity
+parity beyond the consumed vectors.

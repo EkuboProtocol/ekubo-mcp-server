@@ -1,7 +1,8 @@
 import { type Address, decodeFunctionData, encodeFunctionData, type Hex, keccak256, stringToHex, toFunctionSelector } from "viem";
 import { z } from "zod";
-import { zeroSeedAbi } from "./abi.js";
-import { claimStatements, createStatements } from "./disclosures.js";
+import { CREATE_SIGNATURE, zeroSeedAbi } from "./abi.js";
+import { claimStatements, createStatements, DISCLOSURE_STATUS, DISCLOSURE_VERSION } from "./disclosures.js";
+import { exactOutputMultiplier, excessHalvingTime, feeAt, feePercent, feePhase, type FeeSchedule, powQ64 } from "./fee.js";
 import { address, BuildContext, bytes32, createData, decimal, Parameters, type ParametersInput,
   requireLocalPin, validateBuild, validateParameters } from "./installation.js";
 import { Installation, type InstallationInput, validateInstallation } from "./preview.js";
@@ -19,8 +20,9 @@ const Envelope = {
   scope: z.literal(SCOPE), executable: z.literal(false),
   chain_id: decimal, sender: address, target: address, data: hex, value: z.literal("0"), pin: Pin,
 };
+// v2: the parameter tuple gained decayFactor, so a v1 body or one sealed under older disclosures is refused.
 export const LocalCreateBody = z.strictObject({
-  schema_version: z.literal("zero-seed-local-create/v1"), ...Envelope,
+  schema_version: z.literal("zero-seed-local-create/v2"), ...Envelope, disclosure_version: z.literal(DISCLOSURE_VERSION),
   build: BuildContext, requested: Parameters, installation: Installation,
   preview: z.strictObject({ count: z.literal(1), read_integrity: bytes32, read_bytes: z.number().int().positive() }),
 });
@@ -66,14 +68,19 @@ function checkEnvelope(body: CreateBody | ClaimBody, expected: { pin: InstancePi
   if (body.sender !== expected.creator.toLowerCase()) throw new ZeroSeedError("creator_mismatch");
 }
 
-/** Q0.64 fee as a percentage to four decimals, rounding half up. */
-export function feePercent(q64: bigint): string {
-  const scaled = (q64 * 1_000_000n + (1n << 63n)) >> 64n;
-  return `${scaled / 10_000n}.${(scaled % 10_000n).toString().padStart(4, "0")}%`;
+export { feePercent };
+
+function decodeCall(data: Hex) {
+  try {
+    return decodeFunctionData({ abi: zeroSeedAbi, data });
+  } catch {
+    // Includes the pre-decayFactor create selector: old-tuple bytes never decode as the new encoding.
+    throw new ZeroSeedError("unsupported_selector");
+  }
 }
 
 function decodedParameters(data: Hex): ParametersInput {
-  const call = decodeFunctionData({ abi: zeroSeedAbi, data });
+  const call = decodeCall(data);
   if (call.functionName !== "create") throw new ZeroSeedError("calldata_method_mismatch");
   if (encodeFunctionData({ abi: zeroSeedAbi, functionName: "create", args: call.args }) !== data) {
     throw new ZeroSeedError("calldata_noncanonical");
@@ -83,7 +90,8 @@ function decodedParameters(data: Hex): ParametersInput {
     quoteToken: p.quoteToken.toLowerCase(), name: p.name, symbol: p.symbol, decimals: p.decimals,
     supply: p.supply.toString(), liquidity: p.liquidity.toString(), askTick: p.askTick, upperTick: p.upperTick,
     tickSpacing: p.tickSpacing, tradingStart: p.tradingStart.toString(), feeDuration: p.feeDuration,
-    initialFee: p.initialFee.toString(), finalFee: p.finalFee.toString(), salt: p.salt.toLowerCase(),
+    initialFee: p.initialFee.toString(), finalFee: p.finalFee.toString(), decayFactor: p.decayFactor.toString(),
+    salt: p.salt.toLowerCase(),
   };
 }
 
@@ -104,12 +112,47 @@ export function localCreateBody(preview: {
   actual: ParametersInput; installation: InstallationInput; preview: { reference: { integrity: { value: Hex }; bytes: number } };
 }): Sealed {
   return seal(LocalCreateBody.parse({
-    schema_version: "zero-seed-local-create/v1", scope: SCOPE, executable: false,
+    schema_version: "zero-seed-local-create/v2", scope: SCOPE, executable: false,
     chain_id: preview.pin.chainId, sender: preview.creator.toLowerCase(), target: preview.pin.address,
-    data: createData(preview.actual), value: "0", pin: { ...preview.pin }, build: preview.build,
+    data: createData(preview.actual), value: "0", pin: { ...preview.pin }, disclosure_version: DISCLOSURE_VERSION,
+    build: preview.build,
     requested: preview.requested, installation: preview.installation,
     preview: { count: 1, read_integrity: preview.preview.reference.integrity.value, read_bytes: preview.preview.reference.bytes },
   }));
+}
+
+function scheduleOf(actual: ParametersInput): FeeSchedule {
+  return {
+    tradingStart: BigInt(actual.tradingStart), feeDuration: BigInt(actual.feeDuration),
+    initialFee: BigInt(actual.initialFee), finalFee: BigInt(actual.finalFee), decayFactor: BigInt(actual.decayFactor),
+  };
+}
+
+const SAMPLE_SECONDS = [0n, 1n, 10n, 60n, 600n, 3600n];
+
+/** The exact integer schedule the encoded factor produces; nothing here assumes a linear or half-life shape. */
+function feeScheduleFields(actual: ParametersInput, buildTime: bigint) {
+  const schedule = scheduleOf(actual);
+  const duration = schedule.feeDuration;
+  const elapsed = [...new Set([...SAMPLE_SECONDS, duration / 2n, duration - 1n, duration]
+    .filter((t) => t >= 0n && t <= duration).map(String))].map(BigInt).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const point = (time: bigint) => {
+    const fee = feeAt(schedule, time);
+    return { fee_q64: fee.toString(), fee_percent: feePercent(fee) };
+  };
+  const halving = excessHalvingTime(schedule);
+  const afterOne = feeAt(schedule, schedule.tradingStart + 1n);
+  return {
+    curve: "endpoint_normalized_exponential" as const,
+    decay_factor: actual.decayFactor,
+    decay_factor_meaning: "literal Q0.64 per-second multiplier before endpoint normalization; not a half-life" as const,
+    endpoint_power_q64: powQ64(schedule.decayFactor, duration).toString(),
+    excess_halving_seconds: halving === null ? null : Number(halving),
+    effective_cliff: duration > 1n && schedule.initialFee !== schedule.finalFee && afterOne === schedule.finalFee,
+    exact_output_multiplier_at_initial: exactOutputMultiplier(schedule.initialFee),
+    current: { evaluated_at: Number(buildTime), phase: feePhase(schedule, buildTime), ...point(buildTime) },
+    samples: elapsed.map((t) => ({ elapsed: Number(t), ...point(schedule.tradingStart + t) })),
+  };
 }
 
 function createFields(body: CreateBody, actual: ParametersInput) {
@@ -119,13 +162,16 @@ function createFields(body: CreateBody, actual: ParametersInput) {
     decimals: actual.decimals, supply: actual.supply, liquidity: actual.liquidity, ask_tick: actual.askTick,
     upper_tick: actual.upperTick, tick_spacing: actual.tickSpacing, trading_start: Number(actual.tradingStart),
     fee_duration: actual.feeDuration, initial_fee: actual.initialFee, final_fee: actual.finalFee,
+    decay_factor: actual.decayFactor,
     initial_fee_percent: feePercent(BigInt(actual.initialFee)), final_fee_percent: feePercent(BigInt(actual.finalFee)),
     salt: actual.salt,
+    fee_schedule: feeScheduleFields(actual, BigInt(body.build.buildTime)),
     binding: {
       requested_supply: body.requested.supply, installed_supply: actual.supply, installed_liquidity: actual.liquidity,
       token: body.installation.token, launch_token_is_token1: tokenIs1, pool_key: body.installation.poolKey,
       position_id: body.installation.positionId, initial_tick: body.installation.initialTick,
       execution_expiry: Number(body.build.executionExpiry), preview_count: 1, execution_guaranteed: false,
+      calldata_keccak256: keccak256(body.data as Hex), preview_read_integrity: body.preview.read_integrity,
     },
     rounding: {
       upper_residue: { asset: "launch_token", known_at_creation: false, claimable_principal: false, creator_fee: false },
@@ -143,16 +189,25 @@ export function decodeOwnerCreate(sealed: Sealed, expected: {
   const actual = bindActual(body, expected.requested);
   validateBuild(actual, body.build, freshTime);
   const fields = createFields(body, actual);
-  return {
-    schema_version: "zero-seed-launch-owner-summary/v1" as const, chain_id: body.chain_id, target: body.target,
-    selector: toFunctionSelector("create((address,string,string,uint8,uint128,uint128,int32,int32,uint32,uint64,uint32,uint64,uint64,bytes32))"),
-    method: "create" as const, fields,
-    statements: createStatements({
-      installedSupply: actual.supply, initialFeePercent: fields.initial_fee_percent, finalFeePercent: fields.final_fee_percent,
-      feeDuration: String(actual.feeDuration), tradingStart: new Date(Number(actual.tradingStart) * 1000).toISOString(),
-      creator: body.sender,
-    }),
-  };
+  const statements = createStatements({
+    installedSupply: actual.supply, initialFeePercent: fields.initial_fee_percent, finalFeePercent: fields.final_fee_percent,
+    feeDuration: String(actual.feeDuration), tradingStart: new Date(Number(actual.tradingStart) * 1000).toISOString(),
+    decayFactor: actual.decayFactor, excessHalvingSeconds: String(fields.fee_schedule.excess_halving_seconds ?? "none"),
+    exactOutputMultiplier: fields.fee_schedule.exact_output_multiplier_at_initial, creator: body.sender,
+  });
+  return withSummaryHash({
+    schema_version: OWNER_SUMMARY_VERSION, chain_id: body.chain_id, target: body.target,
+    selector: toFunctionSelector(CREATE_SIGNATURE), method: "create" as const, disclosure: DISCLOSURE, fields, statements,
+  });
+}
+
+// v2: create fields carry the decay factor and schedule; both summaries carry the disclosure version.
+const OWNER_SUMMARY_VERSION = "zero-seed-launch-owner-summary/v2" as const;
+const DISCLOSURE = Object.freeze({ version: DISCLOSURE_VERSION, status: DISCLOSURE_STATUS });
+
+/** keccak256 of the canonical summary JSON without this field, so a consumer can bind exactly what was shown. */
+function withSummaryHash<T extends object>(summary: T): T & { summary_keccak256: Hex } {
+  return { ...summary, summary_keccak256: keccak256(stringToHex(JSON.stringify(summary))) };
 }
 
 const claimSelector = toFunctionSelector("claimFees((address,address,bytes32),address)");
@@ -202,14 +257,14 @@ export function decodeOwnerClaim(sealed: Sealed, expected: { pin: InstancePin; c
   checkEnvelope(body, expected);
   checkClaim(body);
   checkClaimTime(body.build, freshTime);
-  return {
-    schema_version: "zero-seed-launch-owner-summary/v1" as const, chain_id: body.chain_id, target: body.target,
-    selector: claimSelector, method: "claimFees" as const,
+  return withSummaryHash({
+    schema_version: OWNER_SUMMARY_VERSION, chain_id: body.chain_id, target: body.target,
+    selector: claimSelector, method: "claimFees" as const, disclosure: DISCLOSURE,
     fields: {
       pool_key: body.pool_key, recipient: body.recipient,
       settlement: { atomic: true, assets: ["token0", "token1"], partial_claim: false,
         on_revert: "nothing moves; prepare a fresh claim", execution_guaranteed: false },
     },
     statements: claimStatements(body.recipient),
-  };
+  });
 }

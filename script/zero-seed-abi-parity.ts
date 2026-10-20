@@ -6,7 +6,7 @@ import { ABI_SHA256 } from "../src/launchpad/zero-seed/policy.js";
 
 // Offline comparison against the exact accepted full ABI; not a provider read.
 const path = process.argv[2];
-if (!path) throw new Error("Pass artifacts/eku-1528/ZeroSeedLaunch.abi.json");
+if (!path) throw new Error("Pass the compiled ZeroSeedLaunch ABI (jq -cS .abi of the forge artifact)");
 const bytes = await Bun.file(path).arrayBuffer();
 const digest = createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
 if (digest !== ABI_SHA256) throw new Error(`Frozen full ABI mismatch: ${digest}`);
@@ -17,7 +17,7 @@ const parameters: ParametersInput = {
   quoteToken: "0xffffffffffffffffffffffffffffffffffffffff", name: "Local λ", symbol: "LOC", decimals: 18,
   supply: "1000000000000000000000000000", liquidity: "1111119116089565312897934", askTick: -13815500,
   upperTick: -9210300, tickSpacing: 100, tradingStart: "1300", feeDuration: 3600,
-  initialFee: "922337203685477580", finalFee: "55340232221128654", salt: config,
+  initialFee: "922337203685477580", finalFee: "55340232221128654", decayFactor: "18425445863997925462", salt: config,
 };
 const tuple = abiParameters(parameters);
 const poolKey = { token0: creator, token1: tuple.quoteToken, config };
@@ -29,10 +29,10 @@ function same(a: string, b: string, label: string) {
 for (const abi of [zeroSeedAbi, frozen]) {
   const create = encodeFunctionData({ abi, functionName: "create", args: [tuple] });
   same(create, encodeFunctionData({ abi: frozen, functionName: "create", args: [tuple] }), "create");
-  same(create.slice(0, 10), "0xe11b98da", "create selector");
+  same(create.slice(0, 10), "0xd5f50468", "create selector");
   const preview = encodeFunctionData({ abi, functionName: "previewInstallation", args: [creator, tuple] });
   same(preview, encodeFunctionData({ abi: frozen, functionName: "previewInstallation", args: [creator, tuple] }), "preview");
-  same(preview.slice(0, 10), "0xcd1632b3", "preview selector");
+  same(preview.slice(0, 10), "0x5283ac38", "preview selector");
   const claim = encodeFunctionData({ abi, functionName: "claimFees", args: [poolKey, creator] });
   same(claim, encodeFunctionData({ abi: frozen, functionName: "claimFees", args: [poolKey, creator] }), "claim");
   same(claim.slice(0, 10), "0x6906b4c0", "claim selector");

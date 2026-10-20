@@ -1,7 +1,8 @@
 import { type Address, getAddress, zeroAddress } from "viem";
 import { ServiceError } from "../../core.js";
 
-export const ABI_SHA256 = "189ff93c0f6fb64f6e7dd0675872bf6686692f8303e6218b8c2521bfa5ced215";
+// Draft exponential creator-fee decay ABI (evm-contracts b1cbb1c, not released or audited).
+export const ABI_SHA256 = "bc51b39284a5a2a0970d3a804420762ce291dc01f9c21ddf31840e354a3792bb";
 export const POLICY_SHA256 = "7864a2d33a0fa8964922a5225653ed19842c590091f289eb4e29306feac6f6e1";
 export const FREEZE_REVISION = "ceebe872-8deb-4858-a192-8c013516def1";
 
@@ -23,19 +24,19 @@ const WETH_RUNTIME = "0x8a3a1f6a9f9dce633117adee5b458245835a8645a8c8726a26382a46
 export const LOCAL_INSTANCE_PINS: readonly Readonly<InstancePin>[] = Object.freeze([
   Object.freeze({
     chainId: "31337",
-    address: "0x510d7c117adeeb89bb33b9acb53995f3280eaa3a",
+    address: "0x5142e167b32877ca3cf3060010a0a1418e3ef1b9",
     core: CORE,
     quote: "0xffffffffffffffffffffffffffffffffffffffff",
-    runtime: "0x8d8839b97583f275a84aaf26cd6a5fa3ba21a7be04731a65f6140fc5040477c4",
+    runtime: "0x8fb360bb48006819049e6b9a53679ccaa01264e61465ce8e8cd2e8b185d3a8d1",
     quoteRuntime: WETH_RUNTIME,
     abiSha256: ABI_SHA256,
   }),
   Object.freeze({
     chainId: "31337",
-    address: "0x5195c03d30c11be73485ab76a35eb6f59fc52072",
+    address: "0x51174b5db84c81a906ec55445070fd84c8c8e655",
     core: CORE,
     quote: "0x0000000000000000000000000000000000010000",
-    runtime: "0x8751bab213ba226c4e45f6441b9df2db1f9c8ee9e9335320e180f3b348646014",
+    runtime: "0xa951db07ad354ea45df3ff1b720b69c7cc588c4feb44aaea79cd79639da61f6e",
     quoteRuntime: WETH_RUNTIME,
     abiSha256: ABI_SHA256,
   }),

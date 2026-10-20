@@ -9,23 +9,23 @@ import { LOCAL_INSTANCE_PINS, type InstancePin } from "../../src/launchpad/zero-
 import { localInstallationPreview, PREVIEW_ID, type SyntheticPreviewWallet } from "../../src/launchpad/zero-seed/preview.js";
 import { predictLaunchToken } from "../../src/launchpad/zero-seed/token.js";
 
-// Actual fixture creator/metadata/salt and the installed pair the actual d6aeb58
+// Actual fixture creator/metadata/salt and the installed pair the draft b1cbb1c
 // contract's previewInstallation returned for l1 (token0) and l3 (token1) in the
-// accepted EKU-1522 local chain. Timing here is synthetic boundary context.
+// regenerated local chain. Timing here is synthetic boundary context.
 export const creator = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8" as Address;
 export const build: BuildInput = {
   buildTime: "1000", executionExpiry: "1299", blockTime: "1000", blockNumber: "42", blockHash: `0x${"ab".repeat(32)}`,
 };
 const label = (pin: InstancePin) => (pin.address === LOCAL_INSTANCE_PINS[0].address ? "l1" : "l3");
 export const CAPTURED = {
-  l1: { token: "0x89738a97983f78baf6a68ab69b520851e24da09b", liquidity: 1111119116089565312897934n, installedSupply: 999999999999999999999999210n },
-  l3: { token: "0x66b53575a5dfcb1d6d40e8e3e6ccfa9a8e7e64e4", liquidity: 1111119116089565312898036n, installedSupply: 999999999999999999999999422n },
+  l1: { token: "0x4845fa093a3bf10b31a943a81e230aac5d201ff7", liquidity: 1111119116089565312897934n, installedSupply: 999999999999999999999999210n },
+  l3: { token: "0xd0fd0e218e2a98d1ce1bae8bf49d5d80d0b956b6", liquidity: 1111119116089565312898036n, installedSupply: 999999999999999999999999422n },
 } as const;
 export const request = (pin: InstancePin): ParametersInput => ({
   quoteToken: pin.quote, name: `Zero Seed ${label(pin)}`, symbol: label(pin).toUpperCase(), decimals: 18,
   supply: "1000000000000000000000000000", liquidity: "0", askTick: -13815500, upperTick: -9210300,
   tickSpacing: 100, tradingStart: "1300", feeDuration: 3600, initialFee: "922337203685477580",
-  finalFee: "55340232221128654", salt: `0x${"00".repeat(31)}01`,
+  finalFee: "55340232221128654", decayFactor: "18425445863997925462", salt: `0x${"00".repeat(31)}01`,
 });
 
 function installationFor(pin: InstancePin, token: Address, captured: { liquidity: bigint; installedSupply: bigint }) {
@@ -61,7 +61,7 @@ export function fixture(pin = LOCAL_INSTANCE_PINS[0]) {
       expect(body.calls).toHaveLength(1);
       expect(body.block_parameter).toBe("0x2a");
       expect(body.from).toBe(creator);
-      expect(body.calls[0].data.slice(0, 10)).toBe("0xcd1632b3");
+      expect(body.calls[0].data.slice(0, 10)).toBe("0x5283ac38");
       return storeArtifact(env, "https://synthetic.invalid", { artifactType: "read_calls", body });
     },
     async read(reference) {

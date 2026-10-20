@@ -1,7 +1,8 @@
 import { z } from "zod";
 
-// Exact shapes consumed from api#191 head 230afd4, not historical templates.
-export const SchemaVersion = z.literal("zero-seed-launch-api/v1");
+// Exact shapes consumed from the draft exponential-fee API head 35c22bd, not historical templates.
+// A v1 body (no decay_factor) is refused: its rate cannot be checked against the new schedule.
+export const SchemaVersion = z.literal("zero-seed-launch-api/v2");
 const U = z.string().regex(/^(0|[1-9][0-9]*)$/);
 const I = z.string().regex(/^(0|-?[1-9][0-9]*)$/);
 const Address = z.string().regex(/^0x[0-9a-f]{40}$/);
@@ -26,7 +27,7 @@ const PoolKey = z.strictObject({
 });
 export const FeeSchedule = z.strictObject({
   trading_start: Seconds, fee_duration: z.number().int().positive(), fee_end: Seconds,
-  initial_fee: U, final_fee: U,
+  initial_fee: U, final_fee: U, decay_factor: U,
   phase: z.enum(["before_trading_start", "fee_decay", "final_fee"]),
   fee_rate: U, evaluated_at: Seconds,
 });

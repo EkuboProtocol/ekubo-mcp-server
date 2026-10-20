@@ -115,7 +115,8 @@ describe("single synthetic installation preview (not executable evidence)", () =
   });
   for (const patch of [
     { supply: "0" }, { supply: (1n << 127n).toString() }, { liquidity: (1n << 127n).toString() },
-    { initialFee: "1844674407370955162" }, { finalFee: "922337203685477581" },
+    { initialFee: "18262276632972456100" }, { finalFee: "922337203685477581" }, { decayFactor: "0" },
+    { decayFactor: "18446744073709551616" },
     { tradingStart: (1n << 64n).toString() }, { askTick: -13815499 },
   ]) test(`invalid parameters refuse before any budgeted read ${JSON.stringify(patch)}`, async () => {
     const f = fixture();

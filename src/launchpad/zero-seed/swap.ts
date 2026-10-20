@@ -1,6 +1,7 @@
 import { encodeRoutes } from "@ekubo/yul-router-sdk";
 import { type Address, concatHex, type Hex, maxInt128, numberToHex } from "viem";
 import { z } from "zod";
+import { exactOutputMultiplier, feeAt, feePercent, feePhase } from "./fee.js";
 import { address, bytes32, decimal, requireLocalPin } from "./installation.js";
 import { type InstancePin, ZeroSeedError } from "./policy.js";
 
@@ -113,13 +114,38 @@ function routerCalldata(input: {
   ]).toLowerCase() as Hex;
 }
 
+/** The indexed launch's own schedule, bound to the quoted pool: the API's served rate is not reused. */
+export interface LaunchSchedule {
+  pool_key: { token0: string; token1: string; config: string };
+  fee_schedule: { trading_start: number; fee_duration: number; initial_fee: string; final_fee: string; decay_factor: string };
+}
+
+/** Creator fee rate the contract applies at the quote's indexed block time, from the exact integer schedule. */
+function creatorFeeAt(launch: LaunchSchedule, hop: z.infer<typeof Hop>, blockTime: bigint) {
+  const key = launch.pool_key;
+  if (key.token0 !== hop.pool_key.token0 || key.token1 !== hop.pool_key.token1 || key.config !== hop.pool_key.config) {
+    throw new ZeroSeedError("quote_route_mismatch");
+  }
+  const fee = launch.fee_schedule;
+  const schedule = {
+    tradingStart: BigInt(fee.trading_start), feeDuration: BigInt(fee.fee_duration), initialFee: BigInt(fee.initial_fee),
+    finalFee: BigInt(fee.final_fee), decayFactor: BigInt(fee.decay_factor),
+  };
+  const rate = feeAt(schedule, blockTime);
+  return {
+    evaluated_at: blockTime.toString(), phase: feePhase(schedule, blockTime), rate_q64: rate.toString(),
+    rate_percent: feePercent(rate), exact_output_multiplier: exactOutputMultiplier(rate),
+    charged_on: "calculated_side" as const, recipient: "creator_fee_ledger" as const,
+  };
+}
+
 /**
  * Consumes one accepted quoter request/response at its indexed block and encodes the 0x03c8 router call.
  * LOCAL and non-executable: the quoter's estimated_gas_cost is deliberately not read, and nothing here is a
  * gas limit, UserOp budget, affordability decision or owner assurance. The public entrypoint refuses.
  */
 export function localSwapFromQuote(input: {
-  pin: InstancePin; request: unknown; response: unknown; context: IndexedContext; recipient: Address;
+  pin: InstancePin; request: unknown; response: unknown; context: IndexedContext; recipient: Address; launch?: LaunchSchedule;
 }, freshTime: bigint) {
   requireLocalPin(input.pin);
   const request = parse(QuoterRequest, input.request, "invalid_argument");
@@ -134,7 +160,9 @@ export function localSwapFromQuote(input: {
   checkHop(hop, request, input.pin);
   const calculated = checkAmounts(response, request, threshold);
   const recipient = address.parse(input.recipient.toLowerCase()) as Address;
+  const creatorFee = input.launch === undefined ? {} : { creator_fee: creatorFeeAt(input.launch, hop, BigInt(input.context.blockTime)) };
   return {
+    ...creatorFee,
     scope: "synthetic-local-non-executable" as const, executable: false as const, executionGuaranteed: false as const,
     router: ZERO_SEED_ROUTER, value: "0", data: routerCalldata({ request, hop, threshold, recipient, deadline }),
     quote_type: BigInt(request.amount) > 0n ? "exact_input" as const : "exact_output" as const,
