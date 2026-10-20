@@ -30,10 +30,11 @@ const ORDERS_PATH = "/platform/v2/onramp/orders";
 const PAYMENT_ORIGIN = "https://pay.coinbase.com";
 const MAX_BODY_BYTES = 4096;
 
-// Sandbox only: Coinbase sends no real SMS or email for these destinations
-// and accepts the code 000000, so this page can never be used to send
-// messages to real people.
-const SANDBOX_PHONE = /^\+1000\d{7}$/;
+// Sandbox only: codes go to Coinbase's sandbox destinations (+1000...,
+// @sandbox.test), which send no real SMS or email and accept 000000, so this
+// page can never message real people. Orders validate the phone as a real US
+// number, so the buyer enters one and the code goes to its sandbox twin.
+const US_PHONE = /^\+1[2-9]\d{2}[2-9]\d{6}$/;
 const SANDBOX_EMAIL = /^[A-Za-z0-9._%+-]{1,64}@sandbox\.test$/;
 const VERIFICATION_ID = /^onramp_verification_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -50,7 +51,7 @@ const confirmSchema = z.strictObject({
 });
 const orderSchema = z.strictObject({
   link: linkField,
-  phone: z.string().regex(SANDBOX_PHONE),
+  phone: z.string().regex(US_PHONE),
   email: z.string().regex(SANDBOX_EMAIL),
   sms_verification_id: z.string().regex(VERIFICATION_ID),
   email_verification_id: z.string().regex(VERIFICATION_ID),
@@ -120,14 +121,8 @@ type Handler = (keys: Keys, body: unknown, checkout: Checkout, request: Request,
 const API_HANDLERS: Record<string, Handler> = {
   async [GUEST_PATHS.verify](keys, body, _checkout, _request, fetcher) {
     const input = verifySchema.parse(body);
-    const pattern = input.channel === "sms" ? SANDBOX_PHONE : SANDBOX_EMAIL;
-    if (!pattern.test(input.destination)) {
-      throw new ServiceError(
-        "coinbase_sandbox_contact_required",
-        "Sandbox checkout accepts only phone numbers starting +1000 and email addresses ending @sandbox.test",
-      );
-    }
-    const result = (await coinbasePost(keys, VERIFICATIONS_PATH, { channel: input.channel, destination: input.destination }, fetcher)) as {
+    const destination = sandboxDestination(input.channel, input.destination);
+    const result = (await coinbasePost(keys, VERIFICATIONS_PATH, { channel: input.channel, destination }, fetcher)) as {
       verificationId?: unknown;
       otpExpiresAt?: unknown;
     };
@@ -186,6 +181,15 @@ const API_HANDLERS: Record<string, Handler> = {
     };
   },
 };
+
+function sandboxDestination(channel: "sms" | "email", destination: string): string {
+  if (channel === "sms" && US_PHONE.test(destination)) return `+1000${destination.slice(-7)}`;
+  if (channel === "email" && SANDBOX_EMAIL.test(destination)) return destination;
+  throw new ServiceError(
+    "coinbase_sandbox_contact_required",
+    "Sandbox checkout needs a US mobile number in +1 format (no text is sent) and an email address ending @sandbox.test",
+  );
+}
 
 async function signedCheckout(
   keys: Keys,
@@ -250,7 +254,7 @@ iframe{width:100%;height:28rem;border:0}[hidden]{display:none}
 </style></head><body>
 <h1>Buy ${escapeHtml(checkout.asset)} on ${escapeHtml(checkout.network)}</h1>
 <p>Delivered to <span class="address">${escapeHtml(address)}</span>${amount === undefined ? "" : ` for ${escapeHtml(amount)} ${escapeHtml(checkout.payment_currency)}`}.</p>
-<p class="note"><strong>Sandbox:</strong> no real money moves. Use a phone number starting +1000, an email ending @sandbox.test and the code 000000.</p>
+<p class="note"><strong>Sandbox:</strong> no real money moves. Enter any US mobile number (no text is sent), an email ending @sandbox.test and the code 000000 for both.</p>
 ${
   usd
     ? `<section id="guest"><h2>Apple Pay, no account needed</h2><p class="note">US residents with a US mobile number only. Coinbase processes the payment.</p>

@@ -113,20 +113,20 @@ describe("Coinbase guest checkout page", () => {
 });
 
 describe("Coinbase guest checkout API", () => {
-  it("sends sandbox verification codes and refuses real contacts without calling Coinbase", async () => {
+  it("sends codes only to Coinbase sandbox destinations, never to the entered number", async () => {
     const link = (await checkoutLink()).search.slice(1);
     const { seen } = mockCoinbase(() => Response.json({ verificationId: SMS_ID, otpExpiresAt: "2026-10-20T15:00:00Z" }, { status: 201 }));
-    const real = await api("verify", { link, channel: "sms", destination: "+12025550123" });
-    expect(real.status).toBe(400);
-    expect(((await real.json()) as any).error.code).toBe("coinbase_sandbox_contact_required");
+    const foreign = await api("verify", { link, channel: "sms", destination: "+447700900123" });
+    expect(foreign.status).toBe(400);
+    expect(((await foreign.json()) as any).error.code).toBe("coinbase_sandbox_contact_required");
     const realEmail = await api("verify", { link, channel: "email", destination: "someone@example.com" });
     expect(realEmail.status).toBe(400);
     expect(seen).toHaveLength(0);
 
-    const sent = await api("verify", { link, channel: "sms", destination: "+10005550100" });
+    const sent = await api("verify", { link, channel: "sms", destination: "+14155552671" });
     expect(sent.status).toBe(200);
     expect(await sent.json()).toEqual({ verification_id: SMS_ID, expires_at: "2026-10-20T15:00:00Z" });
-    expect(seen).toEqual([{ url: "https://api.cdp.coinbase.com/platform/v2/onramp/verifications", body: { channel: "sms", destination: "+10005550100" } }]);
+    expect(seen).toEqual([{ url: "https://api.cdp.coinbase.com/platform/v2/onramp/verifications", body: { channel: "sms", destination: "+10005552671" } }]);
   });
 
   it("submits codes to the verification Coinbase issued", async () => {
@@ -144,7 +144,7 @@ describe("Coinbase guest checkout API", () => {
     const { seen } = mockCoinbase(() => Response.json({ order: { orderId: "order-1" }, paymentLink: { url: PAY_URL, paymentLinkType: "PAYMENT_LINK_TYPE_APPLE_PAY_BUTTON" } }, { status: 201 }));
     const response = await api("order", {
       link,
-      phone: "+10005550100",
+      phone: "+14155552671",
       email: "tester@sandbox.test",
       sms_verification_id: SMS_ID,
       email_verification_id: EMAIL_ID,
@@ -163,7 +163,7 @@ describe("Coinbase guest checkout API", () => {
       destinationNetwork: "base",
       partnerUserRef: expect.stringMatching(/^sandbox-[0-9a-f-]{36}$/),
       email: "tester@sandbox.test",
-      phoneNumber: "+10005550100",
+      phoneNumber: "+14155552671",
       emailVerificationId: EMAIL_ID,
       smsVerificationId: SMS_ID,
       phoneNumberVerifiedAt: expect.any(String),
@@ -175,7 +175,7 @@ describe("Coinbase guest checkout API", () => {
 
   it("needs an amount, the terms and a payment link from Coinbase", async () => {
     const link = (await checkoutLink({ asset: "ETH" })).search.slice(1);
-    const order = { link, phone: "+10005550100", email: "tester@sandbox.test", sms_verification_id: SMS_ID, email_verification_id: EMAIL_ID, agreement_accepted: true };
+    const order = { link, phone: "+14155552671", email: "tester@sandbox.test", sms_verification_id: SMS_ID, email_verification_id: EMAIL_ID, agreement_accepted: true };
     mockCoinbase(() => Response.json({ paymentLink: { url: "https://evil.example/pay" } }, { status: 201 }));
     expect(((await (await api("order", order)).json()) as any).error.code).toBe("coinbase_amount_required");
     expect((await api("order", { ...order, agreement_accepted: false, payment_amount: "20" })).status).toBe(400);
@@ -192,7 +192,7 @@ describe("Coinbase guest checkout API", () => {
         { status: 429 },
       ),
     );
-    const response = await api("order", { link, phone: "+10005550100", email: "tester@sandbox.test", sms_verification_id: SMS_ID, email_verification_id: EMAIL_ID, agreement_accepted: true });
+    const response = await api("order", { link, phone: "+14155552671", email: "tester@sandbox.test", sms_verification_id: SMS_ID, email_verification_id: EMAIL_ID, agreement_accepted: true });
     expect(response.status).toBe(400);
     const body = JSON.stringify(await response.json());
     expect(body).toContain("guest_transaction_limit");
