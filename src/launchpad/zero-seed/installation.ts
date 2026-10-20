@@ -1,20 +1,21 @@
 import { type Address, encodeFunctionData, type Hex } from "viem";
 import { z } from "zod";
-import { zeroSeedAbi } from "./abi.js";
+import { peripheryAbi } from "./abi.js";
 import { MAX_CREATOR_FEE } from "./fee.js";
 import { type InstancePin, supportedInstances, unsigned, validateCreationTiming, validateMetadata, ZeroSeedError } from "./policy.js";
 
 export const decimal = z.string().regex(/^(0|[1-9][0-9]*)$/);
 export const address = z.string().regex(/^0x[0-9a-f]{40}$/);
 export const bytes32 = z.string().regex(/^0x[0-9a-f]{64}$/);
+/** LaunchParameters: no quote token (the instance's constructor fixes it) and no decay factor (600 s half-life). */
 export const Parameters = z.strictObject({
-  quoteToken: address, name: z.string(), symbol: z.string(), decimals: z.number().int().min(0).max(255),
+  name: z.string(), symbol: z.string(), decimals: z.number().int().min(0).max(255),
   supply: decimal, liquidity: decimal,
   askTick: z.number().int().min(-88722835).max(88722835),
   upperTick: z.number().int().min(-88722835).max(88722835),
   tickSpacing: z.number().int().min(1).max(698605), tradingStart: decimal,
   feeDuration: z.number().int().min(1).max(4294967295), initialFee: decimal, finalFee: decimal,
-  decayFactor: decimal.describe("Literal Q0.64 per-second multiplier in (0, 2^64), not a half-life"), salt: bytes32,
+  salt: bytes32.describe("The owner's salt; the periphery and extension namespace it by owner and controller"),
 });
 export type ParametersInput = z.infer<typeof Parameters>;
 export const BuildContext = z.strictObject({
@@ -32,7 +33,6 @@ export function validateParameters(input: ParametersInput, pin: InstancePin): vo
   Parameters.parse(input);
   validateMetadata(input.name);
   validateMetadata(input.symbol);
-  if (input.quoteToken !== pin.quote) throw new ZeroSeedError("unsupported_quote");
   const supply = unsigned(BigInt(input.supply), 127);
   unsigned(BigInt(input.liquidity), 127);
   if (supply === 0n || input.askTick >= input.upperTick) throw new ZeroSeedError("invalid_parameters");
@@ -42,13 +42,12 @@ export function validateParameters(input: ParametersInput, pin: InstancePin): vo
   validateFees(input);
 }
 
-/** Creation validation of the draft contract: FeeTooHigh above the 99% cap, InvalidFeeSchedule otherwise. */
+/** Creation validation of the contract: FeeTooHigh above the 99% cap, InvalidFeeSchedule otherwise. */
 function validateFees(input: ParametersInput): void {
   const initial = unsigned(BigInt(input.initialFee), 64);
   const final = unsigned(BigInt(input.finalFee), 64);
-  const factor = unsigned(BigInt(input.decayFactor), 64);
   if (initial > MAX_CREATOR_FEE) throw new ZeroSeedError("fee_too_high");
-  if (final > initial || factor === 0n) throw new ZeroSeedError("invalid_fee_schedule");
+  if (final > initial) throw new ZeroSeedError("invalid_fee_schedule");
   unsigned(BigInt(input.tradingStart) + BigInt(input.feeDuration), 64);
 }
 
@@ -65,17 +64,17 @@ export function validateBuild(input: ParametersInput, build: BuildInput, freshTi
 
 export function abiParameters(input: ParametersInput) {
   return {
-    ...input, quoteToken: input.quoteToken as Address, salt: input.salt as Hex,
+    ...input, salt: input.salt as Hex,
     supply: BigInt(input.supply), liquidity: BigInt(input.liquidity),
     tradingStart: BigInt(input.tradingStart), initialFee: BigInt(input.initialFee), finalFee: BigInt(input.finalFee),
-    decayFactor: BigInt(input.decayFactor),
   };
 }
 
-export function previewData(creator: Address, input: ParametersInput): Hex {
-  return encodeFunctionData({ abi: zeroSeedAbi, functionName: "previewInstallation", args: [creator, abiParameters(input)] });
+/** periphery.previewInstallation(owner, parameters): the periphery namespaces the salt by owner. */
+export function previewData(owner: Address, input: ParametersInput): Hex {
+  return encodeFunctionData({ abi: peripheryAbi, functionName: "previewInstallation", args: [owner, abiParameters(input)] });
 }
 
 export function createData(input: ParametersInput): Hex {
-  return encodeFunctionData({ abi: zeroSeedAbi, functionName: "create", args: [abiParameters(input)] });
+  return encodeFunctionData({ abi: peripheryAbi, functionName: "create", args: [abiParameters(input)] });
 }

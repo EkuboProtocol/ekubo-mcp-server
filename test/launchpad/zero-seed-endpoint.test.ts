@@ -31,9 +31,9 @@ const pin = LOCAL_INSTANCE_PINS[0];
 const sender = "0x0000000000000000000000000000000000000123";
 const poolId = `0x${"11".repeat(32)}`;
 const parameters = {
-  quoteToken: pin.quote, name: "Local", symbol: "LOC", decimals: 18, supply: "1000", liquidity: "0",
+  name: "Local", symbol: "LOC", decimals: 18, supply: "1000", liquidity: "0",
   askTick: -100, upperTick: 100, tickSpacing: 100, tradingStart: "1300", feeDuration: 3600,
-  initialFee: "1", finalFee: "0", decayFactor: "1", salt: `0x${"00".repeat(32)}`,
+  initialFee: "1", finalFee: "0", salt: `0x${"00".repeat(32)}`,
 };
 
 function workerEnv() {
@@ -215,16 +215,18 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
     });
   }
 
-  it("prepare_create takes the literal decay factor and refuses a missing one before anything else", async () => {
+  it("prepare_create takes no quote token or decay factor and refuses the earlier tuple before anything else", async () => {
     const e = workerEnv();
     const tools = (await mcp(e, TESTING, "tools/list")).result.tools as Json[];
     const create = tools.find((t) => t.name === "launchpad_prepare_create");
-    expect(create.inputSchema.properties.parameters.required).toContain("decayFactor");
-    expect(create.inputSchema.properties.parameters.properties.decayFactor.description).toContain("not a half-life");
-    const { decayFactor: _, ...stale } = parameters;
+    const properties = Object.keys(create.inputSchema.properties.parameters.properties);
+    expect(properties).not.toContain("quoteToken");
+    expect(properties).not.toContain("decayFactor");
+    expect(create.inputSchema.properties.parameters.required).toEqual(properties);
+    const stale = { ...parameters, quoteToken: `0x${"00".repeat(20)}`, decayFactor: "1" };
     const reply = await call(e, "launchpad_prepare_create", { chain_id: pin.chainId, sender, parameters: stale });
     expect(reply.result.isError).toBe(true);
-    expect(reply.result.content[0].text).toContain("parameters.decayFactor");
+    expect(reply.result.content[0].text).toContain("quoteToken");
     expect(JSON.stringify(reply)).not.toContain("execution_plan_reference");
     expect(e.ARTIFACT_STORE.entries.size).toBe(0);
     expect(requests).toEqual([]);
@@ -236,15 +238,18 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
     expect(reply.result.structuredContent.error.code).toBe("launch_support_disabled");
   });
 
-  it("serves the eight versioned draft mechanism disclosures", async () => {
+  it("serves the nine versioned draft mechanism disclosures", async () => {
     const reply = await mcp(workerEnv(), TESTING, "resources/read", { uri: "launchpad://disclosures" });
     const document = JSON.parse(reply.result.contents[0].text);
-    expect(document).toMatchObject({ version: 3, status: "draft_not_approved" });
+    expect(document).toMatchObject({ version: 4, status: "draft_not_approved" });
     expect(document.disclosures.map((entry: Json) => entry.code)).toEqual([
-      "zero_initial_bid", "buyer_funded_quote_reserve", "permanent_principal_lock",
-      "creator_fee_recipient_and_rate", "creator_fee_recapture", "high_initial_fee", "exact_output_gross_up", "no_exit_guarantee",
+      "zero_initial_bid", "buyer_funded_quote_reserve", "permanent_principal_lock", "creator_fee_recipient_and_rate",
+      "transferable_launch_ownership", "creator_fee_recapture", "high_initial_fee", "exact_output_gross_up", "no_exit_guarantee",
     ]);
-    expect(DISCLOSURE_CODES).toHaveLength(8);
-    expect(reply.result.contents[0].text).not.toContain("linearly");
+    expect(DISCLOSURE_CODES).toHaveLength(9);
+    const text = reply.result.contents[0].text;
+    expect(text).not.toContain("linearly");
+    expect(text).not.toContain("cannot transfer");
+    expect(text).toContain("600 s half-life");
   });
 });

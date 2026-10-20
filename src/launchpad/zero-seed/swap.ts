@@ -1,9 +1,9 @@
 import { encodeRoutes } from "@ekubo/yul-router-sdk";
-import { type Address, concatHex, type Hex, maxInt128, numberToHex } from "viem";
+import { type Address, concatHex, getAddress, type Hex, maxInt128, numberToHex, zeroAddress } from "viem";
 import { z } from "zod";
 import { exactOutputMultiplier, feeAt, feePercent, feePhase } from "./fee.js";
 import { address, bytes32, decimal, requireLocalPin } from "./installation.js";
-import { type InstancePin, ZeroSeedError } from "./policy.js";
+import { type InstancePin, NATIVE_QUOTE, ZeroSeedError } from "./policy.js";
 
 /** Base Yul router whose runtime (keccak 0x32ba8475…) executed the accepted local router vectors. */
 export const ZERO_SEED_ROUTER = "0x03c8b90854b90aa22448b11e885f692972da441c";
@@ -15,7 +15,7 @@ const HEADER_BYTES = 78;
 const anyAddress = z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((value) => value.toLowerCase());
 const signed = z.string().regex(/^-?(0|[1-9][0-9]*)$/);
 
-/** Accepted EKU-1522 launch query (request contract SHA256 2319a23c…), plus the path amount/tokens. */
+/** Launch quote query, plus the path amount/tokens. A native quote is address(0). */
 export const QuoterRequest = z.strictObject({
   amount: signed, specified_token: address, other_token: address, extension: address,
   min_output: decimal.optional(), max_input: decimal.optional(), deadline: decimal,
@@ -73,13 +73,43 @@ function checkDeadline(deadline: bigint, context: IndexedContext, freshTime: big
 }
 
 function checkHop(hop: z.infer<typeof Hop>, request: QuoterRequestInput, pin: InstancePin): void {
-  if (request.extension !== pin.address || hop.forwardee !== pin.address ||
-    BigInt(hop.pool_key.config) >> 96n !== BigInt(pin.address)) throw new ZeroSeedError("launch_support_disabled");
+  // Swaps forward to the extension, never to the periphery, with the unchanged (PoolKey, SwapParameters) payload.
+  if (request.extension !== pin.extension || hop.forwardee !== pin.extension ||
+    BigInt(hop.pool_key.config) >> 96n !== BigInt(pin.extension)) throw new ZeroSeedError("launch_support_disabled");
   const pair = [hop.pool_key.token0, hop.pool_key.token1];
   const tokens = [request.specified_token, request.other_token];
   if (!pair.includes(pin.quote) || !tokens.every((token) => pair.includes(token)) || tokens[0] === tokens[1]) {
     throw new ZeroSeedError("quote_route_mismatch");
   }
+  if (pin.quoteKind === "native" && hop.pool_key.token0 !== NATIVE_QUOTE) throw new ZeroSeedError("quote_route_mismatch");
+}
+
+/** Output sent to any of these is stranded or refused: they book nothing for a bare transfer. */
+function checkRecipient(recipient: Address, hop: z.infer<typeof Hop>, pin: InstancePin): void {
+  const refused = [zeroAddress, pin.core, pin.extension, pin.periphery, ZERO_SEED_ROUTER, hop.pool_key.token0,
+    hop.pool_key.token1].map((sink) => getAddress(sink));
+  if (refused.includes(getAddress(recipient))) throw new ZeroSeedError("invalid_recipient");
+}
+
+/**
+ * Native settlement: ETH input is attached as value, never wrapped and never approved. An exact-input buy attaches
+ * exactly the input; an exact-output buy attaches the maximum input and the router refunds what the swap does not
+ * spend. Native output (a sell) attaches nothing. An ERC-20 input needs the sender's allowance to the router.
+ */
+function settlement(request: QuoterRequestInput, threshold: bigint, pin: InstancePin) {
+  const amount = BigInt(request.amount);
+  const input = amount > 0n ? request.specified_token : request.other_token;
+  if (pin.quoteKind !== "native" || input !== NATIVE_QUOTE) {
+    return { value: 0n, native: null, input_approval: { token: input, spender: ZERO_SEED_ROUTER,
+      amount: (amount > 0n ? amount : -threshold).toString() } };
+  }
+  const exactIn = amount > 0n;
+  const value = exactIn ? amount : -threshold;
+  const native = exactIn
+    ? { attached_value: value.toString(), spend: "exact" as const, refund: null }
+    : { attached_value: value.toString(), spend: "at_most" as const,
+      refund: "the router returns the unspent value to the sender in the same transaction" };
+  return { value, input_approval: null, native: { ...native, wrapping: false, approval: false } };
 }
 
 function checkAmounts(response: z.infer<typeof QuoterResponse>, request: QuoterRequestInput, threshold: bigint): bigint {
@@ -117,7 +147,7 @@ function routerCalldata(input: {
 /** The indexed launch's own schedule, bound to the quoted pool: the API's served rate is not reused. */
 export interface LaunchSchedule {
   pool_key: { token0: string; token1: string; config: string };
-  fee_schedule: { trading_start: number; fee_duration: number; initial_fee: string; final_fee: string; decay_factor: string };
+  fee_schedule: { trading_start: number; fee_duration: number; initial_fee: string; final_fee: string };
 }
 
 /** Creator fee rate the contract applies at the quote's indexed block time, from the exact integer schedule. */
@@ -129,7 +159,7 @@ function creatorFeeAt(launch: LaunchSchedule, hop: z.infer<typeof Hop>, blockTim
   const fee = launch.fee_schedule;
   const schedule = {
     tradingStart: BigInt(fee.trading_start), feeDuration: BigInt(fee.fee_duration), initialFee: BigInt(fee.initial_fee),
-    finalFee: BigInt(fee.final_fee), decayFactor: BigInt(fee.decay_factor),
+    finalFee: BigInt(fee.final_fee),
   };
   const rate = feeAt(schedule, blockTime);
   return {
@@ -160,11 +190,13 @@ export function localSwapFromQuote(input: {
   checkHop(hop, request, input.pin);
   const calculated = checkAmounts(response, request, threshold);
   const recipient = address.parse(input.recipient.toLowerCase()) as Address;
+  checkRecipient(recipient, hop, input.pin);
+  const { value, native, input_approval } = settlement(request, threshold, input.pin);
   const creatorFee = input.launch === undefined ? {} : { creator_fee: creatorFeeAt(input.launch, hop, BigInt(input.context.blockTime)) };
   return {
     ...creatorFee,
     scope: "synthetic-local-non-executable" as const, executable: false as const, executionGuaranteed: false as const,
-    router: ZERO_SEED_ROUTER, value: "0", data: routerCalldata({ request, hop, threshold, recipient, deadline }),
+    router: ZERO_SEED_ROUTER, value: value.toString(), native, input_approval, data: routerCalldata({ request, hop, threshold, recipient, deadline }),
     quote_type: BigInt(request.amount) > 0n ? "exact_input" as const : "exact_output" as const,
     specified_amount: request.amount, calculated_amount: calculated.toString(), threshold: threshold.toString(),
     deadline: request.deadline, skip_ahead: 0 as const, partial_fill: false as const,

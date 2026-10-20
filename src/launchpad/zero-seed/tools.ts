@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { ZeroSeedApi } from "./api.js";
 import { disclosuresDocument } from "./disclosures.js";
 import { address, bytes32, decimal, Parameters } from "./installation.js";
 import { LIVE_INSTANCE_PINS, refuseExecutableUse, ZeroSeedError } from "./policy.js";
@@ -24,10 +23,12 @@ const paging = {
   cursor: z.string().regex(/^(0|-?[1-9][0-9]*)$/).optional().describe("Event-id cursor from next_cursor"),
   limit: z.number().int().min(1).max(200).optional(),
 };
-const listSchema = z.strictObject({ chain_id: chainId, creator: address.optional(), ...paging });
+const listSchema = z.strictObject({ chain_id: chainId, owner: address.optional().describe("Current launch owner"), ...paging });
 const launchSchema = z.strictObject({ chain_id: chainId, pool_id: poolId });
 const historySchema = z.strictObject({ chain_id: chainId, pool_id: poolId, ...paging });
-const createSchema = z.strictObject({ chain_id: chainId, sender: address, parameters: Parameters });
+const createSchema = z.strictObject({
+  chain_id: chainId, sender: address.describe("Calls the periphery and becomes the launch owner"), parameters: Parameters,
+});
 const claimSchema = z.strictObject({ chain_id: chainId, sender: address, pool_id: poolId, recipient: address });
 const tradeSchema = z.strictObject({
   chain_id: chainId, sender: address, pool_id: poolId, side: z.enum(["buy", "sell"]),
@@ -38,20 +39,17 @@ const tradeSchema = z.strictObject({
 const HOLD =
   "Zero-seed launchpad, support disabled: no launch instance is supported on any hosted or live chain, so this tool fails closed.";
 
-/** Only the empty live pin list reaches the hosted server; there is no local-harness switch here. */
-function api(env: LaunchpadEnv): ZeroSeedApi {
-  const base = env.LAUNCHPAD_API_URL || env.EKUBO_API_URL;
-  if (!base) throw new ZeroSeedError("launchpad_not_configured");
-  return new ZeroSeedApi(base, fetch);
-}
-
 /** The hosted producer is not wired: it refuses even if a live pin were ever added. */
 const live = (chain: string) => LIVE_INSTANCE_PINS.some((pin) => pin.chainId === chain);
 
-/** Support is checked before configuration, so a disabled chain never reaches the API. */
-function hosted(env: LaunchpadEnv, chain: string): ZeroSeedApi {
+/**
+ * Support is checked before configuration, so a disabled chain never reaches the API. The indexed launch API for
+ * the periphery/native contract version is not consumed yet, so even a supported chain is refused.
+ */
+function hosted(env: LaunchpadEnv, chain: string): never {
   if (!live(chain)) throw new ZeroSeedError("launch_support_disabled");
-  return api(env);
+  if (!(env.LAUNCHPAD_API_URL || env.EKUBO_API_URL)) throw new ZeroSeedError("launchpad_not_configured");
+  throw new ZeroSeedError("api_schema_pending");
 }
 
 function disabled(): never {
@@ -59,26 +57,26 @@ function disabled(): never {
 }
 
 async function listLaunches(env: LaunchpadEnv, input: z.input<typeof listSchema>) {
-  const { chain_id: chain, ...page } = listSchema.parse(input);
+  const { chain_id: chain } = listSchema.parse(input);
   if (!live(chain)) {
     return { data: [], next_cursor: null, launch_support: "disabled" };
   }
-  return hosted(env, chain).list(chain, page);
+  return hosted(env, chain);
 }
 
 async function getLaunch(env: LaunchpadEnv, input: z.input<typeof launchSchema>) {
-  const { chain_id: chain, pool_id: id } = launchSchema.parse(input);
-  return hosted(env, chain).detail(chain, id as `0x${string}`);
+  const { chain_id: chain } = launchSchema.parse(input);
+  return hosted(env, chain);
 }
 
 async function getSwaps(env: LaunchpadEnv, input: z.input<typeof historySchema>) {
-  const { chain_id: chain, pool_id: id, ...page } = historySchema.parse(input);
-  return hosted(env, chain).swaps(chain, id as `0x${string}`, page);
+  const { chain_id: chain } = historySchema.parse(input);
+  return hosted(env, chain);
 }
 
 async function getClaims(env: LaunchpadEnv, input: z.input<typeof historySchema>) {
-  const { chain_id: chain, pool_id: id, ...page } = historySchema.parse(input);
-  return hosted(env, chain).claims(chain, id as `0x${string}`, page);
+  const { chain_id: chain } = historySchema.parse(input);
+  return hosted(env, chain);
 }
 
 async function prepareCreate(_env: LaunchpadEnv, input: z.input<typeof createSchema>) {
@@ -114,11 +112,11 @@ export const launchpadTools: LaunchpadTool[] = [
     launchSchema, getLaunch),
   tool("launchpad_get_swaps", "List zero-seed launch swaps",
     `${HOLD} Refuses with launch_support_disabled.`, historySchema, getSwaps),
-  tool("launchpad_get_claims", "List zero-seed creator-fee claims",
+  tool("launchpad_get_claims", "List zero-seed launch fee claims",
     `${HOLD} Refuses with launch_support_disabled.`, historySchema, getClaims),
   tool("launchpad_prepare_create", "Prepare a zero-seed launch",
     `${HOLD} Refuses with launch_support_disabled; returns no plan or reference.`, createSchema, prepareCreate),
-  tool("launchpad_prepare_claim_fees", "Prepare a zero-seed creator-fee claim",
+  tool("launchpad_prepare_claim_fees", "Prepare a zero-seed launch fee claim",
     `${HOLD} Refuses with launch_support_disabled; returns no plan or reference.`, claimSchema, prepareClaim),
   tool("launchpad_prepare_trade", "Prepare a zero-seed launch trade",
     `${HOLD} Refuses with executable_budget_not_proven: a quoter gas estimate is not an execution budget. Returns no plan or reference.`,

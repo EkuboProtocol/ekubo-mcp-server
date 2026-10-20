@@ -1,71 +1,116 @@
 import { describe, expect, test } from "bun:test";
 import { YUL_ROUTER_ADDRESS } from "@ekubo/yul-router-sdk";
-import { type Address, keccak256 } from "viem";
-import fixture from "../fixtures/launchpad/zero-seed-router-vectors.json";
-import { LOCAL_INSTANCE_PINS } from "../../src/launchpad/zero-seed/policy.js";
+import { type Address, zeroAddress } from "viem";
+import { feeAt, feeInclusiveDelta } from "../../src/launchpad/zero-seed/fee.js";
+import { LOCAL_INSTANCE_PINS, NATIVE_QUOTE } from "../../src/launchpad/zero-seed/policy.js";
 import { localSwapFromQuote, ZERO_SEED_ROUTER } from "../../src/launchpad/zero-seed/swap.js";
+import { chain } from "./zero-seed-fixture.js";
 
-// Accepted quoter responses and the router calldata that executed on the local chain.
-// Thresholds equal the quote (zero slippage) and the deadline equals the indexed time.
-const pinFor = (label: string) => LOCAL_INSTANCE_PINS[label === "l1" ? 0 : 1];
-type Vector = (typeof fixture.vectors)[number];
+// Router quotes read at block S on the local chain, shaped as the quoter's response (not real quoter output), and
+// the plans the MCP produced from them, which then executed in a later block at the same timestamp.
+type Vector = (typeof chain.swaps)[number];
+const native = [...chain.swaps, chain.after_transfer.swap];
+const vectors: Vector[] = [...native, chain.erc20_swap];
+const pinFor = (vector: Vector) => LOCAL_INSTANCE_PINS.find((pin) => pin.extension === vector.request.extension)!;
+const label = (v: Vector) => `${pinFor(v).quoteKind} ${v.side} ${v.exact_out ? "exact-out" : "exact-in"}`;
+const scheduleOf = (vector: Vector) => {
+  const launch = pinFor(vector).quoteKind === "native" ? chain.launches.native : chain.launches.erc20;
+  return { pool_key: launch.preview.installation.poolKey, fee_schedule: { trading_start: Number(launch.request.tradingStart),
+    fee_duration: launch.request.feeDuration, initial_fee: launch.request.initialFee, final_fee: launch.request.finalFee } };
+};
 
-function requestFor(vector: Vector) {
-  const pin = pinFor(vector.label);
-  const specified = vector.input.specified_token.toLowerCase();
-  const { token0, token1 } = vector.response.splits[0].route[0].swap.pool_key;
-  const other = [token0, token1].map((t) => t.toLowerCase()).find((t) => t !== specified)!;
-  const exactIn = !vector.input.amount.startsWith("-");
-  return {
-    amount: vector.input.amount, specified_token: specified, other_token: other, extension: pin.address,
-    ...(exactIn ? { min_output: vector.response.total_calculated } : { max_input: vector.response.total_calculated }),
-    deadline: String(vector.input.time),
-  };
-}
-
-function run(vector: Vector, patch: { request?: object; response?: object; fresh?: bigint; pin?: object } = {}) {
-  const context = { blockNumber: String(vector.input.block_number), blockHash: vector.input.block_hash, blockTime: String(vector.input.time) };
+function run(vector: Vector, patch: { request?: object; response?: object; fresh?: bigint; pin?: object; recipient?: string } = {}) {
   return localSwapFromQuote({
-    pin: { ...pinFor(vector.label), ...patch.pin }, request: { ...requestFor(vector), ...patch.request },
-    response: { ...vector.response, ...patch.response }, context, recipient: fixture.recipient as Address,
-  }, patch.fresh ?? BigInt(vector.input.time));
+    pin: { ...pinFor(vector), ...patch.pin }, request: { ...vector.request, ...patch.request },
+    response: { ...vector.response, ...patch.response }, context: vector.context,
+    recipient: (patch.recipient ?? chain.accounts.buyer) as Address, launch: scheduleOf(vector),
+  }, patch.fresh ?? BigInt(vector.receipt.timestamp));
 }
 
 const hop = (vector: Vector, change: Record<string, unknown>) => ({ splits: [{ ...vector.response.splits[0],
   route: [{ swap: { ...vector.response.splits[0].route[0].swap, ...change } }] }] });
 
-describe("accepted quoter → 0x03c8 router (local, non-executable)", () => {
+describe("router quote at S → 0x03c8 router plan → local execution", () => {
   test("router pin is the executed 0x03c8 router, held independently of the SDK default", () => {
-    expect(fixture.router).toBe(ZERO_SEED_ROUTER);
+    expect(chain.router).toBe(ZERO_SEED_ROUTER);
     expect(ZERO_SEED_ROUTER).toBe("0x03c8b90854b90aa22448b11e885f692972da441c");
-    // Since @ekubo/yul-router-sdk 0.8.0 the default router is the same 0x03c8 router.
     expect(YUL_ROUTER_ADDRESS.toLowerCase()).toBe(ZERO_SEED_ROUTER);
   });
 
-  for (const vector of fixture.vectors) {
-    test(`${vector.label} ${vector.sell ? "sell" : "buy"} ${vector.exactOut ? "exact-out" : "exact-in"} matches executed calldata`, () => {
+  test("covers native buys and sells, exact-in and exact-out, and an ERC-20 buy", () => {
+    expect(vectors.map(label)).toEqual([
+      "native buy exact-in", "native buy exact-out", "native sell exact-in", "native sell exact-out",
+      "native buy exact-in", "erc20 buy exact-in",
+    ]);
+  });
+
+  for (const vector of vectors) {
+    test(`${label(vector)}: reproduces the plan that executed`, () => {
       const prepared = run(vector);
-      expect(prepared.data).toBe(vector.calldata.toLowerCase() as `0x${string}`);
-      expect(keccak256(prepared.data)).toBe(vector.calldataKeccak as `0x${string}`);
-      expect(prepared).toMatchObject({ executable: false, executionGuaranteed: false, skip_ahead: 0, partial_fill: false, value: "0" });
-      for (const key of ["gas", "gas_limit", "estimated_gas_cost", "estimatedRouteGas", "execution_plan", "execution_plan_reference"]) {
+      expect(prepared).toEqual(vector.plan as never);
+      expect(prepared).toMatchObject({ executable: false, executionGuaranteed: false, skip_ahead: 0, partial_fill: false });
+      for (const key of ["gas", "gas_limit", "estimated_gas_cost", "execution_plan", "execution_plan_reference"]) {
         expect(prepared).not.toHaveProperty(key);
+      }
+    });
+
+    test(`${label(vector)}: the emitted rate and fee equal the MCP schedule`, () => {
+      const event = vector.events.find((e) => e.event === "LaunchSwapped")!.args as unknown as Record<string, string> & { feeIsToken1: boolean };
+      const { fee_schedule: s } = scheduleOf(vector);
+      const rate = feeAt({ tradingStart: BigInt(s.trading_start), feeDuration: BigInt(s.fee_duration),
+        initialFee: BigInt(s.initial_fee), finalFee: BigInt(s.final_fee) }, BigInt(vector.receipt.timestamp));
+      expect(rate.toString()).toBe(event.feeRate);
+      expect(run(vector).creator_fee).toMatchObject({ rate_q64: event.feeRate, phase: "fee_decay" });
+      const withFee = BigInt(event.feeIsToken1 ? event.delta1 : event.delta0);
+      expect(feeInclusiveDelta({ calculated: withFee - BigInt(event.feeAmount), rate, exactOut: vector.exact_out }))
+        .toEqual({ fee: BigInt(event.feeAmount), withFee });
+    });
+  }
+
+  for (const vector of native) {
+    test(`${label(vector)}: native settlement without wrapping or a native approval`, () => {
+      const plan = vector.plan;
+      const nativeIn = vector.side === "buy";
+      const executedQuote = BigInt(vector.deltas.quote);
+      const calculated = BigInt(plan.calculated_amount);
+      expect(BigInt(vector.deltas.router_eth)).toBe(0n);
+      if (nativeIn) {
+        expect(plan.input_approval).toBeNull();
+        expect(plan.native).toMatchObject({ wrapping: false, approval: false, attached_value: plan.value });
+        if (vector.exact_out) {
+          // Attached the maximum input; spent the quoted input; the router refunded the rest to the sender.
+          expect(plan.native!.spend).toBe("at_most");
+          expect(BigInt(plan.value)).toBe(-BigInt(plan.threshold));
+          expect(-executedQuote).toBe(calculated);
+          expect(BigInt(plan.value) + executedQuote).toBeGreaterThan(0n);
+          expect(BigInt(vector.deltas.token)).toBe(-BigInt(plan.specified_amount));
+        } else {
+          expect(plan.native!.spend).toBe("exact");
+          expect(plan.value).toBe(plan.specified_amount);
+          expect(executedQuote).toBe(-BigInt(plan.value));
+          expect(BigInt(vector.deltas.token)).toBe(calculated);
+        }
+      } else {
+        expect(plan.value).toBe("0");
+        expect(plan.native).toBeNull();
+        // The only approval is the launch token's, to the router; native output needs none.
+        expect(plan.input_approval).toMatchObject({ spender: ZERO_SEED_ROUTER, token: chain.launches.native.preview.installation.token });
+        expect(plan.input_approval!.token).not.toBe(NATIVE_QUOTE);
+        expect(executedQuote).toBe(vector.exact_out ? -BigInt(plan.specified_amount) : calculated);
       }
     });
   }
 
-  const [buy, buyOut] = fixture.vectors;
-  test("both supported orders are covered", () => {
-    expect(new Set(fixture.vectors.map((v) => v.label))).toEqual(new Set(["l1", "l3"]));
-  });
+  const [buy, buyOut] = native;
   test("estimated_gas_cost cannot influence the prepared call", () => {
-    expect(run(buy, { response: { estimated_gas_cost: 1 } }).data).toBe(run(buy).data);
+    expect(run(buy, { response: { estimated_gas_cost: 1 } })).toEqual(run(buy));
     expect(run(buy, { response: { estimated_gas_cost: 10_000_000 } })).toEqual(run(buy));
   });
   test("inclusive deadline: equal accepts, one second later refuses", () => {
-    expect(run(buy, { fresh: BigInt(buy.input.time) }).deadline).toBe(String(buy.input.time));
-    expect(() => run(buy, { fresh: BigInt(buy.input.time) + 1n })).toThrow("deadline_expired");
-    expect(() => run(buy, { request: { deadline: String(buy.input.time - 1) } })).toThrow("deadline_expired");
+    const deadline = BigInt(buy.request.deadline);
+    expect(run(buy, { fresh: deadline }).deadline).toBe(buy.request.deadline);
+    expect(() => run(buy, { fresh: deadline + 1n })).toThrow("deadline_expired");
+    expect(() => run(buy, { request: { deadline: (BigInt(buy.context.blockTime) - 1n).toString() } })).toThrow("deadline_expired");
     expect(() => run(buy, { request: { deadline: "4294967296" }, fresh: 0n })).toThrow("deadline_out_of_range");
   });
   test("partial intent and nonzero skipAhead refuse", () => {
@@ -84,18 +129,30 @@ describe("accepted quoter → 0x03c8 router (local, non-executable)", () => {
     expect(() => run(buyOut, { request: { max_input: (BigInt(buyOut.response.total_calculated) - 1n).toString() } })).toThrow("guard_not_met");
   });
   test("snapshot, amount and route identity are bound", () => {
-    expect(() => run(buy, { response: { block_number: 14 } })).toThrow("quote_snapshot_mismatch");
+    expect(() => run(buy, { response: { block_number: 1 } })).toThrow("quote_snapshot_mismatch");
     expect(() => run(buy, { response: { block_hash: `0x${"00".repeat(32)}` } })).toThrow("quote_snapshot_mismatch");
     expect(() => run(buy, { request: { amount: "999999999999999999" } })).toThrow("quote_amount_mismatch");
     expect(() => run(buy, { response: { total_calculated: "1" } })).toThrow("quote_amount_mismatch");
     expect(() => run(buy, { response: { price_impact: 0 } })).toThrow("quote_response_invalid");
     expect(() => run(buy, { response: { splits: [buy.response.splits[0], buy.response.splits[0]] } })).toThrow("quote_response_invalid");
     expect(() => run(buy, { response: hop(buy, { type: "core" }) })).toThrow("quote_response_invalid");
-    expect(() => run(buy, { response: hop(buy, { forwardee: LOCAL_INSTANCE_PINS[1].address }) })).toThrow("launch_support_disabled");
-    expect(() => run(buy, { request: { extension: LOCAL_INSTANCE_PINS[1].address } })).toThrow("launch_support_disabled");
+    const [nativePin, erc20Pin] = LOCAL_INSTANCE_PINS;
+    expect(() => run(buy, { response: hop(buy, { forwardee: erc20Pin.extension }) })).toThrow("launch_support_disabled");
+    expect(() => run(buy, { response: hop(buy, { forwardee: nativePin.periphery }) })).toThrow("launch_support_disabled");
+    expect(() => run(buy, { request: { extension: nativePin.periphery } })).toThrow("launch_support_disabled");
+    expect(() => run(buy, { request: { extension: erc20Pin.extension } })).toThrow("launch_support_disabled");
     expect(() => run(buy, { request: { other_token: "0x0000000000000000000000000000000000000001" } })).toThrow("quote_route_mismatch");
   });
-  test("unsupported pin refuses before parsing", () => {
-    expect(() => run(buy, { pin: { runtime: `0x${"00".repeat(32)}` } })).toThrow("launch_support_disabled");
+  test("output to a sink refuses", () => {
+    const pin = LOCAL_INSTANCE_PINS[0];
+    const key = buy.response.splits[0].route[0].swap.pool_key;
+    for (const sink of [zeroAddress, pin.core, pin.extension, pin.periphery, ZERO_SEED_ROUTER, key.token1]) {
+      expect(() => run(buy, { recipient: sink })).toThrow("invalid_recipient");
+    }
+  });
+  test("unsupported or mismatched pin refuses before parsing", () => {
+    expect(() => run(buy, { pin: { extensionRuntime: `0x${"00".repeat(32)}` } })).toThrow("launch_support_disabled");
+    expect(() => run(buy, { pin: { periphery: LOCAL_INSTANCE_PINS[1].periphery } })).toThrow("launch_support_disabled");
+    expect(() => run(buy, { pin: { quoteKind: "erc20" } })).toThrow("launch_support_disabled");
   });
 });

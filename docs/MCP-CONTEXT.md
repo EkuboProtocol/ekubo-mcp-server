@@ -51,9 +51,10 @@ to this server's tools and plans; do not write one as a blanket prohibition.
 The seven support-disabled `launchpad_*` tools and `launchpad://disclosures`
 are served only at `/mcp/launchpad-testing`, so no other endpoint's budget
 grows for them. Placed in the Ekubo Protocol catalog they would cost every
-`/mcp` and `/mcp/ekubo` session about 1,830 o200k tokens (7,166 tools and 251
-resources characters) for tools that refuse every call. The testing endpoint
-itself is about 2,040 tokens (148 instructions, 1,785 tools, 109 resources).
+`/mcp` and `/mcp/ekubo` session about 1,810 o200k tokens (7,145 tools and 252
+resources characters, 0.54.0) for tools that refuse every call. The testing
+endpoint itself is about 2,010 tokens (149 instructions, 1,752 tools, 109
+resources).
 
 ## How the catalog is kept small
 

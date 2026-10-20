@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { type Address, zeroAddress } from "viem";
 import {
-  LOCAL_INSTANCE_PINS, refuseExecutableUse, supportedInstances, unsigned,
-  validateClaimRecipient, validateCreationTiming, validateMetadata,
+  LOCAL_INSTANCE_PINS, NATIVE_QUOTE, refuseExecutableUse, supportedInstances, unsigned,
+  validateClaimRecipient, validateCreationTiming, validateMetadata, wellFormedPin,
 } from "../../src/launchpad/zero-seed/policy.js";
 
 const timing = { buildTime: 1800000000n, tradingStart: 1800000300n, executionExpiry: 1800000300n };
@@ -19,6 +19,26 @@ describe("frozen zero-seed constraints (not executable acceptance)", () => {
       expect(supportedInstances([{ ...LOCAL_INSTANCE_PINS[0], [key]: "wrong" }], true)).toEqual([]);
     });
   }
+
+  test("an extra or missing pin field disables support", () => {
+    expect(supportedInstances([{ ...LOCAL_INSTANCE_PINS[0], address: LOCAL_INSTANCE_PINS[0].extension } as never], true)).toEqual([]);
+    const { quoteRuntime: _, ...missing } = LOCAL_INSTANCE_PINS[0];
+    expect(supportedInstances([missing as never], true)).toEqual([]);
+  });
+
+  test("identity rules: distinct contracts, call-points byte, native exactly at address(0) without a runtime", () => {
+    const [native, erc20] = LOCAL_INSTANCE_PINS;
+    expect(LOCAL_INSTANCE_PINS.every(wellFormedPin)).toBe(true);
+    expect(native).toMatchObject({ quote: NATIVE_QUOTE, quoteKind: "native", quoteRuntime: null });
+    expect(erc20.quoteKind).toBe("erc20");
+    for (const bad of [
+      { ...native, periphery: native.extension }, { ...native, periphery: native.core }, { ...native, extension: native.core },
+      { ...native, extension: `0x52${native.extension.slice(4)}` }, { ...native, quoteRuntime: erc20.quoteRuntime },
+      { ...native, quoteKind: "erc20" as const }, { ...erc20, quote: NATIVE_QUOTE }, { ...erc20, quoteRuntime: null },
+      { ...erc20, quoteKind: "native" as const }, { ...native, periphery: NATIVE_QUOTE }, { ...native, chainId: "0" },
+      { ...native, extensionAbiSha256: native.peripheryAbiSha256 },
+    ]) expect(wellFormedPin(bad as never)).toBe(false);
+  });
 
   test("returned pins cannot be mutated after screening", () => {
     const pins = supportedInstances(LOCAL_INSTANCE_PINS, true);
@@ -61,9 +81,9 @@ describe("frozen zero-seed constraints (not executable acceptance)", () => {
     expect(() => validateMetadata("😀".repeat(8))).toThrow("metadata_too_long");
   });
 
-  test("claim sink set is exactly zero/Core/extension/token0/token1", () => {
+  test("claim sink set is exactly zero/Core/extension/periphery/token0/token1", () => {
     const address = (digit: string) => `0x${digit.repeat(40)}` as Address;
-    const sinks = { core: address("1"), extension: address("2"), token0: address("3"), token1: address("4") };
+    const sinks = { core: address("1"), extension: address("2"), periphery: address("6"), token0: address("3"), token1: address("4") };
     for (const recipient of [zeroAddress, ...Object.values(sinks)]) {
       expect(() => validateClaimRecipient(recipient, sinks)).toThrow("invalid_recipient");
     }
@@ -72,8 +92,8 @@ describe("frozen zero-seed constraints (not executable acceptance)", () => {
 
   test("sinks with checksum letters are refused in any casing", () => {
     const pin = LOCAL_INSTANCE_PINS[0];
-    const sinks = { core: pin.core as Address, extension: pin.address as Address, token0: pin.quote as Address,
-      token1: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd" as Address };
+    const sinks = { core: pin.core as Address, extension: pin.extension as Address, periphery: pin.periphery as Address,
+      token0: pin.quote as Address, token1: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd" as Address };
     for (const recipient of Object.values(sinks)) {
       expect(() => validateClaimRecipient(recipient, sinks)).toThrow("invalid_recipient");
       expect(() => validateClaimRecipient(recipient.toUpperCase().replace("0X", "0x") as Address, sinks)).toThrow("invalid_recipient");

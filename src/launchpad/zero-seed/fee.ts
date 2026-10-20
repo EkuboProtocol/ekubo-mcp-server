@@ -1,34 +1,55 @@
 import { ZeroSeedError } from "./policy.js";
 
-/** 2^64: the Q0.64 unit. Exactly 100% is not encodable as a uint64 fee or factor. */
+/** 2^64: the Q0.64 unit. Exactly 100% is not encodable as a uint64 fee. */
 export const Q64 = 1n << 64n;
+/** 2^128: the Q128 unit of the decay chain. */
+export const Q128 = 1n << 128n;
 const MAX_U128 = (1n << 128n) - 1n;
 const MAX_I128 = (1n << 127n) - 1n;
 
-/** Draft protocol cap floor(99 * 2^64 / 100) on the initial fee. A proposal under review, not a live parameter. */
+/** Protocol cap floor(99 * 2^64 / 100) on the initial fee. */
 export const MAX_CREATOR_FEE = 18262276632972456099n;
 
-/**
- * Study factors only (about six underlying half-lives over the duration); not selected product parameters
- * and never a default. Literal Q0.64 per-second multipliers, not half-lives.
- */
-export const STUDY_DECAY_FACTORS: Readonly<Record<600 | 3600, bigint>> = Object.freeze({
-  600: 18319323104848571946n,
-  3600: 18425445863997925462n,
-});
+/** The fixed half-life of the decay, in seconds. Not a launch parameter. */
+export const FEE_HALF_LIFE_SECONDS = 600;
+
+/** Elapsed seconds from which the decay is exactly zero (2^17). */
+export const DECAY_ZERO_FROM = 131072n;
 
 /**
- * factor ** exponent in Q0.64, exactly as the contract's powQ64: for each set exponent bit multiply the running
- * result by the current factor and floor; shift; square and floor the factor only while bits remain.
+ * round(2^128 * 2^(-2^i / 600)) for bits 0..16, as in the contract's feeDecay.sol. The contract applies bit 0 as
+ * 2^128 minus a constant; the product is the same.
  */
-export function powQ64(factor: bigint, exponent: bigint): bigint {
-  let result = Q64;
-  let base = factor;
-  let rest = exponent;
-  while (rest !== 0n) {
-    if ((rest & 1n) === 1n) result = (result * base) / Q64;
-    rest >>= 1n;
-    if (rest !== 0n) base = (base * base) / Q64;
+export const DECAY_TABLE_Q128: readonly bigint[] = Object.freeze([
+  339889484297159900493648602831395569057n,
+  339497055287118257930533248299650400736n,
+  338713556013920184336129943844147573651n,
+  337151977828609613753562640265082287810n,
+  334050386396171404885545237344599070716n,
+  327932539264834336949184815807600758235n,
+  316030922441737935988095136387330274498n,
+  293507844215098455952964317090465751204n,
+  253162852354938356992240649094357060196n,
+  188347784201757897225807540435664088841n,
+  104251325552682051605813724741512712010n,
+  31939177389160626453527783486618815759n,
+  2997836947964109484105344435429137776n,
+  26410496811510722015611852309540293n,
+  2049810421099131403277778219901n,
+  12347753427443481862030n,
+  448060n,
+]);
+
+/**
+ * decayQ128: 2^(-elapsed / 600) in Q128. Starting at 2^128, multiply by the table constant of every set bit of
+ * `elapsed` in ascending bit order and floor after each multiply; zero from 2^17 seconds. The order is normative.
+ */
+export function decayQ128(elapsed: bigint): bigint {
+  if (elapsed < 0n) throw new ZeroSeedError("unsigned_domain");
+  if (elapsed >= DECAY_ZERO_FROM) return 0n;
+  let result = Q128;
+  for (let bit = 0; bit < DECAY_TABLE_Q128.length; bit++) {
+    if (((elapsed >> BigInt(bit)) & 1n) === 1n) result = (result * DECAY_TABLE_Q128[bit]) / Q128;
   }
   return result;
 }
@@ -38,30 +59,30 @@ export interface FeeSchedule {
   feeDuration: bigint;
   initialFee: bigint;
   finalFee: bigint;
-  decayFactor: bigint;
 }
 
 /** Same domain as the contract's creation validation, minus the cap (indexed data is checked, not capped). */
 export function checkSchedule(schedule: FeeSchedule): void {
-  const { tradingStart, feeDuration, initialFee, finalFee, decayFactor } = schedule;
-  for (const [value, bits] of [[tradingStart, 64], [feeDuration, 32], [initialFee, 64], [finalFee, 64], [decayFactor, 64]] as const) {
+  const { tradingStart, feeDuration, initialFee, finalFee } = schedule;
+  for (const [value, bits] of [[tradingStart, 64], [feeDuration, 32], [initialFee, 64], [finalFee, 64]] as const) {
     if (value < 0n || value >= 1n << BigInt(bits)) throw new ZeroSeedError("unsigned_domain");
   }
-  if (feeDuration === 0n || finalFee > initialFee || decayFactor === 0n) throw new ZeroSeedError("invalid_fee_schedule");
+  if (feeDuration === 0n || finalFee > initialFee) throw new ZeroSeedError("invalid_fee_schedule");
 }
 
 /**
- * The contract's _feeAt: the initial fee at or before trading start, the final fee from start + duration, and
- * in between finalFee + floor((initialFee - finalFee) * (b^t - b^D) / (2^64 - b^D)). Elapsed time is not narrowed.
+ * The contract's decayedFee over elapsed = timestamp - tradingStart: the initial fee at or before trading start, the
+ * final fee from start + duration, and in between finalFee + floor((initialFee - finalFee) * (decay(t) - decay(D)) /
+ * (2^128 - decay(D))). Elapsed time is not narrowed.
  */
 export function feeAt(schedule: FeeSchedule, timestamp: bigint): bigint {
   checkSchedule(schedule);
-  const { tradingStart, feeDuration, initialFee, finalFee, decayFactor } = schedule;
+  const { tradingStart, feeDuration, initialFee, finalFee } = schedule;
   if (timestamp <= tradingStart) return initialFee;
   const elapsed = timestamp - tradingStart;
   if (elapsed >= feeDuration) return finalFee;
-  const endpoint = powQ64(decayFactor, feeDuration);
-  return finalFee + ((initialFee - finalFee) * (powQ64(decayFactor, elapsed) - endpoint)) / (Q64 - endpoint);
+  const endpoint = decayQ128(feeDuration);
+  return finalFee + ((initialFee - finalFee) * (decayQ128(elapsed) - endpoint)) / (Q128 - endpoint);
 }
 
 /** Q0.64 fee as a percentage to four decimals, rounding half up. */
@@ -78,16 +99,16 @@ export function exactOutputMultiplier(rate: bigint): string {
 
 export type FeePhase = "before_trading_start" | "fee_decay" | "final_fee";
 
-/** The API's phase labels: the exclusive start and end match its served schedule. */
+/** Phase labels: the exclusive start and end of the decay window. */
 export function feePhase(schedule: FeeSchedule, timestamp: bigint): FeePhase {
   if (timestamp < schedule.tradingStart) return "before_trading_start";
   return timestamp < schedule.tradingStart + schedule.feeDuration ? "fee_decay" : "final_fee";
 }
 
 /**
- * The first elapsed second at which the excess over the final fee is at most half the initial excess, found
- * from the exact integer schedule (monotone), never from the factor's underlying half-life. Null for a flat
- * schedule.
+ * The first elapsed second at which the excess over the final fee is at most half the initial excess, found from
+ * the exact integer schedule (monotone). It equals the 600 s half-life only when the duration is long; the
+ * endpoint rescaling makes it shorter for short windows. Null for a flat schedule.
  */
 export function excessHalvingTime(schedule: FeeSchedule): bigint | null {
   checkSchedule(schedule);
