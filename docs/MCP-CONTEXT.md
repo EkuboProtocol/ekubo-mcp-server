@@ -55,8 +55,10 @@ grows for them. Placed in the Ekubo Protocol catalog they would cost every
 characters plus the disclosures resource, 0.54.0) for tools that refuse every
 call. The
 testing endpoint's tools budget was raised from 7,500 to 8,500 characters for
-`launchpad_get_owners`, which reads the API v3 ownership history; it is
-measured at 663 instructions, 8,098 tools and 523 resources characters.
+`launchpad_get_owners`, which reads the API ownership history; with the
+per-launch `quoteToken` of the create parameters it is measured at 663
+instructions, 8,230 tools (1,788 for the largest tool) and 523 resources
+characters.
 
 ## How the catalog is kept small
 

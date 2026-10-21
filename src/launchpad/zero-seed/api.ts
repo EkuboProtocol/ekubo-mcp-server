@@ -1,7 +1,8 @@
 import { type Address, encodeAbiParameters, type Hex, keccak256, numberToHex } from "viem";
 import { z } from "zod";
 import { feeAt, feePhase, MAX_CREATOR_FEE } from "./fee.js";
-import { type InstancePin, NATIVE_DECIMALS, NATIVE_QUOTE, supportedInstances, unsigned, ZeroSeedError } from "./policy.js";
+import { type InstancePin, launchQuote, NATIVE_DECIMALS, NATIVE_QUOTE, supportedInstances, unsigned,
+  ZeroSeedError } from "./policy.js";
 import { BlockRef, ClaimPage, LaunchDetail, LaunchList, LaunchSummary, OwnerPage, SwapPage } from "./schema.js";
 
 type Summary = z.infer<typeof LaunchSummary>;
@@ -17,11 +18,20 @@ const cursor = z.string().regex(/^(0|-?[1-9][0-9]*)$/).refine((value) =>
 );
 const pageInput = z.strictObject({ cursor: cursor.optional(), limit: z.number().int().min(1).max(200).optional() });
 
-/** The pinned instance this row belongs to: Core, extension, quote and its kind, and the periphery as controller. */
+/** The pinned instance this row belongs to: Core, extension, and the periphery as controller. */
 function pinOf(row: Summary, pins: readonly InstancePin[]): InstancePin | undefined {
   return pins.find((pin) => pin.chainId === row.chain_id && pin.extension === row.pool_key.extension &&
-    pin.core === row.pool_key.core_address && pin.quote === row.quote_token.address &&
-    pin.quoteKind === row.quote_token.kind && pin.periphery === row.controller);
+    pin.core === row.pool_key.core_address && pin.periphery === row.controller);
+}
+
+/** A launch is served only with a supported quote: native ETH, or an ERC-20 reviewed for this chain. */
+function supportedQuote(row: Summary, localHarness: boolean): boolean {
+  try {
+    const quote = launchQuote(row.chain_id, row.quote_token.address, localHarness);
+    return quote.kind === row.quote_token.kind;
+  } catch {
+    return false;
+  }
 }
 
 function sameBlock(a: Block, b: Block): boolean {
@@ -68,14 +78,23 @@ function validateFee(row: Summary): void {
   }
 }
 
+/** 0 < installed <= requested and sink = requested - installed, held by address(0). */
+function validateSupply(row: Summary): void {
+  const { requested, installed, sink } = row.supply;
+  const [r, i, k] = [requested, installed, sink].map(BigInt);
+  if (r >= 1n << 127n || i === 0n || i > r || k !== r - i) throw new ZeroSeedError("api_supply_mismatch");
+}
+
 function validateRow(row: Summary): void {
   validateQuote(row);
   validatePool(row);
   validateFee(row);
+  validateSupply(row);
 }
 
 /** The current owner holds the transferable ledger; the position spans the launch range on the launch token's side. */
 function validateDetail(row: Detail): void {
+  if (BigInt(row.principal.liquidity) === 0n) throw new ZeroSeedError("api_supply_mismatch");
   const ledger = row.fee_ledger;
   const sides = [ledger.launch_token, ledger.quote_token];
   if (ledger.holder !== row.owner || sides.some((s) => BigInt(s.accrued) !== BigInt(s.claimed) + BigInt(s.unclaimed))) {
@@ -112,16 +131,23 @@ function checkList(list: z.infer<typeof LaunchList>, chain: string, cursor: stri
   }
 }
 
-/** Read-only exact API v3 contract. No RPC, log scan, symbol resolution, or stats. */
+/** Read-only exact API v4 contract. No RPC, log scan, symbol resolution, or stats. */
 export class ZeroSeedApi {
   private readonly pins: readonly InstancePin[];
+  private readonly localHarness: boolean;
   private readonly base: URL;
 
   constructor(base: string, private readonly fetcher: typeof fetch, local?: {
     localHarness: boolean; instances: readonly InstancePin[];
   }) {
     this.base = new URL(base);
-    this.pins = supportedInstances(local?.instances ?? [], local?.localHarness ?? false);
+    this.localHarness = local?.localHarness ?? false;
+    this.pins = supportedInstances(local?.instances ?? [], this.localHarness);
+  }
+
+  /** Rows of a pinned instance with a supported quote; anything else is not served. */
+  private served(row: Summary): boolean {
+    return pinOf(row, this.pins) !== undefined && supportedQuote(row, this.localHarness);
   }
 
   private requireSupport(chain: string): void {
@@ -148,7 +174,7 @@ export class ZeroSeedApi {
     if (creator !== undefined) query.creator = address.parse(creator);
     const result = await this.request("/launches", { chainId: chain, ...query }, LaunchList);
     checkList(result, chain, paging.cursor, { owner, creator });
-    const data = result.data.filter((row) => pinOf(row, this.pins) !== undefined);
+    const data = result.data.filter((row) => this.served(row));
     data.forEach(validateRow);
     return { ...result, data };
   }
@@ -158,7 +184,7 @@ export class ZeroSeedApi {
     poolId.parse(id);
     const row = await this.request(`/launches/${chain}/${id}`, {}, LaunchDetail);
     if (row.chain_id !== chain || row.pool_id !== id) throw new ZeroSeedError("api_pool_identity_mismatch");
-    if (pinOf(row, this.pins) === undefined) throw new ZeroSeedError("api_404");
+    if (!this.served(row)) throw new ZeroSeedError("api_404");
     validateRow(row);
     validateDetail(row);
     return row;

@@ -6,18 +6,23 @@ import { decayQ128, exactOutputMultiplier, excessHalvingTime, FEE_HALF_LIFE_SECO
   type FeeSchedule } from "./fee.js";
 import { address, BuildContext, bytes32, createData, decimal, Parameters, type ParametersInput,
   requireLocalPin, validateBuild, validateParameters } from "./installation.js";
-import { Installation, type InstallationInput, validateInstallation } from "./preview.js";
-import { type InstancePin, NATIVE_DECIMALS, samePin, validateClaimRecipient, ZeroSeedError } from "./policy.js";
+import { Installation, type InstallationInput, supplyOf, validateInstallation } from "./preview.js";
+import { type InstancePin, launchQuote, type LaunchQuote, NATIVE_DECIMALS, samePin, validateClaimRecipient,
+  ZeroSeedError } from "./policy.js";
 import { launchSalts } from "./token.js";
 
 // Local, explicitly non-executable bodies. They are sealed with the artifact
 // envelope's digest and length rules but never stored as an execution_plan.
 const SCOPE = "synthetic-local-non-executable";
 const Pin = z.strictObject({
-  chainId: decimal, core: address, extension: address, periphery: address, quote: address,
-  quoteKind: z.enum(["native", "erc20"]), quoteRuntime: bytes32.nullable(), extensionRuntime: bytes32,
-  peripheryRuntime: bytes32, extensionAbiSha256: z.string(), peripheryAbiSha256: z.string(),
+  chainId: decimal, core: address, extension: address, periphery: address, extensionRuntime: bytes32,
+  peripheryRuntime: bytes32, deploymentBlock: decimal, extensionAbiSha256: z.string(), peripheryAbiSha256: z.string(),
 });
+/** The launch's own quote as resolved at build time: native ETH, or a reviewed ERC-20 and its runtime codehash. */
+const Quote = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("native"), address: z.literal("0x0000000000000000000000000000000000000000"), runtime: z.null() }),
+  z.strictObject({ kind: z.literal("erc20"), address, runtime: bytes32 }),
+]);
 const PoolKey = z.strictObject({ token0: address, token1: address, config: bytes32 });
 const hex = z.string().regex(/^0x([0-9a-f]{2})*$/);
 /** Create and claim are periphery calls that never carry value: the periphery cannot receive ETH. */
@@ -25,16 +30,16 @@ const Envelope = {
   scope: z.literal(SCOPE), executable: z.literal(false),
   chain_id: decimal, sender: address, target: address, data: hex, value: z.literal("0"), pin: Pin,
 };
-// v3: the target is the periphery, the tuple has no quote token or decay factor, and the pin binds both contracts.
+// v4: the tuple names the launch's quote and carries the requested supply unchanged; the pin has no quote.
 export const LocalCreateBody = z.strictObject({
-  schema_version: z.literal("zero-seed-local-create/v3"), ...Envelope, disclosure_version: z.literal(DISCLOSURE_VERSION),
-  build: BuildContext, requested: Parameters, installation: Installation,
+  schema_version: z.literal("zero-seed-local-create/v4"), ...Envelope, quote: Quote,
+  disclosure_version: z.literal(DISCLOSURE_VERSION), build: BuildContext, requested: Parameters, installation: Installation,
   preview: z.strictObject({ count: z.literal(1), read_integrity: bytes32, read_bytes: z.number().int().positive() }),
 });
 /** The launchOwner(poolId) read the claim was built on; the periphery checks the same owner at execution. */
 const OwnerCheck = z.strictObject({ block_number: decimal, block_hash: bytes32, pool_id: bytes32, launch_owner: address });
 export const LocalClaimBody = z.strictObject({
-  schema_version: z.literal("zero-seed-local-claim/v2"), ...Envelope,
+  schema_version: z.literal("zero-seed-local-claim/v3"), ...Envelope, quote: Quote,
   pool_key: PoolKey, recipient: address, owner_check: OwnerCheck,
   build: z.strictObject({ buildTime: decimal, executionExpiry: decimal }),
 });
@@ -92,32 +97,39 @@ function decodedParameters(data: Hex): ParametersInput {
   const p = call.args[0];
   return {
     name: p.name, symbol: p.symbol, decimals: p.decimals,
-    supply: p.supply.toString(), liquidity: p.liquidity.toString(), askTick: p.askTick, upperTick: p.upperTick,
+    supply: p.supply.toString(), quoteToken: p.quoteToken.toLowerCase(), askTick: p.askTick, upperTick: p.upperTick,
     tickSpacing: p.tickSpacing, tradingStart: p.tradingStart.toString(), feeDuration: p.feeDuration,
     initialFee: p.initialFee.toString(), finalFee: p.finalFee.toString(), salt: p.salt.toLowerCase(),
   };
 }
 
-/** Requested intent and the one preview's installed pair stay separate; only supply/L may differ. */
-function bindActual(body: CreateBody, requested: ParametersInput): ParametersInput {
+function sameQuote(a: LaunchQuote, b: LaunchQuote): boolean {
+  return a.kind === b.kind && a.address === b.address && a.runtime === b.runtime;
+}
+
+/**
+ * The calldata is the requested parameters exactly, supply included: the installed supply and liquidity come from
+ * the one preview and are only shown. The quote is the requested one, still reviewed.
+ */
+function bindRequested(body: CreateBody, requested: ParametersInput): ParametersInput {
   if (!sameParameters(body.requested, requested)) throw new ZeroSeedError("requested_mismatch");
-  validateParameters(body.requested, body.pin);
-  if (body.requested.liquidity !== "0") throw new ZeroSeedError("preview_liquidity_must_be_zero");
-  validateInstallation(body.installation, body.requested, body.pin, body.sender as Address);
-  const actual = { ...body.requested, supply: body.installation.installedSupply, liquidity: body.installation.liquidity };
-  if (!sameParameters(decodedParameters(body.data as Hex), actual)) throw new ZeroSeedError("calldata_summary_mismatch");
-  return actual;
+  const quote = validateParameters(body.requested, body.pin);
+  if (!sameQuote(body.quote, quote)) throw new ZeroSeedError("unsupported_quote");
+  validateInstallation(body.installation, body.requested, body.pin, quote, body.sender as Address);
+  if (!sameParameters(decodedParameters(body.data as Hex), body.requested)) throw new ZeroSeedError("calldata_summary_mismatch");
+  return body.requested;
 }
 
 /** Local producer: the periphery create body for exactly the one bound preview. Never executable. */
 export function localCreateBody(preview: {
-  owner: Address; pin: InstancePin; build: z.infer<typeof BuildContext>; requested: ParametersInput;
-  actual: ParametersInput; installation: InstallationInput; preview: { reference: { integrity: { value: Hex }; bytes: number } };
+  owner: Address; pin: InstancePin; quote: LaunchQuote; build: z.infer<typeof BuildContext>; requested: ParametersInput;
+  installation: InstallationInput; preview: { reference: { integrity: { value: Hex }; bytes: number } };
 }): Sealed {
   return seal(LocalCreateBody.parse({
-    schema_version: "zero-seed-local-create/v3", scope: SCOPE, executable: false,
+    schema_version: "zero-seed-local-create/v4", scope: SCOPE, executable: false,
     chain_id: preview.pin.chainId, sender: preview.owner.toLowerCase(), target: preview.pin.periphery,
-    data: createData(preview.actual), value: "0", pin: { ...preview.pin }, disclosure_version: DISCLOSURE_VERSION,
+    data: createData(preview.requested), value: "0", pin: { ...preview.pin }, quote: { ...preview.quote },
+    disclosure_version: DISCLOSURE_VERSION,
     build: preview.build,
     requested: preview.requested, installation: preview.installation,
     preview: { count: 1, read_integrity: preview.preview.reference.integrity.value, read_bytes: preview.preview.reference.bytes },
@@ -163,34 +175,36 @@ export function poolIdOf(key: { token0: string; token1: string; config: string }
     [key.token0 as Address, key.token1 as Address, key.config as Hex]));
 }
 
-/** Instance identity and the deployment's quote provenance, shown with every summary. */
-function instanceFields(pin: InstancePin) {
+/** Instance identity and this launch's reviewed quote, shown with every summary. */
+function instanceFields(pin: InstancePin, quote: LaunchQuote) {
   return {
     instance: { core: pin.core, extension: pin.extension, periphery: pin.periphery, controller: pin.periphery,
-      extension_runtime: pin.extensionRuntime, periphery_runtime: pin.peripheryRuntime },
-    quote: pin.quoteKind === "native"
-      ? { kind: "native" as const, address: pin.quote, decimals: NATIVE_DECIMALS, runtime: null, wrapping: false, approval: false }
-      : { kind: "erc20" as const, address: pin.quote, decimals: null, runtime: pin.quoteRuntime, wrapping: false, approval: true },
+      extension_runtime: pin.extensionRuntime, periphery_runtime: pin.peripheryRuntime, deployment_block: pin.deploymentBlock },
+    quote: quote.kind === "native"
+      ? { kind: "native" as const, address: quote.address, decimals: NATIVE_DECIMALS, runtime: null, wrapping: false, approval: false }
+      : { kind: "erc20" as const, address: quote.address, decimals: null, runtime: quote.runtime, wrapping: false, approval: true },
   };
 }
 
-function createFields(body: CreateBody, actual: ParametersInput) {
+function createFields(body: CreateBody, requested: ParametersInput) {
   const tokenIs1 = body.installation.poolKey.token1 === body.installation.token;
-  const salts = launchSalts(body.sender as Address, body.pin.periphery as Address, actual.salt as Hex);
+  const salts = launchSalts(body.sender as Address, body.pin.periphery as Address, requested.salt as Hex);
+  const supply = supplyOf(requested, body.installation);
   return {
-    owner: body.sender, ...instanceFields(body.pin), name: actual.name, symbol: actual.symbol,
-    decimals: actual.decimals, supply: actual.supply, liquidity: actual.liquidity, ask_tick: actual.askTick,
-    upper_tick: actual.upperTick, tick_spacing: actual.tickSpacing, trading_start: Number(actual.tradingStart),
-    fee_duration: actual.feeDuration, initial_fee: actual.initialFee, final_fee: actual.finalFee,
-    initial_fee_percent: feePercent(BigInt(actual.initialFee)), final_fee_percent: feePercent(BigInt(actual.finalFee)),
-    salt: { owner_salt: actual.salt, owner_namespaced: salts.ownerSalt, token_create2: salts.tokenSalt },
-    fee_schedule: feeScheduleFields(actual, BigInt(body.build.buildTime)),
+    owner: body.sender, ...instanceFields(body.pin, body.quote), name: requested.name, symbol: requested.symbol,
+    decimals: requested.decimals, supply, liquidity: body.installation.liquidity, ask_tick: requested.askTick,
+    upper_tick: requested.upperTick, tick_spacing: requested.tickSpacing, trading_start: Number(requested.tradingStart),
+    fee_duration: requested.feeDuration, initial_fee: requested.initialFee, final_fee: requested.finalFee,
+    initial_fee_percent: feePercent(BigInt(requested.initialFee)), final_fee_percent: feePercent(BigInt(requested.finalFee)),
+    salt: { owner_salt: requested.salt, owner_namespaced: salts.ownerSalt, token_create2: salts.tokenSalt },
+    fee_schedule: feeScheduleFields(requested, BigInt(body.build.buildTime)),
     ownership: {
       initial_owner: body.sender, recorded_by: body.pin.periphery, transferable: true, claims_by: "current_owner" as const,
       initial_owner_event: "LaunchOwnerChanged(poolId, 0x0, owner)" as const,
     },
     binding: {
-      requested_supply: body.requested.supply, installed_supply: actual.supply, installed_liquidity: actual.liquidity,
+      requested_supply: supply.requested, installed_supply: supply.installed, sink_supply: supply.sink,
+      installed_liquidity: body.installation.liquidity, calldata_supply: requested.supply,
       token: body.installation.token, launch_token_is_token1: tokenIs1, pool_key: body.installation.poolKey,
       pool_id: poolIdOf(body.installation.poolKey),
       position_id: body.installation.positionId, initial_tick: body.installation.initialTick,
@@ -198,6 +212,8 @@ function createFields(body: CreateBody, actual: ParametersInput) {
       calldata_keccak256: keccak256(body.data as Hex), preview_read_integrity: body.preview.read_integrity,
     },
     rounding: {
+      supply_remainder: { asset: "launch_token", amount: supply.sink, holder: supply.sink_holder, spendable: false,
+        counted_in_total_supply: true, known_at_creation: true },
       upper_residue: { asset: "launch_token", known_at_creation: false, claimable_principal: false, creator_fee: false },
       core_unbooked_dust: { per_asset: ["launch_token", "quote_token"], known_at_creation: false, claimable_principal: false, creator_fee: false },
     },
@@ -210,15 +226,16 @@ export function decodeOwnerCreate(sealed: Sealed, expected: {
 }, freshTime: bigint) {
   const body = unseal(sealed, LocalCreateBody);
   checkEnvelope(body, expected);
-  const actual = bindActual(body, expected.requested);
-  validateBuild(actual, body.build, freshTime);
-  const fields = createFields(body, actual);
+  const requested = bindRequested(body, expected.requested);
+  validateBuild(requested, body.build, freshTime);
+  const fields = createFields(body, requested);
   const statements = createStatements({
-    installedSupply: actual.supply, initialFeePercent: fields.initial_fee_percent, finalFeePercent: fields.final_fee_percent,
-    feeDuration: String(actual.feeDuration), tradingStart: new Date(Number(actual.tradingStart) * 1000).toISOString(),
+    requestedSupply: fields.supply.requested, installedSupply: fields.supply.installed, sinkSupply: fields.supply.sink,
+    initialFeePercent: fields.initial_fee_percent, finalFeePercent: fields.final_fee_percent,
+    feeDuration: String(requested.feeDuration), tradingStart: new Date(Number(requested.tradingStart) * 1000).toISOString(),
     excessHalvingSeconds: String(fields.fee_schedule.excess_halving_seconds ?? "none"),
     exactOutputMultiplier: fields.fee_schedule.exact_output_multiplier_at_initial, owner: body.sender,
-    quote: quoteText(body.pin),
+    quote: quoteText(body.quote),
   });
   return withSummaryHash({
     schema_version: OWNER_SUMMARY_VERSION, chain_id: body.chain_id, target: body.target,
@@ -226,8 +243,8 @@ export function decodeOwnerCreate(sealed: Sealed, expected: {
   });
 }
 
-// v3: periphery targets, instance and quote provenance, transferable ownership, no decay factor.
-const OWNER_SUMMARY_VERSION = "zero-seed-launch-owner-summary/v3" as const;
+// v4: per-launch quote, requested/installed/sink supply and the computed liquidity, instance without a quote.
+const OWNER_SUMMARY_VERSION = "zero-seed-launch-owner-summary/v4" as const;
 const DISCLOSURE = Object.freeze({ version: DISCLOSURE_VERSION, status: DISCLOSURE_STATUS });
 
 /** keccak256 of the canonical summary JSON without this field, so a consumer can bind exactly what was shown. */
@@ -241,11 +258,13 @@ function withSummaryHash<T extends object>(summary: T): T & { summary_keccak256:
  * Never executable.
  */
 export function localClaimBody(input: {
-  owner: Address; pin: InstancePin; poolKey: z.infer<typeof PoolKey>; recipient: Address;
+  owner: Address; pin: InstancePin; quoteToken: Address; poolKey: z.infer<typeof PoolKey>; recipient: Address;
   ownerCheck: z.infer<typeof OwnerCheck>; build: { buildTime: string; executionExpiry: string };
 }): Sealed {
+  requireLocalPin(input.pin);
+  const quote = launchQuote(input.pin.chainId, input.quoteToken.toLowerCase(), true);
   const body = LocalClaimBody.parse({
-    schema_version: "zero-seed-local-claim/v2", scope: SCOPE, executable: false,
+    schema_version: "zero-seed-local-claim/v3", scope: SCOPE, executable: false, quote: { ...quote },
     chain_id: input.pin.chainId, sender: input.owner.toLowerCase(), target: input.pin.periphery,
     data: encodeFunctionData({ abi: peripheryAbi, functionName: "claimFees", args: [
       { token0: input.poolKey.token0 as Address, token1: input.poolKey.token1 as Address, config: input.poolKey.config as Hex },
@@ -257,12 +276,13 @@ export function localClaimBody(input: {
   return seal(body);
 }
 
-/** A pool of this instance and its quote: a native quote is always token0. */
+/** A pool of this instance and of the launch's reviewed quote: a native quote is always token0. */
 function checkClaimPool(body: ClaimBody): void {
   const { token0, token1, config } = body.pool_key;
-  const quoteIs0 = token0 === body.pin.quote;
-  if (!quoteIs0 && token1 !== body.pin.quote) throw new ZeroSeedError("unsupported_quote");
-  if (body.pin.quoteKind === "native" && !quoteIs0) throw new ZeroSeedError("unsupported_quote");
+  if (!sameQuote(body.quote, launchQuote(body.pin.chainId, body.quote.address, true))) throw new ZeroSeedError("unsupported_quote");
+  const quoteIs0 = token0 === body.quote.address;
+  if ((!quoteIs0 && token1 !== body.quote.address) || token0 === token1) throw new ZeroSeedError("unsupported_quote");
+  if (body.quote.kind === "native" && !quoteIs0) throw new ZeroSeedError("unsupported_quote");
   if (BigInt(config) >> 96n !== BigInt(body.pin.extension)) throw new ZeroSeedError("pool_extension_mismatch");
   const check = body.owner_check;
   if (check.pool_id !== poolIdOf(body.pool_key)) throw new ZeroSeedError("owner_check_pool_mismatch");
@@ -300,7 +320,7 @@ export function decodeOwnerClaim(sealed: Sealed, expected: { pin: InstancePin; o
     schema_version: OWNER_SUMMARY_VERSION, chain_id: body.chain_id, target: body.target,
     selector: CLAIM_SELECTOR, method: "claimFees" as const, disclosure: DISCLOSURE,
     fields: {
-      owner: body.sender, ...instanceFields(body.pin), pool_key: body.pool_key, pool_id: body.owner_check.pool_id,
+      owner: body.sender, ...instanceFields(body.pin, body.quote), pool_key: body.pool_key, pool_id: body.owner_check.pool_id,
       recipient: body.recipient, owner_check: body.owner_check,
       settlement: { atomic: true, assets: ["token0", "token1"], partial_claim: false,
         on_revert: "nothing moves; prepare a fresh claim", execution_guaranteed: false,

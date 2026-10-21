@@ -32,7 +32,7 @@ const pin = LOCAL_INSTANCE_PINS[0];
 const sender = "0x0000000000000000000000000000000000000123";
 const poolId = `0x${"11".repeat(32)}`;
 const parameters = {
-  name: "Local", symbol: "LOC", decimals: 18, supply: "1000", liquidity: "0",
+  name: "Local", symbol: "LOC", decimals: 18, supply: "1000000000000000000000000000",
   askTick: -100, upperTick: 100, tickSpacing: 100, tradingStart: "1300", feeDuration: 3600,
   initialFee: "1", finalFee: "0", salt: `0x${"00".repeat(32)}`,
 };
@@ -217,19 +217,33 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
     });
   }
 
-  it("prepare_create takes no quote token or decay factor and refuses the earlier tuple before anything else", async () => {
+  it("prepare_create takes the launch's quote (native by default) and the requested supply, with no liquidity input", async () => {
     const e = workerEnv();
     const tools = (await mcp(e, TESTING, "tools/list")).result.tools as Json[];
     const create = tools.find((t) => t.name === "launchpad_prepare_create");
-    const properties = Object.keys(create.inputSchema.properties.parameters.properties);
-    expect(properties).not.toContain("quoteToken");
+    const schema = create.inputSchema.properties.parameters;
+    const properties = Object.keys(schema.properties);
+    expect(properties).toEqual(["name", "symbol", "decimals", "supply", "quoteToken", "askTick", "upperTick", "tickSpacing",
+      "tradingStart", "feeDuration", "initialFee", "finalFee", "salt"]);
+    expect(properties).not.toContain("liquidity");
     expect(properties).not.toContain("decayFactor");
-    expect(create.inputSchema.properties.parameters.required).toEqual(properties);
-    const stale = { ...parameters, quoteToken: `0x${"00".repeat(20)}`, decayFactor: "1" };
-    const reply = await call(e, "launchpad_prepare_create", { chain_id: pin.chainId, sender, parameters: stale });
-    expect(reply.result.isError).toBe(true);
-    expect(reply.result.content[0].text).toContain("quoteToken");
-    expect(JSON.stringify(reply)).not.toContain("execution_plan_reference");
+    expect(schema.required).toEqual(properties.filter((key) => key !== "quoteToken"));
+    expect(schema.properties.quoteToken).toMatchObject({ default: "0x0000000000000000000000000000000000000000",
+      pattern: "^0x[0-9a-f]{40}$" });
+    expect(schema.properties.quoteToken.description).toContain("native ETH");
+    expect(schema.properties.supply.description).toContain("Requested raw supply");
+    for (const stale of [{ ...parameters, liquidity: "0" }, { ...parameters, decayFactor: "1" }]) {
+      const reply = await call(e, "launchpad_prepare_create", { chain_id: pin.chainId, sender, parameters: stale });
+      expect(reply.result.isError).toBe(true);
+      expect(reply.result.content[0].text).toMatch(/liquidity|decayFactor/);
+    }
+    // Native default, an explicit ERC-20 and an unreviewed ERC-20 all fail closed: support is disabled.
+    for (const quoteToken of [undefined, "0xffffffffffffffffffffffffffffffffffffffff", "0x4200000000000000000000000000000000000006"]) {
+      const reply = await call(e, "launchpad_prepare_create", { chain_id: pin.chainId, sender,
+        parameters: quoteToken === undefined ? parameters : { ...parameters, quoteToken } });
+      expect(reply.result.structuredContent.error.code).toBe("launch_support_disabled");
+    }
+    expect(JSON.stringify(tools)).not.toContain("execution_plan_reference");
     expect(e.ARTIFACT_STORE.entries.size).toBe(0);
     expect(requests).toEqual([]);
   });
@@ -243,7 +257,7 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
   it("serves the nine versioned draft mechanism disclosures", async () => {
     const reply = await mcp(workerEnv(), TESTING, "resources/read", { uri: "launchpad://disclosures" });
     const document = JSON.parse(reply.result.contents[0].text);
-    expect(document).toMatchObject({ version: 4, status: "draft_not_approved" });
+    expect(document).toMatchObject({ version: 5, status: "draft_not_approved" });
     expect(document.disclosures.map((entry: Json) => entry.code)).toEqual([
       "zero_initial_bid", "buyer_funded_quote_reserve", "permanent_principal_lock", "creator_fee_recipient_and_rate",
       "transferable_launch_ownership", "creator_fee_recapture", "high_initial_fee", "exact_output_gross_up", "no_exit_guarantee",
@@ -253,5 +267,6 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
     expect(text).not.toContain("linearly");
     expect(text).not.toContain("cannot transfer");
     expect(text).toContain("600 s half-life");
+    expect(text).toContain("rounding remainder of <sink supply> is minted to address(0)");
   });
 });

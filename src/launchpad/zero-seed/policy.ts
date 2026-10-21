@@ -1,12 +1,12 @@
 import { type Address, getAddress, zeroAddress } from "viem";
 import { ServiceError } from "../../core.js";
 
-// Consumer interface of evm-contracts 4f1a306: ZeroSeedLaunch(Core, quote) and ZeroSeedLaunchPeriphery(Core,
-// extension). Not deployed, released or audited.
-export const CONTRACTS_COMMIT = "4f1a3060b099e8a50469848118f44c0c65cfab9a";
+// Consumer interface of evm-contracts 40af6cb: ZeroSeedLaunch(Core) and ZeroSeedLaunchPeriphery(Core, extension).
+// Not deployed, released or audited.
+export const CONTRACTS_COMMIT = "40af6cb359b0de2f61f15e47b6622a00c48b5b08";
 /** sha256 of the compact, key-sorted JSON of each full compiled ABI (`jq -cS .abi`, no trailing newline). */
-export const EXTENSION_ABI_SHA256 = "21f9e2c0166ab28ce8573c481de5b0fc2f37dd7595d496d326f0a2d1a544254e";
-export const PERIPHERY_ABI_SHA256 = "5c563488b843aee923d0d819a66489eeee543dd20d1582de1f5df643f5d08a75";
+export const EXTENSION_ABI_SHA256 = "999068f8e41867e972f4485c0105f584a2c10d7537615e6b4517807548fcd4bf";
+export const PERIPHERY_ABI_SHA256 = "df24d9f07d45323da7e46c0f6e64ce24f8f522442d60cb07880ddf742ebe7305";
 
 /** Core's NATIVE_TOKEN_ADDRESS. A native quote has no code, decimals() or approvals and is always token0. */
 export const NATIVE_QUOTE = zeroAddress;
@@ -15,76 +15,97 @@ export const NATIVE_DECIMALS = 18;
 export const EXTENSION_CALL_POINTS_BYTE = "51";
 
 /**
- * One launcher-deployed instance: the extension, its periphery, Core and the extension's constructor quote, each
- * bound by the exact deployed runtime (see runtime.ts for how the immutables inside it are checked). An ERC-20
- * quote also pins its runtime; a native quote has none.
+ * One launcher-deployed instance: Core, the extension and its periphery, each contract bound by its exact deployed
+ * runtime (see runtime.ts for how the immutables inside it are checked), and the block both were deployed in. An
+ * instance has no quote: every launch names its own, and one instance serves native and ERC-20 quotes alike.
  */
 export interface InstancePin {
   chainId: string;
   core: string;
   extension: string;
   periphery: string;
-  quote: string;
-  quoteKind: "native" | "erc20";
-  quoteRuntime: string | null;
   extensionRuntime: string;
   peripheryRuntime: string;
+  deploymentBlock: string;
   extensionAbiSha256: string;
   peripheryAbiSha256: string;
 }
 
 const CORE = "0x00000000000014aa86c5d3c41765bb24e11bd701";
 
-// Instances deployed by script/zero-seed-local-chain.ts on a local anvil chain from the 4f1a306 artifacts. They
-// are not live instances and equal runtime alone is not provenance.
+// The one instance deployed on a local anvil chain from the 40af6cb artifacts, identically (same deterministic
+// deployer, salts, constructor arguments and block) by script/zero-seed-local-chain.ts and by the indexer's replay
+// fixture generator (indexer d783593, scripts/zeroSeedLaunchFixture.ts), whose chain the backend API golden reads.
+// Not a live instance, and equal runtime alone is not provenance.
 export const LOCAL_INSTANCE_PINS: readonly Readonly<InstancePin>[] = Object.freeze([
   Object.freeze({
     chainId: "31337",
     core: CORE,
-    extension: "0x5114703a4cf4256f0acb68f992c861d8c4d1b173",
-    periphery: "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
-    quote: NATIVE_QUOTE,
-    quoteKind: "native",
-    quoteRuntime: null,
-    extensionRuntime: "0x846786a63ba1a2c976f748fdc94b8cbc8f76dc64f07452333d36ff564f281bf7",
-    peripheryRuntime: "0x57d0ee27c634ac08d08b60bf8e6c2f185c7e9444613ccfde5ac9bbb5e3f84f2a",
-    extensionAbiSha256: EXTENSION_ABI_SHA256,
-    peripheryAbiSha256: PERIPHERY_ABI_SHA256,
-  } as const),
-  Object.freeze({
-    chainId: "31337",
-    core: CORE,
-    extension: "0x519435a42752da78e395999218d0ecc4fdcbcf4b",
-    periphery: "0xdc64a140aa3e981100a9beca4e685f962f0cf6c9",
-    quote: "0xffffffffffffffffffffffffffffffffffffffff",
-    quoteKind: "erc20",
-    quoteRuntime: "0x8a3a1f6a9f9dce633117adee5b458245835a8645a8c8726a26382a4622508b1c",
-    extensionRuntime: "0x56e32aeac03464c3babd754fc21e0594c42d82db9d9c0cc3dd1ce1ec20273750",
-    peripheryRuntime: "0xb78ea649f2e1817c851f7417a604d1565a346c6bec022abc821e3f1110739ac8",
+    extension: "0x519ddb6580e97e08e639d601dc6e378285c3ef34",
+    periphery: "0x094511cf93e73feca154da35a2404e8bde1111b4",
+    extensionRuntime: "0x32160cd19576b73812a6c557ca8f9697ac1c3cd821576afc70e9a9b00bf888be",
+    peripheryRuntime: "0x91a98d2669389244ad8553d84f5c7e3c2947d5d4b5abb519be93d68142cce7c1",
+    deploymentBlock: "2",
     extensionAbiSha256: EXTENSION_ABI_SHA256,
     peripheryAbiSha256: PERIPHERY_ABI_SHA256,
   } as const),
 ]);
-
-// The same two instances deployed separately by the indexer's replay fixture generator (indexer 2006846,
-// scripts/zeroSeedLaunchFixture.ts), whose chain the backend API golden and the quoter router probes read. Only the
-// peripheries' addresses differ; every runtime is identical. Local only, like the pins above.
-export const BACKEND_REPLAY_PINS: readonly Readonly<InstancePin>[] = Object.freeze([
-  Object.freeze({ ...LOCAL_INSTANCE_PINS[0], periphery: "0xb27e16c3d01850191c1e027f7a3372cd2e1fb324" }),
-  Object.freeze({ ...LOCAL_INSTANCE_PINS[1], periphery: "0x94e1b338def908449e6ea7c7d254630b45d27562" }),
-]);
-
-const LOCAL_HARNESS_PINS = [...LOCAL_INSTANCE_PINS, ...BACKEND_REPLAY_PINS];
 
 /** No env switch, provider read, or caller-supplied address can enable live support. */
 export const LIVE_INSTANCE_PINS: readonly InstancePin[] = Object.freeze([]);
 
+/** An ERC-20 quote reviewed for one chain, bound to its exact runtime codehash. */
+export interface ReviewedQuote {
+  chainId: string;
+  address: string;
+  runtime: string;
+}
+
+/**
+ * The quote is per launch, and supporting it is a separate decision from supporting the instance: native ETH is
+ * always eligible (behind the same instance gates), an ERC-20 only when it is reviewed here. Live: none.
+ */
+export const LIVE_REVIEWED_ERC20_QUOTES: readonly ReviewedQuote[] = Object.freeze([]);
+
+/** The local chains' plain 18-decimal test ERC-20 (evm-contracts test/TestToken.sol), relocated to 0xff..ff. */
+export const LOCAL_REVIEWED_ERC20_QUOTES: readonly Readonly<ReviewedQuote>[] = Object.freeze([
+  Object.freeze({
+    chainId: "31337",
+    address: "0xffffffffffffffffffffffffffffffffffffffff",
+    runtime: "0xe8ccd7c4eb891208d5e04a27a31dfaf2b9bce01e083d7b36f10b6dd6ea643e63",
+  } as const),
+]);
+
+/** The quote of one launch: native ETH at address(0) with no runtime, or a reviewed ERC-20 and its runtime. */
+export type LaunchQuote = Readonly<
+  { kind: "native"; address: typeof NATIVE_QUOTE; runtime: null } | { kind: "erc20"; address: string; runtime: string }
+>;
+const NATIVE: LaunchQuote = Object.freeze({ kind: "native", address: NATIVE_QUOTE, runtime: null });
+
 const ADDRESS = /^0x[0-9a-f]{40}$/;
 const BYTES32 = /^0x[0-9a-f]{64}$/;
 const PIN_KEYS = [
-  "chainId", "core", "extension", "periphery", "quote", "quoteKind", "quoteRuntime", "extensionRuntime",
-  "peripheryRuntime", "extensionAbiSha256", "peripheryAbiSha256",
+  "chainId", "core", "extension", "periphery", "extensionRuntime", "peripheryRuntime", "deploymentBlock",
+  "extensionAbiSha256", "peripheryAbiSha256",
 ] as const satisfies readonly (keyof InstancePin)[];
+
+/**
+ * Resolves a launch's quote token on a chain. Anything but native ETH or a reviewed ERC-20 refuses with
+ * unsupported_quote; outside the local harness the reviewed list is empty.
+ */
+export function launchQuote(chainId: string, quote: string, localHarness: boolean): LaunchQuote {
+  if (typeof quote !== "string" || !ADDRESS.test(quote)) throw new ZeroSeedError("unsupported_quote");
+  if (quote === NATIVE_QUOTE) return NATIVE;
+  const reviewed = (localHarness ? LOCAL_REVIEWED_ERC20_QUOTES : LIVE_REVIEWED_ERC20_QUOTES)
+    .find((entry) => entry.chainId === chainId && entry.address === quote);
+  if (reviewed === undefined) throw new ZeroSeedError("unsupported_quote");
+  return Object.freeze({ kind: "erc20", address: reviewed.address, runtime: reviewed.runtime });
+}
+
+/** A reviewed ERC-20 is reviewed only at its exact runtime: different code at the same address is unsupported. */
+export function verifyQuoteRuntime(quote: LaunchQuote, runtimeKeccak: string | null): void {
+  if (quote.runtime !== runtimeKeccak) throw new ZeroSeedError("unsupported_quote");
+}
 
 function exactKeys(pin: InstancePin): boolean {
   const keys = Object.keys(pin);
@@ -93,29 +114,22 @@ function exactKeys(pin: InstancePin): boolean {
 
 function distinctIdentity(pin: InstancePin): boolean {
   const contracts = [pin.core, pin.extension, pin.periphery];
-  const all = [...contracts, pin.quote];
-  return all.every((a) => typeof a === "string" && ADDRESS.test(a)) && new Set(all).size === 4 &&
+  return contracts.every((a) => typeof a === "string" && ADDRESS.test(a)) && new Set(contracts).size === 3 &&
     !contracts.includes(NATIVE_QUOTE) && pin.extension.slice(2, 4) === EXTENSION_CALL_POINTS_BYTE;
 }
 
 function pinnedArtifacts(pin: InstancePin): boolean {
-  return [pin.extensionRuntime, pin.peripheryRuntime].every((h) => BYTES32.test(h)) &&
+  return [pin.extensionRuntime, pin.peripheryRuntime].every((h) => typeof h === "string" && BYTES32.test(h)) &&
     pin.extensionAbiSha256 === EXTENSION_ABI_SHA256 && pin.peripheryAbiSha256 === PERIPHERY_ABI_SHA256 &&
-    /^[1-9][0-9]*$/.test(pin.chainId);
-}
-
-function quoteProvenance(pin: InstancePin): boolean {
-  if (pin.quoteKind === "native") return pin.quote === NATIVE_QUOTE && pin.quoteRuntime === null;
-  return pin.quoteKind === "erc20" && pin.quote !== NATIVE_QUOTE && typeof pin.quoteRuntime === "string" &&
-    BYTES32.test(pin.quoteRuntime);
+    /^[1-9][0-9]*$/.test(pin.chainId) && /^(0|[1-9][0-9]*)$/.test(pin.deploymentBlock);
 }
 
 /**
- * Structural identity rules every pin must meet: distinct Core, extension, periphery and quote; an extension address
- * that encodes the launch call points; a native quote exactly when the quote is address(0), with no quote runtime.
+ * Structural identity rules every pin must meet: exactly the pin fields, distinct nonzero Core, extension and
+ * periphery, an extension address that encodes the launch call points, and the pinned ABIs.
  */
 export function wellFormedPin(pin: InstancePin): boolean {
-  return exactKeys(pin) && distinctIdentity(pin) && pinnedArtifacts(pin) && quoteProvenance(pin);
+  return exactKeys(pin) && distinctIdentity(pin) && pinnedArtifacts(pin);
 }
 
 export function samePin(a: InstancePin, b: InstancePin): boolean {
@@ -125,7 +139,7 @@ export function samePin(a: InstancePin, b: InstancePin): boolean {
 
 export function supportedInstances(requested: readonly InstancePin[], localHarness: boolean): readonly InstancePin[] {
   if (!localHarness) return LIVE_INSTANCE_PINS;
-  return requested.filter((request) => wellFormedPin(request) && LOCAL_HARNESS_PINS.some((pin) => samePin(pin, request)))
+  return requested.filter((request) => wellFormedPin(request) && LOCAL_INSTANCE_PINS.some((pin) => samePin(pin, request)))
     .map((pin) => Object.freeze({ ...pin }));
 }
 

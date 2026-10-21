@@ -6,9 +6,15 @@
  * test/fixtures/launchpad/zero-seed-quoter-plans.json, which the unit tests replay. Nothing here touches a live
  * chain, provider, key or funds.
  *
+ * The recorded fixture is of the evm-contracts 4f1a306 deployment (one constructor-quote extension per quote). The
+ * swap path is unchanged at 40af6cb, so the tests replay these plans against the current instance with only the
+ * extension address substituted. Reproducing the fixture needs the MCP source it was built with:
+ * ZERO_SEED_MCP_WORKTREE, a checkout of this repository at 807320c0162928f0bbf84276952ca4727711bc89.
+ *
  *   ZERO_SEED_QUOTER_WORKTREE=…/quoter-service    (a1ce2ee7a2546a74b7192bb926b3f0531a65b899, cargo deps cached)
  *   ZERO_SEED_INDEXER_WORKTREE=…/indexer          (200684630121eef0ce18c649cd5035f9b57cef60, bun install run)
  *   ZERO_SEED_CONTRACTS_WORKTREE=…/evm-contracts  (4f1a3060b099e8a50469848118f44c0c65cfab9a, forge build run)
+ *   ZERO_SEED_MCP_WORKTREE=…/ekubo-mcp-server     (807320c0162928f0bbf84276952ca4727711bc89, bun install run)
  *   ZERO_SEED_SCRATCH_DIR=$(mktemp -d) bun script/zero-seed-quoter-plans.ts
  */
 import { execFileSync, spawnSync } from "node:child_process";
@@ -26,11 +32,13 @@ const QUOTER = env("ZERO_SEED_QUOTER_WORKTREE");
 const INDEXER = env("ZERO_SEED_INDEXER_WORKTREE");
 const CONTRACTS = env("ZERO_SEED_CONTRACTS_WORKTREE");
 const SCRATCH = env("ZERO_SEED_SCRATCH_DIR");
+const MCP_SOURCE = env("ZERO_SEED_MCP_WORKTREE");
 const OUT = join(ROOT, "test/fixtures/launchpad/zero-seed-quoter-plans.json");
 const HEADS = {
   quoter: [QUOTER, "a1ce2ee7a2546a74b7192bb926b3f0531a65b899"],
   indexer: [INDEXER, "200684630121eef0ce18c649cd5035f9b57cef60"],
   contracts: [CONTRACTS, "4f1a3060b099e8a50469848118f44c0c65cfab9a"],
+  mcp: [MCP_SOURCE, "807320c0162928f0bbf84276952ca4727711bc89"],
 } as const;
 const FIXTURE_SHA256 = "c4cea4e1d1accf56fcf7beb90743321cd6b1c4761e304651c3636dc9136d482b";
 
@@ -57,7 +65,7 @@ for (const marker of markers) {
   if (text.split(marker).length !== 2) throw new Error(`pinned generator shape changed: ${JSON.stringify(marker)}`);
 }
 const runtime = readFileSync(join(QUOTER, "tests/local-router/runtime.ts"), "utf8") + "\n" +
-  readFileSync(join(ROOT, "script/zero-seed-quoter-plans.runtime.ts"), "utf8");
+  readFileSync(join(MCP_SOURCE, "script/zero-seed-quoter-plans.runtime.ts"), "utf8");
 text = text.replace(markers[0], `${runtime}\n${markers[0]}`)
   .replace(markers[1], `${markers[1]}  await runRouterMatrix("prefix");\n  await runMcpPlans("prefix");\n`)
   .replace(markers[2], `${markers[2]}  await runRouterMatrix("canonical");\n  await runMcpPlans("canonical");\n`)
@@ -71,7 +79,7 @@ const runner = join(SCRATCH, "quoter-plans-fixture.ts");
 writeFileSync(runner, text);
 const run = spawnSync("bun", [runner, CONTRACTS, join(proof, "regenerated-local-chain.json")], {
   cwd: INDEXER, stdio: "inherit",
-  env: { ...process.env, ZERO_SEED_QUOTER_TEST: quoterTest, ZERO_SEED_PROOF_DIR: proof, ZERO_SEED_MCP_ROOT: ROOT },
+  env: { ...process.env, ZERO_SEED_QUOTER_TEST: quoterTest, ZERO_SEED_PROOF_DIR: proof, ZERO_SEED_MCP_ROOT: MCP_SOURCE },
 });
 if (run.status !== 0) throw new Error(`generator exited ${run.status}`);
 if (sha256(join(proof, "regenerated-local-chain.json")) !== FIXTURE_SHA256) throw new Error("regenerated chain differs");

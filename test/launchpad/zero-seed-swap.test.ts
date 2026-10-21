@@ -2,36 +2,62 @@ import { describe, expect, test } from "bun:test";
 import { YUL_ROUTER_ADDRESS } from "@ekubo/yul-router-sdk";
 import { type Address, encodeAbiParameters, type Hex, pad, toHex, zeroAddress } from "viem";
 import { feeAt, feeInclusiveDelta } from "../../src/launchpad/zero-seed/fee.js";
-import { BACKEND_REPLAY_PINS, LOCAL_INSTANCE_PINS, NATIVE_QUOTE } from "../../src/launchpad/zero-seed/policy.js";
+import { LOCAL_INSTANCE_PINS, NATIVE_QUOTE } from "../../src/launchpad/zero-seed/policy.js";
 import { localSwapFromQuote, ZERO_SEED_ROUTER } from "../../src/launchpad/zero-seed/swap.js";
-import golden from "../fixtures/launchpad/zero-seed-api-v3-2429547.golden.json";
 import fixture from "../fixtures/launchpad/zero-seed-quoter-plans.json";
 
-// Real quoter-service output (a1ce2ee) for zero-seed pools on the indexer's fork-free replay chain, the MCP plans
-// built from it and their local execution, recorded by script/zero-seed-quoter-plans.ts. LOCAL evidence only.
+// Real quoter-service output (a1ce2ee) for zero-seed pools on the indexer's fork-free replay chain of the earlier
+// evm-contracts 4f1a306 deployment, the MCP router plans built from it and their local execution, recorded by
+// script/zero-seed-quoter-plans.ts. LOCAL evidence only. The swap path is unchanged at 40af6cb: the forward payload
+// abi.encode(PoolKey, SwapParameters), the router layout and the settlement are the same. Only the instance changed
+// (one extension for every quote, the quote named per launch), so each recorded plan is replayed against the current
+// pin with the earlier extension address substituted, and must reproduce the executed calldata byte for byte with
+// only that address changed. The recorded execution evidence is checked as recorded.
 type Json = any;
 type Plan = (typeof fixture.plans)[number];
 const plans: Plan[] = fixture.plans;
+const [pin] = LOCAL_INSTANCE_PINS;
 const APPROVAL = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
+/** The 4f1a306 replay chain's constructor-quote extensions, one per quote, and that chain's Core. */
+const EARLIER = { native: "0x5114703a4cf4256f0acb68f992c861d8c4d1b173", erc20: "0x519435a42752da78e395999218d0ecc4fdcbcf4b" } as const;
+const CORE = "0x00000000000014aa86c5d3c41765bb24e11bd701";
+// The indexed fee schedules of the three recorded pools (api 2429547 golden; the schedule is unchanged at 40af6cb).
+const SCHEDULES: Record<string, { trading_start: number; fee_duration: number; initial_fee: string; final_fee: string }> = {
+  "0xc0a9f26952af6a470e5798edc551951d998bf408a332128e643c867e0c556a71": { trading_start: 1800001000, fee_duration: 3600,
+    initial_fee: "9223372036854775808", final_fee: "55340232221128654" },
+  "0xc27e3d1a2b492b8fbe32fd539a341e1424d8c629c79ee1f796408c485955fc33": { trading_start: 1800001000, fee_duration: 600,
+    initial_fee: "922337203685477580", final_fee: "55340232221128654" },
+  "0xe5c50d3246c67d6ffc896e8db9c4af89a8f4ee169276a99efb7fbbeb4ad5b2d5": { trading_start: 1800001400, fee_duration: 600,
+    initial_fee: "922337203685477580", final_fee: "55340232221128654" },
+};
 const label = (p: Plan) => `${p.phase} ${p.label} ${p.quoteKind} ${p.side} ${p.exactOut ? "exact-out" : "exact-in"} ${p.variant}`;
-const pinFor = (p: Plan) => BACKEND_REPLAY_PINS.find((pin) => pin.extension === p.request.extension)!;
-const launches = (golden as Json).canonicalList.data as Json[];
-const launchOf = (p: Plan) => launches.find((row) => row.pool_id === p.poolId)!;
+const earlier = (p: Plan) => EARLIER[p.quoteKind as keyof typeof EARLIER];
+/** The recorded plan with the earlier extension address replaced by the current pin's, in any casing. */
+function current<T>(p: Plan, value: T): T {
+  return JSON.parse(JSON.stringify(value).replace(new RegExp(earlier(p).slice(2), "gi"), pin.extension.slice(2)));
+}
+const hopOf = (p: Plan) => p.response.splits[0].route[0].swap;
+const quoteTokenOf = (p: Plan) => (p.quoteKind === "native" ? NATIVE_QUOTE : hopOf(p).pool_key.token1.toLowerCase());
+const launchTokenOf = (p: Plan) => (p.quoteKind === "native" ? hopOf(p).pool_key.token1 : hopOf(p).pool_key.token0).toLowerCase();
 const scheduleOf = (p: Plan) => {
-  const row = launchOf(p);
-  return { pool_key: { token0: row.pool_key.token0, token1: row.pool_key.token1, config: row.pool_key.config },
-    fee_schedule: row.fee_schedule };
+  const key = current(p, hopOf(p).pool_key);
+  return { pool_key: { token0: key.token0.toLowerCase(), token1: key.token1.toLowerCase(), config: key.config },
+    fee_schedule: SCHEDULES[p.poolId] };
 };
 
-function run(p: Plan, patch: { request?: object; response?: object; fresh?: bigint; pin?: object; recipient?: string; launch?: boolean } = {}) {
+function run(p: Plan, patch: { request?: object; response?: object; fresh?: bigint; pin?: object; recipient?: string;
+  launch?: boolean; quoteToken?: string; earlier?: boolean } = {}) {
+  const [request, response] = patch.earlier ? [p.request, p.response] : [current(p, p.request), current(p, p.response)];
   return localSwapFromQuote({
-    pin: { ...pinFor(p), ...patch.pin }, request: { ...p.request, ...patch.request },
-    response: { ...p.response, ...patch.response }, context: p.context,
+    pin: { ...pin, ...patch.pin }, quoteToken: patch.quoteToken ?? quoteTokenOf(p), request: { ...request, ...patch.request },
+    response: { ...response, ...patch.response }, context: p.context,
     recipient: (patch.recipient ?? p.recipient) as Address, ...(patch.launch ? { launch: scheduleOf(p) } : {}),
   }, patch.fresh ?? BigInt(p.context.blockTime));
 }
-const hop = (p: Plan, change: Record<string, unknown>) => ({ splits: [{ ...p.response.splits[0],
-  route: [{ swap: { ...p.response.splits[0].route[0].swap, ...change } }] }] });
+const hop = (p: Plan, change: Record<string, unknown>) => {
+  const response = current(p, p.response);
+  return { splits: [{ ...response.splits[0], route: [{ swap: { ...response.splits[0].route[0].swap, ...change } }] }] };
+};
 
 /** abi.encode(PoolKey, SwapParameters) from the quoter's hop and the request alone. */
 function payload(p: Plan): Hex {
@@ -43,7 +69,7 @@ function payload(p: Plan): Hex {
     [h.pool_key.token0 as Address, h.pool_key.token1 as Address, h.pool_key.config as Hex, pad(toHex(params), { size: 32 })]);
 }
 
-describe("real quoter output → MCP router plan → local execution", () => {
+describe("real quoter output → MCP router plan → local execution (recorded on the 4f1a306 instance)", () => {
   test("provenance: quoter, indexer and contract heads; the quoter harness itself passed", () => {
     expect(fixture.provenance).toMatchObject({ quoterService: "a1ce2ee7a2546a74b7192bb926b3f0531a65b899",
       indexer: "200684630121eef0ce18c649cd5035f9b57cef60", evmContracts: "4f1a3060b099e8a50469848118f44c0c65cfab9a" });
@@ -58,13 +84,16 @@ describe("real quoter output → MCP router plan → local execution", () => {
     expect(new Set(plans.map((p) => `${p.phase} ${p.label}`))).toEqual(
       new Set(["prefix l1", "prefix l2", "canonical l1", "canonical l2", "canonical l4"]));
     expect(plans).toHaveLength(40);
-    for (const p of plans) expect(launchOf(p).quote_token.kind).toBe(p.quoteKind);
+    for (const p of plans) expect(SCHEDULES[p.poolId]).toBeDefined();
   });
 
   for (const p of plans) {
-    test(`${label(p)}: reproduces the plan that executed`, () => {
+    test(`${label(p)}: reproduces the plan that executed, with only the extension address changed`, () => {
       const prepared = run(p);
-      expect(prepared).toEqual(p.plan as never);
+      expect(prepared).toEqual(current(p, p.plan) as never);
+      const occurrences = (data: string, address: string) => data.split(address.slice(2)).length - 1;
+      expect(occurrences(p.plan.data, earlier(p))).toBe(2);
+      expect(prepared.data.replaceAll(pin.extension.slice(2), earlier(p).slice(2))).toBe(p.plan.data);
       expect(prepared).toMatchObject({ executable: false, executionGuaranteed: false, skip_ahead: 0, partial_fill: false,
         router: ZERO_SEED_ROUTER, block: { number: p.context.blockNumber, hash: p.context.blockHash } });
       for (const key of ["gas", "gas_limit", "estimated_gas_cost", "execution_plan", "execution_plan_reference"]) {
@@ -96,7 +125,7 @@ describe("real quoter output → MCP router plan → local execution", () => {
       const prepared = run(p, { launch: true });
       const e = p.execution.event;
       expect(prepared.creator_fee!.rate_q64).toBe(e.feeRate);
-      const { fee_schedule: s } = scheduleOf(p);
+      const s = SCHEDULES[p.poolId];
       const rate = feeAt({ tradingStart: BigInt(s.trading_start), feeDuration: BigInt(s.fee_duration),
         initialFee: BigInt(s.initial_fee), finalFee: BigInt(s.final_fee) }, BigInt(p.execution.blockTime));
       expect(rate.toString()).toBe(e.feeRate);
@@ -123,7 +152,7 @@ describe("real quoter output → MCP router plan → local execution", () => {
       }
       const eth = BigInt(x.traderDeltas.token0);
       // No wrapping: nothing but Core, the extension and the launch token emits, and never the ERC-20 quote.
-      expect(x.logEmitters).toEqual([pinFor(p).core, pinFor(p).extension, launchOf(p).token.address].sort());
+      expect(x.logEmitters).toEqual([CORE, earlier(p), launchTokenOf(p)].sort());
       if (p.side === "buy") {
         expect(plan.input_approval).toBeNull();
         expect(plan.native).toMatchObject({ wrapping: false, approval: false, attached_value: plan.value });
@@ -143,7 +172,7 @@ describe("real quoter output → MCP router plan → local execution", () => {
       } else {
         expect(plan.value).toBe("0");
         expect(plan.native).toBeNull();
-        expect(plan.input_approval).toMatchObject({ token: launchOf(p).token.address, spender: ZERO_SEED_ROUTER });
+        expect(plan.input_approval).toMatchObject({ token: launchTokenOf(p), spender: ZERO_SEED_ROUTER });
         expect(plan.input_approval.token).not.toBe(NATIVE_QUOTE);
         expect(eth).toBe(p.exactOut ? -specified : calculated);
       }
@@ -186,15 +215,24 @@ describe("real quoter output → MCP router plan → local execution", () => {
     expect(() => run(buy, { response: { price_impact: 0 } })).toThrow("quote_response_invalid");
     expect(() => run(buy, { response: { splits: [buy.response.splits[0], buy.response.splits[0]] } })).toThrow("quote_response_invalid");
     expect(() => run(buy, { response: hop(buy, { type: "core" }) })).toThrow("quote_response_invalid");
-    const [nativePin, erc20Pin] = BACKEND_REPLAY_PINS;
-    expect(() => run(buy, { response: hop(buy, { forwardee: erc20Pin.extension }) })).toThrow("launch_support_disabled");
-    expect(() => run(buy, { response: hop(buy, { forwardee: nativePin.periphery }) })).toThrow("launch_support_disabled");
-    expect(() => run(buy, { request: { extension: nativePin.periphery } })).toThrow("launch_support_disabled");
-    expect(() => run(buy, { request: { extension: erc20Pin.extension } })).toThrow("launch_support_disabled");
+    const other = "0x51000000000000000000000000000000000000e1";
+    expect(() => run(buy, { response: hop(buy, { forwardee: other }) })).toThrow("launch_support_disabled");
+    expect(() => run(buy, { response: hop(buy, { forwardee: pin.periphery }) })).toThrow("launch_support_disabled");
+    expect(() => run(buy, { request: { extension: pin.periphery } })).toThrow("launch_support_disabled");
+    expect(() => run(buy, { request: { extension: other } })).toThrow("launch_support_disabled");
     expect(() => run(buy, { request: { other_token: "0x0000000000000000000000000000000000000001" } })).toThrow("quote_route_mismatch");
   });
+  test("the plan names the launch's own quote: another or an unreviewed quote refuses", () => {
+    const erc = plans.find((p) => p.quoteKind === "erc20" && p.variant === "quote_guard")!;
+    expect(() => run(buy, { quoteToken: quoteTokenOf(erc) })).toThrow("quote_route_mismatch");
+    expect(() => run(erc, { quoteToken: NATIVE_QUOTE })).toThrow("quote_route_mismatch");
+    expect(() => run(buy, { quoteToken: "0x4200000000000000000000000000000000000006" })).toThrow("unsupported_quote");
+    expect(() => run(buy, { quoteToken: "0x00" })).toThrow("unsupported_quote");
+  });
+  test("a plan for the earlier per-quote instance refuses", () => {
+    expect(() => run(buy, { earlier: true })).toThrow("launch_support_disabled");
+  });
   test("output to a sink refuses", () => {
-    const pin = pinFor(buy);
     const key = buy.response.splits[0].route[0].swap.pool_key;
     for (const sink of [zeroAddress, pin.core, pin.extension, pin.periphery, ZERO_SEED_ROUTER, key.token1]) {
       expect(() => run(buy, { recipient: sink })).toThrow("invalid_recipient");
@@ -202,10 +240,8 @@ describe("real quoter output → MCP router plan → local execution", () => {
   });
   test("unsupported or mismatched pin refuses before parsing", () => {
     expect(() => run(buy, { pin: { extensionRuntime: `0x${"00".repeat(32)}` } })).toThrow("launch_support_disabled");
-    expect(() => run(buy, { pin: { periphery: BACKEND_REPLAY_PINS[1].periphery } })).toThrow("launch_support_disabled");
     expect(() => run(buy, { pin: { periphery: "0x0000000000000000000000000000000000000abc" } })).toThrow("launch_support_disabled");
-    expect(() => run(buy, { pin: { quoteKind: "erc20" } })).toThrow("launch_support_disabled");
-    // The MCP local chain's own instance of the same extension is accepted as a pin, but not as this route's periphery sink.
-    expect(run(buy, { pin: { periphery: LOCAL_INSTANCE_PINS[0].periphery } }).data).toBe(run(buy).data);
+    expect(() => run(buy, { pin: { deploymentBlock: "3" } })).toThrow("launch_support_disabled");
+    expect(() => run(buy, { pin: { quoteKind: "native" } })).toThrow("launch_support_disabled");
   });
 });

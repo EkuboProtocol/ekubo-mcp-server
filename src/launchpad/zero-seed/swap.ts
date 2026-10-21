@@ -3,7 +3,7 @@ import { type Address, concatHex, getAddress, type Hex, maxInt128, numberToHex, 
 import { z } from "zod";
 import { exactOutputMultiplier, feeAt, feePercent, feePhase } from "./fee.js";
 import { address, bytes32, decimal, requireLocalPin } from "./installation.js";
-import { type InstancePin, NATIVE_QUOTE, ZeroSeedError } from "./policy.js";
+import { type InstancePin, launchQuote, type LaunchQuote, NATIVE_QUOTE, ZeroSeedError } from "./policy.js";
 
 /** Base Yul router whose runtime (keccak 0x32ba8475…) executed the accepted local router vectors. */
 export const ZERO_SEED_ROUTER = "0x03c8b90854b90aa22448b11e885f692972da441c";
@@ -72,16 +72,17 @@ function checkDeadline(deadline: bigint, context: IndexedContext, freshTime: big
   if (BigInt(context.blockTime) > deadline || freshTime > deadline) throw new ZeroSeedError("deadline_expired");
 }
 
-function checkHop(hop: z.infer<typeof Hop>, request: QuoterRequestInput, pin: InstancePin): void {
+function checkHop(hop: z.infer<typeof Hop>, request: QuoterRequestInput, pin: InstancePin, quote: LaunchQuote): void {
   // Swaps forward to the extension, never to the periphery, with the unchanged (PoolKey, SwapParameters) payload.
   if (request.extension !== pin.extension || hop.forwardee !== pin.extension ||
     BigInt(hop.pool_key.config) >> 96n !== BigInt(pin.extension)) throw new ZeroSeedError("launch_support_disabled");
   const pair = [hop.pool_key.token0, hop.pool_key.token1];
   const tokens = [request.specified_token, request.other_token];
-  if (!pair.includes(pin.quote) || !tokens.every((token) => pair.includes(token)) || tokens[0] === tokens[1]) {
+  // The pool pairs the launch token with this launch's own quote; a native quote is always token0.
+  if (!pair.includes(quote.address) || !tokens.every((token) => pair.includes(token)) || tokens[0] === tokens[1]) {
     throw new ZeroSeedError("quote_route_mismatch");
   }
-  if (pin.quoteKind === "native" && hop.pool_key.token0 !== NATIVE_QUOTE) throw new ZeroSeedError("quote_route_mismatch");
+  if (quote.kind === "native" && hop.pool_key.token0 !== NATIVE_QUOTE) throw new ZeroSeedError("quote_route_mismatch");
 }
 
 /** Output sent to any of these is stranded or refused: they book nothing for a bare transfer. */
@@ -96,10 +97,10 @@ function checkRecipient(recipient: Address, hop: z.infer<typeof Hop>, pin: Insta
  * exactly the input; an exact-output buy attaches the maximum input and the router refunds what the swap does not
  * spend. Native output (a sell) attaches nothing. An ERC-20 input needs the sender's allowance to the router.
  */
-function settlement(request: QuoterRequestInput, threshold: bigint, pin: InstancePin) {
+function settlement(request: QuoterRequestInput, threshold: bigint, quote: LaunchQuote) {
   const amount = BigInt(request.amount);
   const input = amount > 0n ? request.specified_token : request.other_token;
-  if (pin.quoteKind !== "native" || input !== NATIVE_QUOTE) {
+  if (quote.kind !== "native" || input !== NATIVE_QUOTE) {
     return { value: 0n, native: null, input_approval: { token: input, spender: ZERO_SEED_ROUTER,
       amount: (amount > 0n ? amount : -threshold).toString() } };
   }
@@ -170,14 +171,17 @@ function creatorFeeAt(launch: LaunchSchedule, hop: z.infer<typeof Hop>, blockTim
 }
 
 /**
- * Consumes one accepted quoter request/response at its indexed block and encodes the 0x03c8 router call.
+ * Consumes one accepted quoter request/response at its indexed block and encodes the 0x03c8 router call. The
+ * launch's quote token is named explicitly and must be native ETH or a reviewed ERC-20.
  * LOCAL and non-executable: the quoter's estimated_gas_cost is deliberately not read, and nothing here is a
  * gas limit, UserOp budget, affordability decision or owner assurance. The public entrypoint refuses.
  */
 export function localSwapFromQuote(input: {
-  pin: InstancePin; request: unknown; response: unknown; context: IndexedContext; recipient: Address; launch?: LaunchSchedule;
+  pin: InstancePin; quoteToken: string; request: unknown; response: unknown; context: IndexedContext; recipient: Address;
+  launch?: LaunchSchedule;
 }, freshTime: bigint) {
   requireLocalPin(input.pin);
+  const quote = launchQuote(input.pin.chainId, input.quoteToken, true);
   const request = parse(QuoterRequest, input.request, "invalid_argument");
   const threshold = guardThreshold(request);
   const response = parse(QuoterResponse, input.response, "quote_response_invalid");
@@ -187,11 +191,11 @@ export function localSwapFromQuote(input: {
   const deadline = BigInt(request.deadline);
   checkDeadline(deadline, input.context, freshTime);
   const hop = response.splits[0].route[0].swap;
-  checkHop(hop, request, input.pin);
+  checkHop(hop, request, input.pin, quote);
   const calculated = checkAmounts(response, request, threshold);
   const recipient = address.parse(input.recipient.toLowerCase()) as Address;
   checkRecipient(recipient, hop, input.pin);
-  const { value, native, input_approval } = settlement(request, threshold, input.pin);
+  const { value, native, input_approval } = settlement(request, threshold, quote);
   const creatorFee = input.launch === undefined ? {} : { creator_fee: creatorFeeAt(input.launch, hop, BigInt(input.context.blockTime)) };
   return {
     ...creatorFee,

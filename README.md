@@ -34,9 +34,10 @@ a data API and the quoter remains a route-data service.
 - `POST/GET /mcp?protocols=<slug>+<slug>` — one connection serving the named
   protocols (any of the above except Safe and launchpad-testing); see below
 - `POST/GET /mcp/safe` — dedicated Safe signer preparation; see [Safe coverage](docs/safe.md)
-- `POST/GET /mcp/launchpad-testing` — zero-seed launchpad tools for testing only, with
-  launch support disabled so every call is refused; excluded from `/mcp` and not
-  combinable. See [Launchpad](docs/launchpad.md)
+- `POST/GET /mcp/launchpad-testing` — zero-seed launchpad tools for testing only
+  (evm-contracts `40af6cb` interface: per-launch quote token, requested supply),
+  with launch support disabled so every call is refused; excluded from `/mcp` and
+  not combinable. See [Launchpad](docs/launchpad.md)
 - `GET /` — service metadata, per-protocol endpoints, and canonical
   documentation links
 - `GET /tools` — deterministic tool catalog for non-MCP discovery, filterable

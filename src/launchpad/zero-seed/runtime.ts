@@ -2,10 +2,11 @@ import { type Hex, hexToBytes, keccak256 } from "viem";
 import { ZeroSeedError } from "./policy.js";
 
 /**
- * Compiler output of evm-contracts 4f1a306 (solc 0.8.33, via-IR, 9,999,999 runs, osaka): the runtime with every
+ * Compiler output of evm-contracts 40af6cb (solc 0.8.33, via-IR, 9,999,999 runs, osaka): the runtime with every
  * immutable zeroed, its length, and where each immutable is embedded (compiler immutableReferences). A deployed
  * instance is accepted only when its code is this template with exactly the expected words at those offsets: a
- * template hash alone says nothing about which Core, quote or extension an instance is bound to.
+ * template hash alone says nothing about which Core or extension an instance is bound to. The extension has no
+ * quote immutable: each launch names its own quote.
  */
 interface RuntimeTemplate {
   templateKeccak256: Hex;
@@ -14,22 +15,21 @@ interface RuntimeTemplate {
 }
 
 export const EXTENSION_RUNTIME: RuntimeTemplate = Object.freeze({
-  templateKeccak256: "0x25637ad2d1071b641f275d3b1037616b8836d2445501c05d38618764fa924167",
-  length: 20432,
+  templateKeccak256: "0x39a99e30dfff34873b7a820416ae4bc33a337612c644c45e68c51ac6564a9f4d",
+  length: 20184,
   immutables: Object.freeze([
-    { role: "core", offsets: [857, 4501, 5721, 7607] },
-    { role: "accountant", offsets: [2739] },
-    { role: "quote", offsets: [2378, 10332] },
+    { role: "core", offsets: [846, 6258, 7399, 9094] },
+    { role: "accountant", offsets: [2418] },
   ]),
 });
 
 export const PERIPHERY_RUNTIME: RuntimeTemplate = Object.freeze({
-  templateKeccak256: "0x271683d2c3cf5e518fc5aa531f8568191b166a262a43e05d13325f0630dd5d7a",
-  length: 5541,
+  templateKeccak256: "0x08216f696368b4398afb8c43ca3eff0cccdcea00e71397178b78b2b94f957dbb",
+  length: 5552,
   immutables: Object.freeze([
-    { role: "core", offsets: [1063, 4390] },
-    { role: "launch", offsets: [999, 1818, 2019, 4335] },
-    { role: "accountant", offsets: [2125, 4629, 5250] },
+    { role: "core", offsets: [1399, 4401] },
+    { role: "launch", offsets: [311, 1335, 2015, 4346] },
+    { role: "accountant", offsets: [2121, 4640, 5261] },
   ]),
 });
 
@@ -54,9 +54,9 @@ function verify(code: Hex, template: RuntimeTemplate, values: Readonly<Record<st
   return keccak256(bytes);
 }
 
-/** Extension runtime bound to Core (core and accountant) and its constructor quote. */
-export function verifyExtensionRuntime(code: Hex, identity: { core: string; quote: string }): Hex {
-  return verify(code, EXTENSION_RUNTIME, { core: identity.core, accountant: identity.core, quote: identity.quote }, "extension");
+/** Extension runtime bound to Core (core and accountant). */
+export function verifyExtensionRuntime(code: Hex, identity: { core: string }): Hex {
+  return verify(code, EXTENSION_RUNTIME, { core: identity.core, accountant: identity.core }, "extension");
 }
 
 /** Periphery runtime bound to Core (core and accountant) and its one extension. */

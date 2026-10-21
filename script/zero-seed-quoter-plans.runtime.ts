@@ -1,3 +1,5 @@
+// Historical: runs against the MCP source at 807320c (see zero-seed-quoter-plans.ts), whose policy module still had
+// one pin per quote. Kept unchanged so the recorded fixture stays reproducible.
 // Appended by zero-seed-quoter-plans.ts after the quoter's tests/local-router/runtime.ts, inside the indexer's
 // fixture generator. After the quoter's matrix for a phase (its probes are all reverted, so the chain is back at the
 // quoted state), every quoter response it executed is turned into an MCP router plan by localSwapFromQuote and that

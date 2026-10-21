@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { type Address, zeroAddress } from "viem";
 import {
-  LOCAL_INSTANCE_PINS, NATIVE_QUOTE, refuseExecutableUse, supportedInstances, unsigned,
-  validateClaimRecipient, validateCreationTiming, validateMetadata, wellFormedPin,
+  launchQuote, LIVE_REVIEWED_ERC20_QUOTES, LOCAL_INSTANCE_PINS, LOCAL_REVIEWED_ERC20_QUOTES, NATIVE_QUOTE, refuseExecutableUse,
+  supportedInstances, unsigned, validateClaimRecipient, validateCreationTiming, validateMetadata, verifyQuoteRuntime, wellFormedPin,
 } from "../../src/launchpad/zero-seed/policy.js";
 
 const timing = { buildTime: 1800000000n, tradingStart: 1800000300n, executionExpiry: 1800000300n };
@@ -20,24 +20,49 @@ describe("frozen zero-seed constraints (not executable acceptance)", () => {
     });
   }
 
-  test("an extra or missing pin field disables support", () => {
-    expect(supportedInstances([{ ...LOCAL_INSTANCE_PINS[0], address: LOCAL_INSTANCE_PINS[0].extension } as never], true)).toEqual([]);
-    const { quoteRuntime: _, ...missing } = LOCAL_INSTANCE_PINS[0];
+  test("an extra or missing pin field disables support, including the earlier quote fields", () => {
+    const [pin] = LOCAL_INSTANCE_PINS;
+    expect(supportedInstances([{ ...pin, address: pin.extension } as never], true)).toEqual([]);
+    const { deploymentBlock: _, ...missing } = pin;
     expect(supportedInstances([missing as never], true)).toEqual([]);
+    for (const extra of [{ quote: NATIVE_QUOTE }, { quoteKind: "native" }, { quoteRuntime: null }]) {
+      expect(supportedInstances([{ ...pin, ...extra } as never], true)).toEqual([]);
+    }
   });
 
-  test("identity rules: distinct contracts, call-points byte, native exactly at address(0) without a runtime", () => {
-    const [native, erc20] = LOCAL_INSTANCE_PINS;
-    expect(LOCAL_INSTANCE_PINS.every(wellFormedPin)).toBe(true);
-    expect(native).toMatchObject({ quote: NATIVE_QUOTE, quoteKind: "native", quoteRuntime: null });
-    expect(erc20.quoteKind).toBe("erc20");
+  test("one instance pin serves every quote; identity rules: distinct contracts, call-points byte", () => {
+    const [pin] = LOCAL_INSTANCE_PINS;
+    expect(LOCAL_INSTANCE_PINS).toHaveLength(1);
+    expect(wellFormedPin(pin)).toBe(true);
+    expect(Object.keys(pin).sort()).toEqual(["chainId", "core", "deploymentBlock", "extension", "extensionAbiSha256",
+      "extensionRuntime", "periphery", "peripheryAbiSha256", "peripheryRuntime"]);
     for (const bad of [
-      { ...native, periphery: native.extension }, { ...native, periphery: native.core }, { ...native, extension: native.core },
-      { ...native, extension: `0x52${native.extension.slice(4)}` }, { ...native, quoteRuntime: erc20.quoteRuntime },
-      { ...native, quoteKind: "erc20" as const }, { ...erc20, quote: NATIVE_QUOTE }, { ...erc20, quoteRuntime: null },
-      { ...erc20, quoteKind: "native" as const }, { ...native, periphery: NATIVE_QUOTE }, { ...native, chainId: "0" },
-      { ...native, extensionAbiSha256: native.peripheryAbiSha256 },
+      { ...pin, periphery: pin.extension }, { ...pin, periphery: pin.core }, { ...pin, extension: pin.core },
+      { ...pin, extension: `0x52${pin.extension.slice(4)}` }, { ...pin, periphery: NATIVE_QUOTE }, { ...pin, chainId: "0" },
+      { ...pin, extensionAbiSha256: pin.peripheryAbiSha256 }, { ...pin, deploymentBlock: "02" }, { ...pin, deploymentBlock: "-1" },
     ]) expect(wellFormedPin(bad as never)).toBe(false);
+  });
+
+  test("quote support: native always; an ERC-20 only from the reviewed list, which is empty on live chains", () => {
+    expect(LIVE_REVIEWED_ERC20_QUOTES).toEqual([]);
+    expect(Object.isFrozen(LIVE_REVIEWED_ERC20_QUOTES)).toBe(true);
+    expect(LOCAL_REVIEWED_ERC20_QUOTES).toEqual([{ chainId: "31337", address: "0xffffffffffffffffffffffffffffffffffffffff",
+      runtime: "0xe8ccd7c4eb891208d5e04a27a31dfaf2b9bce01e083d7b36f10b6dd6ea643e63" }]);
+    for (const local of [true, false]) {
+      expect(launchQuote("31337", NATIVE_QUOTE, local)).toEqual({ kind: "native", address: NATIVE_QUOTE, runtime: null });
+      expect(launchQuote("8453", NATIVE_QUOTE, local).kind).toBe("native");
+    }
+    const [reviewed] = LOCAL_REVIEWED_ERC20_QUOTES;
+    expect(launchQuote("31337", reviewed.address, true)).toEqual({ kind: "erc20", address: reviewed.address, runtime: reviewed.runtime });
+    expect(() => launchQuote("31337", reviewed.address, false)).toThrow("unsupported_quote");
+    expect(() => launchQuote("8453", reviewed.address, true)).toThrow("unsupported_quote");
+    for (const quote of ["0x4200000000000000000000000000000000000006", "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", "0x00", ""]) {
+      expect(() => launchQuote("31337", quote, true)).toThrow("unsupported_quote");
+    }
+    const erc20 = launchQuote("31337", reviewed.address, true);
+    expect(() => verifyQuoteRuntime(erc20, reviewed.runtime)).not.toThrow();
+    expect(() => verifyQuoteRuntime(erc20, `0x${"00".repeat(32)}`)).toThrow("unsupported_quote");
+    expect(() => verifyQuoteRuntime(launchQuote("31337", NATIVE_QUOTE, true), null)).not.toThrow();
   });
 
   test("returned pins cannot be mutated after screening", () => {
@@ -93,7 +118,7 @@ describe("frozen zero-seed constraints (not executable acceptance)", () => {
   test("sinks with checksum letters are refused in any casing", () => {
     const pin = LOCAL_INSTANCE_PINS[0];
     const sinks = { core: pin.core as Address, extension: pin.extension as Address, periphery: pin.periphery as Address,
-      token0: pin.quote as Address, token1: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd" as Address };
+      token0: NATIVE_QUOTE as Address, token1: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd" as Address };
     for (const recipient of Object.values(sinks)) {
       expect(() => validateClaimRecipient(recipient, sinks)).toThrow("invalid_recipient");
       expect(() => validateClaimRecipient(recipient.toUpperCase().replace("0X", "0x") as Address, sinks)).toThrow("invalid_recipient");

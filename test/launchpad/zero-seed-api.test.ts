@@ -5,21 +5,22 @@ import type { Hex } from "viem";
 import { z } from "zod";
 import { ZeroSeedApi } from "../../src/launchpad/zero-seed/api.js";
 import { feeAt, feePhase } from "../../src/launchpad/zero-seed/fee.js";
-import { BACKEND_REPLAY_PINS, LOCAL_INSTANCE_PINS } from "../../src/launchpad/zero-seed/policy.js";
+import { LOCAL_INSTANCE_PINS } from "../../src/launchpad/zero-seed/policy.js";
 import { ClaimPage, LaunchDetail, LaunchList, OwnerPage, SwapPage } from "../../src/launchpad/zero-seed/schema.js";
-import golden from "../fixtures/launchpad/zero-seed-api-v3-2429547.golden.json";
-import openapi from "../fixtures/launchpad/zero-seed-api-v3-2429547.openapi-launches.json";
+import golden from "../fixtures/launchpad/zero-seed-api-v4-8f18246.golden.json";
+import openapi from "../fixtures/launchpad/zero-seed-api-v4-8f18246.openapi-launches.json";
 
-// The backend's API v3 golden: actual handler output over the indexer's replayed local chain (api 2429547, the
-// final head of api #191; the backend owner confirmed it unchanged in the final report). Byte-identical copy.
-const GOLDEN_SHA256 = "edb0a36f9c8fe22b346b2c88223bc12987abfc81e38ca2214dbd13194d0ca516";
-// `/launches*` paths of openapi.json at the same head (whole file sha256 ee4a41d1…fb56), extracted with
-// json.dumps({openapi, paths}, indent=1, sort_keys=True).
-const OPENAPI_SHA256 = "b0d54b5cf714984860e9ed8162a792d33b85b82de2a85d39b816654568cd3a64";
+// The backend's API v4 golden: actual handler output over the indexer's replayed local chain (api 8f18246,
+// src/routes/launches/fixtures/zero-seed-launch-api-v4.golden.json; indexer d783593). Byte-identical copy.
+const GOLDEN_SHA256 = "0f808cd606372ca526e60170fcea87c0bdf5342f83e91e40ecd0f8b6e8381186";
+// `/launches*` paths of openapi.json at the same head (whole file sha256 dc62934b…a468), extracted with
+// json.dumps({openapi, paths}, indent=1, sort_keys=True) plus a trailing newline.
+const OPENAPI_SHA256 = "59a172d374f4ec6388b8d6a3f332c8a9d081ab51746eae8d2df9a8da46a92782";
 
 type Json = any;
 const CHAIN = "31337";
-const local = { localHarness: true, instances: BACKEND_REPLAY_PINS };
+const local = { localHarness: true, instances: LOCAL_INSTANCE_PINS };
+const [pin] = LOCAL_INSTANCE_PINS;
 const sha256 = (path: string) => createHash("sha256").update(readFileSync(new URL(path, import.meta.url))).digest("hex");
 
 function client(reply: (url: URL) => Json, seen: URL[] = [], instances = local) {
@@ -36,7 +37,8 @@ function client(reply: (url: URL) => Json, seen: URL[] = [], instances = local) 
 const g = golden as Json;
 const pages: Record<string, Record<string, Json>> = {
   [g.nativeDetail.pool_id]: { detail: g.nativeDetail, swaps: g.nativeSwaps, claims: g.nativeClaims, owners: g.nativeOwners },
-  [g.erc20Detail.pool_id]: { detail: g.erc20Detail, claims: g.erc20Claims, owners: g.erc20Owners },
+  [g.erc20Detail.pool_id]: { detail: g.erc20Detail, swaps: g.erc20Swaps, claims: g.erc20Claims, owners: g.erc20Owners },
+  [g.erc20TraderOwnedDetail.pool_id]: { detail: g.erc20TraderOwnedDetail },
 };
 /** Serves the golden by path. The block-9 list pages answer the paged reads; the head list the rest. */
 function routes(url: URL): Json {
@@ -81,11 +83,11 @@ function normalize(schema: Json): Json {
   return unwrapNullable(out);
 }
 
-describe("API v3 contract: the backend's final golden and OpenAPI", () => {
+describe("API v4 contract: the backend's golden and OpenAPI", () => {
   test("fixtures are the published bytes", () => {
-    expect(sha256("../fixtures/launchpad/zero-seed-api-v3-2429547.golden.json")).toBe(GOLDEN_SHA256);
-    expect(sha256("../fixtures/launchpad/zero-seed-api-v3-2429547.openapi-launches.json")).toBe(OPENAPI_SHA256);
-    expect(g.schema_version).toBe("zero-seed-launch-api/v3");
+    expect(sha256("../fixtures/launchpad/zero-seed-api-v4-8f18246.golden.json")).toBe(GOLDEN_SHA256);
+    expect(sha256("../fixtures/launchpad/zero-seed-api-v4-8f18246.openapi-launches.json")).toBe(OPENAPI_SHA256);
+    expect(g.schema_version).toBe("zero-seed-launch-api/v4");
   });
 
   const responses: [string, z.ZodType][] = [
@@ -118,7 +120,7 @@ describe("API v3 contract: the backend's final golden and OpenAPI", () => {
   });
 });
 
-describe("API v3 replay through the MCP client (backend replay chain pins)", () => {
+describe("API v4 replay through the MCP client (the one local instance pin)", () => {
   test("pages the block-9 list with before_event_id and returns the head list unchanged", async () => {
     const seen: URL[] = [];
     const api = client(routes, seen);
@@ -137,7 +139,9 @@ describe("API v3 replay through the MCP client (backend replay chain pins)", () 
     const api = client(routes, seen);
     expect(await api.detail(CHAIN, nativeId)).toEqual(g.nativeDetail);
     expect(await api.detail(CHAIN, erc20Id)).toEqual(g.erc20Detail);
+    expect(await api.detail(CHAIN, g.erc20TraderOwnedDetail.pool_id)).toEqual(g.erc20TraderOwnedDetail);
     expect(await api.swaps(CHAIN, nativeId)).toEqual(g.nativeSwaps);
+    expect(await api.swaps(CHAIN, erc20Id)).toEqual(g.erc20Swaps);
     expect(await api.claims(CHAIN, nativeId)).toEqual(g.nativeClaims);
     expect(await api.claims(CHAIN, erc20Id)).toEqual(g.erc20Claims);
     expect(await api.owners(CHAIN, nativeId)).toEqual(g.nativeOwners);
@@ -145,13 +149,32 @@ describe("API v3 replay through the MCP client (backend replay chain pins)", () 
     expect(seen.map((u) => u.pathname)).toContain(`/launches/31337/${nativeId}/owners`);
   });
 
-  test("quote kind: native ETH is address(0), token0, 18 decimals, no metadata; the ERC-20 is the pinned quote", () => {
+  test("quote kind: native ETH is address(0), token0, 18 decimals, no metadata; the ERC-20 is the reviewed local quote", () => {
     expect(g.nativeDetail.quote_token).toEqual({
       address: "0x0000000000000000000000000000000000000000", name: null, symbol: null, decimals: 18, kind: "native" });
     expect(g.nativeDetail.pool_key.token0).toBe(g.nativeDetail.quote_token.address);
     expect(g.nativeDetail.launch_token_is_token1).toBe(true);
-    expect(g.erc20Detail.quote_token).toMatchObject({ address: BACKEND_REPLAY_PINS[1].quote, kind: "erc20" });
+    expect(g.erc20Detail.quote_token).toMatchObject({ address: "0xffffffffffffffffffffffffffffffffffffffff", kind: "erc20" });
     expect(g.erc20Detail.launch_token_is_token1).toBe(false);
+    // One instance serves both quotes.
+    expect(g.nativeDetail.pool_key.extension).toBe(g.erc20Detail.pool_key.extension);
+    expect(g.nativeDetail.controller).toBe(g.erc20Detail.controller);
+  });
+
+  test("supply: requested, installed and sink are exact; installed_supply left principal", () => {
+    expect(g.nativeDetail.supply).toEqual({ requested: "1000000000000000000000000000", installed: "999999999999999999999999422",
+      sink: "578", sink_holder: "0x0000000000000000000000000000000000000000" });
+    expect(g.erc20Detail.supply).toEqual({ requested: "1000000000000000000000000000", installed: "999999999999999999999999210",
+      sink: "790", sink_holder: "0x0000000000000000000000000000000000000000" });
+    const rows = [g.list, g.second, g.canonicalList].flatMap((list) => list.data)
+      .concat([g.nativeDetail, g.erc20Detail, g.erc20TraderOwnedDetail]);
+    for (const row of rows) {
+      expect(BigInt(row.supply.requested) - BigInt(row.supply.installed)).toBe(BigInt(row.supply.sink));
+    }
+    for (const detail of [g.nativeDetail, g.erc20Detail, g.erc20TraderOwnedDetail]) {
+      expect(detail.principal).not.toHaveProperty("installed_supply");
+      expect(BigInt(detail.principal.liquidity)).toBeGreaterThan(0n);
+    }
   });
 
   test("every served fee_rate and phase equals the fixed-base table at evaluated_at (600 s half-life)", () => {
@@ -169,7 +192,7 @@ describe("API v3 replay through the MCP client (backend replay chain pins)", () 
 
   test("creator, owner and controller are distinct roles; the current owner holds the transferable ledger", () => {
     const d = g.nativeDetail;
-    expect(d.controller).toBe(BACKEND_REPLAY_PINS[0].periphery);
+    expect(d.controller).toBe(pin.periphery);
     expect(d.creator).toBe(g.nativeOwners.data[0].new_owner);
     expect(g.nativeOwners.data[0].previous_owner).toBeNull();
     expect(d.owner).toBe(g.nativeOwners.data.at(-1).new_owner);
@@ -200,11 +223,21 @@ describe("API v3 replay through the MCP client (backend replay chain pins)", () 
   });
 
   test("rows of instances that are not pinned are dropped from lists and refused as details", async () => {
-    const mcpChainOnly = { localHarness: true, instances: LOCAL_INSTANCE_PINS };
-    expect((await client(routes, [], mcpChainOnly).list(CHAIN)).data).toEqual([]);
-    await expect(client(routes, [], mcpChainOnly).detail(CHAIN, nativeId)).rejects.toThrow("api_404");
-    const nativeOnly = { localHarness: true, instances: [BACKEND_REPLAY_PINS[0]] };
-    expect((await client(routes, [], nativeOnly).list(CHAIN)).data.map((r: Json) => r.pool_id)).toEqual([nativeId]);
+    const otherInstance = { localHarness: true, instances: [{ ...pin, deploymentBlock: "3" }] };
+    await expect(client(routes, [], otherInstance).list(CHAIN)).rejects.toThrow("launch_support_disabled");
+    const other = "0x00000000000000000000000000000000000000e1";
+    const foreign = { ...g.canonicalList, data: g.canonicalList.data.map((row: Json, i: number) => (i === 0 ? { ...row, controller: other } : row)) };
+    expect((await client(() => foreign).list(CHAIN)).data.map((r: Json) => r.pool_id))
+      .toEqual(g.canonicalList.data.slice(1).map((r: Json) => r.pool_id));
+  });
+
+  test("rows whose quote is not native or a reviewed ERC-20 are dropped from lists and refused as details", async () => {
+    const unreviewed = "0x4200000000000000000000000000000000000006";
+    const list = { ...g.canonicalList, data: g.canonicalList.data.map((row: Json) =>
+      (row.quote_token.kind === "erc20" ? { ...row, quote_token: { ...row.quote_token, address: unreviewed } } : row)) };
+    expect((await client(() => list).list(CHAIN)).data.map((r: Json) => r.quote_token.kind)).toEqual(["native"]);
+    await expect(client(() => tamper(g.erc20Detail, (d) => { d.quote_token.address = unreviewed; })).detail(CHAIN, erc20Id))
+      .rejects.toThrow("api_404");
   });
 
   test("support is disabled without the local harness: nothing is requested", async () => {
@@ -217,18 +250,35 @@ describe("API v3 replay through the MCP client (backend replay chain pins)", () 
   });
 });
 
-describe("API v3 refusals", () => {
+describe("API v4 refusals", () => {
   const detail = (change: (d: Json) => void) => client(() => tamper(g.nativeDetail, change)).detail(CHAIN, nativeId);
   const history = (kind: "swaps" | "claims" | "owners", change: (p: Json) => void) =>
     client((url) => (url.pathname.endsWith(`/${kind}`) ? tamper(pages[nativeId][kind], change) : routes(url)))[kind](CHAIN, nativeId);
 
-  test("other schema versions and v2 fee fields", async () => {
-    await expect(detail((d) => { d.schema_version = "zero-seed-launch-api/v2"; })).rejects.toThrow("api_invalid_response");
+  test("other schema versions, v3 supply fields and v2 fee fields", async () => {
+    for (const version of ["zero-seed-launch-api/v3", "zero-seed-launch-api/v2", "zero-seed-launch-api/v5"]) {
+      await expect(detail((d) => { d.schema_version = version; })).rejects.toThrow("api_invalid_response");
+    }
+    await expect(detail((d) => { d.principal.installed_supply = d.supply.installed; })).rejects.toThrow("api_invalid_response");
+    await expect(detail((d) => { delete d.supply; })).rejects.toThrow("api_invalid_response");
+    await expect(detail((d) => { d.supply.sink_holder = d.owner; })).rejects.toThrow("api_invalid_response");
+    await expect(detail((d) => { d.supply.sink = 578; })).rejects.toThrow("api_invalid_response");
     await expect(detail((d) => { d.fee_schedule.decay_factor = "1"; })).rejects.toThrow("api_invalid_response");
     await expect(detail((d) => { delete d.fee_schedule.decay; })).rejects.toThrow("api_invalid_response");
     await expect(detail((d) => { d.fee_schedule.decay.half_life_seconds = 3600; })).rejects.toThrow("api_invalid_response");
     await expect(detail((d) => { delete d.quote_token.kind; })).rejects.toThrow("api_invalid_response");
     await expect(detail((d) => { d.fee_ledger.transferable = false; })).rejects.toThrow("api_invalid_response");
+  });
+
+  test("supply invariants: 0 < installed <= requested, sink = requested - installed", async () => {
+    await expect(detail((d) => { d.supply.sink = "579"; })).rejects.toThrow("api_supply_mismatch");
+    await expect(detail((d) => { d.supply.installed = "0"; d.supply.sink = d.supply.requested; })).rejects.toThrow("api_supply_mismatch");
+    await expect(detail((d) => { d.supply.installed = (BigInt(d.supply.requested) + 1n).toString(); d.supply.sink = "0"; }))
+      .rejects.toThrow("api_supply_mismatch");
+    await expect(detail((d) => { d.supply.requested = d.supply.installed; })).rejects.toThrow("api_supply_mismatch");
+    await expect(detail((d) => { d.principal.liquidity = "0"; })).rejects.toThrow("api_supply_mismatch");
+    const zeroSink = await detail((d) => { d.supply.installed = d.supply.requested; d.supply.sink = "0"; });
+    expect(zeroSink.supply.sink).toBe("0");
   });
 
   test("a served rate or phase the schedule does not produce", async () => {
@@ -244,8 +294,8 @@ describe("API v3 refusals", () => {
     await expect(detail((d) => { d.quote_token.decimals = 6; })).rejects.toThrow("api_quote_identity_mismatch");
     await expect(detail((d) => { d.pool_key.config = `0x${"00".repeat(32)}`; })).rejects.toThrow("api_pool_identity_mismatch");
     await expect(detail((d) => { d.launch_token_is_token1 = false; })).rejects.toThrow("api_quote_identity_mismatch");
-    // The MCP local chain's periphery for the same extension is another instance.
-    await expect(detail((d) => { d.controller = LOCAL_INSTANCE_PINS[0].periphery; })).rejects.toThrow("api_404");
+    // Another periphery forwarding to the same extension is another instance.
+    await expect(detail((d) => { d.controller = "0x00000000000000000000000000000000000000e1"; })).rejects.toThrow("api_404");
     await expect(detail((d) => { d.quote_token.kind = "erc20"; })).rejects.toThrow("api_404");
     await expect(detail((d) => { d.pool_id = erc20Id; })).rejects.toThrow("api_pool_identity_mismatch");
   });

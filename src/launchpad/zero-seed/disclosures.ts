@@ -1,6 +1,7 @@
 /**
- * Owner-summary statements. Version 4 describes the fixed 600 s half-life decay, the transferable launch ownership
- * recorded by the periphery and the native or ERC-20 quote. It is a draft, not approved copy. The only interpolated
+ * Owner-summary statements. Version 5 describes the fixed 600 s half-life decay, the transferable launch ownership
+ * recorded by the periphery, the launch's own native or ERC-20 quote, and the requested supply split into the
+ * installed supply and the remainder minted to address(0). It is a draft, not approved copy. The only interpolated
  * values are integers, addresses, times and percentages the decoder derived from calldata or the pinned instance;
  * launch metadata is never interpolated.
  */
@@ -16,11 +17,14 @@ export const DISCLOSURE_CODES = [
   "no_exit_guarantee",
 ] as const;
 export type DisclosureCode = (typeof DISCLOSURE_CODES)[number];
-export const DISCLOSURE_VERSION = 4;
+export const DISCLOSURE_VERSION = 5;
 export const DISCLOSURE_STATUS = "draft_not_approved";
 
 export interface CreateStatementInput {
+  /** Raw launch-token units: the requested supply (totalSupply), the installed part and the remainder at address(0). */
+  requestedSupply: string;
   installedSupply: string;
+  sinkSupply: string;
   initialFeePercent: string;
   finalFeePercent: string;
   feeDuration: string;
@@ -45,8 +49,8 @@ const TEMPLATES: Record<DisclosureCode, (input: CreateStatementInput) => string>
     `Zero initial bid: the pool starts with no ${quote}. Until someone buys, selling the launch token fills nothing.`,
   buyer_funded_quote_reserve: ({ quote }) =>
     `Buyer-funded quote reserve: the only ${quote} in the pool is what buyers pay in. Sells can withdraw only that.`,
-  permanent_principal_lock: ({ installedSupply }) =>
-    `Permanent principal lock: the whole supply (${installedSupply} raw units) goes into one position that nobody, including you, can withdraw, rebalance, migrate or refund. Quote that buyers pay in is locked in it too.`,
+  permanent_principal_lock: ({ requestedSupply, installedSupply, sinkSupply }) =>
+    `Permanent principal lock: of the total supply of ${requestedSupply} raw units, ${installedSupply} go into one position that nobody, including you, can withdraw, rebalance, migrate or refund, and the rounding remainder of ${sinkSupply} is minted to address(0), where nobody can ever spend it. Quote that buyers pay in is locked in the position too.`,
   creator_fee_recipient_and_rate: (input) =>
     `Creator fee: ${input.initialFeePercent} at trading start ${input.tradingStart}, decaying with a fixed 600 s half-life rescaled to reach exactly ${input.finalFeePercent} after ${input.feeDuration} s, then ${input.finalFeePercent} for good. ${shape(input)} The fee is taken on the calculated side of every swap into a separate two-asset fee ledger, never into principal.`,
   transferable_launch_ownership: ({ owner }) =>
@@ -80,7 +84,7 @@ export function transferStatements(newOwner: string): string[] {
 }
 
 const PLACEHOLDERS: CreateStatementInput = {
-  installedSupply: "<installed supply>", initialFeePercent: "<initial fee>", finalFeePercent: "<final fee>",
+  requestedSupply: "<requested supply>", installedSupply: "<installed supply>", sinkSupply: "<sink supply>", initialFeePercent: "<initial fee>", finalFeePercent: "<final fee>",
   feeDuration: "<fee duration>", tradingStart: "<trading start>", excessHalvingSeconds: "<excess halving time>",
   exactOutputMultiplier: "<exact-output multiplier>", owner: "<owner>", quote: "<quote>",
 };
@@ -97,6 +101,6 @@ export function disclosuresDocument() {
 }
 
 /** The quote as owner text: native ETH or the exact token address; never a symbol. */
-export function quoteText(pin: { quoteKind: "native" | "erc20"; quote: string }): string {
-  return pin.quoteKind === "native" ? "native ETH" : `quote token ${pin.quote}`;
+export function quoteText(quote: { kind: "native" | "erc20"; address: string }): string {
+  return quote.kind === "native" ? "native ETH" : `quote token ${quote.address}`;
 }

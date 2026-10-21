@@ -6,26 +6,31 @@ import { storeArtifact } from "../../src/artifact-store.js";
 import type { Env } from "../../src/core.js";
 import { peripheryAbi, PREVIEW_SELECTOR } from "../../src/launchpad/zero-seed/abi.js";
 import { type BuildInput, type ParametersInput } from "../../src/launchpad/zero-seed/installation.js";
-import { LOCAL_INSTANCE_PINS, type InstancePin } from "../../src/launchpad/zero-seed/policy.js";
+import { LOCAL_INSTANCE_PINS, NATIVE_QUOTE, type InstancePin } from "../../src/launchpad/zero-seed/policy.js";
 import { localInstallationPreview, PREVIEW_ID, type SyntheticPreviewWallet } from "../../src/launchpad/zero-seed/preview.js";
 import { predictLaunchToken } from "../../src/launchpad/zero-seed/token.js";
 import chain from "../fixtures/launchpad/zero-seed-native-local-chain.json";
 
 export { chain };
 export const owner = chain.accounts.owner as Address;
+export const pin = LOCAL_INSTANCE_PINS[0];
+export const ERC20_QUOTE = chain.erc20_quote.address;
+/** The two recorded launches of the one instance: native ETH (launch token1) and the test ERC-20 (launch token0). */
+export const KINDS = ["native", "erc20"] as const;
+export type Kind = (typeof KINDS)[number];
 type Launch = typeof chain.launches.native;
-export const launchOf = (pin: InstancePin): Launch =>
-  (pin.quoteKind === "native" ? chain.launches.native : chain.launches.erc20) as unknown as Launch;
-export const build = (pin = LOCAL_INSTANCE_PINS[0]): BuildInput => ({ ...launchOf(pin).build });
-export const request = (pin: InstancePin): ParametersInput => ({ ...launchOf(pin).request });
-export const freshTime = (pin = LOCAL_INSTANCE_PINS[0]) => BigInt(launchOf(pin).build.buildTime) + 1n;
+export const launchOf = (kind: Kind = "native"): Launch => chain.launches[kind] as unknown as Launch;
+export const quoteOf = (kind: Kind) => (kind === "native" ? NATIVE_QUOTE : ERC20_QUOTE);
+export const build = (kind: Kind = "native"): BuildInput => ({ ...launchOf(kind).build });
+export const request = (kind: Kind = "native"): ParametersInput => ({ ...launchOf(kind).request });
+export const freshTime = (kind: Kind = "native") => BigInt(launchOf(kind).build.buildTime) + 1n;
 
 interface Installation {
   token: Address; poolKey: { token0: Address; token1: Address; config: Hex }; positionId: Hex; initialTick: number;
   liquidity: bigint; installedSupply: bigint;
 }
-function installationFor(pin: InstancePin): Installation {
-  const i = launchOf(pin).preview.installation;
+function installationFor(kind: Kind): Installation {
+  const i = launchOf(kind).preview.installation;
   return {
     token: i.token as Address, poolKey: { token0: i.poolKey.token0 as Address, token1: i.poolKey.token1 as Address,
       config: i.poolKey.config as Hex }, positionId: i.positionId as Hex, initialTick: i.initialTick,
@@ -40,9 +45,9 @@ function withToken(installation: Installation, token: Address): Installation {
     token1: swap(installation.poolKey.token1) } };
 }
 
-export function fixture(pin = LOCAL_INSTANCE_PINS[0]) {
-  const recorded = launchOf(pin);
-  const installation = installationFor(pin);
+export function fixture(kind: Kind = "native") {
+  const recorded = launchOf(kind);
+  const installation = installationFor(kind);
   let raw: Hex | undefined;
   let override: Installation | undefined;
   let calls = 0;
@@ -50,7 +55,7 @@ export function fixture(pin = LOCAL_INSTANCE_PINS[0]) {
   let ids = [PREVIEW_ID];
   let success = true;
   let blockHash = recorded.build.blockHash;
-  let now = freshTime(pin);
+  let now = freshTime(kind);
   let afterRead: (() => void) | undefined;
   const storage = new Map<string, string>();
   const env = { ARTIFACT_STORE: { put: async (key: string, body: string) => { storage.set(key, body); } } } as unknown as Env;
@@ -76,7 +81,7 @@ export function fixture(pin = LOCAL_INSTANCE_PINS[0]) {
       if (decoded.functionName !== "previewInstallation") throw new Error("unexpected read");
       expect(decoded.args[0].toLowerCase()).toBe(owner);
       afterRead?.();
-      // Like the contract, the token follows owner/periphery/salt/metadata; supply/L stay the recorded pair.
+      // Like the contract, the token follows owner/periphery/salt/metadata; the amounts stay the recorded ones.
       const token = predictLaunchToken({ extension: pin.extension as Address, periphery: pin.periphery as Address }, owner, decoded.args[1]);
       const data = raw ?? encodeFunctionResult({ abi: peripheryAbi, functionName: "previewInstallation",
         result: override ?? withToken(installation, token) });
@@ -85,14 +90,14 @@ export function fixture(pin = LOCAL_INSTANCE_PINS[0]) {
     },
   };
   return {
-    run: (input = request(pin), context = build(pin), instance: InstancePin = pin) => localInstallationPreview({ owner,
+    run: (input = request(kind), context = build(kind), instance: InstancePin = pin) => localInstallationPreview({ owner,
       request: input, build: context, pin: instance }, wallet, () => now),
     setRaw: (value: Hex) => { raw = value; }, setIds: (value: string[]) => { ids = value; },
     setFailed: () => { success = false; }, setHash: () => { blockHash = `0x${"cd".repeat(32)}`; },
     setTime: (value: bigint) => { now = value; },
     afterRead: (action: () => void) => { afterRead = action; },
     setInstallation: (value: Installation) => { override = value; },
-    counts: () => ({ calls, stores }), installation, pin, recorded,
+    counts: () => ({ calls, stores }), installation, pin, kind, recorded,
     raw: recorded.preview.raw as Hex,
   };
 }

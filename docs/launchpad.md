@@ -1,8 +1,9 @@
 # Launchpad (zero-seed, support disabled)
 
 The launchpad targets the zero-seed launch interface of evm-contracts
-`4f1a306`: the `ZeroSeedLaunch(Core, quote)` extension and the
-`ZeroSeedLaunchPeriphery(Core, extension)` that users call. It is not
+`40af6cb`: the `ZeroSeedLaunch(Core)` extension and the
+`ZeroSeedLaunchPeriphery(Core, extension)` that users call. One extension and
+its periphery serve every quote token; each launch names its own. It is not
 deployed, released or externally reviewed. A launcher deploys and funds its
 own pair of contracts; nothing here assumes a canonical Ekubo instance.
 
@@ -43,44 +44,91 @@ provider read or caller-supplied address can add one.
 | `launchpad_prepare_claim_fees` | Refuses with `launch_support_disabled`; no plan or reference. |
 | `launchpad_prepare_trade` | Refuses with `executable_budget_not_proven`; no plan or reference. |
 
-The read tools consume the indexed launch API `zero-seed-launch-api/v3`
+The read tools consume the indexed launch API `zero-seed-launch-api/v4`
 (`src/launchpad/zero-seed/api.ts`) only for a chain with a live pin, of which
-there is none, so no hosted call reaches the API. The client re-derives the
-pool, the instance, the quote kind, the fee rate and the owner and ledger
-totals from each response; see
+there is none, so no hosted call reaches the API. Any other schema version is
+refused. The client re-derives the pool, the instance, the launch's quote and
+its support, the supply split, the fee rate and the owner and ledger totals
+from each response; see
 [zero-seed-checkpoint.md](zero-seed-checkpoint.md).
 
-`launchpad://disclosures` serves the nine mechanism disclosures (version 4)
+`launchpad://disclosures` serves the nine mechanism disclosures (version 5)
 every owner summary carries: zero initial bid, buyer-funded quote reserve,
-permanent principal lock, creator fee rate, transferable launch ownership,
+permanent principal lock (with the requested, installed and sink supply),
+creator fee rate, transferable launch ownership,
 owner fee recapture, high initial fee, exact-output gross-up and no exit
 guarantee. The wording is a draft and not approved.
 
 ## Instances
 
-A pin (`InstancePin`) binds one launcher deployment: Core, the extension, its
-periphery and the extension's constructor quote, each by exact deployed
-runtime. The extension address must start with the call-points byte `0x51`;
-Core, extension, periphery and quote must be distinct. `runtime.ts` accepts
-deployed code only when it is the compiler template with exactly the expected
-Core, quote or extension word at every `immutableReferences` offset, so a
-template-equal instance bound to another Core, quote or extension is refused.
+A pin (`InstancePin`) binds one launcher deployment: the chain, Core, the
+extension and its periphery, each contract by exact deployed runtime, and the
+block both were deployed in. It has no quote. The extension address must start
+with the call-points byte `0x51`; Core, extension and periphery must be
+distinct. `runtime.ts` accepts deployed code only when it is the compiler
+template with exactly the expected Core or extension word at every
+`immutableReferences` offset, so a template-equal instance bound to another
+Core or extension is refused. The extension has no quote immutable and no
+`quoteToken()` getter.
 
-The quote is either native ETH (`quoteKind: "native"`, `address(0)`, always
-token0, 18 decimals, no runtime, no `decimals()` call, no approval, no
-wrapping) or an ERC-20 whose runtime is pinned. Owner summaries show which.
+## Quotes
+
+The quote is per launch: `LaunchParameters.quoteToken`, the other token of
+that launch's pool key, fixed at creation. Native ETH is `address(0)`: always
+token0 (so the launch token is token1), 18 decimals, no runtime, no
+`decimals()` call, no approval and no wrapping. An ERC-20 quote at a higher
+address than the launch token makes the launch token token0. The contract
+refuses a nonzero quote without code (`UnsupportedQuoteToken()`) and screens
+nothing else.
+
+Supporting a quote is a separate, per-launch decision from supporting the
+instance. Native ETH is eligible behind the same instance gates. An ERC-20 is
+eligible only when it is in a reviewed list keyed by chain, address and
+runtime codehash (`policy.ts`): `LIVE_REVIEWED_ERC20_QUOTES` is empty, and the
+local list holds only the local chains' plain test ERC-20 at
+`0xff…ff`. Every producer (preview, create, claim, swap plan) and the API
+client refuse any other quote with `unsupported_quote`, or drop it from lists.
+Owner summaries show the quote and, for an ERC-20, its reviewed runtime.
+
+## Supply
+
+`LaunchParameters.supply` is the requested supply: the token's `totalSupply`
+and `LaunchCreated.parameters.supply`. There is no liquidity input. The
+contract computes the largest liquidity the requested supply buys (refusing
+`ZeroLiquidity` and `LiquidityAboveTickCap`), installs the launch-token amount
+Core takes for it (`installedSupply`, rounded up, `0 < installed <=
+requested`) and mints the remainder `sink = requested - installed` to
+`address(0)`, where nothing can spend it; `totalSupply` stays the requested
+supply. `previewInstallation` returns the same installation for display.
+
+The producers submit the requested parameters unchanged: the create calldata
+carries the requested supply, never the installed one. The preview and owner
+summary report `supply: { requested, installed, sink, sink_holder }` as exact
+decimal strings of raw launch-token units, plus the computed `liquidity`, and
+refuse a preview whose installed supply exceeds the request, whose liquidity is
+zero or above the per-tick cap, or whose pool does not pair the launch token
+with the launch's own quote. For 18/18 decimals, ticks `-13815500`/`-9210300`,
+spacing 100 and a requested `1e27`, the native launch (token1) installs
+`999999999999999999999999422` with a sink of `578`, and an ERC-20 launch whose
+token is token0 installs `999999999999999999999999210` with a sink of `790`.
 
 ## Calls
 
-- `create(LaunchParameters)` and `claimFees(PoolKey, recipient)` go to the
-  periphery, never with value. `LaunchParameters` has no quote token (the
-  constructor fixes it) and no decay factor.
+- `create(LaunchParameters)` (`0x662af306`), `previewInstallation(owner,
+  LaunchParameters)` (`0x917c1163`) and `claimFees(PoolKey, recipient)` go to
+  the periphery, never with value. `LaunchParameters` is `(name, symbol,
+  decimals, supply, quoteToken, askTick, upperTick, tickSpacing, tradingStart,
+  feeDuration, initialFee, finalFee, salt)`: the quote in slot 5, no liquidity
+  and no decay factor. The earlier `0x687ba810` tuple never decodes as a
+  create.
 - The periphery namespaces the user's salt as `keccak256(abi.encode(owner,
   salt))`; the extension namespaces it again with its controller, the
   periphery. The launch token is `CREATE2(extension, keccak256(abi.encode(
   periphery, ownerSalt)), MintableERC20 init code)`.
 - The caller of `create` becomes the launch owner, recorded by the periphery
-  (`LaunchOwnerChanged(poolId, 0x0, owner)` identifies the creator). Only the
+  (`LaunchOwnerChanged(poolId, 0x0, owner)` identifies the creator;
+  `events.ts` decodes `LaunchCreated`, topic `0x3a4e8111…098f`, and
+  attributes the creator from it). Only the
   current owner can claim, and `transferLaunch` moves that right, including
   fees not yet claimed. A claim body carries the `launchOwner(poolId)` read it
   was built on and is refused for anyone else.
@@ -91,7 +139,8 @@ wrapping) or an ERC-20 whose runtime is pinned. Owner summaries show which.
   exact-input buy attaches exactly the input as value; a native exact-output
   buy attaches the maximum input and the router refunds the rest in the same
   transaction; a sell attaches nothing. Only an ERC-20 input needs an
-  allowance to the router.
+  allowance to the router. A swap plan names the launch's quote and is checked
+  against the pool's pair.
 
 ## Creator fee schedule
 
@@ -102,9 +151,10 @@ each multiply, and is zero from `2^17` s. With `E = decayQ128(D)` the fee is
 `finalFee + floor((initialFee - finalFee) * (decayQ128(t) - E) / (2^128 - E))`
 inside the window and `finalFee` from `D` on. The initial fee is capped at
 `floor(99 * 2^64 / 100)`. 50% to 0.3% over 3,600 s first halves its excess
-after 587 s. Owner summaries (`zero-seed-launch-owner-summary/v3`) show the
+after 587 s. Owner summaries (`zero-seed-launch-owner-summary/v4`) show the
 exact schedule at sample times; sealed local bodies are
-`zero-seed-local-create/v3` and `zero-seed-local-claim/v2`.
+`zero-seed-local-create/v4` and `zero-seed-local-claim/v3`, both carrying the
+launch's resolved quote.
 
 The quoter's `estimated_gas_cost` is never a gas limit, UserOp budget,
 affordability decision or owner assurance. Trade preparation stays refused
@@ -116,9 +166,10 @@ until execution budgeting and wallet simulation are separately proven.
 checks (`runtime.ts`), the periphery and extension ABI subsets (`abi.ts`),
 parameter and build validation (`installation.ts`), the single installation
 preview (`preview.ts`), the local create/claim producer and owner decoder
-(`owner.ts`) and the router plan from a quote (`swap.ts`). They accept the
-local anvil instances only, inside an explicit local harness that the public
-tools never construct. See [zero-seed-checkpoint.md](zero-seed-checkpoint.md)
+(`owner.ts`), `LaunchCreated` decoding and creator attribution (`events.ts`)
+and the router plan from a quote (`swap.ts`). They accept the one local anvil
+instance only, inside an explicit local harness that the public tools never
+construct. See [zero-seed-checkpoint.md](zero-seed-checkpoint.md)
 for reproduction and what remains unproven.
 
 ## Release
@@ -127,9 +178,10 @@ This unpublished candidate bumps, in the same commit:
 
 - `MCP_TOOL_CATALOG_REVISION` in `src/version.ts`, from
   `2026-10-20.launchpad-zero-seed-hold` to
-  `2026-10-20.launchpad-zero-seed-api-v3` (the create tool's parameters
-  changed and `launchpad_get_owners` was added; set the date to the actual
-  release date if it ships later);
+  `2026-10-21.launchpad-zero-seed-api-v4` (the create tool's parameters
+  changed: `quoteToken` added with the native default, `liquidity` removed;
+  `launchpad_get_owners` was added; set the date to the actual release date if
+  it ships later);
 - `MCP_SERVER_VERSION` in `src/version.ts` and `version` in `package.json`, from
   `0.53.0` to `0.54.0`.
 

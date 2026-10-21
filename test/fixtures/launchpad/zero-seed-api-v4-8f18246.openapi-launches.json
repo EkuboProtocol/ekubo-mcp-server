@@ -370,9 +370,39 @@
              },
              "schema_version": {
               "enum": [
-               "zero-seed-launch-api/v3"
+               "zero-seed-launch-api/v4"
               ],
               "type": "string"
+             },
+             "supply": {
+              "additionalProperties": false,
+              "properties": {
+               "installed": {
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+               },
+               "requested": {
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+               },
+               "sink": {
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+               },
+               "sink_holder": {
+                "enum": [
+                 "0x0000000000000000000000000000000000000000"
+                ],
+                "type": "string"
+               }
+              },
+              "required": [
+               "requested",
+               "installed",
+               "sink",
+               "sink_holder"
+              ],
+              "type": "object"
              },
              "token": {
               "additionalProperties": false,
@@ -421,6 +451,7 @@
              "pool_key",
              "token",
              "quote_token",
+             "supply",
              "launch_token_is_token1",
              "controller",
              "creator",
@@ -443,7 +474,7 @@
           },
           "schema_version": {
            "enum": [
-            "zero-seed-launch-api/v3"
+            "zero-seed-launch-api/v4"
            ],
            "type": "string"
           }
@@ -873,10 +904,6 @@
           "principal": {
            "additionalProperties": false,
            "properties": {
-            "installed_supply": {
-             "pattern": "^(0|[1-9][0-9]*)$",
-             "type": "string"
-            },
             "liquidity": {
              "pattern": "^(0|[1-9][0-9]*)$",
              "type": "string"
@@ -933,7 +960,6 @@
             "tick_lower",
             "tick_upper",
             "liquidity",
-            "installed_supply",
             "locked",
             "withdrawable",
             "pool_reserves",
@@ -987,9 +1013,39 @@
           },
           "schema_version": {
            "enum": [
-            "zero-seed-launch-api/v3"
+            "zero-seed-launch-api/v4"
            ],
            "type": "string"
+          },
+          "supply": {
+           "additionalProperties": false,
+           "properties": {
+            "installed": {
+             "pattern": "^(0|[1-9][0-9]*)$",
+             "type": "string"
+            },
+            "requested": {
+             "pattern": "^(0|[1-9][0-9]*)$",
+             "type": "string"
+            },
+            "sink": {
+             "pattern": "^(0|[1-9][0-9]*)$",
+             "type": "string"
+            },
+            "sink_holder": {
+             "enum": [
+              "0x0000000000000000000000000000000000000000"
+             ],
+             "type": "string"
+            }
+           },
+           "required": [
+            "requested",
+            "installed",
+            "sink",
+            "sink_holder"
+           ],
+           "type": "object"
           },
           "token": {
            "additionalProperties": false,
@@ -1038,6 +1094,7 @@
           "pool_key",
           "token",
           "quote_token",
+          "supply",
           "launch_token_is_token1",
           "controller",
           "creator",
@@ -1285,7 +1342,7 @@
           },
           "schema_version": {
            "enum": [
-            "zero-seed-launch-api/v3"
+            "zero-seed-launch-api/v4"
            ],
            "type": "string"
           }
@@ -1520,7 +1577,7 @@
           },
           "schema_version": {
            "enum": [
-            "zero-seed-launch-api/v3"
+            "zero-seed-launch-api/v4"
            ],
            "type": "string"
           }
@@ -1784,7 +1841,7 @@
           },
           "schema_version": {
            "enum": [
-            "zero-seed-launch-api/v3"
+            "zero-seed-launch-api/v4"
            ],
            "type": "string"
           }

@@ -1,8 +1,9 @@
 import { z } from "zod";
 
-// Exact shapes consumed from the backend API v3 (api 2429547): native quote kind, the fixed-base fee table and the
-// periphery's owner identity. Any other schema version, including v2 with its decay_factor, is refused.
-export const SchemaVersion = z.literal("zero-seed-launch-api/v3");
+// Exact shapes consumed from the backend API v4 (api 8f18246): the launch's own quote token and kind, requested,
+// installed and sink supply, the fixed-base fee table and the periphery's owner identity. Any other schema version,
+// including v3 with principal.installed_supply and v2 with its decay_factor, is refused.
+export const SchemaVersion = z.literal("zero-seed-launch-api/v4");
 const U = z.string().regex(/^(0|[1-9][0-9]*)$/);
 const I = z.string().regex(/^(0|-?[1-9][0-9]*)$/);
 const Address = z.string().regex(/^0x[0-9a-f]{40}$/);
@@ -33,10 +34,14 @@ export const FeeSchedule = z.strictObject({
   phase: z.enum(["before_trading_start", "fee_decay", "final_fee"]),
   fee_rate: U, evaluated_at: Seconds,
 });
+/** Raw launch-token units: requested = totalSupply, installed in the position, sink = requested - installed at 0x0. */
+export const Supply = z.strictObject({
+  requested: U, installed: U, sink: U, sink_holder: z.literal("0x0000000000000000000000000000000000000000"),
+});
 /** `controller` is the periphery that forwarded the creation, `creator` the first owner, `owner` the current one. */
 export const LaunchSummary = z.strictObject({
   schema_version: SchemaVersion, chain_id: U, pool_id: Bytes32, pool_key: PoolKey,
-  token: Token, quote_token: QuoteToken, launch_token_is_token1: z.boolean(),
+  token: Token, quote_token: QuoteToken, supply: Supply, launch_token_is_token1: z.boolean(),
   controller: Address, creator: Address, owner: Address,
   ask_tick: z.number().int(), upper_tick: z.number().int(), fee_schedule: FeeSchedule,
   created: EventRef, as_of: BlockRef,
@@ -46,7 +51,7 @@ const LedgerSide = z.strictObject({ accrued: U, claimed: U, unclaimed: U });
 export const LaunchDetail = LaunchSummary.extend({
   principal: z.strictObject({
     position_id: Bytes32, tick_lower: z.number().int(), tick_upper: z.number().int(),
-    liquidity: U, installed_supply: U, locked: z.literal(true), withdrawable: z.literal(false),
+    liquidity: U, locked: z.literal(true), withdrawable: z.literal(false),
     pool_reserves: SideAmounts, reserves_basis: z.literal("core_pool_balance"),
   }),
   fee_ledger: z.strictObject({

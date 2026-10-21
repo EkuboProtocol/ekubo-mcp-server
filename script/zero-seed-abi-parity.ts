@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { type Abi, type Address, encodeEventTopics, encodeFunctionData, encodeFunctionResult, type Hex } from "viem";
-import { CLAIM_SELECTOR, CREATE_SELECTOR, extensionAbi, peripheryAbi, PREVIEW_SELECTOR,
+import { type Abi, type Address, encodeErrorResult, encodeEventTopics, encodeFunctionData, encodeFunctionResult, type Hex } from "viem";
+import { CLAIM_SELECTOR, CREATE_SELECTOR, extensionAbi, LAUNCH_CREATED_TOPIC, peripheryAbi, PREVIEW_SELECTOR,
   TRANSFER_SELECTOR } from "../src/launchpad/zero-seed/abi.js";
 import { abiParameters, type ParametersInput } from "../src/launchpad/zero-seed/installation.js";
 import { EXTENSION_ABI_SHA256, PERIPHERY_ABI_SHA256 } from "../src/launchpad/zero-seed/policy.js";
@@ -21,7 +21,8 @@ const periphery = await load(peripheryPath, PERIPHERY_ABI_SHA256);
 const owner = "0x0000000000000000000000000000000000000123" as Address;
 const config = `0x${"00".repeat(32)}` as Hex;
 const parameters: ParametersInput = {
-  name: "Local λ", symbol: "LOC", decimals: 18, supply: "1000000000000000000000000000", liquidity: "1111119116089565312897934",
+  name: "Local λ", symbol: "LOC", decimals: 18, supply: "1000000000000000000000000000",
+  quoteToken: "0xffffffffffffffffffffffffffffffffffffffff",
   askTick: -13815500, upperTick: -9210300, tickSpacing: 100, tradingStart: "1300", feeDuration: 3600,
   initialFee: "922337203685477580", finalFee: "55340232221128654", salt: config,
 };
@@ -46,7 +47,7 @@ for (const abi of [peripheryAbi, periphery]) {
   same(transfer, encodeFunctionData({ abi: periphery, functionName: "transferLaunch", args: [config, owner] }), "transfer");
   same(transfer.slice(0, 10), TRANSFER_SELECTOR, "transfer selector");
   const installation = { token: owner, poolKey, positionId: config, initialTick: -13815500,
-    liquidity: tuple.liquidity, installedSupply: tuple.supply };
+    liquidity: 1111119116089565312897934n, installedSupply: 999999999999999999999999210n };
   const result = encodeFunctionResult({ abi, functionName: "previewInstallation", result: installation });
   same(result, encodeFunctionResult({ abi: periphery, functionName: "previewInstallation", result: installation }), "preview result");
   for (const eventName of ["LaunchOwnerChanged", "LaunchFeesClaimed"] as const) {
@@ -57,7 +58,17 @@ for (const abi of [extensionAbi, extension]) {
   for (const eventName of ["LaunchCreated", "LaunchSwapped", "CreatorFeesClaimed"] as const) {
     same(encodeEventTopics({ abi, eventName }), encodeEventTopics({ abi: extension, eventName }), eventName);
   }
-  same(encodeFunctionData({ abi, functionName: "quoteToken" }), encodeFunctionData({ abi: extension, functionName: "quoteToken" }), "quoteToken");
+  same(encodeEventTopics({ abi, eventName: "LaunchCreated" })[0], LAUNCH_CREATED_TOPIC, "LaunchCreated topic");
+  for (const errorName of ["UnsupportedQuoteToken", "ZeroLiquidity"] as const) {
+    same(encodeErrorResult({ abi, errorName }), encodeErrorResult({ abi: extension, errorName }), errorName);
+  }
+  same(encodeErrorResult({ abi, errorName: "LiquidityAboveTickCap", args: [1n, 2n] }),
+    encodeErrorResult({ abi: extension, errorName: "LiquidityAboveTickCap", args: [1n, 2n] }), "LiquidityAboveTickCap");
+}
+// Removed at 40af6cb: the constructor quote's getter and the exact-installable-supply error.
+for (const name of ["quoteToken", "SupplyNotExactlyInstallable"]) {
+  if (extension.some((entry) => "name" in entry && entry.name === name)) throw new Error(`${name} is still in the compiled ABI`);
+  controls++;
 }
 console.log(JSON.stringify({ scope: "offline-ABI-subset-parity", extensionAbiSha256: EXTENSION_ABI_SHA256,
   peripheryAbiSha256: PERIPHERY_ABI_SHA256, controls, executable: false, fullCompiledAbiModified: false }));
