@@ -30,7 +30,6 @@ import {
   prepareExecuteTwammVirtualOrders,
   prepareLpPositionTransfer,
   prepareManualPoolBoost,
-  prepareOldGekuboUnwrap,
   prepareOracleCapacityExpansion,
   prepareWrapUnwrap,
 } from "../src/ui-actions.js";
@@ -494,12 +493,7 @@ describe("EVM interface action preparation", () => {
     expect(planFunctions(creatorProceeds, ALL_ABI)[0]).toBe("collectCreatorProceeds");
   });
 
-  it("matches the old gEKUBO byte route and revenue maintenance ordering", () => {
-    const unwrap = prepareOldGekuboUnwrap({
-      chainId: "1",
-      sender,
-      amount: "1",
-    });
+  it("orders revenue maintenance", () => {
     const buybacks = prepareRevenueBuybacks({
       chainId: "1",
       sender,
@@ -508,12 +502,6 @@ describe("EVM interface action preparation", () => {
       rollTokens: [token1],
     });
 
-    expect(planTransactions(unwrap)[1]?.data).toBe(
-      "0x0001005a0300000001000501",
-    );
-    expect(unwrap.execution_plan.required_capabilities).toEqual([
-      "atomic_batch",
-    ]);
     expect(planFunctions(buybacks, ALL_ABI)).toEqual([
       "collect",
       "withdrawProtocolFees",

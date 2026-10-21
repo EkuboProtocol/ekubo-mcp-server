@@ -1,12 +1,10 @@
 import {
-  concatHex,
   encodeFunctionData,
   erc20Abi,
   getAddress,
   keccak256,
   numberToHex,
   parseAbi,
-  size,
   stringToHex,
   type Address,
   type Hex,
@@ -70,16 +68,6 @@ const OLD_TWAMM_V3 = getAddress("0xd4F1060cB9c1A13e1d2d20379b8aa2cF7541eD9b");
 const MANUAL_POOL_BOOSTER_V3 = getAddress(
   "0xddb1758118F65e13a91497015B8cB26801402761",
 );
-const OLD_GEKUBO_TOKEN = getAddress(
-  "0x0c93b16cb1d8691e629514fc98f02cbad340da3c",
-);
-const EKUBO_TOKEN = getAddress("0x04c46e830bb56ce22735d5d8fc9cb90309317d0f");
-const HYPER_ROUTER_V2_MAINNET = getAddress(
-  "0x8CCB1ffD5C2aa6Bd926473425Dea4c8c15DE60fd",
-);
-const EKUBO_TOKEN_INDEX = 3;
-const OLD_GEKUBO_TOKEN_INDEX = 90;
-const MAX_INT128 = (1n << 127n) - 1n;
 
 const WRAPPED_NATIVE_ABI = parseAbi([
   "function deposit() payable",
@@ -504,68 +492,6 @@ export function prepareApprovalRevocations(input: {
   });
 }
 
-export function prepareOldGekuboUnwrap(input: {
-  chainId: string;
-  sender: string;
-  amount: string;
-}) {
-  if (input.chainId !== "1") {
-    throw new ServiceError(
-      "unsupported_chain",
-      "Old gEKUBO unwrapping is available only on Ethereum mainnet",
-    );
-  }
-  const sender = getAddress(input.sender);
-  const amount = positiveUnsigned(input.amount, 127, "amount");
-  if (amount > MAX_INT128) {
-    throw new ServiceError("invalid_amount", "amount must fit positive int128");
-  }
-  const amountByteSize = size(numberToHex(amount));
-  const data = concatHex([
-    numberToHex(0, { size: 1 }),
-    numberToHex(amountByteSize, { size: 1 }),
-    numberToHex(0, { size: 1 }),
-    numberToHex(OLD_GEKUBO_TOKEN_INDEX, { size: 1 }),
-    numberToHex(EKUBO_TOKEN_INDEX, { size: 1 }),
-    numberToHex(0, { size: 1 }),
-    numberToHex(0, { size: 1 }),
-    numberToHex(0, { size: 1 }),
-    numberToHex(amount, { size: amountByteSize }),
-    "0x00",
-    "0x0501",
-  ]);
-  const approvalTransaction = erc20ApprovalTransaction(
-    input.chainId,
-    OLD_GEKUBO_TOKEN,
-    HYPER_ROUTER_V2_MAINNET,
-    amount,
-  );
-  const transaction = preparedTransaction(
-    input.chainId,
-    HYPER_ROUTER_V2_MAINNET,
-    data,
-    0n,
-  );
-
-  return preparedUiAction({
-    action: "ekubo_unwrap_old_gekubo",
-    chainId: input.chainId,
-    sender,
-    request: {
-      chain_id: input.chainId,
-      sender,
-      amount: amount.toString(),
-    },
-    approvals: [approvalTransaction],
-    transaction,
-    atomicBatchRequired: true,
-    details: {
-      requires_atomic_batch_wallet_in_interface: true,
-      exact_router_calldata: data,
-    },
-  });
-}
-
 export function preparedUiAction(input: PreparedUiActionInput) {
   if ((input.steps === undefined) === (input.transaction === undefined)) {
     throw new Error(
@@ -715,9 +641,6 @@ export const UI_ACTION_ADDRESSES = {
   twamm_v3: TWAMM_V3,
   old_twamm_v3: OLD_TWAMM_V3,
   manual_pool_booster_v3: MANUAL_POOL_BOOSTER_V3,
-  old_gekubo_token: OLD_GEKUBO_TOKEN,
-  ekubo_token: EKUBO_TOKEN,
-  hyper_router_v2_mainnet: HYPER_ROUTER_V2_MAINNET,
 } as const;
 
 export { transactionIdentity };

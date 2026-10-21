@@ -62,8 +62,8 @@ sessions use: tokens, quotes and swaps, pools, LP positions and deposits,
 withdrawals and claims, liquidity opportunities, transfers, wrap/unwrap,
 rewards, and ve(3,3)/STONX. `/mcp/ekubo-advanced` carries the rarely used
 operator tools: auctions, TWAMM orders, pool initialization and price fixes,
-oracle capacity, manual boosts, revenue buybacks, the old gEKUBO unwrap,
-approval revocations, and pool-key enumeration and derivation. Each one's
+oracle capacity, manual boosts, revenue buybacks, approval revocations, and
+pool-key enumeration and derivation. Each one's
 instructions name the other, so an agent that needs a tool from the other half
 tells the user which server to add. `/mcp` serves both halves.
 `/tools?protocol=safe` publishes the Safe catalog; unfiltered `/tools` describes `/mcp`.
@@ -359,7 +359,7 @@ The remaining EVM interface transaction paths also have first-class tools:
   exact reads, quote, approval, and execution route;
 - TWAMM/DCA creation, collection, stop, and virtual-order execution;
 - auction creation, completion/graduation initialization, and creator proceeds;
-- manual boosts, oracle capacity, ERC-20 revocations, and old gEKUBO unwrap;
+- manual boosts, oracle capacity, and ERC-20 revocations;
 - incentive rewards, Recovery Fund claims, and revenue buyback maintenance;
 - VeToken increase-stake, fee-safe merge, and expired withdrawal.
 
