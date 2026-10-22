@@ -23,7 +23,7 @@ const feeQ64 = (description: string) => z.string({ error: "must be a decimal str
   .describe(description);
 
 /**
- * LaunchParameters of evm-contracts 550afc4, in tuple order. `supply` is the requested supply, submitted unchanged:
+ * LaunchParameters of evm-contracts 43d6628, in tuple order. `supply` is the requested supply, submitted unchanged:
  * the contract derives the liquidity from it and mints the uninstallable remainder to address(0). There is no
  * liquidity input and no decay factor (600 s half-life). Like the contract, the fee schedule needs only
  * finalFee <= initialFee and feeDuration > 0 (InvalidFeeSchedule); there is no fee ceiling below uint64.

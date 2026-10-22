@@ -9,7 +9,7 @@ import { build, ERC20_QUOTE, fixture, KINDS, owner, request } from "./zero-seed-
 const B = BigInt(build().buildTime);
 const at = (offset: bigint) => (B + offset).toString();
 
-// Contract vectors (evm-contracts 550afc4, unchanged since 40af6cb, test/vectors/zero-seed-launch.json) at supply 1e27, 18/18 decimals,
+// Contract vectors (evm-contracts 43d6628, unchanged since 40af6cb, test/vectors/zero-seed-launch.json) at supply 1e27, 18/18 decimals,
 // ask -13815500, upper -9210300, spacing 100: the native launch token is token1, the ERC-20 launch token0.
 const EXPECTED = {
   native: { requested: "1000000000000000000000000000", installed: "999999999999999999999999422", sink: "578",

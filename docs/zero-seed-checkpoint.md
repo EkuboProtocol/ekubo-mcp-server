@@ -4,28 +4,35 @@ Local only. Release HOLD. Every hosted tool refuses; the live pin list is empty.
 
 ## Basis
 
-evm-contracts `550afc40280423128c02eb5ffd213aa959b34e2a` (tree `dbbfe6a5…`):
+evm-contracts `43d6628841b3ce91dafa048b7ceef64bed55fc8e` (tree `9ab869d1…`):
 extension ABI SHA-256 `efae9388…90d1e41e`, periphery ABI SHA-256
-`df24d9f0…bebe7305` (`jq -cS .abi`, no trailing newline), runtime templates
-`0xf10adeca…` and `0x73cbf73c…`, MintableERC20 init code `0x25da7fd3…`
-(unchanged). The extension's constructor is `(core)`; the quote is
-`LaunchParameters.quoteToken`, per launch. Against `40af6cb` the only change
-is the creator fee range: every uint64 initial and final fee is accepted
-(`MAX_CREATOR_FEE = 2^64 - 1`, just under 100%), `FeeTooHigh()` (`0xcd4e6167`)
-is gone, and `InvalidFeeSchedule()` (`0xf75a271a`) refuses only a rising fee
-or a zero duration; selectors, topics, structs, the fee table and settlement
-are unchanged.
-`test/fixtures/launchpad/zero-seed-interface-550afc4.json` is the canonical
-interface manifest (`manifest_sha256` `032f3c9b…e0b2deed`), vendored verbatim;
+`df24d9f0…bebe7305` (`jq -cS .abi`, no trailing newline; both unchanged),
+runtime templates `0x19d7461a…` (20,402 bytes) and `0x76db610a…`,
+MintableERC20 init code `0x25da7fd3…` (unchanged). The extension's
+constructor is `(core)`; the quote is `LaunchParameters.quoteToken`, per
+launch. Every uint64 initial and final fee is accepted (`MAX_CREATOR_FEE =
+2^64 - 1`, just under 100%); `InvalidFeeSchedule()` (`0xf75a271a`) refuses
+only a rising fee or a zero duration.
+
+Against `550afc4` the only change is the installation of a launch whose token
+is token0 (an ERC-20 quote above the token address). The installed liquidity is
+now `floor(supply * lower * upper / (2^128 * (upper - lower)))`, the largest
+liquidity whose rounded-up Core debit fits the requested supply; the shared
+helper it replaced floored `lower * upper / 2^128` first and could install
+less at low prices, sinking the difference. Token1 (native ETH) installations,
+selectors, topics, structs, the fee table and settlement are unchanged. The
+MCP has no installation mirror: it reads `previewInstallation` and checks its
+bounds, so only the pins and fixtures changed.
+`test/fixtures/launchpad/zero-seed-interface-43d6628.json` is the canonical
+interface manifest (`manifest_sha256` `6be8bd0a…18906629`), vendored verbatim;
 its `creator_fee_range` verdicts are replayed against the parameter
 validation. `zero-seed-fee-decay-vectors.json` holds the protocol generator's
-independent fee vectors; the `550afc4` generator writes the same file (its 99%
-rows are a study rate, no longer the ceiling).
+independent fee vectors, unchanged.
 
 ## Local chain
 
 `script/zero-seed-local-chain.ts` drives a fresh anvil chain from the compiled
-`550afc4` artifacts:
+`43d6628` artifacts:
 
 1. Core's runtime is placed at its canonical address (runtime hash equal to
    Base Core, `0xc5f90c9d…`) and the checkout's plain 18-decimal
@@ -34,8 +41,8 @@ rows are a study rate, no longer the ceiling).
 2. Block 2 deploys, through the CREATE2 deployer, the one extension at the
    first salt whose address starts with `0x51` and its periphery at salt 0,
    exactly as the indexer's replay generator does, so both chains share the
-   one pin (extension `0x511b4327…046d8b`, periphery `0x2f0be2fc…23ef64`,
-   equal to indexer `c78a48e`).
+   one pin (extension `0x519c5f79…08211f`, periphery `0x0df4e2a7…7e8ef4`,
+   equal to indexer `91a7036`).
    `runtime.ts` verifies both runtimes and every immutable before the pin is
    accepted.
 3. The MCP preview, create producer and owner decoder run over that chain for
@@ -43,7 +50,8 @@ rows are a study rate, no longer the ceiling).
    token0), each requesting `1e27`; the exact `create` they produced, carrying
    the requested supply, executes from the owner. The script checks Core's
    `PositionUpdated` against the installed supply (quote side 0, liquidity
-   delta equal to `LaunchCreated.liquidity`), one `Transfer(0x0, 0x0, sink)`,
+   delta equal to `LaunchCreated.liquidity`), one `Transfer(0x0, 0x0, sink)`
+   (none when the sink is zero),
    `totalSupply == requested` and `balanceOf(address(0)) == sink`, and
    attributes the creator from the periphery's event.
 4. Native buys and sells (exact-in and exact-out), and an ERC-20 buy and sell,
@@ -58,15 +66,25 @@ rows are a study rate, no longer the ceiling).
    schedule 50% -> 0.3% over 3,600 s (native), the maximum `2^64 - 1` -> 0.3%
    over 3,600 s (native) and flat at the maximum over 1 s (ERC-20), and one
    buy runs on each maximum-fee launch.
+7. Two ERC-20 launches (launch token0) whose exact installation differs from
+   the shared helper, from the producer's own preview and create: ticks
+   `-88080384`/`-85983232`, spacing 524,288, requesting `1e30`, which installs
+   liquidity `115073586432` and `999999999991410763432286846442` with a sink
+   of `8589236567713153558` raw units (the helper installed `106052588672`
+   and sank 7.84%); and the full width at spacing 1 requesting
+   `170141183460469231694794709727778658247`, which installs liquidity
+   `9223595582101085260` and the whole supply, with no sink mint (the helper
+   was one liquidity unit short).
 
 It writes `test/fixtures/launchpad/zero-seed-native-local-chain.json` (it now
-holds all five launches; sha256 `ad960147…3002ef41`); two runs on fresh anvil
-instances produced byte-identical files. Reproduce:
+holds all seven launches; sha256 `b917c2b4…9aeba78b5`); two runs on fresh anvil
+instances, inside an OS sandbox with no network, produced byte-identical files.
+Reproduce:
 
 ```sh
 anvil --port 8546 --chain-id 31337 --hardfork osaka --timestamp 1800000000 --base-fee 0 --gas-price 0 \
   --gas-limit 60000000 &
-EVM_CONTRACTS=<evm-contracts at 550afc4, after forge build> RPC_URL=http://127.0.0.1:8546 \
+EVM_CONTRACTS=<evm-contracts at 43d6628, after forge build> RPC_URL=http://127.0.0.1:8546 \
   bun script/zero-seed-local-chain.ts test/fixtures/launchpad/zero-seed-native-local-chain.json
 jq -cS .abi <ZeroSeedLaunch.json> | tr -d '\n' > ext.json
 jq -cS .abi <ZeroSeedLaunchPeriphery.json> | tr -d '\n' > per.json
@@ -90,19 +108,24 @@ value, `TradingNotStarted`, `UnsupportedQuoteToken`, the earlier selector,
 launches the owner decoder reproduces each summary from its sealed body, the
 create calldata decodes to exactly the requested fees, `LaunchCreated` carries
 them, no percentage reads `100.0000%`, the emitted rate at the maximum is
-`2^64 - 1`, and an exact-input buy there nets `floor(gross / 2^64)`.
+`2^64 - 1`, and an exact-input buy there nets `floor(gross / 2^64)`. For the
+two exact token0 launches the preview, the sealed create, the owner summary
+and Core's `PositionUpdated` agree on the liquidity, installed supply and sink
+exactly, and the summary states that nothing is minted to address(0) when the
+sink is zero.
 
 ## Backend API v4
 
 `src/launchpad/zero-seed/api.ts` consumes `zero-seed-launch-api/v4` of api
-`cf05546b0b5f49194cab76b7c9348d9929574b58`: list (with `owner=` and
+`620aa1154e276b829865204ba54bfc54f6c95537`: list (with `owner=` and
 `creator=`), detail, swaps, claims and owners; every other schema version is
 refused. The tests replay the backend's golden
-(`test/fixtures/launchpad/zero-seed-api-v4-cf05546.golden.json`, sha256
-`346400de…a30499a2`, byte-identical to the API's
+(`test/fixtures/launchpad/zero-seed-api-v4-620aa11.golden.json`, sha256
+`e2c5c070…9362d491`, byte-identical to the API's
 `src/routes/launches/fixtures/zero-seed-launch-api-v4.golden.json`): actual
 handler output over the indexer's replayed fork-free chain (indexer
-`c78a48e`, contracts `550afc4`), served by the current local pin. It includes
+`91a7036`, contracts `43d6628`), served by the current local pin. It includes
+the low-price and full-width token0 launches at the exact installation and
 the two launches created at the maximum fee: l5 (native, `2^64 - 1` -> 0.3%
 over 3,600 s) and l6 (ERC-20, flat at `2^64 - 1`). Their detail, swaps,
 claims and list rows parse through the client with `initial_fee` and, at
@@ -113,7 +136,8 @@ maximum nets `floor(gross / 2^64)`, and no fee the MCP renders for them reads
 the published schema states; anything above is refused as an invalid
 response. The consumed zod schemas equal the `/launches*` response schemas of
 `openapi.json` at the same head
-(`zero-seed-api-v4-cf05546.openapi-launches.json`, sha256 `721309ef…8dad27c5`),
+(`zero-seed-api-v4-620aa11.openapi-launches.json`, sha256 `721309ef…8dad27c5`,
+unchanged since `cf05546`),
 and every query parameter the client sends is published there.
 
 The client recomputes, per row: the launch's quote (native is `address(0)`,
@@ -132,8 +156,8 @@ current `owner` with `owner_change_count` entries.
 ## Real quoter output
 
 This evidence is of the earlier `4f1a306` deployment and is kept as recorded:
-the quoter-service updates for `40af6cb` and `550afc4` are not consumed here. The swap path
-did not change (forward payload, router layout, settlement), so the tests
+the quoter-service updates for `40af6cb`, `550afc4` and `43d6628` are not
+consumed here. The swap path did not change (forward payload, router layout, settlement), so the tests
 replay every recorded plan against the current pin with only the extension
 address substituted, and require the produced calldata to equal the executed
 calldata with only that address changed.
@@ -170,7 +194,7 @@ ERC-20 inputs carry the router approval.
 
 ## NOT PROVEN
 
-- Quoter output and router plans against the `550afc4` instance, at any rate
+- Quoter output and router plans against the `43d6628` instance, at any rate
   including the maximum: the recorded quoter plans are of `4f1a306`, replayed
   with the extension substituted; the local chain's swaps use
   `LaunchTestRouter`, not the 0x03c8 router.

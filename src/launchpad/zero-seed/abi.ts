@@ -1,6 +1,6 @@
 import { parseAbi } from "viem";
 
-// Subsets of the ZeroSeedLaunch extension and ZeroSeedLaunchPeriphery ABIs at evm-contracts 550afc4. Users call
+// Subsets of the ZeroSeedLaunch extension and ZeroSeedLaunchPeriphery ABIs at evm-contracts 43d6628. Users call
 // only the periphery; swaps reach the extension through Core.forward. Each launch names its own quote token in
 // LaunchParameters (address(0) is native ETH); `supply` is the requested supply, and the contract derives the
 // liquidity from it and mints the uninstallable remainder to address(0). There is no liquidity input and no decay

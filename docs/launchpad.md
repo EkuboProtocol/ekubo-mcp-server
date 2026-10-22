@@ -1,7 +1,7 @@
 # Launchpad (zero-seed, support disabled)
 
 The launchpad targets the zero-seed launch interface of evm-contracts
-`550afc4`: the `ZeroSeedLaunch(Core)` extension and the
+`43d6628`: the `ZeroSeedLaunch(Core)` extension and the
 `ZeroSeedLaunchPeriphery(Core, extension)` that users call. One extension and
 its periphery serve every quote token; each launch names its own. It is not
 deployed, released or externally reviewed. A launcher deploys and funds its
@@ -52,12 +52,14 @@ its support, the supply split, the fee rate and the owner and ledger totals
 from each response; see
 [zero-seed-checkpoint.md](zero-seed-checkpoint.md).
 
-`launchpad://disclosures` serves the nine mechanism disclosures (version 5)
+`launchpad://disclosures` serves the ten mechanism disclosures (version 6)
 every owner summary carries: zero initial bid, buyer-funded quote reserve,
 permanent principal lock (with the requested, installed and sink supply),
 creator fee rate, transferable launch ownership,
-owner fee recapture, high initial fee, exact-output gross-up and no exit
-guarantee. The wording is a draft and not approved.
+owner fee recapture, high initial fee, exact-output gross-up, no exit
+guarantee and quote trust. The quote-trust statement has an ERC-20 form
+(`template`) and a native-ETH form (`native_template`). The wording is a
+draft and not approved.
 
 ## Instances
 
@@ -90,16 +92,29 @@ local list holds only the local chains' plain test ERC-20 at
 client refuse any other quote with `unsupported_quote`, or drop it from lists.
 Owner summaries show the quote and, for an ERC-20, its reviewed runtime.
 
+Trust in an ERC-20 quote is token-wide, not limited to the launch's pool.
+Core keeps one balance per token, so a quote that misreports balances or
+transfers exposes every pool, position and fee ledger that holds it, including
+other launches and ordinary pools on the same token, and an honest token
+paired with it can lose that pool's own reserve. Pools that do not hold the
+quote, including native ETH and unrelated tokens, keep their own per-token
+accounting and are not reachable through it. Every ERC-20 owner summary
+carries this as its quote-trust statement; a native-ETH summary states that
+no quote token contract is trusted. Reviewing a quote does not change this.
+
 ## Supply
 
 `LaunchParameters.supply` is the requested supply: the token's `totalSupply`
 and `LaunchCreated.parameters.supply`. There is no liquidity input. The
-contract computes the largest liquidity the requested supply buys (refusing
-`ZeroLiquidity` and `LiquidityAboveTickCap`), installs the launch-token amount
-Core takes for it (`installedSupply`, rounded up, `0 < installed <=
-requested`) and mints the remainder `sink = requested - installed` to
-`address(0)`, where nothing can spend it; `totalSupply` stays the requested
-supply. `previewInstallation` returns the same installation for display.
+contract computes the largest liquidity whose rounded-up Core debit fits the
+requested supply (refusing `ZeroLiquidity` and `LiquidityAboveTickCap`),
+installs the launch-token amount Core takes for it (`installedSupply`, rounded
+up, `0 < installed <= requested`) and mints the remainder `sink = requested -
+installed` to `address(0)`, where nothing can spend it; the sink is too small
+to pay for one more liquidity unit, and when it is zero nothing is minted
+there. `totalSupply` stays the requested supply. `previewInstallation`
+returns the same installation for display; the MCP reads it rather than
+recomputing it.
 
 The producers submit the requested parameters unchanged: the create calldata
 carries the requested supply, never the installed one. The preview and owner
@@ -111,6 +126,12 @@ with the launch's own quote. For 18/18 decimals, ticks `-13815500`/`-9210300`,
 spacing 100 and a requested `1e27`, the native launch (token1) installs
 `999999999999999999999999422` with a sink of `578`, and an ERC-20 launch whose
 token is token0 installs `999999999999999999999999210` with a sink of `790`.
+At ticks `-88080384`/`-85983232`, spacing 524,288 and a requested `1e30`, an
+ERC-20 launch whose token is token0 installs liquidity `115073586432` and
+`999999999991410763432286846442` with a sink of `8589236567713153558` raw
+units; over the full width at spacing 1, a requested
+`170141183460469231694794709727778658247` installs the whole supply with no
+sink.
 
 ## Calls
 
@@ -197,8 +218,9 @@ This unpublished candidate bumps, in the same commit:
   `2026-10-21.launchpad-zero-seed-fee-range` (the create tool's parameters
   changed: `quoteToken` added with the native default, `liquidity` removed,
   `initialFee` and `finalFee` documented and validated as the full uint64
-  range; `launchpad_get_owners` was added; set the date to the actual release
-  date if it ships later);
+  range; `launchpad_get_owners` was added; the disclosures resource moved to
+  version 6 with the quote-trust statement and the exact-installation sink
+  wording; set the date to the actual release date if it ships later);
 - `MCP_SERVER_VERSION` in `src/version.ts` and `version` in `package.json`, from
   `0.53.0` to `0.54.0`.
 

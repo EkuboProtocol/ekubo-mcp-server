@@ -1,9 +1,9 @@
 import { type Address, getAddress, zeroAddress } from "viem";
 import { ServiceError } from "../../core.js";
 
-// Consumer interface of evm-contracts 550afc4: ZeroSeedLaunch(Core) and ZeroSeedLaunchPeriphery(Core, extension).
+// Consumer interface of evm-contracts 43d6628: ZeroSeedLaunch(Core) and ZeroSeedLaunchPeriphery(Core, extension).
 // Not deployed, released or audited.
-export const CONTRACTS_COMMIT = "550afc40280423128c02eb5ffd213aa959b34e2a";
+export const CONTRACTS_COMMIT = "43d6628841b3ce91dafa048b7ceef64bed55fc8e";
 /** sha256 of the compact, key-sorted JSON of each full compiled ABI (`jq -cS .abi`, no trailing newline). */
 export const EXTENSION_ABI_SHA256 = "efae9388aa6b1342479204ddf436fd2a310df16bf06c80c990b2d22c90d1e41e";
 export const PERIPHERY_ABI_SHA256 = "df24d9f07d45323da7e46c0f6e64ce24f8f522442d60cb07880ddf742ebe7305";
@@ -33,18 +33,18 @@ export interface InstancePin {
 
 const CORE = "0x00000000000014aa86c5d3c41765bb24e11bd701";
 
-// The one instance deployed on a local anvil chain from the 550afc4 artifacts, identically (same deterministic
+// The one instance deployed on a local anvil chain from the 43d6628 artifacts, identically (same deterministic
 // deployer, salts, constructor arguments and block) by script/zero-seed-local-chain.ts and by the indexer's replay
-// fixture generator (indexer c78a48e, scripts/zeroSeedLaunchFixture.ts).
+// fixture generator (indexer 91a7036, scripts/zeroSeedLaunchFixture.ts).
 // Not a live instance, and equal runtime alone is not provenance.
 export const LOCAL_INSTANCE_PINS: readonly Readonly<InstancePin>[] = Object.freeze([
   Object.freeze({
     chainId: "31337",
     core: CORE,
-    extension: "0x511b4327c2a2b6fd803b4ae85f2f9d831e046d8b",
-    periphery: "0x2f0be2fc5a2825cecd23dbf6ed33ed8ff823ef64",
-    extensionRuntime: "0xb8c6d15f45c41e9dc43ac0e6ab8ea941dc833514cdb0b82f381c65f42f73a858",
-    peripheryRuntime: "0x49988478ba70cc8d2587eb63141b333c7ef0a67c4639c3a2ee25de4c4597999e",
+    extension: "0x519c5f793d3f6cf9ee439e4cc38d8285cf08211f",
+    periphery: "0x0df4e2a76640b52e51479b435f52d0eb0e7e8ef4",
+    extensionRuntime: "0xd6b4c7ce8da56e9948fdb004a035d9b52dbd3690bcb03c1269bbf2a9981d8ed5",
+    peripheryRuntime: "0x2a9329dbb064a2c031115c7c120c8b6a1f31de167f33374180e4dc73d975974b",
     deploymentBlock: "2",
     extensionAbiSha256: EXTENSION_ABI_SHA256,
     peripheryAbiSha256: PERIPHERY_ABI_SHA256,

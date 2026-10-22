@@ -2,7 +2,7 @@ import { type Hex, hexToBytes, keccak256 } from "viem";
 import { ZeroSeedError } from "./policy.js";
 
 /**
- * Compiler output of evm-contracts 550afc4 (solc 0.8.33, via-IR, 9,999,999 runs, osaka): the runtime with every
+ * Compiler output of evm-contracts 43d6628 (solc 0.8.33, via-IR, 9,999,999 runs, osaka): the runtime with every
  * immutable zeroed, its length, and where each immutable is embedded (compiler immutableReferences). A deployed
  * instance is accepted only when its code is this template with exactly the expected words at those offsets: a
  * template hash alone says nothing about which Core or extension an instance is bound to. The extension has no
@@ -15,16 +15,16 @@ interface RuntimeTemplate {
 }
 
 export const EXTENSION_RUNTIME: RuntimeTemplate = Object.freeze({
-  templateKeccak256: "0xf10adeca29e131bfb07f22d350641a17df000fb9945b40ac65061fb3c6ddf8c1",
-  length: 20125,
+  templateKeccak256: "0x19d7461a57e0058bd09c848684152a234b4b3909404c1c85dbf6e69b9d59c925",
+  length: 20402,
   immutables: Object.freeze([
-    { role: "core", offsets: [846, 6199, 7340, 9035] },
+    { role: "core", offsets: [846, 6169, 7310, 9005] },
     { role: "accountant", offsets: [2418] },
   ]),
 });
 
 export const PERIPHERY_RUNTIME: RuntimeTemplate = Object.freeze({
-  templateKeccak256: "0x73cbf73c2fb778fd4a2541d59da08c4346a2217e5a73d7282583fe3ab69376d9",
+  templateKeccak256: "0x76db610aa6d183253d966ff21d2c59f750028b9ad83c0e4cc0d362324740e2e7",
   length: 5552,
   immutables: Object.freeze([
     { role: "core", offsets: [1399, 4401] },

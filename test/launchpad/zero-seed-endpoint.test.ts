@@ -326,19 +326,26 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
     expect(reply.result.structuredContent.error.code).toBe("launch_support_disabled");
   });
 
-  it("serves the nine versioned draft mechanism disclosures", async () => {
+  it("serves the ten versioned draft mechanism disclosures", async () => {
     const reply = await mcp(workerEnv(), TESTING, "resources/read", { uri: "launchpad://disclosures" });
     const document = JSON.parse(reply.result.contents[0].text);
-    expect(document).toMatchObject({ version: 5, status: "draft_not_approved" });
+    expect(document).toMatchObject({ version: 6, status: "draft_not_approved" });
     expect(document.disclosures.map((entry: Json) => entry.code)).toEqual([
       "zero_initial_bid", "buyer_funded_quote_reserve", "permanent_principal_lock", "creator_fee_recipient_and_rate",
       "transferable_launch_ownership", "creator_fee_recapture", "high_initial_fee", "exact_output_gross_up", "no_exit_guarantee",
+      "quote_token_trust",
     ]);
-    expect(DISCLOSURE_CODES).toHaveLength(9);
+    expect(DISCLOSURE_CODES).toHaveLength(10);
     const text = reply.result.contents[0].text;
     expect(text).not.toContain("linearly");
     expect(text).not.toContain("cannot transfer");
+    expect(text).not.toContain("rounding remainder");
     expect(text).toContain("600 s half-life");
-    expect(text).toContain("rounding remainder of <sink supply> is minted to address(0)");
+    expect(text).toContain("the remainder of <sink supply>, too small to pay for one more unit of liquidity, is minted to address(0)");
+    const trust = document.disclosures.find((entry: Json) => entry.code === "quote_token_trust");
+    expect(trust.template).toContain("<quote> is trusted across all of Core, not just this pool");
+    expect(trust.template).toContain("an honest token paired with it can lose that pool's own reserve");
+    expect(trust.template).toContain("are not reachable through it");
+    expect(trust.native_template).toBe("Quote trust: the quote is native ETH, which Core accounts for itself. No quote token contract is trusted.");
   });
 });

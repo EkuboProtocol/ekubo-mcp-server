@@ -1,14 +1,16 @@
-// Local, fork-free run of the zero-seed launch on anvil: deploys the 550afc4 artifacts the way a launcher would
+// Local, fork-free run of the zero-seed launch on anvil: deploys the 43d6628 artifacts the way a launcher would
 // (one extension at a mined CREATE2 address and its periphery, both through the deterministic deployer, in block 2,
 // exactly as the indexer's replay fixture generator does), then drives every MCP producer and owner decoder against
 // that chain, executes exactly the create and claim calls they produced, and swaps through the checkout's compiled
 // test/LaunchTestRouter.sol. Launches with a native-ETH quote and with the plain test ERC-20 quote share the one
 // extension. It also creates launches at the default 50% -> 0.3% schedule and at the maximum uint64 fee, from the
-// producer's own create, and swaps at the maximum rate. It writes the fixture the tests replay.
+// producer's own create, and swaps at the maximum rate, plus two token0 launches whose exact installation differs
+// from the shared liquidity helper (a low-price range and the full width at spacing 1). It writes the fixture the
+// tests replay.
 //
 //   anvil --port 8546 --chain-id 31337 --hardfork osaka --timestamp 1800000000 --base-fee 0 --gas-price 0 \
 //     --gas-limit 60000000
-//   EVM_CONTRACTS=<evm-contracts checkout at 550afc4, built with forge build> RPC_URL=http://127.0.0.1:8546 \
+//   EVM_CONTRACTS=<evm-contracts checkout at 43d6628, built with forge build> RPC_URL=http://127.0.0.1:8546 \
 //     bun script/zero-seed-local-chain.ts test/fixtures/launchpad/zero-seed-native-local-chain.json
 //
 // Local evidence only: no fork, no live instance, no UserOp, bundler, paymaster or real quoter.
@@ -192,11 +194,22 @@ const FEE_MAX = ((1n << 64n) - 1n).toString();
 const REQUESTED_SUPPLY = "1000000000000000000000000000";
 type FeeSchedule = Pick<ParametersInput, "feeDuration" | "initialFee" | "finalFee">;
 const FIXTURE_SCHEDULE: FeeSchedule = { feeDuration: 3600, initialFee: FEE_5, finalFee: FEE_03 };
-function parameters(label: string, quoteToken: Address, tradingStart: bigint, fees = FIXTURE_SCHEDULE): ParametersInput {
+type Geometry = Pick<ParametersInput, "supply" | "askTick" | "upperTick" | "tickSpacing">;
+const FIXTURE_GEOMETRY: Geometry = { supply: REQUESTED_SUPPLY, askTick: -13815500, upperTick: -9210300, tickSpacing: 100 };
+/**
+ * Token0 geometries where the exact installation differs from the shared helper's floor(lower * upper / 2^128) first
+ * step: the low-price range at 1e30 (the helper installed 106052588672 and sank 7.84%), and the full width at spacing
+ * 1 with a supply the exact maximum pays for completely (no sink mint; the helper was one liquidity unit short).
+ */
+const LOW_PRICE_GEOMETRY: Geometry = { supply: "1000000000000000000000000000000", askTick: -88080384, upperTick: -85983232,
+  tickSpacing: 524288 };
+const FULL_WIDTH_GEOMETRY: Geometry = { supply: "170141183460469231694794709727778658247", askTick: -88722835, upperTick: 88722835,
+  tickSpacing: 1 };
+function parameters(label: string, quoteToken: Address, tradingStart: bigint, fees = FIXTURE_SCHEDULE,
+  geometry = FIXTURE_GEOMETRY): ParametersInput {
   return {
-    name: `Zero Seed ${label}`, symbol: label.toUpperCase(), decimals: 18, supply: REQUESTED_SUPPLY, quoteToken,
-    askTick: -13815500, upperTick: -9210300, tickSpacing: 100, tradingStart: tradingStart.toString(),
-    ...fees, salt: `0x${"00".repeat(31)}01`,
+    name: `Zero Seed ${label}`, symbol: label.toUpperCase(), decimals: 18, quoteToken, ...geometry,
+    tradingStart: tradingStart.toString(), ...fees, salt: `0x${"00".repeat(31)}01`,
   };
 }
 
@@ -244,17 +257,20 @@ async function supplySplit(preview: Preview, request: ParametersInput, events: R
     core_quote_delta: quoteDelta.toString(), core_liquidity_delta: position.args.liquidityDelta,
     sink_transfer: sinkMints.map((e) => e.args.amount),
   };
+  // No sink mint when the installed liquidity takes the whole requested supply.
+  const sinkTransfers = supply.sink === "0" ? [] : [supply.sink];
   const matches = [supply.installed === preview.supply.installed, supply.sink === preview.supply.sink,
     supply.total_supply === request.supply, supply.sink_balance === supply.sink, quoteDelta === 0n,
-    supply.core_liquidity_delta === preview.liquidity, JSON.stringify(supply.sink_transfer) === JSON.stringify([supply.sink])];
+    supply.core_liquidity_delta === preview.liquidity, JSON.stringify(supply.sink_transfer) === JSON.stringify(sinkTransfers)];
   if (matches.includes(false)) throw new Error(`${label}: supply split ${JSON.stringify(supply)}`);
   return supply;
 }
 
-async function createLaunch(pin: InstancePin, quoteToken: Address, label: string, fees = FIXTURE_SCHEDULE) {
+async function createLaunch(pin: InstancePin, quoteToken: Address, label: string, fees = FIXTURE_SCHEDULE,
+  geometry = FIXTURE_GEOMETRY) {
   const build = await mineAt(clock + 10n);
   const buildTime = build.timestamp;
-  const request = parameters(label, quoteToken, buildTime + 600n, fees);
+  const request = parameters(label, quoteToken, buildTime + 600n, fees, geometry);
   const buildContext = {
     buildTime: buildTime.toString(), executionExpiry: (buildTime + 300n).toString(),
     blockNumber: build.number.toString(), blockHash: build.hash, blockTime: buildTime.toString(),
@@ -346,7 +362,7 @@ async function claim(pin: InstancePin, launch: Launch, claimer: typeof owner, to
 }
 
 // --- run --------------------------------------------------------------------------------------------------------------
-if (CONTRACTS_COMMIT !== "550afc40280423128c02eb5ffd213aa959b34e2a") throw new Error("contracts pin");
+if (CONTRACTS_COMMIT !== "43d6628841b3ce91dafa048b7ceef64bed55fc8e") throw new Error("contracts pin");
 await placeCoreAndQuote();
 const pin = await deployInstance();
 if (LOCAL_INSTANCE_PINS.length !== 1 || !samePin(LOCAL_INSTANCE_PINS[0], pin)) {
@@ -434,14 +450,19 @@ const maxSwaps = [
   await swap(launchOf(maxFlat), scheduleOf(maxFlat), "buy", false, 10n ** 18n, BigInt(maxFlat.request.tradingStart) + 30n),
 ];
 
+// Exact token0 installation, from the producer's own preview and create (ERC-20 quote, so the launch token is token0).
+const lowPrice = await createLaunch(pin, ERC20_QUOTE, "p1", FIXTURE_SCHEDULE, LOW_PRICE_GEOMETRY);
+const fullWidth = await createLaunch(pin, ERC20_QUOTE, "w1", FIXTURE_SCHEDULE, FULL_WIDTH_GEOMETRY);
+
 const fixture = {
-  scope: "LOCAL anvil chain from evm-contracts 550afc4 artifacts. Not a fork, live instance, UserOp, bundler or real quoter output.",
+  scope: "LOCAL anvil chain from evm-contracts 43d6628 artifacts. Not a fork, live instance, UserOp, bundler or real quoter output.",
   contracts_commit: CONTRACTS_COMMIT,
   accounts: { launcher: lower(launcher.address), owner: lower(owner.address), buyer: lower(buyer.address),
     recipient: lower(recipient.address), new_owner: lower(newOwner.address) },
   core: CORE, router: ROUTER, erc20_quote: { address: ERC20_QUOTE, runtime: keccak256((await pub.getCode({ address: ERC20_QUOTE }))!) },
   pin, deployed, approvals,
-  launches: { native, erc20: erc, default_schedule: defaultSchedule, max_to_final: maxToFinal, max_flat: maxFlat },
+  launches: { native, erc20: erc, default_schedule: defaultSchedule, max_to_final: maxToFinal, max_flat: maxFlat,
+    low_price: lowPrice, full_width: fullWidth },
   swaps, first_claim: firstClaim, refusals,
   transfer: { data: transferData, receipt: { block_number: transferReceipt.blockNumber.toString(), transaction_hash: transferReceipt.transactionHash },
     events: decodeLogs(transferReceipt.logs) },
@@ -450,4 +471,4 @@ const fixture = {
 };
 writeFileSync(OUT, `${JSON.stringify(fixture, null, 1)}\n`);
 console.log(JSON.stringify({ written: OUT, swaps: swaps.length + 1 + ercSwaps.length + maxSwaps.length, refusals, old_owner_claim: oldOwnerClaim,
-  supply: { native: native.supply, erc20: erc.supply } }));
+  supply: { native: native.supply, erc20: erc.supply, low_price: lowPrice.supply, full_width: fullWidth.supply } }));

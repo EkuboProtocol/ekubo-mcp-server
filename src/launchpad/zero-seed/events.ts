@@ -41,7 +41,7 @@ interface CreatedArgs {
 }
 
 /**
- * Decodes one LaunchCreated log of a pinned extension (evm-contracts 550afc4; the tuple is unchanged since 40af6cb:
+ * Decodes one LaunchCreated log of a pinned extension (evm-contracts 43d6628; the tuple is unchanged since 40af6cb:
  * quoteToken in slot 5, no liquidity input) and checks it against the contract's own rules: the emitter is the extension, the pool pairs the
  * token with the launch's quote (native ETH always token0), the pool id, fee 0 and spacing, the position bounds, a
  * nonzero liquidity and a requested supply in 1..int128.max. `parameters.salt` is the salt the extension received:

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// Exact shapes consumed from the backend API v4 (api cf05546): the launch's own quote token and kind, requested,
+// Exact shapes consumed from the backend API v4 (api 620aa11, unchanged since cf05546): the launch's own quote token and kind, requested,
 // installed and sink supply, the fixed-base fee table and the periphery's owner identity. Any other schema version,
 // including v3 with principal.installed_supply and v2 with its decay_factor, is refused.
 export const SchemaVersion = z.literal("zero-seed-launch-api/v4");

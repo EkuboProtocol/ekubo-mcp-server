@@ -37,7 +37,7 @@ describe("opaque owner decoder: periphery create (local, non-executable)", () =>
     const { f, sealed, expected } = await created(kind);
     const summary = decodeOwnerCreate(sealed, expected, freshTime(kind));
     expect(summary).toMatchObject({ schema_version: "zero-seed-launch-owner-summary/v4", chain_id: "31337",
-      target: pin.periphery, selector: "0x662af306", method: "create", disclosure: { version: 5, status: "draft_not_approved" } });
+      target: pin.periphery, selector: "0x662af306", method: "create", disclosure: { version: 6, status: "draft_not_approved" } });
     const requested = request(kind).supply;
     const installed = f.installation.installedSupply.toString();
     expect(summary.fields.supply).toEqual({ requested, installed, sink: SINK[kind], sink_holder: zeroAddress });
@@ -58,9 +58,11 @@ describe("opaque owner decoder: periphery create (local, non-executable)", () =>
       execution_guaranteed: false });
     const salts = launchSalts(owner, pin.periphery as Address, request(kind).salt as Hex);
     expect(summary.fields.salt).toEqual({ owner_salt: request(kind).salt, owner_namespaced: salts.ownerSalt, token_create2: salts.tokenSalt });
-    expect(summary.statements).toHaveLength(9);
+    expect(summary.statements).toHaveLength(10);
     expect(summary.statements[2]).toContain(`of the total supply of ${requested} raw units, ${installed} go into one position`);
-    expect(summary.statements[2]).toContain(`rounding remainder of ${SINK[kind]} is minted to address(0)`);
+    expect(summary.statements[2]).toContain(`the remainder of ${SINK[kind]}, too small to pay for one more unit of liquidity, is minted to address(0)`);
+    expect(summary.statements[9]).toStartWith(kind === "native" ? "Quote trust: the quote is native ETH"
+      : `Quote trust: quote token ${ERC20_QUOTE} is trusted across all of Core, not just this pool.`);
     const call = decodeFunctionData({ abi: peripheryAbi, data: JSON.parse(sealed.body).data as Hex });
     if (call.functionName !== "create") throw new Error("create");
     expect(call.args[0].supply).toBe(BigInt(requested));
@@ -109,7 +111,7 @@ describe("opaque owner decoder: periphery create (local, non-executable)", () =>
     expect(() => decodeOwnerCreate({ ...sealed, bytes: sealed.bytes + 1 }, expected, now)).toThrow("artifact_length_mismatch");
     expect(() => decodeOwnerCreate(reseal(` ${sealed.body}`), expected, now)).toThrow("artifact_noncanonical");
     for (const change of [(b: any) => { b.executable = true; }, (b: any) => { b.extra = 1; },
-      (b: any) => { b.schema_version = "zero-seed-local-create/v3"; }, (b: any) => { b.disclosure_version = 4; },
+      (b: any) => { b.schema_version = "zero-seed-local-create/v3"; }, (b: any) => { b.disclosure_version = 5; },
       (b: any) => { b.value = "1"; }, (b: any) => { b.requested.decayFactor = "1"; }, (b: any) => { b.requested.liquidity = "0"; },
       (b: any) => { b.pin.quote = zeroAddress; }, (b: any) => { delete b.quote; },
       (b: any) => { delete b.pin.periphery; }, (b: any) => { b.preview.count = 2; }]) {
@@ -227,29 +229,36 @@ describe("owner statements and rates", () => {
     expect(feePercent(922337203685477n)).toBe("0.0050%");
   });
 
-  test("v5 draft statements for 50% -> 0.3% on native ETH, byte for byte", () => {
+  test("v6 draft statements for 50% -> 0.3% on native ETH, byte for byte", () => {
     expect(createStatements({ requestedSupply: "1000000000000000000000000000", installedSupply: "999999999999999999999999422",
       sinkSupply: "578", initialFeePercent: "50.0000%",
       finalFeePercent: "0.3000%", feeDuration: "3600", tradingStart: new Date(1800000100 * 1000).toISOString(),
       excessHalvingSeconds: "587", exactOutputMultiplier: "2.00", owner: "0x00000000000000000000000000000000c0ffee01",
-      quote: "native ETH" })).toEqual([
+      quote: "native ETH", quoteKind: "native" })).toEqual([
       "Zero initial bid: the pool starts with no native ETH. Until someone buys, selling the launch token fills nothing.",
       "Buyer-funded quote reserve: the only native ETH in the pool is what buyers pay in. Sells can withdraw only that.",
-      "Permanent principal lock: of the total supply of 1000000000000000000000000000 raw units, 999999999999999999999999422 go into one position that nobody, including you, can withdraw, rebalance, migrate or refund, and the rounding remainder of 578 is minted to address(0), where nobody can ever spend it. Quote that buyers pay in is locked in the position too.",
+      "Permanent principal lock: of the total supply of 1000000000000000000000000000 raw units, 999999999999999999999999422 go into one position that nobody, including you, can withdraw, rebalance, migrate or refund, and the remainder of 578, too small to pay for one more unit of liquidity, is minted to address(0), where nobody can ever spend it. Quote that buyers pay in is locked in the position too.",
       "Creator fee: 50.0000% at trading start 2027-01-15T08:01:40.000Z, decaying with a fixed 600 s half-life rescaled to reach exactly 0.3000% after 3600 s, then 0.3000% for good. It is not linear: the excess over 0.3000% first falls to half or less 587 s after trading start. The fee is taken on the calculated side of every swap into a separate two-asset fee ledger, never into principal.",
       "Launch ownership: 0x00000000000000000000000000000000c0ffee01 (this account) becomes the launch owner. Only the current owner can claim the fee ledger, and ownership can be transferred. Whoever owns the launch when it claims receives every unclaimed fee, including fees earned before a transfer.",
       "Owner recapture: every fee goes to the launch owner. When the owner, or anyone buying for it, trades, it gets that fee back through its claim: on an exact-input buy at 50.0000% it can end up with the whole pre-fee output, while anyone else making the same trade gets only the net. The fee cannot tell owners, snipers and honest buyers apart.",
       "High early fee: near 50.0000%, a swap can deliver a negligible or zero amount after the fee, and an immediate round trip pays the fee twice plus price impact. A high starting fee is not protection against snipers and does not promise that anyone avoids a loss.",
       "Exact-output gross-up: for a fixed output, the input paid is the pre-fee input times 1 / (1 - fee), about 2.00x at 50.0000%, which grows much faster than the fee itself. Large amounts at high fees revert on overflow. Always set a minimum output or a maximum input.",
       "No exit guarantee: there is no buyer of last resort, no refund and no admin rescue. The price can fall back to the ask.",
+      "Quote trust: the quote is native ETH, which Core accounts for itself. No quote token contract is trusted.",
     ]);
+    const erc20 = createStatements({ requestedSupply: "170141183460469231694794709727778658247",
+      installedSupply: "170141183460469231694794709727778658247", sinkSupply: "0", initialFeePercent: "50.0000%",
+      finalFeePercent: "0.3000%", feeDuration: "3600", tradingStart: "t", excessHalvingSeconds: "587", exactOutputMultiplier: "2.00",
+      owner: "c", quote: "quote token 0xffffffffffffffffffffffffffffffffffffffff", quoteKind: "erc20" });
+    expect(erc20[2]).toBe("Permanent principal lock: of the total supply of 170141183460469231694794709727778658247 raw units, 170141183460469231694794709727778658247 go into one position that nobody, including you, can withdraw, rebalance, migrate or refund, and the position takes the whole supply, so nothing is minted to address(0). Quote that buyers pay in is locked in the position too.");
+    expect(erc20[9]).toBe("Quote trust: quote token 0xffffffffffffffffffffffffffffffffffffffff is trusted across all of Core, not just this pool. Core keeps one balance per token, so if this token misreports balances or transfers, every pool, position and fee ledger holding it is exposed, including other launches and ordinary pools on it, and an honest token paired with it can lose that pool's own reserve. A transfer fee, rebase, blocked transfer or callback breaks every pool on it the same way. Pools that do not hold this token, including native ETH and unrelated tokens, keep their own per-token accounting and are not reachable through it.");
     const all = createStatements({ requestedSupply: "2", installedSupply: "1", sinkSupply: "1", initialFeePercent: "5.0000%", finalFeePercent: "0.3000%", feeDuration: "3600",
-      tradingStart: "t", excessHalvingSeconds: "1", exactOutputMultiplier: "1.05", owner: "c", quote: "q" }).join(" ");
+      tradingStart: "t", excessHalvingSeconds: "1", exactOutputMultiplier: "1.05", owner: "c", quote: "q", quoteKind: "erc20" }).join(" ");
     for (const promise of ["linearly", "cannot transfer", "protects", "no loss", "guarantee", "decay factor"]) {
       expect(all.replace("No exit guarantee", "")).not.toContain(promise);
     }
     expect(createStatements({ requestedSupply: "1", installedSupply: "1", sinkSupply: "0", initialFeePercent: "0.3000%", finalFeePercent: "0.3000%", feeDuration: "3600",
-      tradingStart: "t", excessHalvingSeconds: "none", exactOutputMultiplier: "1.00", owner: "c", quote: "q" })[3])
+      tradingStart: "t", excessHalvingSeconds: "none", exactOutputMultiplier: "1.00", owner: "c", quote: "q", quoteKind: "erc20" })[3])
       .toContain("The fee is flat: initial and final are both 0.3000%.");
     expect(claimStatements("0x00000000000000000000000000000000c0ffee02")).toEqual([
       "Withdraws the whole two-asset fee ledger of this launch to 0x00000000000000000000000000000000c0ffee02, both assets or neither. It never touches the locked principal.",

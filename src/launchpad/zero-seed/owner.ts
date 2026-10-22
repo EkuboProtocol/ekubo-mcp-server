@@ -235,7 +235,7 @@ export function decodeOwnerCreate(sealed: Sealed, expected: {
     feeDuration: String(requested.feeDuration), tradingStart: new Date(Number(requested.tradingStart) * 1000).toISOString(),
     excessHalvingSeconds: String(fields.fee_schedule.excess_halving_seconds ?? "none"),
     exactOutputMultiplier: fields.fee_schedule.exact_output_multiplier_at_initial, owner: body.sender,
-    quote: quoteText(body.quote),
+    quote: quoteText(body.quote), quoteKind: body.quote.kind,
   });
   return withSummaryHash({
     schema_version: OWNER_SUMMARY_VERSION, chain_id: body.chain_id, target: body.target,

@@ -7,13 +7,14 @@ import { ZeroSeedApi } from "../../src/launchpad/zero-seed/api.js";
 import { feeAt, feePercent, feePhase } from "../../src/launchpad/zero-seed/fee.js";
 import { LOCAL_INSTANCE_PINS } from "../../src/launchpad/zero-seed/policy.js";
 import { ClaimPage, LaunchDetail, LaunchList, OwnerPage, SwapPage } from "../../src/launchpad/zero-seed/schema.js";
-import golden from "../fixtures/launchpad/zero-seed-api-v4-cf05546.golden.json";
-import openapi from "../fixtures/launchpad/zero-seed-api-v4-cf05546.openapi-launches.json";
+import golden from "../fixtures/launchpad/zero-seed-api-v4-620aa11.golden.json";
+import openapi from "../fixtures/launchpad/zero-seed-api-v4-620aa11.openapi-launches.json";
 
 // The backend's API v4 golden: actual handler output over the indexer's replayed local chain of evm-contracts
-// 550afc4 (api cf05546b0b5f49194cab76b7c9348d9929574b58, src/routes/launches/fixtures/zero-seed-launch-api-v4.golden.json;
-// indexer c78a48e). Byte-identical copy. It includes the two launches created at the maximum fee 2^64 - 1.
-const GOLDEN_SHA256 = "346400dedab2964e62c043e511fb1db6533e5af0b4d70f733f3b0191a30499a2";
+// 43d6628 (api 620aa1154e276b829865204ba54bfc54f6c95537, src/routes/launches/fixtures/zero-seed-launch-api-v4.golden.json;
+// indexer 91a7036). Byte-identical copy. It includes the two launches created at the maximum fee 2^64 - 1 and two
+// token0 launches whose installation is the exact maximum (low price with a sink, full width with none).
+const GOLDEN_SHA256 = "e2c5c0705491b94856744a11a1db0ce733a2622da871e79624e94c499362d491";
 // `/launches*` paths of openapi.json at the same head (whole file sha256 ec1177f4…36b0f8), extracted with
 // json.dumps({openapi, paths}, indent=1, sort_keys=True) plus a trailing newline.
 const OPENAPI_SHA256 = "721309ef3a232cf284866443cabb6d3513894116a495f560afa52bd88dad27c5";
@@ -42,6 +43,8 @@ const pages: Record<string, Record<string, Json>> = {
   [g.erc20TraderOwnedDetail.pool_id]: { detail: g.erc20TraderOwnedDetail },
   [g.maxNativeDetail.pool_id]: { detail: g.maxNativeDetail, swaps: g.maxNativeSwaps, claims: g.maxNativeClaims },
   [g.maxErc20Detail.pool_id]: { detail: g.maxErc20Detail, swaps: g.maxErc20Swaps, claims: g.maxErc20Claims },
+  [g.lowPriceErc20Detail.pool_id]: { detail: g.lowPriceErc20Detail },
+  [g.fullWidthErc20Detail.pool_id]: { detail: g.fullWidthErc20Detail },
 };
 /** Serves the golden by path. The block-9 list pages answer the paged reads; the head list the rest. */
 function routes(url: URL): Json {
@@ -88,8 +91,8 @@ function normalize(schema: Json): Json {
 
 describe("API v4 contract: the backend's golden and OpenAPI", () => {
   test("fixtures are the published bytes", () => {
-    expect(sha256("../fixtures/launchpad/zero-seed-api-v4-cf05546.golden.json")).toBe(GOLDEN_SHA256);
-    expect(sha256("../fixtures/launchpad/zero-seed-api-v4-cf05546.openapi-launches.json")).toBe(OPENAPI_SHA256);
+    expect(sha256("../fixtures/launchpad/zero-seed-api-v4-620aa11.golden.json")).toBe(GOLDEN_SHA256);
+    expect(sha256("../fixtures/launchpad/zero-seed-api-v4-620aa11.openapi-launches.json")).toBe(OPENAPI_SHA256);
     expect(g.schema_version).toBe("zero-seed-launch-api/v4");
   });
 
@@ -177,6 +180,24 @@ describe("API v4 replay through the MCP client (the one local instance pin)", ()
     for (const detail of [g.nativeDetail, g.erc20Detail, g.erc20TraderOwnedDetail]) {
       expect(detail.principal).not.toHaveProperty("installed_supply");
       expect(BigInt(detail.principal.liquidity)).toBeGreaterThan(0n);
+    }
+  });
+
+  test("exact token0 installations: the indexed liquidity and split parse unchanged, including an empty sink", async () => {
+    const api = client(routes);
+    const cases = [
+      [g.lowPriceErc20Detail, { requested: "1000000000000000000000000000000", installed: "999999999991410763432286846442",
+        sink: "8589236567713153558" }, "115073586432", [-88080384, -85983232]],
+      [g.fullWidthErc20Detail, { requested: "170141183460469231694794709727778658247",
+        installed: "170141183460469231694794709727778658247", sink: "0" }, "9223595582101085260", [-88722835, 88722835]],
+    ] as const;
+    for (const [detail, supply, liquidity, [ask, upper]] of cases) {
+      expect(await api.detail(CHAIN, detail.pool_id)).toEqual(detail);
+      expect(detail.supply).toEqual({ ...supply, sink_holder: "0x0000000000000000000000000000000000000000" });
+      expect(detail.principal.liquidity).toBe(liquidity);
+      expect([detail.ask_tick, detail.upper_tick]).toEqual([ask, upper]);
+      expect(detail.launch_token_is_token1).toBe(false);
+      expect(detail.quote_token).toMatchObject({ address: "0xffffffffffffffffffffffffffffffffffffffff", kind: "erc20" });
     }
   });
 

@@ -12,7 +12,7 @@ import { CONTRACTS_COMMIT, EXTENSION_ABI_SHA256, LOCAL_INSTANCE_PINS, PERIPHERY_
   samePin } from "../../src/launchpad/zero-seed/policy.js";
 import { launchSalts } from "../../src/launchpad/zero-seed/token.js";
 import { EXTENSION_RUNTIME, PERIPHERY_RUNTIME, verifyExtensionRuntime, verifyPeripheryRuntime } from "../../src/launchpad/zero-seed/runtime.js";
-import iface from "../fixtures/launchpad/zero-seed-interface-550afc4.json";
+import iface from "../fixtures/launchpad/zero-seed-interface-43d6628.json";
 import { chain, ERC20_QUOTE, KINDS, type Kind, pin, quoteOf } from "./zero-seed-fixture.js";
 
 const deployed = chain.deployed;
@@ -24,11 +24,11 @@ const SINK = { native: "578", erc20: "790" } as const;
 const INSTALLED = { native: "999999999999999999999999422", erc20: "999999999999999999999999210" } as const;
 const REQUESTED = "1000000000000000000000000000";
 
-describe("interface manifest of evm-contracts 550afc4", () => {
+describe("interface manifest of evm-contracts 43d6628", () => {
   test("vendored verbatim from the canonical manifest", () => {
-    const bytes = readFileSync(new URL("../fixtures/launchpad/zero-seed-interface-550afc4.json", import.meta.url));
-    expect(createHash("sha256").update(bytes).digest("hex")).toBe("57d8485ee7aa34049269f66bedccbfb43b66869b2e37bddf5857d070df02ca0b");
-    expect(iface.manifest_sha256).toBe("032f3c9bfe191f5bb074d1926f4c265af9e06e939140ca13edbd9181e0b2deed");
+    const bytes = readFileSync(new URL("../fixtures/launchpad/zero-seed-interface-43d6628.json", import.meta.url));
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe("7e351ef4fe1ee835f41870cbbab69a07d26b0a66ffebd5915ef4a42a18edcc6e");
+    expect(iface.manifest_sha256).toBe("6be8bd0a5a54f6dd51f9f7836bd4d64922672deebff7e19a6ff821e318906629");
     expect(iface.frozen_commit).toBe(CONTRACTS_COMMIT);
     expect(iface.artifacts.ZeroSeedLaunch.abi_sha256_canonical_json).toBe(EXTENSION_ABI_SHA256);
     expect(iface.artifacts.ZeroSeedLaunchPeriphery.abi_sha256_canonical_json).toBe(PERIPHERY_ABI_SHA256);
@@ -105,11 +105,11 @@ describe("the one launcher-deployed local instance", () => {
   });
 
   test("the same instance the indexer's replay chain deploys", () => {
-    // indexer c78a48e, tests/fixtures/zero-seed-launch/local-chain.json, instances[0]
-    expect(pin).toMatchObject({ extension: "0x511b4327c2a2b6fd803b4ae85f2f9d831e046d8b",
-      periphery: "0x2f0be2fc5a2825cecd23dbf6ed33ed8ff823ef64", deploymentBlock: "2",
-      extensionRuntime: "0xb8c6d15f45c41e9dc43ac0e6ab8ea941dc833514cdb0b82f381c65f42f73a858",
-      peripheryRuntime: "0x49988478ba70cc8d2587eb63141b333c7ef0a67c4639c3a2ee25de4c4597999e" });
+    // indexer 91a7036, tests/fixtures/zero-seed-launch/local-chain.json, instances[0]
+    expect(pin).toMatchObject({ extension: "0x519c5f793d3f6cf9ee439e4cc38d8285cf08211f",
+      periphery: "0x0df4e2a76640b52e51479b435f52d0eb0e7e8ef4", deploymentBlock: "2",
+      extensionRuntime: "0xd6b4c7ce8da56e9948fdb004a035d9b52dbd3690bcb03c1269bbf2a9981d8ed5",
+      peripheryRuntime: "0x2a9329dbb064a2c031115c7c120c8b6a1f31de167f33374180e4dc73d975974b" });
   });
 
   test("a template-equal runtime bound to another Core or extension refuses", () => {
@@ -154,7 +154,7 @@ const createdLogs = (kind: Kind) => chain.launches[kind].logs as RawLog[];
 const createdLog = (kind: Kind) => createdLogs(kind).find((log) => log.topics[0] === LAUNCH_CREATED_TOPIC)!;
 
 describe("LaunchCreated decoding and owner attribution", () => {
-  for (const kind of KINDS) test(`${kind}: decodes the 550afc4 tuple and attributes the creator from the periphery`, () => {
+  for (const kind of KINDS) test(`${kind}: decodes the 43d6628 tuple and attributes the creator from the periphery`, () => {
     const launch = chain.launches[kind];
     const created = launchCreator(createdLogs(kind), pin, true);
     expect(created).toEqual(launch.created as never);
@@ -316,5 +316,45 @@ describe("the default schedule and the maximum uint64 fee on the local chain", (
     const swapped = flat.events.find((e) => e.event === "LaunchSwapped")!.args as unknown as Record<string, string>;
     const net = BigInt(flat.deltas.token);
     expect(net).toBe((net + BigInt(swapped.feeAmount)) / (1n << 64n));
+  });
+});
+
+describe("exact token0 installation on the local chain", () => {
+  // evm-contracts 43d6628 installs floor(supply * lower * upper / (2^128 * (upper - lower))), the largest liquidity
+  // whose rounded-up debit fits the supply. The shared helper floored lower * upper / 2^128 first and installed
+  // 106052588672 (low price) and 9223595582101085259 (full width) for the same requests.
+  const cases = {
+    low_price: { supply: "1000000000000000000000000000000", askTick: -88080384, upperTick: -85983232, tickSpacing: 524288,
+      liquidity: "115073586432", installed: "999999999991410763432286846442", sink: "8589236567713153558" },
+    full_width: { supply: "170141183460469231694794709727778658247", askTick: -88722835, upperTick: 88722835, tickSpacing: 1,
+      liquidity: "9223595582101085260", installed: "170141183460469231694794709727778658247", sink: "0" },
+  } as const;
+  for (const [key, want] of Object.entries(cases)) test(`${key}: preview, sealed create, owner summary and the chain agree exactly`, () => {
+    const launch = chain.launches[key as keyof typeof cases];
+    expect(launch.request).toMatchObject({ supply: want.supply, askTick: want.askTick, upperTick: want.upperTick,
+      tickSpacing: want.tickSpacing, quoteToken: ERC20_QUOTE });
+    expect(launch.preview.installation.poolKey.token0).toBe(launch.preview.installation.token);
+    expect(launch.preview.installation).toMatchObject({ liquidity: want.liquidity, installedSupply: want.installed });
+    expect(launch.preview.supply).toEqual({ requested: want.supply, installed: want.installed, sink: want.sink, sink_holder: zeroAddress });
+    // Core took exactly the installed supply for exactly the previewed liquidity; totalSupply is the request.
+    expect(launch.supply).toEqual({ requested: want.supply, installed: want.installed, sink: want.sink, total_supply: want.supply,
+      sink_balance: want.sink, core_quote_delta: "0", core_liquidity_delta: want.liquidity,
+      sink_transfer: want.sink === "0" ? [] : [want.sink] });
+    const expected = { pin, owner: chain.accounts.owner as Address, requested: launch.request as ParametersInput };
+    const summary = decodeOwnerCreate(launch.sealed as Sealed, expected, BigInt(launch.build.buildTime) + 1n);
+    expect(JSON.stringify(summary)).toBe(JSON.stringify(launch.owner_summary));
+    expect(summary.fields.supply).toEqual({ requested: want.supply, installed: want.installed, sink: want.sink, sink_holder: zeroAddress });
+    expect(summary.fields.liquidity).toBe(want.liquidity);
+    expect(summary.fields.binding).toMatchObject({ requested_supply: want.supply, installed_supply: want.installed,
+      sink_supply: want.sink, calldata_supply: want.supply, installed_liquidity: want.liquidity });
+    expect(summary.statements[2]).toContain(`of the total supply of ${want.supply} raw units, ${want.installed} go into one position`);
+    expect(summary.statements[2]).toContain(want.sink === "0" ? "nothing is minted to address(0)"
+      : `the remainder of ${want.sink}, too small to pay for one more unit of liquidity, is minted to address(0)`);
+    expect(summary.statements[9]).toStartWith(`Quote trust: quote token ${ERC20_QUOTE} is trusted across all of Core`);
+    const decoded = decodeFunctionData({ abi: peripheryAbi, data: JSON.parse(launch.sealed.body).data });
+    if (decoded.functionName !== "create") throw new Error("not a create");
+    expect(decoded.args[0].supply).toBe(BigInt(want.supply));
+    const created = launchCreator(launch.logs as RawLog[], pin, true);
+    expect(created).toMatchObject({ creator: chain.accounts.owner, requested_supply: want.supply });
   });
 });
