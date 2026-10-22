@@ -19,11 +19,17 @@ import {
   type VoterCandidate,
   voterValue,
 } from "./stonx-efficiency.js";
+import { STONX_RECOMMENDATION_SQL } from "./stonx-recommendation-sql.js";
 
-const RECOMMENDATION_RESULT_URL =
-  "https://api.dune.com/api/v1/query/8187907/results";
-const RECOMMENDATION_EXECUTE_URL =
-  "https://api.dune.com/api/v1/query/8187907/execute";
+const PROVIDER_ORIGIN = "https://api.dune.com";
+const RECOMMENDATION_EXECUTE_PATH = "/api/v1/sql/execute";
+const RECOMMENDATION_PERFORMANCE = "medium";
+// The last good snapshot and the in-flight refresh live in the artifact
+// bucket, outside the `artifact/` prefix that the bucket's one-day lifecycle
+// rule expires, so a failed refresh can fall back for the full usable window.
+const SNAPSHOT_STORE_KEY = "recommendation/stonx-allocation/snapshot.json";
+const REFRESH_STORE_KEY = "recommendation/stonx-allocation/refresh.json";
+const REFRESH_REUSE_MS = 10 * 60 * 1_000;
 const MAX_RECOMMENDATION_POOLS = 100;
 const MAX_EXECUTABLE_RECOMMENDATION_TARGETS = 25;
 const RECOMMENDATION_REFRESH_AFTER_MS = 24 * 60 * 60 * 1_000;
@@ -588,54 +594,120 @@ async function fetchRecommendationSnapshot(
       "Allocation recommendations are not configured for this deployment",
     );
   }
-  const url = new URL(RECOMMENDATION_RESULT_URL);
-  url.searchParams.set("limit", MAX_RECOMMENDATION_POOLS.toString());
-  const payload = await fetchProviderJson(env, fetcher, url);
-
-  let existing: RecommendationSnapshot | null = null;
-  if (payload.state === "QUERY_STATE_COMPLETED") {
-    existing = parseRecommendationSnapshot(payload, false);
-    if (isCurrent(existing.snapshotAt, runtime)) return existing;
-  } else if (isActiveExecution(payload)) {
-    return refreshOrFallback(env, fetcher, executionId(payload), null, runtime);
-  }
-
-  const execution = await fetchProviderJson(
-    env,
-    fetcher,
-    RECOMMENDATION_EXECUTE_URL,
-    { method: "POST" },
-  );
-  return refreshOrFallback(
-    env,
-    fetcher,
-    executionId(execution),
-    existing,
-    runtime,
-  );
+  const stored = await loadStoredSnapshot(env);
+  if (stored !== null && isCurrent(stored.snapshotAt, runtime)) return stored;
+  return refreshOrFallback(env, fetcher, stored, runtime);
 }
 
 async function refreshOrFallback(
   env: Env,
   fetcher: typeof fetch,
-  id: string,
-  existing: RecommendationSnapshot | null,
+  stored: RecommendationSnapshot | null,
   runtime: RecommendationRuntime,
 ): Promise<RecommendationSnapshot> {
   const fallback =
-    existing !== null && isUsable(existing.snapshotAt, runtime)
-      ? existing
-      : null;
+    stored !== null && isUsable(stored.snapshotAt, runtime) ? stored : null;
   let refreshed: RecommendationSnapshot;
   try {
+    const id = await refreshExecutionId(env, fetcher, runtime);
     refreshed = await waitForRefreshedSnapshot(env, fetcher, id, runtime);
   } catch (error) {
+    console.warn("STONX allocation recommendation refresh failed", {
+      code: error instanceof ServiceError ? error.code : "unexpected_error",
+      fallback_snapshot_at: fallback?.snapshotAt ?? null,
+    });
     if (fallback !== null) return fallback;
     throw error;
   }
   if (isUsable(refreshed.snapshotAt, runtime)) return refreshed;
   if (fallback !== null) return fallback;
   throw recommendationUnavailable();
+}
+
+async function refreshExecutionId(
+  env: Env,
+  fetcher: typeof fetch,
+  runtime: RecommendationRuntime,
+): Promise<string> {
+  const now = (runtime.now ?? Date.now)();
+  const pending = await readStoredJson(env, REFRESH_STORE_KEY);
+  if (
+    pending !== null &&
+    typeof pending.started_at === "number" &&
+    now - pending.started_at >= 0 &&
+    now - pending.started_at < REFRESH_REUSE_MS
+  ) {
+    try {
+      return executionId(pending);
+    } catch {
+      // A malformed marker is replaced by a fresh execution below.
+    }
+  }
+  const execution = await fetchProviderJson(
+    env,
+    fetcher,
+    new URL(RECOMMENDATION_EXECUTE_PATH, PROVIDER_ORIGIN),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sql: STONX_RECOMMENDATION_SQL,
+        performance: RECOMMENDATION_PERFORMANCE,
+      }),
+    },
+  );
+  const id = executionId(execution);
+  await writeStoredJson(env, REFRESH_STORE_KEY, {
+    execution_id: id,
+    started_at: now,
+  });
+  return id;
+}
+
+async function loadStoredSnapshot(
+  env: Env,
+): Promise<RecommendationSnapshot | null> {
+  const payload = await readStoredJson(env, SNAPSHOT_STORE_KEY);
+  if (payload === null) return null;
+  try {
+    return parseRecommendationSnapshot(payload, false);
+  } catch {
+    return null;
+  }
+}
+
+async function readStoredJson(
+  env: Env,
+  key: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const object = await env.ARTIFACT_STORE.get(key);
+    if (object === null) return null;
+    const value: unknown = JSON.parse(await object.text());
+    return isRecord(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeStoredJson(
+  env: Env,
+  key: string,
+  value: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await env.ARTIFACT_STORE.put(key, JSON.stringify(value));
+  } catch {
+    // Storage only saves a later request a refresh; the result stays valid.
+  }
+}
+
+async function clearStoredRefresh(env: Env): Promise<void> {
+  try {
+    await env.ARTIFACT_STORE.delete(REFRESH_STORE_KEY);
+  } catch {
+    // An unreadable marker expires on its own after REFRESH_REUSE_MS.
+  }
 }
 
 function parseRecommendationSnapshot(
@@ -700,20 +772,35 @@ async function waitForRefreshedSnapshot(
   const deadline = now() + maxWaitMs;
   const url = new URL(
     `/api/v1/execution/${encodeURIComponent(id)}/results`,
-    "https://api.dune.com",
+    PROVIDER_ORIGIN,
   );
   url.searchParams.set("limit", MAX_RECOMMENDATION_POOLS.toString());
 
   while (true) {
     const payload = await fetchProviderJson(env, fetcher, url);
     if (payload.state === "QUERY_STATE_COMPLETED") {
-      return parseRecommendationSnapshot(payload, true);
+      const snapshot = parseRecommendationSnapshot(payload, true);
+      await writeStoredJson(env, SNAPSHOT_STORE_KEY, storedSnapshot(payload));
+      await clearStoredRefresh(env);
+      return snapshot;
     }
-    if (!isActiveExecution(payload) || now() >= deadline) {
+    if (!isActiveExecution(payload)) {
+      await clearStoredRefresh(env);
       throw recommendationUnavailable();
     }
+    if (now() >= deadline) throw recommendationUnavailable();
     await sleep(Math.min(pollIntervalMs, Math.max(0, deadline - now())));
   }
+}
+
+function storedSnapshot(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    state: payload.state,
+    submitted_at: payload.submitted_at,
+    result: payload.result,
+  };
 }
 
 async function fetchProviderJson(

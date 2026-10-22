@@ -271,6 +271,12 @@ assert(
   "recommendation is not executable",
 );
 assert(
+  typeof recommendation?.snapshot_age_seconds === "number" &&
+    recommendation.snapshot_age_seconds <=
+      2 * recommendation.snapshot_refresh_after_seconds,
+  "recommendation snapshot is stale; its daily refresh is failing",
+);
+assert(
   recommendation?.target_total_weight_bps === 10_000,
   "recommendation targets do not total 10,000 bps",
 );

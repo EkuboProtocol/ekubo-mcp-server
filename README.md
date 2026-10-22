@@ -707,7 +707,12 @@ The deployment also uses five Worker secrets:
 - `LAYER_ZERO_API_KEY`
 - `LI_FI_API_KEY`
 - `DUNE_API_KEY` (internal allocation-recommendation data access; never
-  returned or identified by the public MCP surface)
+  returned or identified by the public MCP surface). The recommendation runs
+  the query in `src/stonx-recommendation-sql.ts` through Dune's SQL execution
+  endpoint, so it depends on no saved query or materialized view in any Dune
+  account. The last good snapshot is kept in the `ARTIFACT_STORE` bucket under
+  `recommendation/`, which the bucket's one-day expiry rule must not cover
+  (that rule is scoped to `artifact/`).
 
 They are declared as required runtime secrets in `wrangler.jsonc`, so a deploy
 fails rather than silently publishing disabled provider tools when a binding is
