@@ -1,13 +1,14 @@
-// Local, fork-free run of the zero-seed launch on anvil: deploys the 40af6cb artifacts the way a launcher would
+// Local, fork-free run of the zero-seed launch on anvil: deploys the 550afc4 artifacts the way a launcher would
 // (one extension at a mined CREATE2 address and its periphery, both through the deterministic deployer, in block 2,
 // exactly as the indexer's replay fixture generator does), then drives every MCP producer and owner decoder against
 // that chain, executes exactly the create and claim calls they produced, and swaps through the checkout's compiled
 // test/LaunchTestRouter.sol. Launches with a native-ETH quote and with the plain test ERC-20 quote share the one
-// extension. It writes the fixture the tests replay.
+// extension. It also creates launches at the default 50% -> 0.3% schedule and at the maximum uint64 fee, from the
+// producer's own create, and swaps at the maximum rate. It writes the fixture the tests replay.
 //
 //   anvil --port 8546 --chain-id 31337 --hardfork osaka --timestamp 1800000000 --base-fee 0 --gas-price 0 \
 //     --gas-limit 60000000
-//   EVM_CONTRACTS=<evm-contracts checkout at 40af6cb, built with forge build> RPC_URL=http://127.0.0.1:8546 \
+//   EVM_CONTRACTS=<evm-contracts checkout at 550afc4, built with forge build> RPC_URL=http://127.0.0.1:8546 \
 //     bun script/zero-seed-local-chain.ts test/fixtures/launchpad/zero-seed-native-local-chain.json
 //
 // Local evidence only: no fork, no live instance, no UserOp, bundler, paymaster or real quoter.
@@ -184,13 +185,18 @@ const previewWallet: SyntheticPreviewWallet = {
 };
 
 const FEE_5 = "922337203685477580";
+const FEE_50 = "9223372036854775808";
 const FEE_03 = "55340232221128654";
+/** type(uint64).max: the largest creator fee, just under 100%. */
+const FEE_MAX = ((1n << 64n) - 1n).toString();
 const REQUESTED_SUPPLY = "1000000000000000000000000000";
-function parameters(label: string, quoteToken: Address, tradingStart: bigint): ParametersInput {
+type FeeSchedule = Pick<ParametersInput, "feeDuration" | "initialFee" | "finalFee">;
+const FIXTURE_SCHEDULE: FeeSchedule = { feeDuration: 3600, initialFee: FEE_5, finalFee: FEE_03 };
+function parameters(label: string, quoteToken: Address, tradingStart: bigint, fees = FIXTURE_SCHEDULE): ParametersInput {
   return {
     name: `Zero Seed ${label}`, symbol: label.toUpperCase(), decimals: 18, supply: REQUESTED_SUPPLY, quoteToken,
     askTick: -13815500, upperTick: -9210300, tickSpacing: 100, tradingStart: tradingStart.toString(),
-    feeDuration: 3600, initialFee: FEE_5, finalFee: FEE_03, salt: `0x${"00".repeat(31)}01`,
+    ...fees, salt: `0x${"00".repeat(31)}01`,
   };
 }
 
@@ -245,10 +251,10 @@ async function supplySplit(preview: Preview, request: ParametersInput, events: R
   return supply;
 }
 
-async function createLaunch(pin: InstancePin, quoteToken: Address, label: string) {
+async function createLaunch(pin: InstancePin, quoteToken: Address, label: string, fees = FIXTURE_SCHEDULE) {
   const build = await mineAt(clock + 10n);
   const buildTime = build.timestamp;
-  const request = parameters(label, quoteToken, buildTime + 600n);
+  const request = parameters(label, quoteToken, buildTime + 600n, fees);
   const buildContext = {
     buildTime: buildTime.toString(), executionExpiry: (buildTime + 300n).toString(),
     blockNumber: build.number.toString(), blockHash: build.hash, blockTime: buildTime.toString(),
@@ -340,7 +346,7 @@ async function claim(pin: InstancePin, launch: Launch, claimer: typeof owner, to
 }
 
 // --- run --------------------------------------------------------------------------------------------------------------
-if (CONTRACTS_COMMIT !== "40af6cb359b0de2f61f15e47b6622a00c48b5b08") throw new Error("contracts pin");
+if (CONTRACTS_COMMIT !== "550afc40280423128c02eb5ffd213aa959b34e2a") throw new Error("contracts pin");
 await placeCoreAndQuote();
 const pin = await deployInstance();
 if (LOCAL_INSTANCE_PINS.length !== 1 || !samePin(LOCAL_INSTANCE_PINS[0], pin)) {
@@ -355,8 +361,11 @@ const launchOf = (c: typeof native): Launch => ({ token: c.preview.installation.
 const scheduleOf = (c: typeof native): Schedule => ({ trading_start: Number(c.request.tradingStart), fee_duration: c.request.feeDuration,
   initial_fee: c.request.initialFee, final_fee: c.request.finalFee });
 
-// Creation refusals the chain makes: a nonzero quote without code, and the earlier 13-field tuple's selector.
+// Creation refusals the chain makes: a nonzero quote without code, the earlier 13-field tuple's selector, and a fee
+// schedule that rises or has no duration (InvalidFeeSchedule). There is no fee ceiling below uint64 to refuse.
 const unsupported = parameters("u1", "0x00000000000000000000000000000000000000aa", clock + 600n);
+const scheduleProbe = (fees: FeeSchedule) => revertSelector({ account: owner.address, to: pin.periphery as Address,
+  data: createData(parameters("f1", NATIVE_QUOTE, clock + 600n, fees)) });
 const oldTuple = parseAbi(["function create((string,string,uint8,uint128,uint128,int32,int32,uint32,uint64,uint32,uint64,uint64,bytes32))"]);
 const u = unsupported;
 const creationRefusals = {
@@ -364,6 +373,9 @@ const creationRefusals = {
   old_selector: await revertSelector({ account: owner.address, to: pin.periphery as Address, data: encodeFunctionData({ abi: oldTuple,
     functionName: "create", args: [[u.name, u.symbol, u.decimals, BigInt(u.supply), 0n, u.askTick, u.upperTick, u.tickSpacing,
       BigInt(u.tradingStart), u.feeDuration, BigInt(u.initialFee), BigInt(u.finalFee), u.salt as Hex]] }) }),
+  final_above_initial: await scheduleProbe({ feeDuration: 3600, initialFee: (BigInt(FEE_MAX) - 1n).toString(), finalFee: FEE_MAX }),
+  zero_fee_duration: await scheduleProbe({ feeDuration: 0, initialFee: FEE_MAX, finalFee: FEE_MAX }),
+  max_fee_create: await scheduleProbe({ feeDuration: 3600, initialFee: FEE_MAX, finalFee: FEE_03 }),
 };
 
 await test.setBalance({ address: buyer.address, value: 10n ** 30n });
@@ -412,20 +424,30 @@ const ercSwaps = [
 ];
 const ercClaim = await claim(pin, e, owner, recipient.address, clock + 30n);
 
+// The unchanged default schedule and the maximum uint64 fee, each created from the producer's own create: max -> 0.3%
+// over 3,600 s (native), and flat at the maximum over 1 s (ERC-20). Then one buy at each maximum-rate launch.
+const defaultSchedule = await createLaunch(pin, NATIVE_QUOTE, "d1", { feeDuration: 3600, initialFee: FEE_50, finalFee: FEE_03 });
+const maxToFinal = await createLaunch(pin, NATIVE_QUOTE, "m1", { feeDuration: 3600, initialFee: FEE_MAX, finalFee: FEE_03 });
+const maxFlat = await createLaunch(pin, ERC20_QUOTE, "x1", { feeDuration: 1, initialFee: FEE_MAX, finalFee: FEE_MAX });
+const maxSwaps = [
+  await swap(launchOf(maxToFinal), scheduleOf(maxToFinal), "buy", false, 10n ** 18n, BigInt(maxToFinal.request.tradingStart) + 1n),
+  await swap(launchOf(maxFlat), scheduleOf(maxFlat), "buy", false, 10n ** 18n, BigInt(maxFlat.request.tradingStart) + 30n),
+];
+
 const fixture = {
-  scope: "LOCAL anvil chain from evm-contracts 40af6cb artifacts. Not a fork, live instance, UserOp, bundler or real quoter output.",
+  scope: "LOCAL anvil chain from evm-contracts 550afc4 artifacts. Not a fork, live instance, UserOp, bundler or real quoter output.",
   contracts_commit: CONTRACTS_COMMIT,
   accounts: { launcher: lower(launcher.address), owner: lower(owner.address), buyer: lower(buyer.address),
     recipient: lower(recipient.address), new_owner: lower(newOwner.address) },
   core: CORE, router: ROUTER, erc20_quote: { address: ERC20_QUOTE, runtime: keccak256((await pub.getCode({ address: ERC20_QUOTE }))!) },
   pin, deployed, approvals,
-  launches: { native, erc20: erc },
+  launches: { native, erc20: erc, default_schedule: defaultSchedule, max_to_final: maxToFinal, max_flat: maxFlat },
   swaps, first_claim: firstClaim, refusals,
   transfer: { data: transferData, receipt: { block_number: transferReceipt.blockNumber.toString(), transaction_hash: transferReceipt.transactionHash },
     events: decodeLogs(transferReceipt.logs) },
   after_transfer: { swap: afterTransferSwap, old_owner_claim: oldOwnerClaim, claim: secondClaim },
-  erc20_swaps: ercSwaps, erc20_claim: ercClaim,
+  erc20_swaps: ercSwaps, erc20_claim: ercClaim, max_fee_swaps: maxSwaps,
 };
 writeFileSync(OUT, `${JSON.stringify(fixture, null, 1)}\n`);
-console.log(JSON.stringify({ written: OUT, swaps: swaps.length + 1 + ercSwaps.length, refusals, old_owner_claim: oldOwnerClaim,
+console.log(JSON.stringify({ written: OUT, swaps: swaps.length + 1 + ercSwaps.length + maxSwaps.length, refusals, old_owner_claim: oldOwnerClaim,
   supply: { native: native.supply, erc20: erc.supply } }));

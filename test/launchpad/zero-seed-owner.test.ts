@@ -218,11 +218,12 @@ describe("owner summary binds the fixed-half-life fee schedule", () => {
 });
 
 describe("owner statements and rates", () => {
-  test("Q0.64 rates round half up to four decimals", () => {
+  test("Q0.64 rates round half up to four decimals, never up to 100%", () => {
     expect(feePercent(922337203685477580n)).toBe("5.0000%");
     expect(feePercent(55340232221128654n)).toBe("0.3000%");
     expect(feePercent(0n)).toBe("0.0000%");
-    expect(feePercent((1n << 64n) - 1n)).toBe("100.0000%");
+    expect(feePercent((1n << 64n) - 1n)).toBe("99.9999%");
+    expect(feePercent(9223372036854775808n)).toBe("50.0000%");
     expect(feePercent(922337203685477n)).toBe("0.0050%");
   });
 

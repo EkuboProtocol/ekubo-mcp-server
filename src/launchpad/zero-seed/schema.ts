@@ -1,11 +1,16 @@
 import { z } from "zod";
 
-// Exact shapes consumed from the backend API v4 (api 8f18246): the launch's own quote token and kind, requested,
+// Exact shapes consumed from the backend API v4 (api cf05546): the launch's own quote token and kind, requested,
 // installed and sink supply, the fixed-base fee table and the periphery's owner identity. Any other schema version,
 // including v3 with principal.installed_supply and v2 with its decay_factor, is refused.
 export const SchemaVersion = z.literal("zero-seed-launch-api/v4");
 const U = z.string().regex(/^(0|[1-9][0-9]*)$/);
 const I = z.string().regex(/^(0|-?[1-9][0-9]*)$/);
+const UINT64_MAX = (1n << 64n) - 1n;
+/** A Q0.64 fee rate, any uint64: value / 2^64, so the maximum is just under 100%, never exactly 100%. */
+const Q64 = U.max(20).refine((value) => /^(0|[1-9][0-9]*)$/.test(value) && BigInt(value) <= UINT64_MAX).describe(
+  "Q0.64 fee rate as a canonical decimal uint64 (0 to 18446744073709551615): the fee fraction is value / 2^64, so the maximum is just under 100%",
+);
 const Address = z.string().regex(/^0x[0-9a-f]{40}$/);
 const Bytes32 = z.string().regex(/^0x[0-9a-f]{64}$/);
 const Seconds = z.number().int().nonnegative();
@@ -29,10 +34,10 @@ const PoolKey = z.strictObject({
 });
 export const FeeSchedule = z.strictObject({
   trading_start: Seconds, fee_duration: z.number().int().positive(), fee_end: Seconds,
-  initial_fee: U, final_fee: U,
+  initial_fee: Q64, final_fee: Q64,
   decay: z.strictObject({ kind: z.literal("fixed_base_q128"), half_life_seconds: z.literal(600) }),
   phase: z.enum(["before_trading_start", "fee_decay", "final_fee"]),
-  fee_rate: U, evaluated_at: Seconds,
+  fee_rate: Q64, evaluated_at: Seconds,
 });
 /** Raw launch-token units: requested = totalSupply, installed in the position, sink = requested - installed at 0x0. */
 export const Supply = z.strictObject({
@@ -66,7 +71,7 @@ export const LaunchList = z.strictObject({
 });
 export const Swap = z.strictObject({
   event: EventRef, forwarding_locker: Address, direction: z.enum(["buy", "sell", "zero_fill"]),
-  launch_token_delta: I, quote_token_delta: I, fee_rate: U, fee_amount: U,
+  launch_token_delta: I, quote_token_delta: I, fee_rate: Q64, fee_amount: U,
   fee_asset: z.enum(["launch_token", "quote_token"]),
 });
 /** One payout per row: the periphery's event, linked to the extension ledger event of the same transaction. */

@@ -5,13 +5,28 @@ import { MAX_CREATOR_FEE } from "./fee.js";
 import { type InstancePin, launchQuote, type LaunchQuote, NATIVE_QUOTE, supportedInstances, unsigned, validateCreationTiming,
   validateMetadata, ZeroSeedError } from "./policy.js";
 
-export const decimal = z.string().regex(/^(0|[1-9][0-9]*)$/);
+const CANONICAL_DECIMAL = /^(0|[1-9][0-9]*)$/;
+export const decimal = z.string().regex(CANONICAL_DECIMAL);
 export const address = z.string().regex(/^0x[0-9a-f]{40}$/);
 export const bytes32 = z.string().regex(/^0x[0-9a-f]{64}$/);
+const isFee = (value: string) => CANONICAL_DECIMAL.test(value) && BigInt(value) <= MAX_CREATOR_FEE;
+
 /**
- * LaunchParameters of evm-contracts 40af6cb, in tuple order. `supply` is the requested supply, submitted unchanged:
+ * A creator fee: the canonical decimal string of a uint64 Q0.64 rate, every value 0..2^64 - 1 accepted. Anything
+ * else is refused, never truncated or wrapped: 2^64 (exactly 100%) and above are not uint64.
+ */
+const feeQ64 = (description: string) => z.string({ error: "must be a decimal string; a JSON number cannot carry every uint64 exactly" })
+  .regex(CANONICAL_DECIMAL, { abort: true, message:
+    "must be a canonical decimal string: digits only, no leading zeros, sign, spaces, hex, exponent or fraction" })
+  .refine((value) => BigInt(value) <= MAX_CREATOR_FEE, { message:
+    `must be at most ${MAX_CREATOR_FEE} (uint64 max, just under 100%); 2^64 = ${MAX_CREATOR_FEE + 1n} would be exactly 100% and is not a uint64` })
+  .describe(description);
+
+/**
+ * LaunchParameters of evm-contracts 550afc4, in tuple order. `supply` is the requested supply, submitted unchanged:
  * the contract derives the liquidity from it and mints the uninstallable remainder to address(0). There is no
- * liquidity input and no decay factor (600 s half-life).
+ * liquidity input and no decay factor (600 s half-life). Like the contract, the fee schedule needs only
+ * finalFee <= initialFee and feeDuration > 0 (InvalidFeeSchedule); there is no fee ceiling below uint64.
  */
 export const Parameters = z.strictObject({
   name: z.string(), symbol: z.string(), decimals: z.number().int().min(0).max(255),
@@ -20,8 +35,14 @@ export const Parameters = z.strictObject({
   askTick: z.number().int().min(-88722835).max(88722835),
   upperTick: z.number().int().min(-88722835).max(88722835),
   tickSpacing: z.number().int().min(1).max(698605), tradingStart: decimal,
-  feeDuration: z.number().int().min(1).max(4294967295), initialFee: decimal, finalFee: decimal,
+  feeDuration: z.number().int().min(1, { message: "must be at least 1 second (the contract refuses 0 with InvalidFeeSchedule)" })
+    .max(4294967295),
+  initialFee: feeQ64(`uint64 Q0.64 creator fee at trading start (value / 2^64): 0 to ${MAX_CREATOR_FEE}, just under 100%`),
+  finalFee: feeQ64("Fee from tradingStart + feeDuration, same encoding, <= initialFee"),
   salt: bytes32.describe("The owner's salt; the periphery and extension namespace it by owner and controller"),
+}).refine((input) => !isFee(input.initialFee) || !isFee(input.finalFee) || BigInt(input.finalFee) <= BigInt(input.initialFee), {
+  path: ["finalFee"],
+  message: "invalid_fee_schedule: finalFee must be at most initialFee (the contract refuses a rising fee with InvalidFeeSchedule)",
 });
 export type ParametersInput = z.infer<typeof Parameters>;
 export const BuildContext = z.strictObject({
@@ -55,12 +76,11 @@ export function validateParameters(input: ParametersInput, pin: InstancePin): La
   return quote;
 }
 
-/** Creation validation of the contract: FeeTooHigh above the 99% cap, InvalidFeeSchedule otherwise. */
+/** Creation validation of the contract: any uint64 fee, InvalidFeeSchedule when the fee would rise. */
 function validateFees(input: ParametersInput): void {
   const initial = unsigned(BigInt(input.initialFee), 64);
   const final = unsigned(BigInt(input.finalFee), 64);
-  if (initial > MAX_CREATOR_FEE) throw new ZeroSeedError("fee_too_high");
-  if (final > initial) throw new ZeroSeedError("invalid_fee_schedule");
+  if (final > initial || input.feeDuration < 1) throw new ZeroSeedError("invalid_fee_schedule");
   unsigned(BigInt(input.tradingStart) + BigInt(input.feeDuration), 64);
 }
 

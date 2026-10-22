@@ -1,7 +1,7 @@
 # Launchpad (zero-seed, support disabled)
 
 The launchpad targets the zero-seed launch interface of evm-contracts
-`40af6cb`: the `ZeroSeedLaunch(Core)` extension and the
+`550afc4`: the `ZeroSeedLaunch(Core)` extension and the
 `ZeroSeedLaunchPeriphery(Core, extension)` that users call. One extension and
 its periphery serve every quote token; each launch names its own. It is not
 deployed, released or externally reviewed. A launcher deploys and funds its
@@ -149,9 +149,25 @@ the table constant of every set bit of `t` in ascending order, flooring after
 each multiply, and is zero from `2^17` s. With `E = decayQ128(D)` the fee is
 `initialFee` at or before trading start,
 `finalFee + floor((initialFee - finalFee) * (decayQ128(t) - E) / (2^128 - E))`
-inside the window and `finalFee` from `D` on. The initial fee is capped at
-`floor(99 * 2^64 / 100)`. 50% to 0.3% over 3,600 s first halves its excess
-after 587 s. Owner summaries (`zero-seed-launch-owner-summary/v4`) show the
+inside the window and `finalFee` from `D` on. Both fees are Q0.64 rates
+(`value / 2^64`) and may be any uint64, `0` to `18446744073709551615` (`2^64 - 1`,
+just under 100%; exactly 100% is `2^64`, which is not a uint64). The contract
+checks only `finalFee <= initialFee` and `feeDuration > 0`
+(`InvalidFeeSchedule()`); there is no lower ceiling and no `FeeTooHigh`.
+Both fee fields are required; the tool has no default schedule. The reference
+schedule is unchanged: 50% (`9223372036854775808`) to 0.3%
+(`55340232221128654`) over 3,600 s, whose excess first halves after 587 s,
+with the fees going to the launch owner. The maximum is a bound a caller may
+choose, not a suggestion.
+
+At the tool boundary `initialFee` and `finalFee` are canonical decimal
+strings. Leading zeros, signs, whitespace, hex, exponents, fractions, empty
+strings and JSON numbers are refused as invalid input naming the field, as is
+any value above `2^64 - 1`, a final fee above the initial fee and a zero
+duration; nothing is truncated or wrapped. Owner summaries show each rate as
+the exact Q0.64 integer and as a percentage to four decimals rounded half up,
+except that no rate below `2^64` rounds up to 100%: the maximum shows as
+`99.9999%`. Owner summaries (`zero-seed-launch-owner-summary/v4`) show the
 exact schedule at sample times; sealed local bodies are
 `zero-seed-local-create/v4` and `zero-seed-local-claim/v3`, both carrying the
 launch's resolved quote.
@@ -178,10 +194,11 @@ This unpublished candidate bumps, in the same commit:
 
 - `MCP_TOOL_CATALOG_REVISION` in `src/version.ts`, from
   `2026-10-20.launchpad-zero-seed-hold` to
-  `2026-10-21.launchpad-zero-seed-api-v4` (the create tool's parameters
-  changed: `quoteToken` added with the native default, `liquidity` removed;
-  `launchpad_get_owners` was added; set the date to the actual release date if
-  it ships later);
+  `2026-10-21.launchpad-zero-seed-fee-range` (the create tool's parameters
+  changed: `quoteToken` added with the native default, `liquidity` removed,
+  `initialFee` and `finalFee` documented and validated as the full uint64
+  range; `launchpad_get_owners` was added; set the date to the actual release
+  date if it ships later);
 - `MCP_SERVER_VERSION` in `src/version.ts` and `version` in `package.json`, from
   `0.53.0` to `0.54.0`.
 

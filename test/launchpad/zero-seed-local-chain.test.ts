@@ -1,17 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { type Address, encodeAbiParameters, encodeEventTopics, getContractAddress, type Hex, keccak256, parseAbi, toEventSelector,
+import { type Address, decodeFunctionData, encodeAbiParameters, encodeEventTopics, getContractAddress, type Hex, keccak256, parseAbi, toEventSelector,
   toFunctionSelector, zeroAddress } from "viem";
 import { CLAIM_SELECTOR, CREATE_SELECTOR, CREATE_SIGNATURE, extensionAbi, LAUNCH_CREATED_TOPIC, LAUNCH_OWNER_SELECTOR,
   peripheryAbi, PREVIEW_SELECTOR, TRANSFER_SELECTOR } from "../../src/launchpad/zero-seed/abi.js";
 import { decodeLaunchCreated, launchCreator, type RawLog } from "../../src/launchpad/zero-seed/events.js";
-import { poolIdOf } from "../../src/launchpad/zero-seed/owner.js";
+import type { ParametersInput } from "../../src/launchpad/zero-seed/installation.js";
+import { decodeOwnerCreate, poolIdOf, type Sealed } from "../../src/launchpad/zero-seed/owner.js";
 import { CONTRACTS_COMMIT, EXTENSION_ABI_SHA256, LOCAL_INSTANCE_PINS, PERIPHERY_ABI_SHA256,
   samePin } from "../../src/launchpad/zero-seed/policy.js";
 import { launchSalts } from "../../src/launchpad/zero-seed/token.js";
 import { EXTENSION_RUNTIME, PERIPHERY_RUNTIME, verifyExtensionRuntime, verifyPeripheryRuntime } from "../../src/launchpad/zero-seed/runtime.js";
-import iface from "../fixtures/launchpad/zero-seed-interface-40af6cb.json";
+import iface from "../fixtures/launchpad/zero-seed-interface-550afc4.json";
 import { chain, ERC20_QUOTE, KINDS, type Kind, pin, quoteOf } from "./zero-seed-fixture.js";
 
 const deployed = chain.deployed;
@@ -23,11 +24,11 @@ const SINK = { native: "578", erc20: "790" } as const;
 const INSTALLED = { native: "999999999999999999999999422", erc20: "999999999999999999999999210" } as const;
 const REQUESTED = "1000000000000000000000000000";
 
-describe("interface manifest of evm-contracts 40af6cb", () => {
+describe("interface manifest of evm-contracts 550afc4", () => {
   test("vendored verbatim from the canonical manifest", () => {
-    const bytes = readFileSync(new URL("../fixtures/launchpad/zero-seed-interface-40af6cb.json", import.meta.url));
-    expect(createHash("sha256").update(bytes).digest("hex")).toBe("6dce9c6bcb0dd1be2a542109b546a4199db55b01f5a0bdcfead13e721eadea6b");
-    expect(iface.manifest_sha256).toBe("5eb115a68920aab6ed83f0fa61f961f841c5680e7cdb05be57b757ed74079dcb");
+    const bytes = readFileSync(new URL("../fixtures/launchpad/zero-seed-interface-550afc4.json", import.meta.url));
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe("57d8485ee7aa34049269f66bedccbfb43b66869b2e37bddf5857d070df02ca0b");
+    expect(iface.manifest_sha256).toBe("032f3c9bfe191f5bb074d1926f4c265af9e06e939140ca13edbd9181e0b2deed");
     expect(iface.frozen_commit).toBe(CONTRACTS_COMMIT);
     expect(iface.artifacts.ZeroSeedLaunch.abi_sha256_canonical_json).toBe(EXTENSION_ABI_SHA256);
     expect(iface.artifacts.ZeroSeedLaunchPeriphery.abi_sha256_canonical_json).toBe(PERIPHERY_ABI_SHA256);
@@ -66,6 +67,10 @@ describe("interface manifest of evm-contracts 40af6cb", () => {
     const all = [...Object.values(extension.functions), ...Object.values(periphery.functions)];
     for (const removed of ["0x217a4b70", "0x687ba810", "0x42b9fe08"]) expect(all).not.toContain(removed);
     expect(Object.values(extension.errors)).not.toContain("0xad00b597");
+    // FeeTooHigh() is gone: every uint64 fee is accepted; only InvalidFeeSchedule remains.
+    expect(iface.removed_from_abi).toEqual({ "FeeTooHigh()": "0xcd4e6167" });
+    expect(Object.values(extension.errors)).not.toContain("0xcd4e6167");
+    expect((extension.errors as Record<string, string>)["InvalidFeeSchedule()"]).toBe("0xf75a271a");
     expect((extensionAbi as readonly { type: string; name?: string }[]).some((e) => e.type === "function" && e.name === "quoteToken")).toBe(false);
   });
 
@@ -99,12 +104,12 @@ describe("the one launcher-deployed local instance", () => {
     expect(deployed.deployment_block).toBe(pin.deploymentBlock);
   });
 
-  test("the same instance the indexer's replay chain deploys (and the API golden reads)", () => {
-    // indexer d783593, tests/fixtures/zero-seed-launch/local-chain.json, instances[0]
-    expect(pin).toMatchObject({ extension: "0x519ddb6580e97e08e639d601dc6e378285c3ef34",
-      periphery: "0x094511cf93e73feca154da35a2404e8bde1111b4", deploymentBlock: "2",
-      extensionRuntime: "0x32160cd19576b73812a6c557ca8f9697ac1c3cd821576afc70e9a9b00bf888be",
-      peripheryRuntime: "0x91a98d2669389244ad8553d84f5c7e3c2947d5d4b5abb519be93d68142cce7c1" });
+  test("the same instance the indexer's replay chain deploys", () => {
+    // indexer c78a48e, tests/fixtures/zero-seed-launch/local-chain.json, instances[0]
+    expect(pin).toMatchObject({ extension: "0x511b4327c2a2b6fd803b4ae85f2f9d831e046d8b",
+      periphery: "0x2f0be2fc5a2825cecd23dbf6ed33ed8ff823ef64", deploymentBlock: "2",
+      extensionRuntime: "0xb8c6d15f45c41e9dc43ac0e6ab8ea941dc833514cdb0b82f381c65f42f73a858",
+      peripheryRuntime: "0x49988478ba70cc8d2587eb63141b333c7ef0a67c4639c3a2ee25de4c4597999e" });
   });
 
   test("a template-equal runtime bound to another Core or extension refuses", () => {
@@ -149,7 +154,7 @@ const createdLogs = (kind: Kind) => chain.launches[kind].logs as RawLog[];
 const createdLog = (kind: Kind) => createdLogs(kind).find((log) => log.topics[0] === LAUNCH_CREATED_TOPIC)!;
 
 describe("LaunchCreated decoding and owner attribution", () => {
-  for (const kind of KINDS) test(`${kind}: decodes the 40af6cb tuple and attributes the creator from the periphery`, () => {
+  for (const kind of KINDS) test(`${kind}: decodes the 550afc4 tuple and attributes the creator from the periphery`, () => {
     const launch = chain.launches[kind];
     const created = launchCreator(createdLogs(kind), pin, true);
     expect(created).toEqual(launch.created as never);
@@ -257,7 +262,10 @@ describe("ownership, claims and accounting on the local chain", () => {
       claim_with_value: "revert_without_data", swap_before_trading_start: "0xacf75be8",
       // UnsupportedQuoteToken(): a nonzero quote without code; the earlier create selector does not exist.
       quote_without_code: "0x658d8331", old_selector: "revert_without_data",
+      // InvalidFeeSchedule(): a rising fee or a zero duration; the maximum fee itself creates.
+      final_above_initial: "0xf75a271a", zero_fee_duration: "0xf75a271a", max_fee_create: "success",
     });
+    expect(iface.abi.ZeroSeedLaunch.errors["InvalidFeeSchedule()"]).toBe("0xf75a271a");
     expect(iface.abi.ZeroSeedLaunch.errors["UnsupportedQuoteToken()"]).toBe("0x658d8331");
     for (const kind of KINDS) expect(chain.launches[kind].create_with_value).toBe("revert_without_data");
   });
@@ -268,5 +276,45 @@ describe("ownership, claims and accounting on the local chain", () => {
       expect(body.data.slice(0, 10)).toBe(CREATE_SELECTOR);
       expect(keccak256(body.data)).toBe(chain.launches[kind].owner_summary.fields.binding.calldata_keccak256 as Hex);
     }
+  });
+});
+
+describe("the default schedule and the maximum uint64 fee on the local chain", () => {
+  const MAX = "18446744073709551615";
+  const cases = {
+    default_schedule: { initialFee: "9223372036854775808", finalFee: "55340232221128654", feeDuration: 3600, percent: ["50.0000%", "0.3000%"] },
+    max_to_final: { initialFee: MAX, finalFee: "55340232221128654", feeDuration: 3600, percent: ["99.9999%", "0.3000%"] },
+    max_flat: { initialFee: MAX, finalFee: MAX, feeDuration: 1, percent: ["99.9999%", "99.9999%"] },
+  } as const;
+  for (const [key, want] of Object.entries(cases)) test(`${key}: the produced create carries the fees exactly and the chain created it`, () => {
+    const launch = chain.launches[key as keyof typeof cases];
+    const expected = { pin, owner: chain.accounts.owner as Address, requested: launch.request as ParametersInput };
+    // The owner decoder reproduces the recorded summary from the sealed body, byte for byte.
+    const summary = decodeOwnerCreate(launch.sealed as Sealed, expected, BigInt(launch.build.buildTime) + 1n);
+    expect(JSON.stringify(summary)).toBe(JSON.stringify(launch.owner_summary));
+    expect(summary.fields).toMatchObject({ initial_fee: want.initialFee, final_fee: want.finalFee, fee_duration: want.feeDuration,
+      initial_fee_percent: want.percent[0], final_fee_percent: want.percent[1] });
+    expect(JSON.stringify(summary)).not.toContain("100.0000%");
+    const body = JSON.parse(launch.sealed.body);
+    expect(body.data.slice(0, 10)).toBe(CREATE_SELECTOR);
+    const decoded = decodeFunctionData({ abi: peripheryAbi, data: body.data });
+    if (decoded.functionName !== "create") throw new Error("not a create");
+    expect([decoded.args[0].initialFee, decoded.args[0].finalFee, decoded.args[0].feeDuration])
+      .toEqual([BigInt(want.initialFee), BigInt(want.finalFee), want.feeDuration]);
+    const created = launchCreator(launch.logs as RawLog[], pin, true);
+    expect(created.parameters).toMatchObject({ initialFee: want.initialFee, finalFee: want.finalFee, feeDuration: want.feeDuration });
+    expect(created.creator).toBe(chain.accounts.owner);
+  });
+
+  test("swaps at the maximum rate: emitted rate equals the integer schedule; exact input nets floor(gross / 2^64)", () => {
+    const [decaying, flat] = chain.max_fee_swaps;
+    for (const swap of chain.max_fee_swaps) {
+      expect(swap.events.find((e) => e.event === "LaunchSwapped")!.args.feeRate).toBe(swap.ts_fee_rate);
+    }
+    expect(flat.ts_fee_rate).toBe(MAX);
+    expect(BigInt(decaying.ts_fee_rate) < BigInt(MAX)).toBe(true);
+    const swapped = flat.events.find((e) => e.event === "LaunchSwapped")!.args as unknown as Record<string, string>;
+    const net = BigInt(flat.deltas.token);
+    expect(net).toBe((net + BigInt(swapped.feeAmount)) / (1n << 64n));
   });
 });

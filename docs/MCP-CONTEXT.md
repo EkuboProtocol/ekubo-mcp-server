@@ -58,7 +58,10 @@ testing endpoint's tools budget was raised from 7,500 to 8,500 characters for
 `launchpad_get_owners`, which reads the API ownership history; with the
 per-launch `quoteToken` of the create parameters it is measured at 663
 instructions, 8,230 tools (1,788 for the largest tool) and 523 resources
-characters.
+characters. Its largest-tool budget was then raised from 1,800 to 2,000
+characters so `launchpad_prepare_create` can state the creator fee encoding and
+its full range (uint64 Q0.64, `0` to `2^64 - 1`, just under 100%) on the
+arguments: 8,401 tools, 1,959 for that tool.
 
 ## How the catalog is kept small
 

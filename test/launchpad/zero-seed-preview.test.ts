@@ -9,7 +9,7 @@ import { build, ERC20_QUOTE, fixture, KINDS, owner, request } from "./zero-seed-
 const B = BigInt(build().buildTime);
 const at = (offset: bigint) => (B + offset).toString();
 
-// Contract vectors (evm-contracts 40af6cb, test/vectors/zero-seed-launch.json) at supply 1e27, 18/18 decimals,
+// Contract vectors (evm-contracts 550afc4, unchanged since 40af6cb, test/vectors/zero-seed-launch.json) at supply 1e27, 18/18 decimals,
 // ask -13815500, upper -9210300, spacing 100: the native launch token is token1, the ERC-20 launch token0.
 const EXPECTED = {
   native: { requested: "1000000000000000000000000000", installed: "999999999999999999999999422", sink: "578",
@@ -220,12 +220,23 @@ describe("preview refusals before and after the one read", () => {
   });
   for (const patch of [
     { supply: "0" }, { supply: (1n << 127n).toString() },
-    { initialFee: "18262276632972456100" }, { finalFee: "922337203685477581" }, { feeDuration: 0 },
+    { initialFee: "18446744073709551616" }, { finalFee: "18446744073709551616" }, { initialFee: "018446744073709551615" },
+    { finalFee: "922337203685477581" }, { feeDuration: 0 },
     { tradingStart: (1n << 64n).toString() }, { askTick: -13815499 },
   ]) test(`invalid parameters refuse before any budgeted read ${JSON.stringify(patch)}`, async () => {
     const f = fixture();
     await expect(f.run({ ...request(), ...patch })).rejects.toThrow();
     expect(f.counts()).toEqual({ calls: 0, stores: 0 });
+  });
+  for (const fees of [
+    { initialFee: "18446744073709551615", finalFee: "55340232221128654" },
+    { initialFee: "18446744073709551615", finalFee: "18446744073709551615", feeDuration: 1 },
+    { initialFee: "18446744073709551615", finalFee: "18446744073709551614" },
+  ]) test(`the maximum uint64 fee previews with one read ${JSON.stringify(fees)}`, async () => {
+    const f = fixture();
+    const preview = await f.run({ ...request(), ...fees });
+    expect(preview.requested).toMatchObject(fees);
+    expect(f.counts()).toEqual({ calls: 1, stores: 1 });
   });
   test("largest requested supply int128.max is accepted as input", async () => {
     const f = fixture();

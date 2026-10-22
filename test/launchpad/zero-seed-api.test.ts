@@ -4,18 +4,19 @@ import { readFileSync } from "node:fs";
 import type { Hex } from "viem";
 import { z } from "zod";
 import { ZeroSeedApi } from "../../src/launchpad/zero-seed/api.js";
-import { feeAt, feePhase } from "../../src/launchpad/zero-seed/fee.js";
+import { feeAt, feePercent, feePhase } from "../../src/launchpad/zero-seed/fee.js";
 import { LOCAL_INSTANCE_PINS } from "../../src/launchpad/zero-seed/policy.js";
 import { ClaimPage, LaunchDetail, LaunchList, OwnerPage, SwapPage } from "../../src/launchpad/zero-seed/schema.js";
-import golden from "../fixtures/launchpad/zero-seed-api-v4-8f18246.golden.json";
-import openapi from "../fixtures/launchpad/zero-seed-api-v4-8f18246.openapi-launches.json";
+import golden from "../fixtures/launchpad/zero-seed-api-v4-cf05546.golden.json";
+import openapi from "../fixtures/launchpad/zero-seed-api-v4-cf05546.openapi-launches.json";
 
-// The backend's API v4 golden: actual handler output over the indexer's replayed local chain (api 8f18246,
-// src/routes/launches/fixtures/zero-seed-launch-api-v4.golden.json; indexer d783593). Byte-identical copy.
-const GOLDEN_SHA256 = "0f808cd606372ca526e60170fcea87c0bdf5342f83e91e40ecd0f8b6e8381186";
-// `/launches*` paths of openapi.json at the same head (whole file sha256 dc62934b…a468), extracted with
+// The backend's API v4 golden: actual handler output over the indexer's replayed local chain of evm-contracts
+// 550afc4 (api cf05546b0b5f49194cab76b7c9348d9929574b58, src/routes/launches/fixtures/zero-seed-launch-api-v4.golden.json;
+// indexer c78a48e). Byte-identical copy. It includes the two launches created at the maximum fee 2^64 - 1.
+const GOLDEN_SHA256 = "346400dedab2964e62c043e511fb1db6533e5af0b4d70f733f3b0191a30499a2";
+// `/launches*` paths of openapi.json at the same head (whole file sha256 ec1177f4…36b0f8), extracted with
 // json.dumps({openapi, paths}, indent=1, sort_keys=True) plus a trailing newline.
-const OPENAPI_SHA256 = "59a172d374f4ec6388b8d6a3f332c8a9d081ab51746eae8d2df9a8da46a92782";
+const OPENAPI_SHA256 = "721309ef3a232cf284866443cabb6d3513894116a495f560afa52bd88dad27c5";
 
 type Json = any;
 const CHAIN = "31337";
@@ -39,6 +40,8 @@ const pages: Record<string, Record<string, Json>> = {
   [g.nativeDetail.pool_id]: { detail: g.nativeDetail, swaps: g.nativeSwaps, claims: g.nativeClaims, owners: g.nativeOwners },
   [g.erc20Detail.pool_id]: { detail: g.erc20Detail, swaps: g.erc20Swaps, claims: g.erc20Claims, owners: g.erc20Owners },
   [g.erc20TraderOwnedDetail.pool_id]: { detail: g.erc20TraderOwnedDetail },
+  [g.maxNativeDetail.pool_id]: { detail: g.maxNativeDetail, swaps: g.maxNativeSwaps, claims: g.maxNativeClaims },
+  [g.maxErc20Detail.pool_id]: { detail: g.maxErc20Detail, swaps: g.maxErc20Swaps, claims: g.maxErc20Claims },
 };
 /** Serves the golden by path. The block-9 list pages answer the paged reads; the head list the rest. */
 function routes(url: URL): Json {
@@ -85,8 +88,8 @@ function normalize(schema: Json): Json {
 
 describe("API v4 contract: the backend's golden and OpenAPI", () => {
   test("fixtures are the published bytes", () => {
-    expect(sha256("../fixtures/launchpad/zero-seed-api-v4-8f18246.golden.json")).toBe(GOLDEN_SHA256);
-    expect(sha256("../fixtures/launchpad/zero-seed-api-v4-8f18246.openapi-launches.json")).toBe(OPENAPI_SHA256);
+    expect(sha256("../fixtures/launchpad/zero-seed-api-v4-cf05546.golden.json")).toBe(GOLDEN_SHA256);
+    expect(sha256("../fixtures/launchpad/zero-seed-api-v4-cf05546.openapi-launches.json")).toBe(OPENAPI_SHA256);
     expect(g.schema_version).toBe("zero-seed-launch-api/v4");
   });
 
@@ -235,7 +238,9 @@ describe("API v4 replay through the MCP client (the one local instance pin)", ()
     const unreviewed = "0x4200000000000000000000000000000000000006";
     const list = { ...g.canonicalList, data: g.canonicalList.data.map((row: Json) =>
       (row.quote_token.kind === "erc20" ? { ...row, quote_token: { ...row.quote_token, address: unreviewed } } : row)) };
-    expect((await client(() => list).list(CHAIN)).data.map((r: Json) => r.quote_token.kind)).toEqual(["native"]);
+    const natives = g.canonicalList.data.filter((row: Json) => row.quote_token.kind === "native").map((row: Json) => row.pool_id);
+    expect(natives.length).toBeGreaterThan(0);
+    expect((await client(() => list).list(CHAIN)).data.map((r: Json) => r.pool_id)).toEqual(natives);
     await expect(client(() => tamper(g.erc20Detail, (d) => { d.quote_token.address = unreviewed; })).detail(CHAIN, erc20Id))
       .rejects.toThrow("api_404");
   });
@@ -247,6 +252,63 @@ describe("API v4 replay through the MCP client (the one local instance pin)", ()
     await expect(hosted.detail(CHAIN, nativeId)).rejects.toThrow("launch_support_disabled");
     await expect(client(routes).detail("8453", nativeId)).rejects.toThrow("launch_support_disabled");
     expect(seen).toEqual([]);
+  });
+});
+
+describe("API v4 launches at the maximum uint64 fee (l5 native max -> 0.3%, l6 ERC-20 flat max)", () => {
+  const MAX = "18446744073709551615";
+  const l5 = g.maxNativeDetail.pool_id as Hex;
+  const l6 = g.maxErc20Detail.pool_id as Hex;
+
+  test("detail, swaps, claims and the list parse through the client unchanged, with the maximum exact", async () => {
+    const api = client(routes);
+    const native = await api.detail(CHAIN, l5);
+    const erc20 = await api.detail(CHAIN, l6);
+    expect(native).toEqual(g.maxNativeDetail);
+    expect(erc20).toEqual(g.maxErc20Detail);
+    expect(native.quote_token.kind).toBe("native");
+    expect(native.fee_schedule).toMatchObject({ initial_fee: MAX, final_fee: "55340232221128654", fee_duration: 3600 });
+    expect(erc20.quote_token.kind).toBe("erc20");
+    expect(erc20.fee_schedule).toMatchObject({ initial_fee: MAX, final_fee: MAX, fee_duration: 1, fee_rate: MAX });
+    expect(await api.swaps(CHAIN, l5)).toEqual(g.maxNativeSwaps);
+    expect(await api.swaps(CHAIN, l6)).toEqual(g.maxErc20Swaps);
+    expect(await api.claims(CHAIN, l5)).toEqual(g.maxNativeClaims);
+    expect(await api.claims(CHAIN, l6)).toEqual(g.maxErc20Claims);
+    const listed = (await api.list(CHAIN)).data.filter((row: Json) => row.pool_id === l5 || row.pool_id === l6);
+    expect(listed.map((row: Json) => row.fee_schedule.initial_fee)).toEqual([MAX, MAX]);
+  });
+
+  test("swaps at the maximum: the indexed rate is the integer schedule's, and exact input nets floor(gross / 2^64)", () => {
+    const atMax = [];
+    for (const [detail, page] of [[g.maxNativeDetail, g.maxNativeSwaps], [g.maxErc20Detail, g.maxErc20Swaps]]) {
+      for (const swap of page.data) {
+        expect(swap.fee_rate).toBe(feeAt(scheduleOf(detail.fee_schedule), BigInt(swap.event.block_time)).toString());
+        if (swap.fee_rate === MAX) atMax.push(swap);
+      }
+    }
+    expect(atMax).toHaveLength(4);
+    for (const swap of atMax.filter((s: Json) => s.direction === "buy" && s.fee_asset === "launch_token")) {
+      const net = -BigInt(swap.launch_token_delta);
+      expect(net).toBe((net + BigInt(swap.fee_amount)) / (1n << 64n));
+    }
+  });
+
+  test("every fee the MCP renders for them reads just under 100%, never 100%", async () => {
+    const api = client(routes);
+    const served = [await api.detail(CHAIN, l5), await api.detail(CHAIN, l6), await api.swaps(CHAIN, l5), await api.swaps(CHAIN, l6)];
+    const rates = new Set<string>();
+    const collect = (node: Json): void => {
+      if (node === null || typeof node !== "object") return;
+      for (const [key, value] of Object.entries(node)) {
+        if (["initial_fee", "final_fee", "fee_rate"].includes(key)) rates.add(value as string);
+        else collect(value);
+      }
+    };
+    served.forEach(collect);
+    expect(rates.has(MAX)).toBe(true);
+    for (const rate of rates) expect(feePercent(BigInt(rate))).not.toBe("100.0000%");
+    expect(feePercent(BigInt(MAX))).toBe("99.9999%");
+    expect(JSON.stringify(served)).not.toContain("100%");
   });
 });
 
@@ -287,6 +349,27 @@ describe("API v4 refusals", () => {
     await expect(detail((d) => { d.fee_schedule.phase = "fee_decay"; })).rejects.toThrow("api_fee_identity_mismatch");
     await expect(detail((d) => { d.fee_schedule.evaluated_at -= 1; })).rejects.toThrow("api_fee_identity_mismatch");
     await expect(detail((d) => { d.fee_schedule.fee_end += 1; })).rejects.toThrow("api_fee_identity_mismatch");
+  });
+
+  test("every uint64 fee is served; above uint64 or a rising schedule refuses", async () => {
+    const MAX = (1n << 64n) - 1n;
+    const withFees = (initial: bigint, final: bigint) => (d: Json) => {
+      const fee = d.fee_schedule;
+      Object.assign(fee, { initial_fee: initial.toString(), final_fee: final.toString() });
+      fee.fee_rate = feeAt(scheduleOf(fee), BigInt(fee.evaluated_at)).toString();
+    };
+    for (const [initial, final] of [[MAX, BigInt(g.nativeDetail.fee_schedule.final_fee)], [MAX, MAX], [MAX, MAX - 1n], [0n, 0n]]) {
+      const served = await detail(withFees(initial, final));
+      expect(served.fee_schedule).toMatchObject({ initial_fee: initial.toString(), final_fee: final.toString() });
+    }
+    // Above uint64 is not a fee: the published schema itself refuses it, before any arithmetic.
+    for (const field of ["initial_fee", "final_fee", "fee_rate"]) {
+      for (const bad of [(MAX + 1n).toString(), "036893488147419103", "1".repeat(21)]) {
+        await expect(detail((d) => { d.fee_schedule[field] = bad; })).rejects.toThrow("api_invalid_response");
+      }
+    }
+    await expect(detail((d) => { d.fee_schedule.final_fee = (BigInt(d.fee_schedule.initial_fee) + 1n).toString(); }))
+      .rejects.toThrow("api_fee_identity_mismatch");
   });
 
   test("quote, pool and instance identity", async () => {

@@ -27,6 +27,8 @@ const parameters: ParametersInput = {
   initialFee: "922337203685477580", finalFee: "55340232221128654", salt: config,
 };
 const tuple = abiParameters(parameters);
+// The maximum uint64 fee encodes identically through the subset and the full ABI.
+const maxFee = abiParameters({ ...parameters, initialFee: "18446744073709551615", finalFee: "18446744073709551615" });
 const poolKey = { token0: "0x0000000000000000000000000000000000000000" as Address, token1: owner, config };
 let controls = 0;
 function same(a: unknown, b: unknown, label: string) {
@@ -37,6 +39,8 @@ for (const abi of [peripheryAbi, periphery]) {
   const create = encodeFunctionData({ abi, functionName: "create", args: [tuple] });
   same(create, encodeFunctionData({ abi: periphery, functionName: "create", args: [tuple] }), "create");
   same(create.slice(0, 10), CREATE_SELECTOR, "create selector");
+  same(encodeFunctionData({ abi, functionName: "create", args: [maxFee] }),
+    encodeFunctionData({ abi: periphery, functionName: "create", args: [maxFee] }), "create at the maximum fee");
   const preview = encodeFunctionData({ abi, functionName: "previewInstallation", args: [owner, tuple] });
   same(preview, encodeFunctionData({ abi: periphery, functionName: "previewInstallation", args: [owner, tuple] }), "preview");
   same(preview.slice(0, 10), PREVIEW_SELECTOR, "preview selector");
@@ -65,8 +69,13 @@ for (const abi of [extensionAbi, extension]) {
   same(encodeErrorResult({ abi, errorName: "LiquidityAboveTickCap", args: [1n, 2n] }),
     encodeErrorResult({ abi: extension, errorName: "LiquidityAboveTickCap", args: [1n, 2n] }), "LiquidityAboveTickCap");
 }
-// Removed at 40af6cb: the constructor quote's getter and the exact-installable-supply error.
-for (const name of ["quoteToken", "SupplyNotExactlyInstallable"]) {
+// Removed at 40af6cb: the constructor quote's getter and the exact-installable-supply error. Removed at 550afc4: the
+// fee ceiling's FeeTooHigh error (every uint64 fee is accepted); InvalidFeeSchedule remains the only fee refusal.
+if (!extension.some((entry) => entry.type === "error" && entry.name === "InvalidFeeSchedule")) {
+  throw new Error("InvalidFeeSchedule is missing from the compiled ABI");
+}
+controls++;
+for (const name of ["quoteToken", "SupplyNotExactlyInstallable", "FeeTooHigh"]) {
   if (extension.some((entry) => "name" in entry && entry.name === name)) throw new Error(`${name} is still in the compiled ABI`);
   controls++;
 }

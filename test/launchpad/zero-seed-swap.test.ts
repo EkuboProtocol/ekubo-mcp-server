@@ -8,7 +8,7 @@ import fixture from "../fixtures/launchpad/zero-seed-quoter-plans.json";
 
 // Real quoter-service output (a1ce2ee) for zero-seed pools on the indexer's fork-free replay chain of the earlier
 // evm-contracts 4f1a306 deployment, the MCP router plans built from it and their local execution, recorded by
-// script/zero-seed-quoter-plans.ts. LOCAL evidence only. The swap path is unchanged at 40af6cb: the forward payload
+// script/zero-seed-quoter-plans.ts. LOCAL evidence only. The swap path is unchanged through 550afc4: the forward payload
 // abi.encode(PoolKey, SwapParameters), the router layout and the settlement are the same. Only the instance changed
 // (one extension for every quote, the quote named per launch), so each recorded plan is replayed against the current
 // pin with the earlier extension address substituted, and must reproduce the executed calldata byte for byte with
@@ -21,7 +21,7 @@ const APPROVAL = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3
 /** The 4f1a306 replay chain's constructor-quote extensions, one per quote, and that chain's Core. */
 const EARLIER = { native: "0x5114703a4cf4256f0acb68f992c861d8c4d1b173", erc20: "0x519435a42752da78e395999218d0ecc4fdcbcf4b" } as const;
 const CORE = "0x00000000000014aa86c5d3c41765bb24e11bd701";
-// The indexed fee schedules of the three recorded pools (api 2429547 golden; the schedule is unchanged at 40af6cb).
+// The indexed fee schedules of the three recorded pools (api 2429547 golden; the schedule is unchanged through 550afc4).
 const SCHEDULES: Record<string, { trading_start: number; fee_duration: number; initial_fee: string; final_fee: string }> = {
   "0xc0a9f26952af6a470e5798edc551951d998bf408a332128e643c867e0c556a71": { trading_start: 1800001000, fee_duration: 3600,
     initial_fee: "9223372036854775808", final_fee: "55340232221128654" },

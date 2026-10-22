@@ -7,8 +7,11 @@ export const Q128 = 1n << 128n;
 const MAX_U128 = (1n << 128n) - 1n;
 const MAX_I128 = (1n << 127n) - 1n;
 
-/** Protocol cap floor(99 * 2^64 / 100) on the initial fee. */
-export const MAX_CREATOR_FEE = 18262276632972456099n;
+/**
+ * type(uint64).max: the largest creator fee, 1 - 2^-64 of the amount, just under 100%. Every uint64 is a valid
+ * initial or final fee; the contract checks only finalFee <= initialFee and feeDuration > 0.
+ */
+export const MAX_CREATOR_FEE = Q64 - 1n;
 
 /** The fixed half-life of the decay, in seconds. Not a launch parameter. */
 export const FEE_HALF_LIFE_SECONDS = 600;
@@ -85,9 +88,13 @@ export function feeAt(schedule: FeeSchedule, timestamp: bigint): bigint {
   return finalFee + ((initialFee - finalFee) * (decayQ128(elapsed) - endpoint)) / (Q128 - endpoint);
 }
 
-/** Q0.64 fee as a percentage to four decimals, rounding half up. */
+/**
+ * Q0.64 fee as a percentage to four decimals, rounding half up, except that a fee below 2^64 never rounds up to
+ * 100%: rates from 99.99995% to the maximum show as 99.9999%.
+ */
 export function feePercent(q64: bigint): string {
-  const scaled = (q64 * 1_000_000n + (1n << 63n)) >> 64n;
+  const rounded = (q64 * 1_000_000n + (1n << 63n)) >> 64n;
+  const scaled = q64 < Q64 && rounded === 1_000_000n ? 999_999n : rounded;
   return `${scaled / 10_000n}.${(scaled % 10_000n).toString().padStart(4, "0")}%`;
 }
 

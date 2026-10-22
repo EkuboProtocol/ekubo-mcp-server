@@ -41,8 +41,8 @@ interface CreatedArgs {
 }
 
 /**
- * Decodes one LaunchCreated log of a pinned extension (evm-contracts 40af6cb tuple: quoteToken in slot 5, no
- * liquidity input) and checks it against the contract's own rules: the emitter is the extension, the pool pairs the
+ * Decodes one LaunchCreated log of a pinned extension (evm-contracts 550afc4; the tuple is unchanged since 40af6cb:
+ * quoteToken in slot 5, no liquidity input) and checks it against the contract's own rules: the emitter is the extension, the pool pairs the
  * token with the launch's quote (native ETH always token0), the pool id, fee 0 and spacing, the position bounds, a
  * nonzero liquidity and a requested supply in 1..int128.max. `parameters.salt` is the salt the extension received:
  * the periphery's owner-namespaced keccak256(abi.encode(owner, userSalt)). `quote` is the launch's quote only when it is native

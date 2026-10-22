@@ -1,6 +1,6 @@
 import { type Address, encodeAbiParameters, type Hex, keccak256, numberToHex } from "viem";
 import { z } from "zod";
-import { feeAt, feePhase, MAX_CREATOR_FEE } from "./fee.js";
+import { feeAt, feePhase } from "./fee.js";
 import { type InstancePin, launchQuote, NATIVE_DECIMALS, NATIVE_QUOTE, supportedInstances, unsigned,
   ZeroSeedError } from "./policy.js";
 import { BlockRef, ClaimPage, LaunchDetail, LaunchList, LaunchSummary, OwnerPage, SwapPage } from "./schema.js";
@@ -63,12 +63,15 @@ function validatePool(row: Summary): void {
   }
 }
 
-/** Recomputes the served rate from the indexed schedule with the contract's fixed-base table (600 s half-life). */
+/**
+ * Recomputes the served rate from the indexed schedule with the contract's fixed-base table (600 s half-life). Fees
+ * may be any uint64; the response schema already refuses a value above 2^64 - 1.
+ */
 function validateFee(row: Summary): void {
   const fee = row.fee_schedule;
   const [start, duration, end, initial, final, time] = [fee.trading_start, fee.fee_duration, fee.fee_end,
     fee.initial_fee, fee.final_fee, fee.evaluated_at].map((value) => unsigned(BigInt(value), 64));
-  if (start + duration !== end || final > initial || initial > MAX_CREATOR_FEE || duration >= 1n << 32n ||
+  if (start + duration !== end || final > initial || duration >= 1n << 32n ||
     fee.evaluated_at !== row.as_of.block_time) {
     throw new ZeroSeedError("api_fee_identity_mismatch");
   }

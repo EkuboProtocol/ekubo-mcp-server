@@ -7,7 +7,7 @@
  * chain, provider, key or funds.
  *
  * The recorded fixture is of the evm-contracts 4f1a306 deployment (one constructor-quote extension per quote). The
- * swap path is unchanged at 40af6cb, so the tests replay these plans against the current instance with only the
+ * swap path is unchanged through 550afc4, so the tests replay these plans against the current instance with only the
  * extension address substituted. Reproducing the fixture needs the MCP source it was built with:
  * ZERO_SEED_MCP_WORKTREE, a checkout of this repository at 807320c0162928f0bbf84276952ca4727711bc89.
  *

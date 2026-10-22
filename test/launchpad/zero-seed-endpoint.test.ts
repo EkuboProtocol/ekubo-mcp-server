@@ -248,6 +248,78 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
     expect(requests).toEqual([]);
   });
 
+  describe("creator fee range at the tool boundary (uint64 Q0.64 decimal strings)", () => {
+    const MAX = "18446744073709551615";
+    const FEE_50 = "9223372036854775808";
+    const FEE_03 = "55340232221128654";
+    const create = (fees: Record<string, unknown>, e = workerEnv()) =>
+      call(e, "launchpad_prepare_create", { chain_id: pin.chainId, sender, parameters: { ...parameters, ...fees } });
+
+    it("publishes the full range, just under 100%, with no 99% ceiling and no fee_too_high", async () => {
+      const tools = (await mcp(workerEnv(), TESTING, "tools/list")).result.tools as Json[];
+      const schema = tools.find((t) => t.name === "launchpad_prepare_create").inputSchema.properties.parameters;
+      expect(schema.properties.initialFee).toMatchObject({ type: "string" });
+      expect(schema.properties.initialFee.description).toContain(`0 to ${MAX}, just under 100%`);
+      expect(schema.properties.initialFee.description).toContain("uint64 Q0.64");
+      expect(schema.properties.finalFee.description).toContain("<= initialFee");
+      expect(schema.properties.feeDuration).toMatchObject({ type: "integer", minimum: 1 });
+      const text = JSON.stringify(tools);
+      for (const stale of ["99%", "18262276632972456099", "fee_too_high", "FeeTooHigh"]) expect(text).not.toContain(stale);
+      expect(text.replaceAll("just under 100%", "")).not.toContain("100%");
+    });
+
+    const accepted: [string, Record<string, unknown>][] = [
+      ["the unchanged default 50% -> 0.3% over 3,600 s", { initialFee: FEE_50, finalFee: FEE_03, feeDuration: 3600 }],
+      ["the maximum -> 0.3%", { initialFee: MAX, finalFee: FEE_03 }],
+      ["flat at the maximum over 1 s", { initialFee: MAX, finalFee: MAX, feeDuration: 1 }],
+      ["a final fee one below the maximum", { initialFee: MAX, finalFee: "18446744073709551614" }],
+      ["zero", { initialFee: "0", finalFee: "0" }],
+    ];
+    for (const [label, fees] of accepted) {
+      it(`accepts ${label}; support stays disabled, so no plan`, async () => {
+        const e = workerEnv();
+        const reply = await create(fees, e);
+        expect(reply.result.isError).toBe(true);
+        expect(reply.result.structuredContent).toEqual({ error: { code: "launch_support_disabled", message: "launch_support_disabled" } });
+        expect(e.ARTIFACT_STORE.entries.size).toBe(0);
+        expect(requests).toEqual([]);
+      });
+    }
+
+    const NOT_CANONICAL = "must be a canonical decimal string";
+    const ABOVE = `must be at most ${MAX} (uint64 max, just under 100%)`;
+    const refused: [string, Record<string, unknown>, string, string][] = [
+      ["2^64 as the initial fee", { initialFee: "18446744073709551616" }, "initialFee", ABOVE],
+      ["2^64 as the final fee", { initialFee: MAX, finalFee: "18446744073709551616" }, "finalFee", ABOVE],
+      ["2^65 - 1", { initialFee: "36893488147419103231" }, "initialFee", ABOVE],
+      ["a leading zero", { initialFee: `0${MAX}` }, "initialFee", NOT_CANONICAL],
+      ["a sign", { initialFee: "+1" }, "initialFee", NOT_CANONICAL],
+      ["a negative", { finalFee: "-1" }, "finalFee", NOT_CANONICAL],
+      ["whitespace", { initialFee: ` ${MAX}` }, "initialFee", NOT_CANONICAL],
+      ["hex", { initialFee: "0xffffffffffffffff" }, "initialFee", NOT_CANONICAL],
+      ["an exponent", { initialFee: "1e18" }, "initialFee", NOT_CANONICAL],
+      ["a fraction", { initialFee: "0.5" }, "initialFee", NOT_CANONICAL],
+      ["an empty string", { finalFee: "" }, "finalFee", NOT_CANONICAL],
+      ["a JSON number", { initialFee: 1 }, "initialFee", "must be a decimal string; a JSON number cannot carry every uint64"],
+      ["final above initial", { initialFee: "18446744073709551614", finalFee: MAX }, "finalFee",
+        "invalid_fee_schedule: finalFee must be at most initialFee"],
+      ["a zero duration", { initialFee: MAX, finalFee: MAX, feeDuration: 0 }, "feeDuration", "must be at least 1 second"],
+    ];
+    for (const [label, fees, field, message] of refused) {
+      it(`refuses ${label} as invalid input naming parameters.${field}`, async () => {
+        const e = workerEnv();
+        const reply = await create(fees, e);
+        expect(reply.result.isError).toBe(true);
+        expect(reply.result.structuredContent).toBeUndefined();
+        const text = reply.result.content[0].text as string;
+        expect(text).toContain(`parameters.${field}: ${message}`);
+        expect(text).not.toContain("launch_support_disabled");
+        expect(e.ARTIFACT_STORE.entries.size).toBe(0);
+        expect(requests).toEqual([]);
+      });
+    }
+  });
+
   it("refuses disabled chains before configuration is consulted", async () => {
     const reply = await call({ ARTIFACT_STORE: fakeArtifactStore(), ALLOWED_ORIGINS: "https://mcp.ekubo.org" },
       "launchpad_get_launch", { chain_id: "1", pool_id: poolId });
