@@ -83,7 +83,6 @@ const expectedTools = [
   "prepare_manual_pool_boost",
   "prepare_oracle_capacity_expansion",
   "prepare_approval_revocations",
-  "prepare_old_gekubo_unwrap",
   "get_rewards_claims_by_owner",
   "prepare_rewards_claim",
   "prepare_revenue_buybacks",

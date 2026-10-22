@@ -131,13 +131,13 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
   it("keeps /mcp and /mcp/ekubo at their pre-launchpad tool counts", async () => {
     const e = workerEnv();
     const count = async (path: string) => (await mcp(e, path, "tools/list")).result.tools.length;
-    expect(await count("/mcp")).toBe(100);
+    expect(await count("/mcp")).toBe(99);
     expect(await count("/mcp/ekubo")).toBe(34);
   });
 
   it("advertises the testing endpoint only as a standalone protocol", async () => {
     const root = await (await get("/")).json() as Json;
-    expect(root.tool_count).toBe(100);
+    expect(root.tool_count).toBe(99);
     expect(root.mcp_endpoints.all.protocols).not.toContain("launchpad-testing");
     const entry = root.mcp_endpoints.by_protocol.find((p: Json) => p.protocol === "launchpad-testing");
     expect(entry).toMatchObject({ url: `https://mcp.ekubo.org${TESTING}`, tool_count: 8 });

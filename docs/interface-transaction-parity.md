@@ -30,7 +30,7 @@ list, but must not construct calls or decide what transactions belong in it.
 | `EvmManualBoost.tsx`                                                          | Approve and boost a pool                                       | `prepare_manual_pool_boost`                                    |
 | `EvmOracleCapacity.tsx`                                                       | Expand oracle capacity                                         | `prepare_oracle_capacity_expansion`                            |
 | `EvmRevokeApprovals.tsx`                                                      | Revoke one or many ERC-20 approvals                            | `prepare_approval_revocations`                                 |
-| `UnwrapOldGekubo.tsx`                                                         | Approve and route old gEKUBO unwrap                            | `prepare_old_gekubo_unwrap`                             |
+| `UnwrapOldGekubo.tsx`                                                         | Approve and route old gEKUBO unwrap                            | Not exposed: it routes through the retired HyperRouter        |
 | `useEvmRewardsClaims.ts`                                                      | Claim one reward or aggregate independent claims               | `prepare_rewards_claim`                                        |
 | `EvmRevenueBuybacks.tsx`                                                      | Collect ended orders, withdraw protocol fees, and roll tokens  | `prepare_revenue_buybacks`                                     |
 | `EvmVeStonx.tsx`                                                              | Create a new stake                                             | `prepare_ve33_stake`                                           |
@@ -98,6 +98,5 @@ elsewhere in this document.
 
 Plans matching interface submissions made with `forceAtomic` list
 `atomic_batch` in `required_capabilities`. This currently includes swaps with
-an approval or allowance cleanup and the approval-plus-route old gEKUBO
-migration. A wallet that does not implement a required capability must reject
+an approval or allowance cleanup. A wallet that does not implement a required capability must reject
 such a plan rather than adapt it.

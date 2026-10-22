@@ -78,7 +78,6 @@ const EKUBO_ADVANCED_TOOLS = [
   "prepare_manual_pool_boost",
   "prepare_oracle_capacity_expansion",
   "prepare_approval_revocations",
-  "prepare_old_gekubo_unwrap",
   "prepare_revenue_buybacks",
   "prepare_pool_initialization",
 ] as const;
@@ -96,7 +95,7 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
     slug: "ekubo-advanced",
     title: "Ekubo Protocol advanced",
     description:
-      "Ekubo auctions, TWAMM orders, pool initialization and price fixes, oracle capacity, manual boosts, revenue buybacks, old gEKUBO unwrap, approval revocations, and pool-key enumeration",
+      "Ekubo auctions, TWAMM orders, pool initialization and price fixes, oracle capacity, manual boosts, revenue buybacks, approval revocations, and pool-key enumeration",
     skill: null,
     tools: EKUBO_ADVANCED_TOOLS,
   },

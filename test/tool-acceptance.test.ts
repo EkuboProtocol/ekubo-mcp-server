@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { keccak256, stringToHex } from "viem";
+import { decodeFunctionData, erc20Abi, keccak256, stringToHex } from "viem";
+import { YUL_ROUTER_ADDRESS } from "@ekubo/yul-router-sdk";
 import worker from "../src/index.js";
 import { ARTIFACT_TTL_SECONDS } from "../src/artifact-store.js";
+import { PROTOCOLS, protocolMcpPath } from "../src/protocols.js";
 import { fakeArtifactStore } from "./fake-r2.js";
 
 const store = fakeArtifactStore();
@@ -450,5 +452,120 @@ describe("upstream failures are structured and recoverable", () => {
     const serialized = JSON.stringify(result);
     expect(serialized).not.toContain(env.ZERO_X_API_KEY);
     expect(serialized).not.toContain(env.ACROSS_API_KEY);
+  });
+});
+
+describe("retired HyperRouter tools are gone from every endpoint", () => {
+  const REMOVED = ["prepare_old_gekubo_unwrap"];
+  const HYPER_ROUTER_V2 = "0x8CCB1ffD5C2aa6Bd926473425Dea4c8c15DE60fd";
+  const LEGACY = /prepare_old_gekubo_unwrap|unwrap_old_gekubo|hyper.?router|0x8ccb1ffd5c2aa6bd926473425dea4c8c15de60fd/i;
+  const MCP_PATHS = [
+    "/mcp",
+    "/mcp?protocols=ekubo+ekubo-advanced",
+    ...PROTOCOLS.map((protocol) => protocolMcpPath(protocol.slug)),
+  ];
+  const HTTP_DOCUMENTS = [
+    "/",
+    "/tools",
+    "/tools?protocols=ekubo+ekubo-advanced",
+    ...PROTOCOLS.map((protocol) => `/tools?protocol=${protocol.slug}`),
+    "/llms.txt",
+    "/openapi.json",
+    "/.well-known/mcp.json",
+    "/.well-known/mcp/server-card.json",
+  ];
+
+  for (const path of MCP_PATHS) {
+    it(`${path} neither lists nor describes a removed tool`, async () => {
+      const names = (await listTools(path)).map((tool) => tool.name);
+      expect(names.length).toBeGreaterThan(0);
+      for (const name of REMOVED) expect(names).not.toContain(name);
+      const listed = JSON.stringify(await listTools(path));
+      expect(listed).not.toMatch(LEGACY);
+      const init = await rpc(path, "initialize", {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: { name: "removal-test", version: "0" },
+      });
+      expect(JSON.stringify(init.body.result)).not.toMatch(LEGACY);
+    });
+
+    const calls: [string, Json][] = [
+      ["valid synthetic arguments", { chain_id: "1", sender: OWNER, amount: "1000000000000000000" }],
+      ["malformed arguments", { chain_id: 1, sender: "not-an-address", amount: "-1" }],
+      ["no arguments", {}],
+    ];
+    for (const [label, args] of calls) {
+      it(`${path} rejects a cached removed-tool call with ${label} and prepares nothing`, async () => {
+        const upstream = mockUpstream(() => {
+          throw new Error("a removed tool must not reach an upstream");
+        });
+        const storedBefore = store.entries.size;
+        for (const name of REMOVED) {
+          const { status, body } = await rpc(path, "tools/call", { name, arguments: args });
+          expect(status).toBe(200);
+          expect(body.result).toBeUndefined();
+          expect(body.error.code).toBe(-32602);
+          expect(body.error.message).toContain(name);
+          expect(JSON.stringify(body)).not.toContain("execution_plan");
+        }
+        expect(upstream).not.toHaveBeenCalled();
+        expect(store.entries.size).toBe(storedBefore);
+      });
+    }
+  }
+
+  for (const path of HTTP_DOCUMENTS) {
+    it(`${path} does not advertise a removed tool`, async () => {
+      const response = await worker.fetch(new Request(`https://mcp.ekubo.org${path}`), env, context);
+      expect(response.status).toBe(200);
+      expect(await response.text()).not.toMatch(LEGACY);
+    });
+  }
+
+  it("still plans a maintained Ekubo swap through the Yul router only", async () => {
+    mockUpstream((url) => {
+      if (!url.startsWith("https://quoter.test/")) return new Response("not found", { status: 404 });
+      return Response.json({
+        block_number: 123, block_hash: "0x01", total_calculated: "900",
+        estimated_gas_cost: 25000, price_impact: 0.001,
+        splits: [{ amount_specified: "1000", amount_calculated: "900", route: [{ swap: {
+          type: "core", pool_key: { token0: NATIVE, token1: USDC_BASE, config: `0x${"00".repeat(32)}` },
+          sqrt_ratio_limit: "0x000000000000000000000000", skip_ahead: 0,
+        } }] }],
+      });
+    });
+    const result = await callTool("/mcp/ekubo", "get_quotes_with_plans", {
+      chain_id: "8453", token_in: NATIVE, token_out: USDC_BASE,
+      quote_type: "exact_input", amount: "1000", sender: OWNER, slippage_bps: 10,
+    });
+    expect(result.isError).toBeUndefined();
+    const ekubo = (result.structuredContent!.quotes as Json[]).find(
+      (quote) => quote.execution?.execution_plan_reference !== undefined,
+    )!;
+    const reference = ekubo.execution.execution_plan_reference;
+    const body = await (await fetchArtifact(reference.url)).text();
+    expect(keccak256(stringToHex(body))).toBe(reference.integrity.value);
+    const targets = (JSON.parse(body).ordered_steps as Json[]).map((step) => step.transaction.to);
+    expect(targets).toContain(YUL_ROUTER_ADDRESS);
+    expect(targets).not.toContain(HYPER_ROUTER_V2);
+  });
+
+  it("still revokes an allowance left on the retired router", async () => {
+    const result = await callTool("/mcp/ekubo-advanced", "prepare_approval_revocations", {
+      chain_id: "1",
+      sender: OWNER,
+      approvals: [{ token: "0x04C46E830Bb56ce22735d5d8Fc9CB90309317d0f", spender: HYPER_ROUTER_V2 }],
+    });
+    expect(result.isError).toBeUndefined();
+    const reference = result.structuredContent!.execution_plan_reference;
+    const plan = JSON.parse(await (await fetchArtifact(reference.url)).text());
+    expect(plan.ordered_steps).toHaveLength(1);
+    const transaction = plan.ordered_steps[0].transaction;
+    expect(transaction.to).toBe("0x04C46E830Bb56ce22735d5d8Fc9CB90309317d0f");
+    expect(transaction.value).toBe("0");
+    expect(
+      decodeFunctionData({ abi: erc20Abi, data: transaction.data }),
+    ).toEqual({ functionName: "approve", args: [HYPER_ROUTER_V2, 0n] });
   });
 });

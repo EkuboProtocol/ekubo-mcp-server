@@ -211,7 +211,6 @@ describe("Ekubo core and advanced endpoints", () => {
     "prepare_oracle_capacity_expansion",
     "prepare_manual_pool_boost",
     "prepare_revenue_buybacks",
-    "prepare_old_gekubo_unwrap",
     "prepare_approval_revocations",
     "prepare_twamm_order",
     "prepare_twamm_order_collection",
@@ -247,7 +246,7 @@ describe("Ekubo core and advanced endpoints", () => {
   it("tells each half which server holds the other", async () => {
     const core = (await serverInfo("/mcp/ekubo")).instructions;
     expect(core).toContain("add https://mcp.ekubo.org/mcp/ekubo-advanced");
-    for (const topic of ["auctions", "TWAMM", "price fixes", "oracle capacity", "revenue buybacks", "gEKUBO", "approval revocations"]) {
+    for (const topic of ["auctions", "TWAMM", "price fixes", "oracle capacity", "revenue buybacks", "approval revocations"]) {
       expect(core).toContain(topic);
     }
     const advancedText = (await serverInfo("/mcp/ekubo-advanced")).instructions;

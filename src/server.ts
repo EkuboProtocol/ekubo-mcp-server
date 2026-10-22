@@ -90,7 +90,6 @@ import {
   prepareExecuteTwammVirtualOrders,
   prepareLpPositionTransfer,
   prepareManualPoolBoost,
-  prepareOldGekuboUnwrap,
   prepareOracleCapacityExpansion,
   prepareWrapUnwrap,
 } from "./ui-actions.js";
@@ -1000,12 +999,6 @@ export const prepareApprovalRevocationsSchema = z.object({
     .array(z.object({ token: address, spender: address }))
     .min(1)
     .max(200),
-});
-
-export const prepareOldGekuboUnwrapSchema = z.object({
-  chain_id: chainId,
-  sender: address,
-  amount,
 });
 
 export const getRewardsClaimsByOwnerSchema = z.object({ owner: address });
@@ -2305,13 +2298,6 @@ export const publicToolCatalog = [
     description:
       "Prepare every approve(spender,0) as an exact ordered multi-transaction execution plan. The wallet must not discover or construct the transaction list.",
     inputSchema: z.toJSONSchema(prepareApprovalRevocationsSchema),
-  },
-  {
-    name: "prepare_old_gekubo_unwrap",
-    title: "Prepare old gEKUBO unwrapping",
-    description:
-      "Prepare the exact Ethereum HyperRouter byte route and approval used by the interface to unwrap old gEKUBO into EKUBO.",
-    inputSchema: z.toJSONSchema(prepareOldGekuboUnwrapSchema),
   },
   {
     name: "get_rewards_claims_by_owner",
@@ -3726,14 +3712,6 @@ export function createEkuboServer(
     }),
   );
 
-  registerCatalogTool("prepare_old_gekubo_unwrap", prepareOldGekuboUnwrapSchema, (input) =>
-    prepareOldGekuboUnwrap({
-      chainId: canonicalChainId(input.chain_id),
-      sender: input.sender,
-      amount: input.amount,
-    }),
-  );
-
   registerCatalogTool("get_rewards_claims_by_owner", getRewardsClaimsByOwnerSchema, (input) =>
     getRewardsClaimsByOwner(env, { owner: input.owner }),
   );
@@ -4796,7 +4774,7 @@ function endpointScopeSection(
     );
     const advanced =
       protocols.has("ekubo") && !protocols.has("ekubo-advanced")
-        ? ` Auctions, TWAMM orders, pool initialization or price fixes, oracle capacity, manual boosts, revenue buybacks, old gEKUBO unwrap, approval revocations, and pool-key enumeration and derivation are in ekubo-advanced.`
+        ? ` Auctions, TWAMM orders, pool initialization or price fixes, oracle capacity, manual boosts, revenue buybacks, approval revocations, and pool-key enumeration and derivation are in ekubo-advanced.`
         : "";
     return `Endpoint scope: ${facetMcpUrl(origin, protocols)} serves exactly ${joinList(titles, "and")}.${advanced} For another protocol, add its slug to protocols= or connect ${origin}/mcp/<protocol>; Safe is only at ${origin}${protocolMcpPath("safe")}. For a tool named above but not listed, tell the user which protocol to add rather than improvising its call.`;
   }
@@ -4804,7 +4782,7 @@ function endpointScopeSection(
   if (only === undefined) return null;
   const rest = `${origin}/mcp/<protocol> serves each other protocol and ${origin}${ALL_PROTOCOLS_MCP_PATH} all but Safe. For a tool named above but not listed, tell the user which server to add rather than improvising its call.`;
   if (only.slug === "ekubo") {
-    return `Endpoint scope: ${origin}${protocolMcpPath("ekubo")} has the core Ekubo Protocol tools. For auctions, TWAMM orders, pool initialization or price fixes, oracle capacity, manual boosts, revenue buybacks, old gEKUBO unwrap, approval revocations, or pool-key enumeration and derivation, add ${origin}${protocolMcpPath("ekubo-advanced")}; ${rest}`;
+    return `Endpoint scope: ${origin}${protocolMcpPath("ekubo")} has the core Ekubo Protocol tools. For auctions, TWAMM orders, pool initialization or price fixes, oracle capacity, manual boosts, revenue buybacks, approval revocations, or pool-key enumeration and derivation, add ${origin}${protocolMcpPath("ekubo-advanced")}; ${rest}`;
   }
   if (only.slug === "ekubo-advanced") {
     return `Endpoint scope: ${origin}${protocolMcpPath("ekubo-advanced")} has only advanced Ekubo Protocol tools. Token lookup, quotes, pools, LP positions, transfers, rewards and ve(3,3) are on ${origin}${protocolMcpPath("ekubo")}; connect it too. ${rest}`;
