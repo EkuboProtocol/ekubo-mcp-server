@@ -4,6 +4,7 @@ import { describe, expect, it } from "bun:test";
 import { numberToHex } from "viem";
 import { ServiceError } from "../src/core.js";
 import { getStonxAllocationRecommendation } from "../src/recommendations.js";
+import { STONX_RECOMMENDATION_SQL } from "../src/stonx-recommendation-sql.js";
 import {
   allocationBps,
   optimalVoterAllocation,
@@ -50,8 +51,10 @@ const pools = [
   poolRow("21", token2, 1_024),
 ];
 
-const env = {
-  ARTIFACT_STORE: fakeArtifactStore(),
+const snapshotKey = "recommendation/stonx-allocation/snapshot.json";
+const refreshKey = "recommendation/stonx-allocation/refresh.json";
+
+const baseEnv = {
   EKUBO_API_URL: "https://api.test",
   EKUBO_QUOTER_URL: "https://quoter.test",
   ZERO_X_API_KEY: "unused",
@@ -62,17 +65,40 @@ const env = {
   DUNE_API_KEY: "private-test-key",
 };
 
+function testEnv(
+  seed: {
+    snapshotAt?: string;
+    rows?: Record<string, unknown>[];
+    refresh?: { execution_id: string; started_at: number };
+  } = {},
+) {
+  const store = fakeArtifactStore();
+  if (seed.snapshotAt !== undefined) {
+    store.entries.set(snapshotKey, {
+      value: JSON.stringify(completedPayload(seed.snapshotAt, seed.rows)),
+      uploaded: new Date(),
+    });
+  }
+  if (seed.refresh !== undefined) {
+    store.entries.set(refreshKey, {
+      value: JSON.stringify(seed.refresh),
+      uploaded: new Date(),
+    });
+  }
+  return { ...baseEnv, ARTIFACT_STORE: store };
+}
+
 describe("STONX allocation recommendations", () => {
   it("returns provider-neutral, canonical, exact 10,000-bps execution targets", async () => {
     const result = await getStonxAllocationRecommendation(
-      env,
+      testEnv(),
       { chainId, veToken, ve33 },
       recommendationFetcher(),
     );
 
     expect(informationalOutputSchemas.get_stonx_allocation_recommendation!.parse(result)).toEqual(result);
     expect(result.execution_ready).toBe(true);
-    expect(result.snapshot_refreshed_on_request).toBe(false);
+    expect(result.snapshot_refreshed_on_request).toBe(true);
     expect(result.snapshot_max_age_seconds).toBe(604_800);
     expect(result.snapshot_refresh_after_seconds).toBe(86_400);
     expect(result.recommendation_count).toBe(3);
@@ -104,7 +130,7 @@ describe("STONX allocation recommendations", () => {
 
   it("ignores a stableswap pool sitting beside the pool it recommends", async () => {
     const result = await getStonxAllocationRecommendation(
-      env,
+      testEnv(),
       { chainId, veToken, ve33 },
       recommendationFetcher(200, recommendationRows, [
         ...pools,
@@ -126,7 +152,7 @@ describe("STONX allocation recommendations", () => {
 
   it("reports a pair served only by a stableswap pool as unsupported", async () => {
     const result = await getStonxAllocationRecommendation(
-      env,
+      testEnv(),
       { chainId, veToken, ve33 },
       recommendationFetcher(200, recommendationRows, [
         stableswapPoolRow("9001", token1),
@@ -141,7 +167,7 @@ describe("STONX allocation recommendations", () => {
 
   it("fails closed with a provider-neutral error when recommendations are unavailable", async () => {
     const missing = await getStonxAllocationRecommendation(
-      { ...env, DUNE_API_KEY: "" },
+      { ...testEnv(), DUNE_API_KEY: "" },
       { chainId, veToken, ve33 },
       recommendationFetcher(),
     ).catch((error) => error);
@@ -152,7 +178,7 @@ describe("STONX allocation recommendations", () => {
     expect((missing as Error).message).not.toMatch(/dune|query|8187907/i);
 
     const unavailable = await getStonxAllocationRecommendation(
-      env,
+      testEnv(),
       { chainId, veToken, ve33 },
       recommendationFetcher(401),
     ).catch((error) => error);
@@ -163,9 +189,75 @@ describe("STONX allocation recommendations", () => {
     expect(JSON.stringify(unavailable)).not.toMatch(/dune|8187907|api\.dune/i);
   });
 
+  it("runs the self-contained query and keeps its snapshot for later calls", async () => {
+    const env = testEnv();
+    const requests: { method: string; pathname: string }[] = [];
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(input.toString());
+      const method = init?.method ?? "GET";
+      if (url.hostname !== "api.dune.com") return poolResponse(pools);
+      requests.push({ method, pathname: url.pathname });
+      expect(new Headers(init?.headers).get("X-Dune-API-Key")).toBe(
+        "private-test-key",
+      );
+      if (url.pathname === "/api/v1/sql/execute") {
+        expect(method).toBe("POST");
+        expect(JSON.parse(String(init?.body))).toEqual({
+          sql: STONX_RECOMMENDATION_SQL,
+          performance: "medium",
+        });
+        return Response.json({ execution_id: "exec_1", state: "QUERY_STATE_PENDING" });
+      }
+      if (url.pathname === "/api/v1/execution/exec_1/results") {
+        return recommendationResponse(new Date().toISOString());
+      }
+      throw new Error(`unexpected request ${method} ${url.pathname}`);
+    }) as typeof fetch;
+
+    const first = await getStonxAllocationRecommendation(
+      env,
+      { chainId, veToken, ve33 },
+      fetcher,
+    );
+    expect(first.snapshot_refreshed_on_request).toBe(true);
+    expect(env.ARTIFACT_STORE.entries.has(snapshotKey)).toBe(true);
+    expect(env.ARTIFACT_STORE.entries.has(refreshKey)).toBe(false);
+
+    const second = await getStonxAllocationRecommendation(
+      env,
+      { chainId, veToken, ve33 },
+      fetcher,
+    );
+    expect(second.snapshot_refreshed_on_request).toBe(false);
+    expect(second.snapshot_at).toBe(first.snapshot_at);
+    expect(second.targets).toEqual(first.targets);
+    expect(requests).toEqual([
+      { method: "POST", pathname: "/api/v1/sql/execute" },
+      { method: "GET", pathname: "/api/v1/execution/exec_1/results" },
+    ]);
+  });
+
+  it("depends on no saved query, materialized view or other user-owned dataset", () => {
+    const sql = STONX_RECOMMENDATION_SQL.replace(/--[^\n]*/g, "");
+    expect(sql).not.toMatch(/query_\d+|\{\{|\bdune\./i);
+    const sources = [
+      ...sql.matchAll(/\b(?:FROM|JOIN)\s+([a-z0-9_]+)\.([a-z0-9_]+)/gi),
+    ].map(([, schema]) => schema.toLowerCase());
+    expect(sources.length).toBeGreaterThan(0);
+    expect(new Set(sources)).toEqual(
+      new Set([
+        "dex",
+        "robinhood_robinhood",
+        "uniswap_v3_robinhood",
+        "uniswap_v4_robinhood",
+      ]),
+    );
+  });
+
   it("refreshes and returns a snapshot older than one day", async () => {
     const initialNow = Date.parse("2026-08-03T12:00:00.000Z");
     const refreshedAt = "2026-08-03T12:00:01.000Z";
+    const env = testEnv({ snapshotAt: "2026-08-02T11:59:59.999Z" });
     const requests: { method: string; pathname: string }[] = [];
     let clock = initialNow;
     let executionPolls = 0;
@@ -176,13 +268,7 @@ describe("STONX allocation recommendations", () => {
       if (url.hostname !== "api.dune.com") {
         return poolResponse(pools);
       }
-      expect(new Headers(init?.headers).get("X-Dune-API-Key")).toBe(
-        "private-test-key",
-      );
-      if (url.pathname === "/api/v1/query/8187907/results") {
-        return recommendationResponse("2026-08-02T11:59:59.999Z");
-      }
-      if (url.pathname === "/api/v1/query/8187907/execute") {
+      if (url.pathname === "/api/v1/sql/execute") {
         expect(method).toBe("POST");
         return Response.json({
           execution_id: "refresh_1",
@@ -218,8 +304,11 @@ describe("STONX allocation recommendations", () => {
     expect(executionPolls).toBe(2);
     expect(requests).toContainEqual({
       method: "POST",
-      pathname: "/api/v1/query/8187907/execute",
+      pathname: "/api/v1/sql/execute",
     });
+    expect(
+      JSON.parse(env.ARTIFACT_STORE.entries.get(snapshotKey)!.value).submitted_at,
+    ).toBe(refreshedAt);
   });
 
   it("reuses an already-running refresh instead of submitting another", async () => {
@@ -228,13 +317,7 @@ describe("STONX allocation recommendations", () => {
     const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(input.toString());
       if (url.hostname !== "api.dune.com") return poolResponse(pools);
-      if (url.pathname === "/api/v1/query/8187907/results") {
-        return Response.json({
-          execution_id: "refresh_in_progress",
-          state: "QUERY_STATE_EXECUTING",
-        });
-      }
-      if (url.pathname === "/api/v1/query/8187907/execute") {
+      if (url.pathname === "/api/v1/sql/execute") {
         executeRequests += 1;
         throw new Error("must not submit a second refresh");
       }
@@ -248,7 +331,9 @@ describe("STONX allocation recommendations", () => {
     }) as typeof fetch;
 
     const result = await getStonxAllocationRecommendation(
-      env,
+      testEnv({
+        refresh: { execution_id: "refresh_in_progress", started_at: now - 60_000 },
+      }),
       { chainId, veToken, ve33 },
       fetcher,
       { now: () => now },
@@ -262,13 +347,10 @@ describe("STONX allocation recommendations", () => {
     const initialNow = Date.parse("2026-08-03T12:00:00.000Z");
     let clock = initialNow;
     let executeRequests = 0;
-    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetcher = (async (input: RequestInfo | URL) => {
       const url = new URL(input.toString());
       if (url.hostname !== "api.dune.com") return poolResponse(pools);
-      if (url.pathname === "/api/v1/query/8187907/results") {
-        return recommendationResponse("2026-06-01T12:00:00.000Z");
-      }
-      if (url.pathname === "/api/v1/query/8187907/execute") {
+      if (url.pathname === "/api/v1/sql/execute") {
         executeRequests += 1;
         return Response.json({
           execution_id: "refresh_timeout",
@@ -282,7 +364,7 @@ describe("STONX allocation recommendations", () => {
     }) as typeof fetch;
 
     const error = await getStonxAllocationRecommendation(
-      env,
+      testEnv({ snapshotAt: "2026-06-01T12:00:00.000Z" }),
       { chainId, veToken, ve33 },
       fetcher,
       {
@@ -309,10 +391,7 @@ describe("STONX allocation recommendations", () => {
     const fetcher = (async (input: RequestInfo | URL) => {
       const url = new URL(input.toString());
       if (url.hostname !== "api.dune.com") return poolResponse(pools);
-      if (url.pathname === "/api/v1/query/8187907/results") {
-        return recommendationResponse(snapshotAt);
-      }
-      if (url.pathname === "/api/v1/query/8187907/execute") {
+      if (url.pathname === "/api/v1/sql/execute") {
         executeRequests += 1;
         return Response.json({
           execution_id: "refresh_never_lands",
@@ -326,7 +405,7 @@ describe("STONX allocation recommendations", () => {
     }) as typeof fetch;
 
     const result = await getStonxAllocationRecommendation(
-      env,
+      testEnv({ snapshotAt }),
       { chainId, veToken, ve33 },
       fetcher,
       {
@@ -345,6 +424,42 @@ describe("STONX allocation recommendations", () => {
     expect(result.target_total_weight_bps).toBe(10_000);
     expect(result.snapshot_age_seconds).toBeGreaterThanOrEqual(2 * 86_400);
     expect(result.snapshot_refreshed_on_request).toBe(false);
+  });
+
+  it("falls back and retries next time when the provider execution fails", async () => {
+    const snapshotAt = "2026-08-01T12:00:00.000Z";
+    const now = Date.parse("2026-08-03T12:00:00.000Z");
+    const env = testEnv({ snapshotAt });
+    let executeRequests = 0;
+    const fetcher = (async (input: RequestInfo | URL) => {
+      const url = new URL(input.toString());
+      if (url.hostname !== "api.dune.com") return poolResponse(pools);
+      if (url.pathname === "/api/v1/sql/execute") {
+        executeRequests += 1;
+        return Response.json({
+          execution_id: `failed_${executeRequests}`,
+          state: "QUERY_STATE_PENDING",
+        });
+      }
+      return Response.json({
+        execution_id: `failed_${executeRequests}`,
+        state: "QUERY_STATE_FAILED",
+        error: { message: "Provider detail must not escape" },
+      });
+    }) as typeof fetch;
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const result = await getStonxAllocationRecommendation(
+        env,
+        { chainId, veToken, ve33 },
+        fetcher,
+        { now: () => now },
+      );
+      expect(result.snapshot_at).toBe(snapshotAt);
+      expect(JSON.stringify(result)).not.toMatch(/dune|provider detail/i);
+      expect(executeRequests).toBe(attempt);
+      expect(env.ARTIFACT_STORE.entries.has(refreshKey)).toBe(false);
+    }
   });
 
   it("caps executable recommendations at 25 pools and redistributes cutoff weight", async () => {
@@ -366,7 +481,7 @@ describe("STONX allocation recommendations", () => {
       ),
     );
     const result = await getStonxAllocationRecommendation(
-      env,
+      testEnv(),
       { chainId, veToken, ve33 },
       recommendationFetcher(200, rows, poolRows),
     );
@@ -404,7 +519,7 @@ describe("STONX emissions efficiency and voter-optimal allocation", () => {
 
   it("reports the KPI and flags low-retention pools without changing targets", async () => {
     const result = await getStonxAllocationRecommendation(
-      env,
+      testEnv(),
       { chainId, veToken, ve33, options: { ve33EmissionState: emissionState } },
       pricedFetcher(evenRows, pricedPools),
     );
@@ -431,7 +546,7 @@ describe("STONX emissions efficiency and voter-optimal allocation", () => {
 
   it("asks for the emission rate when only the rate-free KPI is available", async () => {
     const result = await getStonxAllocationRecommendation(
-      env,
+      testEnv(),
       { chainId, veToken, ve33 },
       pricedFetcher(evenRows, pricedPools),
     );
@@ -447,7 +562,7 @@ describe("STONX emissions efficiency and voter-optimal allocation", () => {
 
   it("prunes low-efficiency pools and redistributes their weight only on request", async () => {
     const result = await getStonxAllocationRecommendation(
-      env,
+      testEnv(),
       { chainId, veToken, ve33, options: { pruneLowEfficiency: true } },
       pricedFetcher(evenRows, pricedPools),
     );
@@ -470,7 +585,7 @@ describe("STONX emissions efficiency and voter-optimal allocation", () => {
       evenRows[1],
     ];
     const result = await getStonxAllocationRecommendation(
-      env,
+      testEnv(),
       { chainId, veToken, ve33, options: { pruneLowEfficiency: true } },
       pricedFetcher(rows, pricedPools),
     );
@@ -482,7 +597,7 @@ describe("STONX emissions efficiency and voter-optimal allocation", () => {
 
   it("is not execution-ready for a voter until the emission rate is supplied", async () => {
     const result = await getStonxAllocationRecommendation(
-      env,
+      testEnv(),
       {
         chainId,
         veToken,
@@ -500,7 +615,7 @@ describe("STONX emissions efficiency and voter-optimal allocation", () => {
   it("redirects a voter's weight to their own pool when its emissions outweigh fees", async () => {
     const run = (lpShare: number) =>
       getStonxAllocationRecommendation(
-        env,
+        testEnv(),
         {
           chainId,
           veToken,
@@ -588,7 +703,7 @@ function pricedFetcher(
   return (async (input: RequestInfo | URL) => {
     const url = new URL(input.toString());
     if (url.hostname === "api.dune.com") {
-      return recommendationResponse(new Date().toISOString(), rows);
+      return providerResponse(url, rows, new Date().toISOString());
     }
     if (url.pathname === "/tokens/batch") {
       return Response.json(
@@ -693,25 +808,44 @@ function recommendationFetcher(
       expect(new Headers(init?.headers).get("X-Dune-API-Key")).toBe(
         "private-test-key",
       );
-      expect(url.searchParams.get("limit")).toBe("100");
-      return recommendationResponse(submittedAt, rows);
+      return providerResponse(url, rows, submittedAt);
     }
     return poolResponse(poolRows);
   }) as typeof fetch;
 }
 
-function recommendationResponse(
+function providerResponse(
+  url: URL,
+  rows: Record<string, unknown>[],
+  submittedAt: string,
+) {
+  if (url.pathname === "/api/v1/sql/execute") {
+    return Response.json({ execution_id: "exec_1", state: "QUERY_STATE_PENDING" });
+  }
+  expect(url.pathname).toBe("/api/v1/execution/exec_1/results");
+  expect(url.searchParams.get("limit")).toBe("100");
+  return recommendationResponse(submittedAt, rows);
+}
+
+function completedPayload(
   submittedAt: string,
   rows: Record<string, unknown>[] = recommendationRows,
 ) {
-  return Response.json({
+  return {
     state: "QUERY_STATE_COMPLETED",
     submitted_at: submittedAt,
     result: {
       metadata: { total_row_count: rows.length },
       rows,
     },
-  });
+  };
+}
+
+function recommendationResponse(
+  submittedAt: string,
+  rows: Record<string, unknown>[] = recommendationRows,
+) {
+  return Response.json(completedPayload(submittedAt, rows));
 }
 
 function poolResponse(poolRows: Record<string, unknown>[]) {
