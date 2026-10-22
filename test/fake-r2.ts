@@ -5,6 +5,9 @@ export function fakeArtifactStore() {
     async put(key: string, value: string) {
       entries.set(key, { value: String(value), uploaded: new Date() });
     },
+    async delete(key: string) {
+      entries.delete(key);
+    },
     async get(key: string) {
       const entry = entries.get(key);
       if (entry === undefined) return null;
