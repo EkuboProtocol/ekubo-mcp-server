@@ -194,85 +194,177 @@
               "type": "string"
              },
              "fee_schedule": {
-              "additionalProperties": false,
-              "properties": {
-               "decay": {
+              "oneOf": [
+               {
                 "additionalProperties": false,
                 "properties": {
-                 "half_life_seconds": {
-                  "enum": [
-                   600
+                 "decay": {
+                  "additionalProperties": false,
+                  "properties": {
+                   "half_life_seconds": {
+                    "enum": [
+                     600
+                    ],
+                    "type": "number"
+                   },
+                   "kind": {
+                    "enum": [
+                     "fixed_base_q128"
+                    ],
+                    "type": "string"
+                   }
+                  },
+                  "required": [
+                   "kind",
+                   "half_life_seconds"
                   ],
-                  "type": "number"
+                  "type": "object"
                  },
-                 "kind": {
+                 "evaluated_at": {
+                  "minimum": 0,
+                  "type": "integer"
+                 },
+                 "fee_duration": {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                 },
+                 "fee_end": {
+                  "minimum": 0,
+                  "type": "integer"
+                 },
+                 "fee_rate": {
+                  "description": "Q0.64 fee rate as a canonical decimal uint64 (0 to 18446744073709551615): the fee fraction is value / 2^64, so the maximum is just under 100%",
+                  "maxLength": 20,
+                  "pattern": "^(0|[1-9][0-9]*)$",
+                  "type": "string"
+                 },
+                 "final_fee": {
+                  "description": "Q0.64 fee rate as a canonical decimal uint64 (0 to 18446744073709551615): the fee fraction is value / 2^64, so the maximum is just under 100%",
+                  "maxLength": 20,
+                  "pattern": "^(0|[1-9][0-9]*)$",
+                  "type": "string"
+                 },
+                 "initial_fee": {
+                  "description": "Q0.64 fee rate as a canonical decimal uint64 (0 to 18446744073709551615): the fee fraction is value / 2^64, so the maximum is just under 100%",
+                  "maxLength": 20,
+                  "pattern": "^(0|[1-9][0-9]*)$",
+                  "type": "string"
+                 },
+                 "model": {
                   "enum": [
-                   "fixed_base_q128"
+                   "fixed_base_duration_v1"
                   ],
                   "type": "string"
+                 },
+                 "phase": {
+                  "enum": [
+                   "before_trading_start",
+                   "fee_decay",
+                   "final_fee"
+                  ],
+                  "type": "string"
+                 },
+                 "trading_start": {
+                  "minimum": 0,
+                  "type": "integer"
                  }
                 },
                 "required": [
-                 "kind",
-                 "half_life_seconds"
+                 "model",
+                 "trading_start",
+                 "fee_duration",
+                 "fee_end",
+                 "initial_fee",
+                 "final_fee",
+                 "decay",
+                 "phase",
+                 "fee_rate",
+                 "evaluated_at"
                 ],
                 "type": "object"
                },
-               "evaluated_at": {
-                "minimum": 0,
-                "type": "integer"
-               },
-               "fee_duration": {
-                "exclusiveMinimum": 0,
-                "type": "integer"
-               },
-               "fee_end": {
-                "minimum": 0,
-                "type": "integer"
-               },
-               "fee_rate": {
-                "description": "Q0.64 fee rate as a canonical decimal uint64 (0 to 18446744073709551615): the fee fraction is value / 2^64, so the maximum is just under 100%",
-                "maxLength": 20,
-                "pattern": "^(0|[1-9][0-9]*)$",
-                "type": "string"
-               },
-               "final_fee": {
-                "description": "Q0.64 fee rate as a canonical decimal uint64 (0 to 18446744073709551615): the fee fraction is value / 2^64, so the maximum is just under 100%",
-                "maxLength": 20,
-                "pattern": "^(0|[1-9][0-9]*)$",
-                "type": "string"
-               },
-               "initial_fee": {
-                "description": "Q0.64 fee rate as a canonical decimal uint64 (0 to 18446744073709551615): the fee fraction is value / 2^64, so the maximum is just under 100%",
-                "maxLength": 20,
-                "pattern": "^(0|[1-9][0-9]*)$",
-                "type": "string"
-               },
-               "phase": {
-                "enum": [
-                 "before_trading_start",
-                 "fee_decay",
-                 "final_fee"
+               {
+                "additionalProperties": false,
+                "properties": {
+                 "decay_rate_x32": {
+                  "description": "decayRateX32: unsigned Q32.32 ticks per second (2^32 = 1 tick/s) as a canonical decimal uint64; 0 keeps initial_fee",
+                  "maxLength": 20,
+                  "pattern": "^(0|[1-9][0-9]*)$",
+                  "type": "string"
+                 },
+                 "evaluated_at": {
+                  "minimum": 0,
+                  "type": "integer"
+                 },
+                 "fee_rate": {
+                  "description": "Q0.64 fee rate as a canonical decimal uint64 (0 to 18446744073709551615): the fee fraction is value / 2^64, so the maximum is just under 100%",
+                  "maxLength": 20,
+                  "pattern": "^(0|[1-9][0-9]*)$",
+                  "type": "string"
+                 },
+                 "final_fee": {
+                  "description": "Q0.64 long-run floor as a canonical decimal uint64: approached, not scheduled",
+                  "maxLength": 20,
+                  "pattern": "^(0|[1-9][0-9]*)$",
+                  "type": "string"
+                 },
+                 "half_life_seconds": {
+                  "description": "Half-life of the excess over the floor, seconds with 6 decimals (floored), from the exact integer HALF_LIFE_X32_E30 = 5954091920683119788732747343471285361579197626; null for rate 0. Display only",
+                  "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{6}$",
+                  "type": [
+                   "string",
+                   "null"
+                  ]
+                 },
+                 "initial_fee": {
+                  "description": "Q0.64 fee rate as a canonical decimal uint64 (0 to 18446744073709551615): the fee fraction is value / 2^64, so the maximum is just under 100%",
+                  "maxLength": 20,
+                  "pattern": "^(0|[1-9][0-9]*)$",
+                  "type": "string"
+                 },
+                 "model": {
+                  "enum": [
+                   "tick_rate_v2"
+                  ],
+                  "type": "string"
+                 },
+                 "phase": {
+                  "enum": [
+                   "before_trading_start",
+                   "decaying",
+                   "at_floor",
+                   "constant"
+                  ],
+                  "type": "string"
+                 },
+                 "saturation_elapsed_seconds": {
+                  "description": "floor(381061679028371455 / decay_rate_x32): after this many elapsed seconds the fee is exactly final_fee by numerical saturation; null for rate 0. Not a schedule end",
+                  "pattern": "^(0|[1-9][0-9]*)$",
+                  "type": [
+                   "string",
+                   "null"
+                  ]
+                 },
+                 "trading_start": {
+                  "minimum": 0,
+                  "type": "integer"
+                 }
+                },
+                "required": [
+                 "model",
+                 "trading_start",
+                 "initial_fee",
+                 "final_fee",
+                 "decay_rate_x32",
+                 "half_life_seconds",
+                 "saturation_elapsed_seconds",
+                 "phase",
+                 "fee_rate",
+                 "evaluated_at"
                 ],
-                "type": "string"
-               },
-               "trading_start": {
-                "minimum": 0,
-                "type": "integer"
+                "type": "object"
                }
-              },
-              "required": [
-               "trading_start",
-               "fee_duration",
-               "fee_end",
-               "initial_fee",
-               "final_fee",
-               "decay",
-               "phase",
-               "fee_rate",
-               "evaluated_at"
-              ],
-              "type": "object"
+              ]
              },
              "launch_token_is_token1": {
               "type": "boolean"
@@ -376,7 +468,7 @@
              },
              "schema_version": {
               "enum": [
-               "zero-seed-launch-api/v4"
+               "zero-seed-launch-api/v5"
               ],
               "type": "string"
              },
@@ -480,7 +572,7 @@
           },
           "schema_version": {
            "enum": [
-            "zero-seed-launch-api/v4"
+            "zero-seed-launch-api/v5"
            ],
            "type": "string"
           }
@@ -757,85 +849,177 @@
            "type": "object"
           },
           "fee_schedule": {
-           "additionalProperties": false,
-           "properties": {
-            "decay": {
+           "oneOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "half_life_seconds": {
-               "enum": [
-                600
+              "decay": {
+               "additionalProperties": false,
+               "properties": {
+                "half_life_seconds": {
+                 "enum": [
+                  600
+                 ],
+                 "type": "number"
+                },
+                "kind": {
+                 "enum": [
+                  "fixed_base_q128"
+                 ],
+                 "type": "string"
+                }
+               },
+               "required": [
+                "kind",
+                "half_life_seconds"
                ],
-               "type": "number"
+               "type": "object"
               },
-              "kind": {
+              "evaluated_at": {
+               "minimum": 0,
+               "type": "integer"
+              },
+              "fee_duration": {
+               "exclusiveMinimum": 0,
+               "type": "integer"
+              },
+              "fee_end": {
+               "minimum": 0,
+               "type": "integer"
+              },
+              "fee_rate": {
+               "description": "Q0.64 fee rate as a canonical decimal uint64 (0 to 18446744073709551615): the fee fraction is value / 2^64, so the maximum is just under 100%",
+               "maxLength": 20,
+               "pattern": "^(0|[1-9][0-9]*)$",
+               "type": "string"
+              },
+              "final_fee": {
+               "description": "Q0.64 fee rate as a canonical decimal uint64 (0 to 18446744073709551615): the fee fraction is value / 2^64, so the maximum is just under 100%",
+               "maxLength": 20,
+               "pattern": "^(0|[1-9][0-9]*)$",
+               "type": "string"
+              },
+              "initial_fee": {
+               "description": "Q0.64 fee rate as a canonical decimal uint64 (0 to 18446744073709551615): the fee fraction is value / 2^64, so the maximum is just under 100%",
+               "maxLength": 20,
+               "pattern": "^(0|[1-9][0-9]*)$",
+               "type": "string"
+              },
+              "model": {
                "enum": [
-                "fixed_base_q128"
+                "fixed_base_duration_v1"
                ],
                "type": "string"
+              },
+              "phase": {
+               "enum": [
+                "before_trading_start",
+                "fee_decay",
+                "final_fee"
+               ],
+               "type": "string"
+              },
+              "trading_start": {
+               "minimum": 0,
+               "type": "integer"
               }
              },
              "required": [
-              "kind",
-              "half_life_seconds"
+              "model",
+              "trading_start",
+              "fee_duration",
+              "fee_end",
+              "initial_fee",
+              "final_fee",
+              "decay",
+              "phase",
+              "fee_rate",
+              "evaluated_at"
              ],
              "type": "object"
             },
-            "evaluated_at": {
-             "minimum": 0,
-             "type": "integer"
-            },
-            "fee_duration": {
-             "exclusiveMinimum": 0,
-             "type": "integer"
-            },
-            "fee_end": {
-             "minimum": 0,
-             "type": "integer"
-            },
-            "fee_rate": {
-             "description": "Q0.64 fee rate as a canonical decimal uint64 (0 to 18446744073709551615): the fee fraction is value / 2^64, so the maximum is just under 100%",
-             "maxLength": 20,
-             "pattern": "^(0|[1-9][0-9]*)$",
-             "type": "string"
-            },
-            "final_fee": {
-             "description": "Q0.64 fee rate as a canonical decimal uint64 (0 to 18446744073709551615): the fee fraction is value / 2^64, so the maximum is just under 100%",
-             "maxLength": 20,
-             "pattern": "^(0|[1-9][0-9]*)$",
-             "type": "string"
-            },
-            "initial_fee": {
-             "description": "Q0.64 fee rate as a canonical decimal uint64 (0 to 18446744073709551615): the fee fraction is value / 2^64, so the maximum is just under 100%",
-             "maxLength": 20,
-             "pattern": "^(0|[1-9][0-9]*)$",
-             "type": "string"
-            },
-            "phase": {
-             "enum": [
-              "before_trading_start",
-              "fee_decay",
-              "final_fee"
+            {
+             "additionalProperties": false,
+             "properties": {
+              "decay_rate_x32": {
+               "description": "decayRateX32: unsigned Q32.32 ticks per second (2^32 = 1 tick/s) as a canonical decimal uint64; 0 keeps initial_fee",
+               "maxLength": 20,
+               "pattern": "^(0|[1-9][0-9]*)$",
+               "type": "string"
+              },
+              "evaluated_at": {
+               "minimum": 0,
+               "type": "integer"
+              },
+              "fee_rate": {
+               "description": "Q0.64 fee rate as a canonical decimal uint64 (0 to 18446744073709551615): the fee fraction is value / 2^64, so the maximum is just under 100%",
+               "maxLength": 20,
+               "pattern": "^(0|[1-9][0-9]*)$",
+               "type": "string"
+              },
+              "final_fee": {
+               "description": "Q0.64 long-run floor as a canonical decimal uint64: approached, not scheduled",
+               "maxLength": 20,
+               "pattern": "^(0|[1-9][0-9]*)$",
+               "type": "string"
+              },
+              "half_life_seconds": {
+               "description": "Half-life of the excess over the floor, seconds with 6 decimals (floored), from the exact integer HALF_LIFE_X32_E30 = 5954091920683119788732747343471285361579197626; null for rate 0. Display only",
+               "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{6}$",
+               "type": [
+                "string",
+                "null"
+               ]
+              },
+              "initial_fee": {
+               "description": "Q0.64 fee rate as a canonical decimal uint64 (0 to 18446744073709551615): the fee fraction is value / 2^64, so the maximum is just under 100%",
+               "maxLength": 20,
+               "pattern": "^(0|[1-9][0-9]*)$",
+               "type": "string"
+              },
+              "model": {
+               "enum": [
+                "tick_rate_v2"
+               ],
+               "type": "string"
+              },
+              "phase": {
+               "enum": [
+                "before_trading_start",
+                "decaying",
+                "at_floor",
+                "constant"
+               ],
+               "type": "string"
+              },
+              "saturation_elapsed_seconds": {
+               "description": "floor(381061679028371455 / decay_rate_x32): after this many elapsed seconds the fee is exactly final_fee by numerical saturation; null for rate 0. Not a schedule end",
+               "pattern": "^(0|[1-9][0-9]*)$",
+               "type": [
+                "string",
+                "null"
+               ]
+              },
+              "trading_start": {
+               "minimum": 0,
+               "type": "integer"
+              }
+             },
+             "required": [
+              "model",
+              "trading_start",
+              "initial_fee",
+              "final_fee",
+              "decay_rate_x32",
+              "half_life_seconds",
+              "saturation_elapsed_seconds",
+              "phase",
+              "fee_rate",
+              "evaluated_at"
              ],
-             "type": "string"
-            },
-            "trading_start": {
-             "minimum": 0,
-             "type": "integer"
+             "type": "object"
             }
-           },
-           "required": [
-            "trading_start",
-            "fee_duration",
-            "fee_end",
-            "initial_fee",
-            "final_fee",
-            "decay",
-            "phase",
-            "fee_rate",
-            "evaluated_at"
-           ],
-           "type": "object"
+           ]
           },
           "inventory": {
            "additionalProperties": false,
@@ -1025,7 +1209,7 @@
           },
           "schema_version": {
            "enum": [
-            "zero-seed-launch-api/v4"
+            "zero-seed-launch-api/v5"
            ],
            "type": "string"
           },
@@ -1354,7 +1538,7 @@
           },
           "schema_version": {
            "enum": [
-            "zero-seed-launch-api/v4"
+            "zero-seed-launch-api/v5"
            ],
            "type": "string"
           }
@@ -1589,7 +1773,7 @@
           },
           "schema_version": {
            "enum": [
-            "zero-seed-launch-api/v4"
+            "zero-seed-launch-api/v5"
            ],
            "type": "string"
           }
@@ -1855,7 +2039,7 @@
           },
           "schema_version": {
            "enum": [
-            "zero-seed-launch-api/v4"
+            "zero-seed-launch-api/v5"
            ],
            "type": "string"
           }

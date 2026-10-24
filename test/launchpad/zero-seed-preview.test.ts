@@ -4,7 +4,7 @@ import { peripheryAbi } from "../../src/launchpad/zero-seed/abi.js";
 import { abiParameters, createData, Parameters } from "../../src/launchpad/zero-seed/installation.js";
 import { type InstancePin, LOCAL_INSTANCE_PINS } from "../../src/launchpad/zero-seed/policy.js";
 import { PREVIEW_ID } from "../../src/launchpad/zero-seed/preview.js";
-import { build, ERC20_QUOTE, fixture, KINDS, owner, request } from "./zero-seed-fixture.js";
+import { build, ERC20_QUOTE, fixture, KINDS, owner, request, v1Pin } from "./zero-seed-fixture.js";
 
 const B = BigInt(build().buildTime);
 const at = (offset: bigint) => (B + offset).toString();
@@ -221,7 +221,8 @@ describe("preview refusals before and after the one read", () => {
   for (const patch of [
     { supply: "0" }, { supply: (1n << 127n).toString() },
     { initialFee: "18446744073709551616" }, { finalFee: "18446744073709551616" }, { initialFee: "018446744073709551615" },
-    { finalFee: "922337203685477581" }, { feeDuration: 0 },
+    { finalFee: "922337203685477581" }, { feeDuration: 3600 }, { decayRateX32: "18446744073709551616" },
+    { decayRateX32: "01" },
     { tradingStart: (1n << 64n).toString() }, { askTick: -13815499 },
   ]) test(`invalid parameters refuse before any budgeted read ${JSON.stringify(patch)}`, async () => {
     const f = fixture();
@@ -230,13 +231,20 @@ describe("preview refusals before and after the one read", () => {
   });
   for (const fees of [
     { initialFee: "18446744073709551615", finalFee: "55340232221128654" },
-    { initialFee: "18446744073709551615", finalFee: "18446744073709551615", feeDuration: 1 },
+    { initialFee: "18446744073709551615", finalFee: "18446744073709551615", decayRateX32: "18446744073709551615" },
     { initialFee: "18446744073709551615", finalFee: "18446744073709551614" },
-  ]) test(`the maximum uint64 fee previews with one read ${JSON.stringify(fees)}`, async () => {
+    { initialFee: "9223372036854775808", finalFee: "55340232221128654", decayRateX32: "0" },
+    { initialFee: "9223372036854775808", finalFee: "55340232221128654", decayRateX32: "1" },
+  ]) test(`the maximum uint64 fee and the decay-rate extremes preview with one read ${JSON.stringify(fees)}`, async () => {
     const f = fixture();
     const preview = await f.run({ ...request(), ...fees });
     expect(preview.requested).toMatchObject(fees);
     expect(f.counts()).toEqual({ calls: 1, stores: 1 });
+  });
+  test("a fixed_base_duration_v1 instance gets no preview: unsupported_fee_model before any read", async () => {
+    const f = fixture();
+    await expect(f.run(request(), build(), v1Pin)).rejects.toThrow("unsupported_fee_model");
+    expect(f.counts()).toEqual({ calls: 0, stores: 0 });
   });
   test("largest requested supply int128.max is accepted as input", async () => {
     const f = fixture();

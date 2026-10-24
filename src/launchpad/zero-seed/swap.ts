@@ -1,7 +1,7 @@
 import { encodeRoutes } from "@ekubo/yul-router-sdk";
 import { type Address, concatHex, getAddress, type Hex, maxInt128, numberToHex, zeroAddress } from "viem";
 import { z } from "zod";
-import { exactOutputMultiplier, feeAt, feePercent, feePhase } from "./fee.js";
+import { exactOutputMultiplier, feeAt, feePercent, feePhase, tickRateFeeAt, tickRatePhase } from "./fee.js";
 import { address, bytes32, decimal, requireLocalPin } from "./installation.js";
 import { type InstancePin, launchQuote, type LaunchQuote, NATIVE_QUOTE, ZeroSeedError } from "./policy.js";
 
@@ -148,23 +148,32 @@ function routerCalldata(input: {
 /** The indexed launch's own schedule, bound to the quoted pool: the API's served rate is not reused. */
 export interface LaunchSchedule {
   pool_key: { token0: string; token1: string; config: string };
-  fee_schedule: { trading_start: number; fee_duration: number; initial_fee: string; final_fee: string };
+  fee_schedule:
+    | { model: "fixed_base_duration_v1"; trading_start: number; fee_duration: number; initial_fee: string; final_fee: string }
+    | { model: "tick_rate_v2"; trading_start: number; decay_rate_x32: string; initial_fee: string; final_fee: string };
+}
+
+/** The rate and phase of the schedule's own model, which must be the pin's. */
+function scheduledRate(fee: LaunchSchedule["fee_schedule"], pin: InstancePin, blockTime: bigint) {
+  if (fee.model !== pin.feeModel) throw new ZeroSeedError("fee_model_mismatch");
+  const [tradingStart, initialFee, finalFee] = [BigInt(fee.trading_start), BigInt(fee.initial_fee), BigInt(fee.final_fee)];
+  if (fee.model === "fixed_base_duration_v1") {
+    const schedule = { tradingStart, feeDuration: BigInt(fee.fee_duration), initialFee, finalFee };
+    return { rate: feeAt(schedule, blockTime), phase: feePhase(schedule, blockTime) };
+  }
+  const schedule = { tradingStart, decayRateX32: BigInt(fee.decay_rate_x32), initialFee, finalFee };
+  return { rate: tickRateFeeAt(schedule, blockTime), phase: tickRatePhase(schedule, blockTime) };
 }
 
 /** Creator fee rate the contract applies at the quote's indexed block time, from the exact integer schedule. */
-function creatorFeeAt(launch: LaunchSchedule, hop: z.infer<typeof Hop>, blockTime: bigint) {
+function creatorFeeAt(launch: LaunchSchedule, hop: z.infer<typeof Hop>, pin: InstancePin, blockTime: bigint) {
   const key = launch.pool_key;
   if (key.token0 !== hop.pool_key.token0 || key.token1 !== hop.pool_key.token1 || key.config !== hop.pool_key.config) {
     throw new ZeroSeedError("quote_route_mismatch");
   }
-  const fee = launch.fee_schedule;
-  const schedule = {
-    tradingStart: BigInt(fee.trading_start), feeDuration: BigInt(fee.fee_duration), initialFee: BigInt(fee.initial_fee),
-    finalFee: BigInt(fee.final_fee),
-  };
-  const rate = feeAt(schedule, blockTime);
+  const { rate, phase } = scheduledRate(launch.fee_schedule, pin, blockTime);
   return {
-    evaluated_at: blockTime.toString(), phase: feePhase(schedule, blockTime), rate_q64: rate.toString(),
+    evaluated_at: blockTime.toString(), model: launch.fee_schedule.model, phase, rate_q64: rate.toString(),
     rate_percent: feePercent(rate), exact_output_multiplier: exactOutputMultiplier(rate),
     charged_on: "calculated_side" as const, recipient: "creator_fee_ledger" as const,
   };
@@ -196,7 +205,7 @@ export function localSwapFromQuote(input: {
   const recipient = address.parse(input.recipient.toLowerCase()) as Address;
   checkRecipient(recipient, hop, input.pin);
   const { value, native, input_approval } = settlement(request, threshold, quote);
-  const creatorFee = input.launch === undefined ? {} : { creator_fee: creatorFeeAt(input.launch, hop, BigInt(input.context.blockTime)) };
+  const creatorFee = input.launch === undefined ? {} : { creator_fee: creatorFeeAt(input.launch, hop, input.pin, BigInt(input.context.blockTime)) };
   return {
     ...creatorFee,
     scope: "synthetic-local-non-executable" as const, executable: false as const, executionGuaranteed: false as const,

@@ -3,17 +3,36 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { type Address, decodeFunctionData, encodeAbiParameters, encodeEventTopics, getContractAddress, type Hex, keccak256, parseAbi, toEventSelector,
   toFunctionSelector, zeroAddress } from "viem";
-import { CLAIM_SELECTOR, CREATE_SELECTOR, CREATE_SIGNATURE, extensionAbi, LAUNCH_CREATED_TOPIC, LAUNCH_OWNER_SELECTOR,
-  peripheryAbi, PREVIEW_SELECTOR, TRANSFER_SELECTOR } from "../../src/launchpad/zero-seed/abi.js";
+import { CLAIM_SELECTOR, CREATE_SELECTOR_V1 as CREATE_SELECTOR, CREATE_SIGNATURE_V1 as CREATE_SIGNATURE,
+  extensionAbiV1 as extensionAbi, LAUNCH_CREATED_TOPIC_V1 as LAUNCH_CREATED_TOPIC, LAUNCH_OWNER_SELECTOR, peripheryAbi as tickRatePeripheryAbi,
+  peripheryAbiV1 as peripheryAbi, PREVIEW_SELECTOR_V1 as PREVIEW_SELECTOR, TRANSFER_SELECTOR } from "../../src/launchpad/zero-seed/abi.js";
 import { decodeLaunchCreated, launchCreator, type RawLog } from "../../src/launchpad/zero-seed/events.js";
-import type { ParametersInput } from "../../src/launchpad/zero-seed/installation.js";
+import { feeAt } from "../../src/launchpad/zero-seed/fee.js";
 import { decodeOwnerCreate, poolIdOf, type Sealed } from "../../src/launchpad/zero-seed/owner.js";
-import { CONTRACTS_COMMIT, EXTENSION_ABI_SHA256, LOCAL_INSTANCE_PINS, PERIPHERY_ABI_SHA256,
-  samePin } from "../../src/launchpad/zero-seed/policy.js";
+import { ABI_SHA256, CONTRACTS_COMMITS, samePin } from "../../src/launchpad/zero-seed/policy.js";
 import { launchSalts } from "../../src/launchpad/zero-seed/token.js";
-import { EXTENSION_RUNTIME, PERIPHERY_RUNTIME, verifyExtensionRuntime, verifyPeripheryRuntime } from "../../src/launchpad/zero-seed/runtime.js";
+import { EXTENSION_RUNTIME as EXTENSION_RUNTIMES, PERIPHERY_RUNTIME as PERIPHERY_RUNTIMES, verifyExtensionRuntime,
+  verifyPeripheryRuntime } from "../../src/launchpad/zero-seed/runtime.js";
 import iface from "../fixtures/launchpad/zero-seed-interface-43d6628.json";
-import { chain, ERC20_QUOTE, KINDS, type Kind, pin, quoteOf } from "./zero-seed-fixture.js";
+import { ERC20_QUOTE, KINDS, type Kind, quoteOf, pin as tickRatePin, v1Chain as chain, v1Pin as pin } from "./zero-seed-fixture.js";
+
+// Read-only replay of the fixed_base_duration_v1 chain (evm-contracts 43d6628), recorded by
+// script/zero-seed-local-chain.ts at that revision: its decoding, claims, refusals and fee math must read exactly as
+// before. No create or preview is produced for that model any more, so the recorded create artifacts are checked as
+// recorded and refused by the current decoder, never re-read with the tick-rate tuple.
+const CONTRACTS_COMMIT = CONTRACTS_COMMITS.fixed_base_duration_v1;
+const EXTENSION_ABI_SHA256 = ABI_SHA256.fixed_base_duration_v1.extension;
+const PERIPHERY_ABI_SHA256 = ABI_SHA256.fixed_base_duration_v1.periphery;
+const EXTENSION_RUNTIME = EXTENSION_RUNTIMES.fixed_base_duration_v1;
+const PERIPHERY_RUNTIME = PERIPHERY_RUNTIMES.fixed_base_duration_v1;
+type Recorded = { sealed: Sealed; owner_summary: { fields: Record<string, any> }; request: Record<string, any>;
+  build: { buildTime: string } };
+/** The recorded v1 create calldata, decoded with the v1 ABI only. */
+const v1Create = (launch: Recorded) => {
+  const decoded = decodeFunctionData({ abi: peripheryAbi, data: JSON.parse(launch.sealed.body).data });
+  if (decoded.functionName !== "create") throw new Error("not a create");
+  return decoded.args[0];
+};
 
 const deployed = chain.deployed;
 const flip = (code: string, offset: number) => {
@@ -24,7 +43,7 @@ const SINK = { native: "578", erc20: "790" } as const;
 const INSTALLED = { native: "999999999999999999999999422", erc20: "999999999999999999999999210" } as const;
 const REQUESTED = "1000000000000000000000000000";
 
-describe("interface manifest of evm-contracts 43d6628", () => {
+describe("interface manifest of evm-contracts 43d6628 (fixed_base_duration_v1)", () => {
   test("vendored verbatim from the canonical manifest", () => {
     const bytes = readFileSync(new URL("../fixtures/launchpad/zero-seed-interface-43d6628.json", import.meta.url));
     expect(createHash("sha256").update(bytes).digest("hex")).toBe("7e351ef4fe1ee835f41870cbbab69a07d26b0a66ffebd5915ef4a42a18edcc6e");
@@ -89,9 +108,11 @@ describe("interface manifest of evm-contracts 43d6628", () => {
   });
 });
 
-describe("the one launcher-deployed local instance", () => {
+describe("the launcher-deployed fixed_base_duration_v1 local instance", () => {
   test("the pin equals the deployment, its runtimes, its immutables and its block", () => {
-    expect(samePin(chain.pin as never, pin)).toBe(true);
+    // Recorded before pins named their model; the model is the revision's, fixed_base_duration_v1.
+    expect(chain.pin).not.toHaveProperty("feeModel");
+    expect(samePin({ ...chain.pin, feeModel: "fixed_base_duration_v1" } as never, pin)).toBe(true);
     expect(verifyExtensionRuntime(deployed.extension_code as Hex, pin)).toBe(pin.extensionRuntime as Hex);
     expect(verifyPeripheryRuntime(deployed.periphery_code as Hex, pin)).toBe(pin.peripheryRuntime as Hex);
     const extension = getContractAddress({ opcode: "CREATE2", from: deployed.create2_deployer as Address,
@@ -114,9 +135,12 @@ describe("the one launcher-deployed local instance", () => {
 
   test("a template-equal runtime bound to another Core or extension refuses", () => {
     const other = "0x00000000000000000000000000000000000000e1";
-    expect(() => verifyExtensionRuntime(deployed.extension_code as Hex, { core: other })).toThrow("extension_immutable_mismatch");
-    expect(() => verifyPeripheryRuntime(deployed.periphery_code as Hex, { core: pin.core, extension: other })).toThrow("periphery_immutable_mismatch");
-    expect(() => verifyPeripheryRuntime(deployed.periphery_code as Hex, { core: other, extension: pin.extension })).toThrow("periphery_immutable_mismatch");
+    const model = pin.feeModel;
+    expect(() => verifyExtensionRuntime(deployed.extension_code as Hex, { core: other, feeModel: model })).toThrow("extension_immutable_mismatch");
+    expect(() => verifyPeripheryRuntime(deployed.periphery_code as Hex, { core: pin.core, extension: other, feeModel: model })).toThrow("periphery_immutable_mismatch");
+    expect(() => verifyPeripheryRuntime(deployed.periphery_code as Hex, { core: other, extension: pin.extension, feeModel: model })).toThrow("periphery_immutable_mismatch");
+    // The same code checked as the other model's revision is another template.
+    expect(() => verifyExtensionRuntime(deployed.extension_code as Hex, { core: pin.core, feeModel: "tick_rate_v2" })).toThrow("extension_runtime_mismatch");
     for (const { offsets } of EXTENSION_RUNTIME.immutables) {
       for (const offset of offsets) {
         expect(() => verifyExtensionRuntime(flip(deployed.extension_code, offset), pin)).toThrow("extension_immutable_mismatch");
@@ -124,7 +148,7 @@ describe("the one launcher-deployed local instance", () => {
     }
     expect(() => verifyExtensionRuntime(`${deployed.extension_code}00` as Hex, pin)).toThrow("extension_runtime_mismatch");
     expect(() => verifyExtensionRuntime(flip(deployed.extension_code, 100), pin)).toThrow("extension_runtime_mismatch");
-    expect(() => verifyPeripheryRuntime(deployed.extension_code as Hex, { core: pin.core, extension: pin.extension })).toThrow("periphery_runtime_mismatch");
+    expect(() => verifyPeripheryRuntime(deployed.extension_code as Hex, { core: pin.core, extension: pin.extension, feeModel: model })).toThrow("periphery_runtime_mismatch");
   });
 
   test("the ERC-20 quote is the reviewed plain test token at its pinned runtime", () => {
@@ -157,7 +181,8 @@ describe("LaunchCreated decoding and owner attribution", () => {
   for (const kind of KINDS) test(`${kind}: decodes the 43d6628 tuple and attributes the creator from the periphery`, () => {
     const launch = chain.launches[kind];
     const created = launchCreator(createdLogs(kind), pin, true);
-    expect(created).toEqual(launch.created as never);
+    // The recorded decoding, unchanged apart from the model now named in the result.
+    expect(created).toEqual({ fee_model: "fixed_base_duration_v1", ...launch.created } as never);
     expect(created).toMatchObject({ token: launch.preview.installation.token, controller: pin.periphery,
       pool_key: launch.preview.installation.poolKey, pool_id: poolIdOf(launch.preview.installation.poolKey),
       position_id: launch.preview.installation.positionId, launch_token_is_token1: kind === "native",
@@ -166,6 +191,9 @@ describe("LaunchCreated decoding and owner attribution", () => {
     // The extension receives the periphery's owner-namespaced salt.
     const { ownerSalt } = launchSalts(chain.accounts.owner as Address, pin.periphery as Address, launch.request.salt as Hex);
     expect(created.parameters).toEqual({ ...launch.request, salt: ownerSalt });
+    expect(created.fee_model).toBe("fixed_base_duration_v1");
+    expect(created.parameters).toHaveProperty("feeDuration", 3600);
+    expect(created.parameters).not.toHaveProperty("decayRateX32");
     // Outside the local harness the ERC-20 quote is not reviewed; the launch still decodes, marked unsupported.
     expect(decodeLaunchCreated(createdLog(kind), pin, false).quote_token.supported).toBe(kind === "native");
   });
@@ -189,6 +217,20 @@ describe("LaunchCreated decoding and owner attribution", () => {
     expect(() => decodeLaunchCreated({ ...log, topics: [log.topics[0], `0x${"00".repeat(32)}`, token, log.topics[3]] }, pin, true))
       .toThrow("launch_event_pool_mismatch");
     expect(() => decodeLaunchCreated({ ...log, data: `${log.data}00` }, pin, true)).toThrow("launch_event_invalid");
+  });
+
+  test("a v1 LaunchCreated is never re-decoded with the tick-rate tuple, and the tick-rate pin refuses it", () => {
+    for (const kind of KINDS) {
+      const log = createdLog(kind);
+      expect(log.topics[0]).toBe("0x3a4e811187f4a8c0b72396e9d7ca13aeed62eb97a599a24af1ed99066041098f");
+      // Even relabelled as the tick-rate instance's own emitter, the v1 topic is not that model's event.
+      expect(() => decodeLaunchCreated({ ...log, address: tickRatePin.extension }, tickRatePin, true)).toThrow("launch_event_invalid");
+      expect(() => launchCreator(createdLogs(kind), tickRatePin, true)).toThrow("launch_event_invalid");
+      // The v1 data under the v2 topic does not decode strictly either: the uint32 duration word is read as a rate,
+      // so at best another launch, and here the canonical re-encoding check fails or the identity checks do.
+      const relabelled = { ...log, address: tickRatePin.extension, topics: ["0x8f81ce1beb182cad759aa1c797ef027d374f535fd0c08696441c32797c7a5888", ...log.topics.slice(1)] };
+      expect(() => decodeLaunchCreated(relabelled, tickRatePin, true)).toThrow(/launch_event_/);
+    }
   });
 
   test("the creator is the zero-to-owner event of the same pool through the pinned periphery", () => {
@@ -275,33 +317,42 @@ describe("ownership, claims and accounting on the local chain", () => {
       const body = JSON.parse(chain.launches[kind].sealed.body);
       expect(body.data.slice(0, 10)).toBe(CREATE_SELECTOR);
       expect(keccak256(body.data)).toBe(chain.launches[kind].owner_summary.fields.binding.calldata_keccak256 as Hex);
+      // The recorded v1 calldata is not a tick-rate create.
+      expect(() => decodeFunctionData({ abi: tickRatePeripheryAbi, data: body.data })).toThrow();
+    }
+  });
+
+  test("every recorded swap rate is still the fixed-base schedule's (v1 math unchanged)", () => {
+    const n = chain.launches.native.request;
+    const schedule = { tradingStart: BigInt(n.tradingStart), feeDuration: BigInt(n.feeDuration), initialFee: BigInt(n.initialFee),
+      finalFee: BigInt(n.finalFee) };
+    for (const swap of [...chain.swaps, chain.after_transfer.swap]) {
+      expect(feeAt(schedule, BigInt(swap.receipt.timestamp)).toString()).toBe(swap.ts_fee_rate);
     }
   });
 });
 
-describe("the default schedule and the maximum uint64 fee on the local chain", () => {
+describe("the default schedule and the maximum uint64 fee on the fixed_base_duration_v1 chain (recorded)", () => {
   const MAX = "18446744073709551615";
   const cases = {
     default_schedule: { initialFee: "9223372036854775808", finalFee: "55340232221128654", feeDuration: 3600, percent: ["50.0000%", "0.3000%"] },
     max_to_final: { initialFee: MAX, finalFee: "55340232221128654", feeDuration: 3600, percent: ["99.9999%", "0.3000%"] },
     max_flat: { initialFee: MAX, finalFee: MAX, feeDuration: 1, percent: ["99.9999%", "99.9999%"] },
   } as const;
-  for (const [key, want] of Object.entries(cases)) test(`${key}: the produced create carries the fees exactly and the chain created it`, () => {
-    const launch = chain.launches[key as keyof typeof cases];
-    const expected = { pin, owner: chain.accounts.owner as Address, requested: launch.request as ParametersInput };
-    // The owner decoder reproduces the recorded summary from the sealed body, byte for byte.
-    const summary = decodeOwnerCreate(launch.sealed as Sealed, expected, BigInt(launch.build.buildTime) + 1n);
-    expect(JSON.stringify(summary)).toBe(JSON.stringify(launch.owner_summary));
-    expect(summary.fields).toMatchObject({ initial_fee: want.initialFee, final_fee: want.finalFee, fee_duration: want.feeDuration,
-      initial_fee_percent: want.percent[0], final_fee_percent: want.percent[1] });
-    expect(JSON.stringify(summary)).not.toContain("100.0000%");
+  for (const [key, want] of Object.entries(cases)) test(`${key}: the recorded create carries the fees exactly and the chain created it`, () => {
+    const launch = chain.launches[key as keyof typeof cases] as unknown as Recorded & { logs: RawLog[] };
+    // Recorded evidence: the v1 summary as produced at 43d6628. The current decoder refuses the v1 artifact.
+    expect(launch.owner_summary.fields).toMatchObject({ initial_fee: want.initialFee, final_fee: want.finalFee,
+      fee_duration: want.feeDuration, initial_fee_percent: want.percent[0], final_fee_percent: want.percent[1] });
+    expect(JSON.stringify(launch.owner_summary)).not.toContain("100.0000%");
+    expect(() => decodeOwnerCreate(launch.sealed, { pin, owner: chain.accounts.owner as Address, requested: launch.request as never },
+      BigInt(launch.build.buildTime) + 1n)).toThrow("artifact_schema_mismatch");
     const body = JSON.parse(launch.sealed.body);
     expect(body.data.slice(0, 10)).toBe(CREATE_SELECTOR);
-    const decoded = decodeFunctionData({ abi: peripheryAbi, data: body.data });
-    if (decoded.functionName !== "create") throw new Error("not a create");
-    expect([decoded.args[0].initialFee, decoded.args[0].finalFee, decoded.args[0].feeDuration])
+    const decoded = v1Create(launch);
+    expect([decoded.initialFee, decoded.finalFee, decoded.feeDuration])
       .toEqual([BigInt(want.initialFee), BigInt(want.finalFee), want.feeDuration]);
-    const created = launchCreator(launch.logs as RawLog[], pin, true);
+    const created = launchCreator(launch.logs, pin, true);
     expect(created.parameters).toMatchObject({ initialFee: want.initialFee, finalFee: want.finalFee, feeDuration: want.feeDuration });
     expect(created.creator).toBe(chain.accounts.owner);
   });
@@ -319,7 +370,7 @@ describe("the default schedule and the maximum uint64 fee on the local chain", (
   });
 });
 
-describe("exact token0 installation on the local chain", () => {
+describe("exact token0 installation on the fixed_base_duration_v1 chain (recorded)", () => {
   // evm-contracts 43d6628 installs floor(supply * lower * upper / (2^128 * (upper - lower))), the largest liquidity
   // whose rounded-up debit fits the supply. The shared helper floored lower * upper / 2^128 first and installed
   // 106052588672 (low price) and 9223595582101085259 (full width) for the same requests.
@@ -329,7 +380,7 @@ describe("exact token0 installation on the local chain", () => {
     full_width: { supply: "170141183460469231694794709727778658247", askTick: -88722835, upperTick: 88722835, tickSpacing: 1,
       liquidity: "9223595582101085260", installed: "170141183460469231694794709727778658247", sink: "0" },
   } as const;
-  for (const [key, want] of Object.entries(cases)) test(`${key}: preview, sealed create, owner summary and the chain agree exactly`, () => {
+  for (const [key, want] of Object.entries(cases)) test(`${key}: preview, recorded create, recorded summary and the chain agree exactly`, () => {
     const launch = chain.launches[key as keyof typeof cases];
     expect(launch.request).toMatchObject({ supply: want.supply, askTick: want.askTick, upperTick: want.upperTick,
       tickSpacing: want.tickSpacing, quoteToken: ERC20_QUOTE });
@@ -340,9 +391,7 @@ describe("exact token0 installation on the local chain", () => {
     expect(launch.supply).toEqual({ requested: want.supply, installed: want.installed, sink: want.sink, total_supply: want.supply,
       sink_balance: want.sink, core_quote_delta: "0", core_liquidity_delta: want.liquidity,
       sink_transfer: want.sink === "0" ? [] : [want.sink] });
-    const expected = { pin, owner: chain.accounts.owner as Address, requested: launch.request as ParametersInput };
-    const summary = decodeOwnerCreate(launch.sealed as Sealed, expected, BigInt(launch.build.buildTime) + 1n);
-    expect(JSON.stringify(summary)).toBe(JSON.stringify(launch.owner_summary));
+    const summary = launch.owner_summary as unknown as { fields: Record<string, any>; statements: string[] };
     expect(summary.fields.supply).toEqual({ requested: want.supply, installed: want.installed, sink: want.sink, sink_holder: zeroAddress });
     expect(summary.fields.liquidity).toBe(want.liquidity);
     expect(summary.fields.binding).toMatchObject({ requested_supply: want.supply, installed_supply: want.installed,
@@ -351,9 +400,7 @@ describe("exact token0 installation on the local chain", () => {
     expect(summary.statements[2]).toContain(want.sink === "0" ? "nothing is minted to address(0)"
       : `the remainder of ${want.sink}, too small to pay for one more unit of liquidity, is minted to address(0)`);
     expect(summary.statements[9]).toStartWith(`Quote trust: quote token ${ERC20_QUOTE} is trusted across all of Core`);
-    const decoded = decodeFunctionData({ abi: peripheryAbi, data: JSON.parse(launch.sealed.body).data });
-    if (decoded.functionName !== "create") throw new Error("not a create");
-    expect(decoded.args[0].supply).toBe(BigInt(want.supply));
+    expect(v1Create(launch as unknown as Recorded).supply).toBe(BigInt(want.supply));
     const created = launchCreator(launch.logs as RawLog[], pin, true);
     expect(created).toMatchObject({ creator: chain.accounts.owner, requested_supply: want.supply });
   });

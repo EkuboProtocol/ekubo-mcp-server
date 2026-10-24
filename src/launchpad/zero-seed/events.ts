@@ -1,6 +1,6 @@
 import { type Abi, type AbiEvent, type Address, decodeEventLog, encodeAbiParameters, encodeEventTopics, type Hex, maxInt128,
   zeroAddress } from "viem";
-import { extensionAbi, LAUNCH_CREATED_TOPIC, peripheryAbi } from "./abi.js";
+import { MODEL_ABIS } from "./abi.js";
 import { poolIdOf } from "./owner.js";
 import { type InstancePin, launchQuote, ZeroSeedError } from "./policy.js";
 import { poolConfig, positionIdOf } from "./preview.js";
@@ -36,22 +36,31 @@ interface CreatedArgs {
   poolId: Hex; token: Address; controller: Address; poolKey: { token0: Address; token1: Address; config: Hex };
   positionId: Hex; liquidity: bigint;
   parameters: { name: string; symbol: string; decimals: number; supply: bigint; quoteToken: Address; askTick: number;
-    upperTick: number; tickSpacing: number; tradingStart: bigint; feeDuration: number; initialFee: bigint; finalFee: bigint;
-    salt: Hex };
+    upperTick: number; tickSpacing: number; tradingStart: bigint; initialFee: bigint; finalFee: bigint; salt: Hex } &
+    ({ feeDuration: number; decayRateX32?: undefined } | { decayRateX32: bigint; feeDuration?: undefined });
+}
+
+/** The 10th LaunchParameters field as its model defines it: v1 seconds as a number, v2 the rate as a decimal string. */
+function decayField(p: CreatedArgs["parameters"]) {
+  return p.decayRateX32 === undefined ? { feeDuration: p.feeDuration } : { decayRateX32: p.decayRateX32.toString() };
 }
 
 /**
- * Decodes one LaunchCreated log of a pinned extension (evm-contracts 43d6628; the tuple is unchanged since 40af6cb:
- * quoteToken in slot 5, no liquidity input) and checks it against the contract's own rules: the emitter is the extension, the pool pairs the
+ * Decodes one LaunchCreated log of a pinned extension with exactly its pin's fee model: the 43d6628 tuple
+ * (`uint32 feeDuration`) for fixed_base_duration_v1 and the 3d6378f tuple (`uint64 decayRateX32`) for tick_rate_v2.
+ * The two have different topics; a log with the other model's topic is refused, never re-decoded with the other ABI.
+ * It is checked against the contract's own rules: the emitter is the extension, the pool pairs the
  * token with the launch's quote (native ETH always token0), the pool id, fee 0 and spacing, the position bounds, a
  * nonzero liquidity and a requested supply in 1..int128.max. `parameters.salt` is the salt the extension received:
  * the periphery's owner-namespaced keccak256(abi.encode(owner, userSalt)). `quote` is the launch's quote only when it is native
  * or a reviewed ERC-20; every launch of the extension decodes, whatever its quote.
  */
 export function decodeLaunchCreated(log: RawLog, pin: InstancePin, localHarness: boolean) {
-  if (lower(log.topics[0] ?? "") !== LAUNCH_CREATED_TOPIC) throw new ZeroSeedError("launch_event_invalid");
+  const abis = MODEL_ABIS[pin.feeModel];
+  if (abis === undefined) throw new ZeroSeedError("unsupported_fee_model");
+  if (lower(log.topics[0] ?? "") !== abis.launchCreatedTopic) throw new ZeroSeedError("launch_event_invalid");
   if (lower(log.address) !== pin.extension) throw new ZeroSeedError("launch_event_emitter_mismatch");
-  const args = decode<CreatedArgs>(extensionAbi, log, "LaunchCreated");
+  const args = decode<CreatedArgs>(abis.extension, log, "LaunchCreated");
   const p = args.parameters;
   const token = lower(args.token);
   const quoteToken = lower(p.quoteToken);
@@ -60,13 +69,16 @@ export function decodeLaunchCreated(log: RawLog, pin: InstancePin, localHarness:
   const [tickLower, tickUpper] = checkGeometry(args, key, pin, tokenIs0);
   if (args.liquidity === 0n || p.supply === 0n || p.supply > maxInt128) throw new ZeroSeedError("launch_event_amounts_invalid");
   return {
-    pool_id: lower(args.poolId), token, controller: lower(args.controller), pool_key: key,
+    fee_model: pin.feeModel, pool_id: lower(args.poolId), token, controller: lower(args.controller), pool_key: key,
     position_id: lower(args.positionId), tick_lower: tickLower, tick_upper: tickUpper,
     launch_token_is_token1: !tokenIs0, liquidity: args.liquidity.toString(), requested_supply: p.supply.toString(),
     quote_token: { address: quoteToken, kind: quoteToken === zeroAddress ? "native" as const : "erc20" as const,
       supported: supported(pin.chainId, quoteToken, localHarness) },
-    parameters: { ...p, quoteToken, salt: lower(p.salt), supply: p.supply.toString(), tradingStart: p.tradingStart.toString(),
-      initialFee: p.initialFee.toString(), finalFee: p.finalFee.toString() },
+    parameters: {
+      name: p.name, symbol: p.symbol, decimals: p.decimals, supply: p.supply.toString(), quoteToken, askTick: p.askTick,
+      upperTick: p.upperTick, tickSpacing: p.tickSpacing, tradingStart: p.tradingStart.toString(), ...decayField(p),
+      initialFee: p.initialFee.toString(), finalFee: p.finalFee.toString(), salt: lower(p.salt),
+    },
   };
 }
 
@@ -104,13 +116,15 @@ function supported(chainId: string, quoteToken: string, localHarness: boolean): 
  * periphery emits in the creation, after a LaunchCreated whose controller is that periphery.
  */
 export function launchCreator(logs: readonly RawLog[], pin: InstancePin, localHarness: boolean) {
-  const createdLogs = logs.filter((log) => lower(log.topics[0] ?? "") === LAUNCH_CREATED_TOPIC);
+  const abis = MODEL_ABIS[pin.feeModel];
+  if (abis === undefined) throw new ZeroSeedError("unsupported_fee_model");
+  const createdLogs = logs.filter((log) => lower(log.topics[0] ?? "") === abis.launchCreatedTopic);
   if (createdLogs.length !== 1) throw new ZeroSeedError("launch_event_invalid");
   const created = decodeLaunchCreated(createdLogs[0], pin, localHarness);
   if (created.controller !== pin.periphery) throw new ZeroSeedError("launch_event_controller_mismatch");
-  const [topic] = encodeEventTopics({ abi: peripheryAbi, eventName: "LaunchOwnerChanged" });
+  const [topic] = encodeEventTopics({ abi: abis.periphery, eventName: "LaunchOwnerChanged" });
   const owners = logs.filter((log) => lower(log.topics[0] ?? "") === topic && lower(log.address) === pin.periphery)
-    .map((log) => decode<{ poolId: Hex; previousOwner: Address; newOwner: Address }>(peripheryAbi, log, "LaunchOwnerChanged"))
+    .map((log) => decode<{ poolId: Hex; previousOwner: Address; newOwner: Address }>(abis.periphery, log, "LaunchOwnerChanged"))
     .filter((event) => lower(event.poolId) === created.pool_id && lower(event.previousOwner) === zeroAddress);
   if (owners.length !== 1 || lower(owners[0].newOwner) === zeroAddress) throw new ZeroSeedError("launch_owner_missing");
   return { ...created, creator: lower(owners[0].newOwner) };

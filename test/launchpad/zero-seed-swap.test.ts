@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { YUL_ROUTER_ADDRESS } from "@ekubo/yul-router-sdk";
 import { type Address, encodeAbiParameters, type Hex, pad, toHex, zeroAddress } from "viem";
-import { feeAt, feeInclusiveDelta } from "../../src/launchpad/zero-seed/fee.js";
+import { feeAt, feeInclusiveDelta, tickRateFeeAt } from "../../src/launchpad/zero-seed/fee.js";
 import { LOCAL_INSTANCE_PINS, NATIVE_QUOTE } from "../../src/launchpad/zero-seed/policy.js";
 import { localSwapFromQuote, ZERO_SEED_ROUTER } from "../../src/launchpad/zero-seed/swap.js";
 import fixture from "../fixtures/launchpad/zero-seed-quoter-plans.json";
@@ -12,23 +12,28 @@ import fixture from "../fixtures/launchpad/zero-seed-quoter-plans.json";
 // abi.encode(PoolKey, SwapParameters), the router layout and the settlement are the same. Only the instance changed
 // (one extension for every quote, the quote named per launch), so each recorded plan is replayed against the current
 // pin with the earlier extension address substituted, and must reproduce the executed calldata byte for byte with
-// only that address changed. The recorded execution evidence is checked as recorded.
+// only that address changed. The recorded execution evidence is checked as recorded. Those pools have the fixed-base
+// schedule, so they replay against the fixed_base_duration_v1 pin; the tick_rate_v2 revision (3d6378f) leaves the
+// forward payload, router layout and settlement unchanged and changes only the rate the extension applies.
 type Json = any;
 type Plan = (typeof fixture.plans)[number];
 const plans: Plan[] = fixture.plans;
-const [pin] = LOCAL_INSTANCE_PINS;
+const pin = LOCAL_INSTANCE_PINS.find((entry) => entry.feeModel === "fixed_base_duration_v1")!;
+const tickPin = LOCAL_INSTANCE_PINS.find((entry) => entry.feeModel === "tick_rate_v2")!;
 const APPROVAL = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
 /** The 4f1a306 replay chain's constructor-quote extensions, one per quote, and that chain's Core. */
 const EARLIER = { native: "0x5114703a4cf4256f0acb68f992c861d8c4d1b173", erc20: "0x519435a42752da78e395999218d0ecc4fdcbcf4b" } as const;
 const CORE = "0x00000000000014aa86c5d3c41765bb24e11bd701";
 // The indexed fee schedules of the three recorded pools (api 2429547 golden; the schedule is unchanged through 43d6628).
-const SCHEDULES: Record<string, { trading_start: number; fee_duration: number; initial_fee: string; final_fee: string }> = {
-  "0xc0a9f26952af6a470e5798edc551951d998bf408a332128e643c867e0c556a71": { trading_start: 1800001000, fee_duration: 3600,
-    initial_fee: "9223372036854775808", final_fee: "55340232221128654" },
-  "0xc27e3d1a2b492b8fbe32fd539a341e1424d8c629c79ee1f796408c485955fc33": { trading_start: 1800001000, fee_duration: 600,
-    initial_fee: "922337203685477580", final_fee: "55340232221128654" },
-  "0xe5c50d3246c67d6ffc896e8db9c4af89a8f4ee169276a99efb7fbbeb4ad5b2d5": { trading_start: 1800001400, fee_duration: 600,
-    initial_fee: "922337203685477580", final_fee: "55340232221128654" },
+const FIXED = "fixed_base_duration_v1" as const;
+const SCHEDULES: Record<string, { model: typeof FIXED; trading_start: number; fee_duration: number; initial_fee: string;
+  final_fee: string }> = {
+  "0xc0a9f26952af6a470e5798edc551951d998bf408a332128e643c867e0c556a71": { model: FIXED, trading_start: 1800001000,
+    fee_duration: 3600, initial_fee: "9223372036854775808", final_fee: "55340232221128654" },
+  "0xc27e3d1a2b492b8fbe32fd539a341e1424d8c629c79ee1f796408c485955fc33": { model: FIXED, trading_start: 1800001000,
+    fee_duration: 600, initial_fee: "922337203685477580", final_fee: "55340232221128654" },
+  "0xe5c50d3246c67d6ffc896e8db9c4af89a8f4ee169276a99efb7fbbeb4ad5b2d5": { model: FIXED, trading_start: 1800001400,
+    fee_duration: 600, initial_fee: "922337203685477580", final_fee: "55340232221128654" },
 };
 const label = (p: Plan) => `${p.phase} ${p.label} ${p.quoteKind} ${p.side} ${p.exactOut ? "exact-out" : "exact-in"} ${p.variant}`;
 const earlier = (p: Plan) => EARLIER[p.quoteKind as keyof typeof EARLIER];
@@ -243,5 +248,40 @@ describe("real quoter output → MCP router plan → local execution (recorded o
     expect(() => run(buy, { pin: { periphery: "0x0000000000000000000000000000000000000abc" } })).toThrow("launch_support_disabled");
     expect(() => run(buy, { pin: { deploymentBlock: "3" } })).toThrow("launch_support_disabled");
     expect(() => run(buy, { pin: { quoteKind: "native" } })).toThrow("launch_support_disabled");
+  });
+});
+
+describe("creator fee of a tick_rate_v2 launch (the schedule's model must be the pin's)", () => {
+  const [p] = plans;
+  const tick = (launch: object) => localSwapFromQuote({
+    pin: { ...tickPin }, quoteToken: quoteTokenOf(p),
+    request: JSON.parse(JSON.stringify(current(p, p.request)).replaceAll(pin.extension.slice(2), tickPin.extension.slice(2))),
+    response: JSON.parse(JSON.stringify(current(p, p.response)).replaceAll(pin.extension.slice(2), tickPin.extension.slice(2))),
+    context: p.context, recipient: p.recipient as Address, launch: launch as never,
+  }, BigInt(p.context.blockTime));
+  const keyOf = () => {
+    const key = scheduleOf(p).pool_key;
+    return { ...key, config: key.config.replace(pin.extension.slice(2), tickPin.extension.slice(2)) };
+  };
+  const rateSchedule = { model: "tick_rate_v2", trading_start: SCHEDULES[p.poolId].trading_start, decay_rate_x32: "68913100933",
+    initial_fee: SCHEDULES[p.poolId].initial_fee, final_fee: SCHEDULES[p.poolId].final_fee };
+
+  test("the rate at the quote's block is the tick-rate schedule's, labelled with its model and phase", () => {
+    const prepared = tick({ pool_key: keyOf(), fee_schedule: rateSchedule });
+    const time = BigInt(p.context.blockTime);
+    const want = tickRateFeeAt({ tradingStart: BigInt(rateSchedule.trading_start), decayRateX32: 68913100933n,
+      initialFee: BigInt(rateSchedule.initial_fee), finalFee: BigInt(rateSchedule.final_fee) }, time);
+    expect(prepared.creator_fee).toMatchObject({ model: "tick_rate_v2", rate_q64: want.toString(), phase: "decaying" });
+    const fixed = SCHEDULES[p.poolId];
+    expect(want).not.toBe(feeAt({ tradingStart: BigInt(fixed.trading_start), feeDuration: BigInt(fixed.fee_duration),
+      initialFee: BigInt(fixed.initial_fee), finalFee: BigInt(fixed.final_fee) }, time));
+  });
+
+  test("a schedule of the other model refuses with fee_model_mismatch on either pin", () => {
+    expect(() => tick({ pool_key: keyOf(), fee_schedule: SCHEDULES[p.poolId] })).toThrow("fee_model_mismatch");
+    expect(() => run(p, { launch: false, ...{} }) && localSwapFromQuote({ pin: { ...pin }, quoteToken: quoteTokenOf(p),
+      request: current(p, p.request), response: current(p, p.response), context: p.context, recipient: p.recipient as Address,
+      launch: { pool_key: scheduleOf(p).pool_key, fee_schedule: rateSchedule as never } }, BigInt(p.context.blockTime)))
+      .toThrow("fee_model_mismatch");
   });
 });

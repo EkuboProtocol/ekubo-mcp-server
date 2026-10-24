@@ -28,12 +28,12 @@ const headers = {
   origin: "https://mcp.ekubo.org",
   "mcp-protocol-version": "2025-11-25",
 };
-const pin = LOCAL_INSTANCE_PINS[0];
+const pin = LOCAL_INSTANCE_PINS.find((entry) => entry.feeModel === "tick_rate_v2")!;
 const sender = "0x0000000000000000000000000000000000000123";
 const poolId = `0x${"11".repeat(32)}`;
 const parameters = {
   name: "Local", symbol: "LOC", decimals: 18, supply: "1000000000000000000000000000",
-  askTick: -100, upperTick: 100, tickSpacing: 100, tradingStart: "1300", feeDuration: 3600,
+  askTick: -100, upperTick: 100, tickSpacing: 100, tradingStart: "1300", decayRateX32: "68913100933",
   initialFee: "1", finalFee: "0", salt: `0x${"00".repeat(32)}`,
 };
 
@@ -224,18 +224,19 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
     const schema = create.inputSchema.properties.parameters;
     const properties = Object.keys(schema.properties);
     expect(properties).toEqual(["name", "symbol", "decimals", "supply", "quoteToken", "askTick", "upperTick", "tickSpacing",
-      "tradingStart", "feeDuration", "initialFee", "finalFee", "salt"]);
+      "tradingStart", "decayRateX32", "halfLifeSeconds", "initialFee", "finalFee", "salt"]);
     expect(properties).not.toContain("liquidity");
     expect(properties).not.toContain("decayFactor");
-    expect(schema.required).toEqual(properties.filter((key) => key !== "quoteToken"));
+    expect(properties).not.toContain("feeDuration");
+    expect(schema.required).toEqual(properties.filter((key) => !["quoteToken", "decayRateX32", "halfLifeSeconds"].includes(key)));
     expect(schema.properties.quoteToken).toMatchObject({ default: "0x0000000000000000000000000000000000000000",
       pattern: "^0x[0-9a-f]{40}$" });
     expect(schema.properties.quoteToken.description).toContain("native ETH");
     expect(schema.properties.supply.description).toContain("Requested raw supply");
-    for (const stale of [{ ...parameters, liquidity: "0" }, { ...parameters, decayFactor: "1" }]) {
+    for (const stale of [{ ...parameters, liquidity: "0" }, { ...parameters, decayFactor: "1" }, { ...parameters, feeDuration: 3600 }]) {
       const reply = await call(e, "launchpad_prepare_create", { chain_id: pin.chainId, sender, parameters: stale });
       expect(reply.result.isError).toBe(true);
-      expect(reply.result.content[0].text).toMatch(/liquidity|decayFactor/);
+      expect(reply.result.content[0].text).toMatch(/liquidity|decayFactor|feeDuration/);
     }
     // Native default, an explicit ERC-20 and an unreviewed ERC-20 all fail closed: support is disabled.
     for (const quoteToken of [undefined, "0xffffffffffffffffffffffffffffffffffffffff", "0x4200000000000000000000000000000000000006"]) {
@@ -262,16 +263,17 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
       expect(schema.properties.initialFee.description).toContain(`0 to ${MAX}, just under 100%`);
       expect(schema.properties.initialFee.description).toContain("uint64 Q0.64");
       expect(schema.properties.finalFee.description).toContain("<= initialFee");
-      expect(schema.properties.feeDuration).toMatchObject({ type: "integer", minimum: 1 });
+      expect(schema.properties.finalFee.description).toContain("Long-run floor");
+      expect(schema.properties).not.toHaveProperty("feeDuration");
       const text = JSON.stringify(tools);
       for (const stale of ["99%", "18262276632972456099", "fee_too_high", "FeeTooHigh"]) expect(text).not.toContain(stale);
       expect(text.replaceAll("just under 100%", "")).not.toContain("100%");
     });
 
     const accepted: [string, Record<string, unknown>][] = [
-      ["the unchanged default 50% -> 0.3% over 3,600 s", { initialFee: FEE_50, finalFee: FEE_03, feeDuration: 3600 }],
+      ["the default 50% -> 0.3% at the one-day half-life", { initialFee: FEE_50, finalFee: FEE_03 }],
       ["the maximum -> 0.3%", { initialFee: MAX, finalFee: FEE_03 }],
-      ["flat at the maximum over 1 s", { initialFee: MAX, finalFee: MAX, feeDuration: 1 }],
+      ["flat at the maximum", { initialFee: MAX, finalFee: MAX }],
       ["a final fee one below the maximum", { initialFee: MAX, finalFee: "18446744073709551614" }],
       ["zero", { initialFee: "0", finalFee: "0" }],
     ];
@@ -303,7 +305,6 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
       ["a JSON number", { initialFee: 1 }, "initialFee", "must be a decimal string; a JSON number cannot carry every uint64"],
       ["final above initial", { initialFee: "18446744073709551614", finalFee: MAX }, "finalFee",
         "invalid_fee_schedule: finalFee must be at most initialFee"],
-      ["a zero duration", { initialFee: MAX, finalFee: MAX, feeDuration: 0 }, "feeDuration", "must be at least 1 second"],
     ];
     for (const [label, fees, field, message] of refused) {
       it(`refuses ${label} as invalid input naming parameters.${field}`, async () => {
@@ -320,6 +321,81 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
     }
   });
 
+  describe("fee decay at the tool boundary: decayRateX32 or halfLifeSeconds, one-day default", () => {
+    const { decayRateX32: _rate, ...base } = parameters;
+    const MAX = "18446744073709551615";
+    const create = (decay: Record<string, unknown>, e = workerEnv()) =>
+      call(e, "launchpad_prepare_create", { chain_id: pin.chainId, sender, parameters: { ...base, ...decay } });
+
+    it("publishes both inputs with the half-life wording and no duration or end promise", async () => {
+      const tools = (await mcp(workerEnv(), TESTING, "tools/list")).result.tools as Json[];
+      const tool = tools.find((t) => t.name === "launchpad_prepare_create");
+      const schema = tool.inputSchema.properties.parameters;
+      expect(schema.properties.decayRateX32).toMatchObject({ type: "string" });
+      expect(schema.properties.decayRateX32.description).toContain("68913100933 = one-day half-life (default)");
+      expect(schema.properties.decayRateX32.description).toContain("0 = flat at initialFee");
+      expect(schema.properties.halfLifeSeconds).toMatchObject({ type: "string" });
+      expect(schema.properties.halfLifeSeconds.description).toContain("half-life of the excess over finalFee");
+      expect(schema.description).toContain("approaching finalFee, a floor with no end date");
+      const text = JSON.stringify(tool);
+      for (const stale of ["feeDuration", "fee duration", "600 s half-life rescaled", "fee_end", "ends at"]) expect(text).not.toContain(stale);
+    });
+
+    const accepted: [string, Record<string, unknown>][] = [
+      ["neither (the one-day default)", {}],
+      ["decayRateX32 0 (a flat fee)", { decayRateX32: "0" }],
+      ["decayRateX32 1", { decayRateX32: "1" }],
+      ["decayRateX32 2^64 - 1", { decayRateX32: MAX }],
+      ["halfLifeSeconds 86400", { halfLifeSeconds: "86400" }],
+      ["a fractional halfLifeSeconds", { halfLifeSeconds: "86400.5" }],
+      ["halfLifeSeconds at microsecond precision", { halfLifeSeconds: "0.000323" }],
+    ];
+    for (const [label, decay] of accepted) {
+      it(`accepts ${label}; support stays disabled, so no plan`, async () => {
+        const e = workerEnv();
+        const reply = await create(decay, e);
+        expect(reply.result.structuredContent).toEqual({ error: { code: "launch_support_disabled", message: "launch_support_disabled" } });
+        expect(e.ARTIFACT_STORE.entries.size).toBe(0);
+        expect(requests).toEqual([]);
+      });
+    }
+
+    const invalid: [string, Record<string, unknown>, string][] = [
+      ["decayRateX32 2^64", { decayRateX32: "18446744073709551616" }, "parameters.decayRateX32: must be at most 18446744073709551615"],
+      ["decayRateX32 as a JSON number", { decayRateX32: 68913100933 }, "parameters.decayRateX32: must be a decimal string"],
+      ["decayRateX32 with a leading zero", { decayRateX32: "068913100933" }, "parameters.decayRateX32: must be a canonical decimal string"],
+      ["a negative decayRateX32", { decayRateX32: "-1" }, "parameters.decayRateX32: must be a canonical decimal string"],
+      ["both inputs", { decayRateX32: "1", halfLifeSeconds: "86400" }, "parameters.halfLifeSeconds: give decayRateX32 or halfLifeSeconds, not both"],
+      ["seven decimals", { halfLifeSeconds: "1.0000001" }, "parameters.halfLifeSeconds: must be a decimal string of seconds with at most 6 decimals"],
+      ["an exponent", { halfLifeSeconds: "8.64e4" }, "parameters.halfLifeSeconds: must be a decimal string of seconds with at most 6 decimals"],
+      ["the old feeDuration", { feeDuration: 3600 }, "feeDuration"],
+    ];
+    for (const [label, decay, message] of invalid) {
+      it(`refuses ${label} as invalid input before any request`, async () => {
+        const e = workerEnv();
+        const reply = await create(decay, e);
+        expect(reply.result.isError).toBe(true);
+        expect(reply.result.structuredContent).toBeUndefined();
+        expect(reply.result.content[0].text).toContain(message);
+        expect(e.ARTIFACT_STORE.entries.size).toBe(0);
+        expect(requests).toEqual([]);
+      });
+    }
+
+    // A half-life whose exact rate is 0 or above uint64: the conversion refuses instead of clamping.
+    for (const [label, halfLifeSeconds] of [["zero", "0"], ["one too long for a rate of 1", "5954091920683120"],
+      ["too short for uint64", "0.000322"]] as const) {
+      it(`refuses a half-life ${label} with invalid_half_life`, async () => {
+        const e = workerEnv();
+        const reply = await create({ halfLifeSeconds }, e);
+        expect(reply.result.isError).toBe(true);
+        expect(reply.result.structuredContent.error.code).toBe("invalid_half_life");
+        expect(e.ARTIFACT_STORE.entries.size).toBe(0);
+        expect(requests).toEqual([]);
+      });
+    }
+  });
+
   it("refuses disabled chains before configuration is consulted", async () => {
     const reply = await call({ ARTIFACT_STORE: fakeArtifactStore(), ALLOWED_ORIGINS: "https://mcp.ekubo.org" },
       "launchpad_get_launch", { chain_id: "1", pool_id: poolId });
@@ -329,7 +405,7 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
   it("serves the ten versioned draft mechanism disclosures", async () => {
     const reply = await mcp(workerEnv(), TESTING, "resources/read", { uri: "launchpad://disclosures" });
     const document = JSON.parse(reply.result.contents[0].text);
-    expect(document).toMatchObject({ version: 6, status: "draft_not_approved" });
+    expect(document).toMatchObject({ version: 7, status: "draft_not_approved" });
     expect(document.disclosures.map((entry: Json) => entry.code)).toEqual([
       "zero_initial_bid", "buyer_funded_quote_reserve", "permanent_principal_lock", "creator_fee_recipient_and_rate",
       "transferable_launch_ownership", "creator_fee_recapture", "high_initial_fee", "exact_output_gross_up", "no_exit_guarantee",
@@ -340,7 +416,12 @@ describe("hosted zero-seed launchpad tools (support disabled)", () => {
     expect(text).not.toContain("linearly");
     expect(text).not.toContain("cannot transfer");
     expect(text).not.toContain("rounding remainder");
-    expect(text).toContain("600 s half-life");
+    expect(text).not.toContain("600 s half-life");
+    expect(text).not.toContain("<fee duration>");
+    const fee = document.disclosures.find((entry: Json) => entry.code === "creator_fee_recipient_and_rate");
+    expect(fee.template).toContain("halves about every <half-life> s, so the fee approaches <final fee>, a long-run floor and not an end date");
+    expect(fee.template).toContain("once more than <saturation seconds> s have passed since trading start");
+    expect(fee.constant_template).toContain("constant: the decay rate is 0, so it never decays toward <final fee>");
     expect(text).toContain("the remainder of <sink supply>, too small to pay for one more unit of liquidity, is minted to address(0)");
     const trust = document.disclosures.find((entry: Json) => entry.code === "quote_token_trust");
     expect(trust.template).toContain("<quote> is trusted across all of Core, not just this pool");

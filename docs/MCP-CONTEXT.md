@@ -51,8 +51,8 @@ to this server's tools and plans; do not write one as a blanket prohibition.
 The eight support-disabled `launchpad_*` tools and `launchpad://disclosures`
 are served only at `/mcp/launchpad-testing`, so no other endpoint's budget
 grows for them. Placed in the Ekubo Protocol catalog they would cost every
-`/mcp` and `/mcp/ekubo` session roughly 2,000 o200k tokens (about 8,100 tools
-characters plus the disclosures resource, 0.54.0) for tools that refuse every
+`/mcp` and `/mcp/ekubo` session roughly 2,150 o200k tokens (about 9,000 tools
+characters plus the disclosures resource, 0.55.0) for tools that refuse every
 call. The
 testing endpoint's tools budget was raised from 7,500 to 8,500 characters for
 `launchpad_get_owners`, which reads the API ownership history; with the
@@ -61,7 +61,11 @@ instructions, 8,230 tools (1,788 for the largest tool) and 523 resources
 characters. Its largest-tool budget was then raised from 1,800 to 2,000
 characters so `launchpad_prepare_create` can state the creator fee encoding and
 its full range (uint64 Q0.64, `0` to `2^64 - 1`, just under 100%) on the
-arguments: 8,401 tools, 1,959 for that tool.
+arguments: 8,401 tools, 1,959 for that tool. With the tick-rate fee model the
+duration input became `decayRateX32` (its Q32.32 encoding, the one-day default
+and what `0` means) plus the exact `halfLifeSeconds` alternative, and the
+parameters say the final fee is a floor with no end date, so the budgets were
+raised to 9,100 tools and 2,600 for the largest tool: measured 9,004 and 2,562.
 
 ## How the catalog is kept small
 

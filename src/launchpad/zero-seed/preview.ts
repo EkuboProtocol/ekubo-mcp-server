@@ -103,7 +103,8 @@ function validateInstalledAmounts(result: InstallationInput, request: Parameters
   }
 }
 
-function readBundle(owner: Address, request: ParametersInput, pin: InstancePin, build: BuildInput) {
+/** The one budgeted preview read, as stored for the wallet: periphery.previewInstallation(owner, parameters) at the build block. */
+export function readBundle(owner: Address, request: ParametersInput, pin: InstancePin, build: BuildInput) {
   return readCallsBundle({
     chainId: pin.chainId, from: owner, blockParameter: numberToHex(BigInt(build.blockNumber)),
     calls: [functionReadCall({

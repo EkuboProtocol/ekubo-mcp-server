@@ -1,9 +1,9 @@
 import { type Address, encodeAbiParameters, type Hex, keccak256, numberToHex } from "viem";
 import { z } from "zod";
-import { feeAt, feePhase } from "./fee.js";
+import { feeAt, feePhase, halfLifeSeconds, saturationElapsedSeconds, tickRateFeeAt, tickRatePhase } from "./fee.js";
 import { type InstancePin, launchQuote, NATIVE_DECIMALS, NATIVE_QUOTE, supportedInstances, unsigned,
   ZeroSeedError } from "./policy.js";
-import { BlockRef, ClaimPage, LaunchDetail, LaunchList, LaunchSummary, OwnerPage, SwapPage } from "./schema.js";
+import { BlockRef, ClaimPage, type FeeSchedule, LaunchDetail, LaunchList, LaunchSummary, OwnerPage, SwapPage } from "./schema.js";
 
 type Summary = z.infer<typeof LaunchSummary>;
 type Detail = z.infer<typeof LaunchDetail>;
@@ -63,22 +63,46 @@ function validatePool(row: Summary): void {
   }
 }
 
-/**
- * Recomputes the served rate from the indexed schedule with the contract's fixed-base table (600 s half-life). Fees
- * may be any uint64; the response schema already refuses a value above 2^64 - 1.
- */
-function validateFee(row: Summary): void {
-  const fee = row.fee_schedule;
+type Schedule = z.infer<typeof FeeSchedule>;
+type FixedSchedule = Extract<Schedule, { model: "fixed_base_duration_v1" }>;
+type RateSchedule = Extract<Schedule, { model: "tick_rate_v2" }>;
+
+/** fixed_base_duration_v1: the contract's fixed-base table (600 s half-life), rescaled to end at fee_end. */
+function validateFixedFee(fee: FixedSchedule): void {
   const [start, duration, end, initial, final, time] = [fee.trading_start, fee.fee_duration, fee.fee_end,
     fee.initial_fee, fee.final_fee, fee.evaluated_at].map((value) => unsigned(BigInt(value), 64));
-  if (start + duration !== end || final > initial || duration >= 1n << 32n ||
-    fee.evaluated_at !== row.as_of.block_time) {
-    throw new ZeroSeedError("api_fee_identity_mismatch");
-  }
+  if (start + duration !== end || final > initial || duration >= 1n << 32n) throw new ZeroSeedError("api_fee_identity_mismatch");
   const schedule = { tradingStart: start, feeDuration: duration, initialFee: initial, finalFee: final };
   if (fee.phase !== feePhase(schedule, time) || fee.fee_rate !== feeAt(schedule, time).toString()) {
     throw new ZeroSeedError("api_fee_identity_mismatch");
   }
+}
+
+/** tick_rate_v2: the tick-rate formula, and the derived half-life and saturation recomputed from the integer rate. */
+function validateRateFee(fee: RateSchedule): void {
+  const [start, rate, initial, final, time] = [fee.trading_start, fee.decay_rate_x32, fee.initial_fee, fee.final_fee,
+    fee.evaluated_at].map((value) => unsigned(BigInt(value), 64));
+  const saturation = saturationElapsedSeconds(rate);
+  if (final > initial || fee.half_life_seconds !== halfLifeSeconds(rate) ||
+    fee.saturation_elapsed_seconds !== (saturation === null ? null : saturation.toString())) {
+    throw new ZeroSeedError("api_fee_identity_mismatch");
+  }
+  const schedule = { tradingStart: start, decayRateX32: rate, initialFee: initial, finalFee: final };
+  if (fee.phase !== tickRatePhase(schedule, time) || fee.fee_rate !== tickRateFeeAt(schedule, time).toString()) {
+    throw new ZeroSeedError("api_fee_identity_mismatch");
+  }
+}
+
+/**
+ * Recomputes the served rate from the indexed schedule with the math of the row's instance pin: the row's model
+ * must equal the pin's, and is never taken from the row alone. Fees and rates may be any uint64; the response
+ * schema already refuses a value above 2^64 - 1.
+ */
+function validateFee(row: Summary, pin: InstancePin): void {
+  const fee = row.fee_schedule;
+  if (fee.model !== pin.feeModel || fee.evaluated_at !== row.as_of.block_time) throw new ZeroSeedError("api_fee_identity_mismatch");
+  if (fee.model === "fixed_base_duration_v1") validateFixedFee(fee);
+  else validateRateFee(fee);
 }
 
 /** 0 < installed <= requested and sink = requested - installed, held by address(0). */
@@ -88,10 +112,10 @@ function validateSupply(row: Summary): void {
   if (r >= 1n << 127n || i === 0n || i > r || k !== r - i) throw new ZeroSeedError("api_supply_mismatch");
 }
 
-function validateRow(row: Summary): void {
+function validateRow(row: Summary, pin: InstancePin): void {
   validateQuote(row);
   validatePool(row);
-  validateFee(row);
+  validateFee(row, pin);
   validateSupply(row);
 }
 
@@ -134,7 +158,7 @@ function checkList(list: z.infer<typeof LaunchList>, chain: string, cursor: stri
   }
 }
 
-/** Read-only exact API v4 contract. No RPC, log scan, symbol resolution, or stats. */
+/** Read-only exact API v5 contract. No RPC, log scan, symbol resolution, or stats. */
 export class ZeroSeedApi {
   private readonly pins: readonly InstancePin[];
   private readonly localHarness: boolean;
@@ -178,7 +202,7 @@ export class ZeroSeedApi {
     const result = await this.request("/launches", { chainId: chain, ...query }, LaunchList);
     checkList(result, chain, paging.cursor, { owner, creator });
     const data = result.data.filter((row) => this.served(row));
-    data.forEach(validateRow);
+    data.forEach((row) => validateRow(row, pinOf(row, this.pins)!));
     return { ...result, data };
   }
 
@@ -188,7 +212,7 @@ export class ZeroSeedApi {
     const row = await this.request(`/launches/${chain}/${id}`, {}, LaunchDetail);
     if (row.chain_id !== chain || row.pool_id !== id) throw new ZeroSeedError("api_pool_identity_mismatch");
     if (!this.served(row)) throw new ZeroSeedError("api_404");
-    validateRow(row);
+    validateRow(row, pinOf(row, this.pins)!);
     validateDetail(row);
     return row;
   }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { type Address, zeroAddress } from "viem";
 import {
-  launchQuote, LIVE_REVIEWED_ERC20_QUOTES, LOCAL_INSTANCE_PINS, LOCAL_REVIEWED_ERC20_QUOTES, NATIVE_QUOTE, refuseExecutableUse,
+  ABI_SHA256, launchQuote, LIVE_INSTANCE_PINS, LIVE_REVIEWED_ERC20_QUOTES, LOCAL_INSTANCE_PINS, LOCAL_REVIEWED_ERC20_QUOTES, NATIVE_QUOTE, refuseExecutableUse,
   supportedInstances, unsigned, validateClaimRecipient, validateCreationTiming, validateMetadata, verifyQuoteRuntime, wellFormedPin,
 } from "../../src/launchpad/zero-seed/policy.js";
 
@@ -14,10 +14,12 @@ describe("frozen zero-seed constraints (not executable acceptance)", () => {
     expect(supportedInstances(LOCAL_INSTANCE_PINS, true)).toEqual(LOCAL_INSTANCE_PINS);
   });
 
-  for (const key of Object.keys(LOCAL_INSTANCE_PINS[0]) as (keyof typeof LOCAL_INSTANCE_PINS[0])[]) {
-    test(`missing/mismatched ${key} pin disables support`, () => {
-      expect(supportedInstances([{ ...LOCAL_INSTANCE_PINS[0], [key]: "wrong" }], true)).toEqual([]);
-    });
+  for (const pin of LOCAL_INSTANCE_PINS) {
+    for (const key of Object.keys(pin) as (keyof typeof pin)[]) {
+      test(`missing/mismatched ${key} pin disables support (${pin.feeModel})`, () => {
+        expect(supportedInstances([{ ...pin, [key]: "wrong" }], true)).toEqual([]);
+      });
+    }
   }
 
   test("an extra or missing pin field disables support, including the earlier quote fields", () => {
@@ -30,17 +32,29 @@ describe("frozen zero-seed constraints (not executable acceptance)", () => {
     }
   });
 
-  test("one instance pin serves every quote; identity rules: distinct contracts, call-points byte", () => {
-    const [pin] = LOCAL_INSTANCE_PINS;
-    expect(LOCAL_INSTANCE_PINS).toHaveLength(1);
-    expect(wellFormedPin(pin)).toBe(true);
-    expect(Object.keys(pin).sort()).toEqual(["chainId", "core", "deploymentBlock", "extension", "extensionAbiSha256",
-      "extensionRuntime", "periphery", "peripheryAbiSha256", "peripheryRuntime"]);
-    for (const bad of [
-      { ...pin, periphery: pin.extension }, { ...pin, periphery: pin.core }, { ...pin, extension: pin.core },
-      { ...pin, extension: `0x52${pin.extension.slice(4)}` }, { ...pin, periphery: NATIVE_QUOTE }, { ...pin, chainId: "0" },
-      { ...pin, extensionAbiSha256: pin.peripheryAbiSha256 }, { ...pin, deploymentBlock: "02" }, { ...pin, deploymentBlock: "-1" },
-    ]) expect(wellFormedPin(bad as never)).toBe(false);
+  test("one instance pin per fee model serves every quote; identity rules: distinct contracts, call-points byte, model ABIs", () => {
+    expect(LOCAL_INSTANCE_PINS.map((p) => p.feeModel)).toEqual(["fixed_base_duration_v1", "tick_rate_v2"]);
+    for (const pin of LOCAL_INSTANCE_PINS) {
+      expect(wellFormedPin(pin)).toBe(true);
+      expect(Object.keys(pin).sort()).toEqual(["chainId", "core", "deploymentBlock", "extension", "extensionAbiSha256",
+        "extensionRuntime", "feeModel", "periphery", "peripheryAbiSha256", "peripheryRuntime"]);
+      expect(pin.extensionAbiSha256).toBe(ABI_SHA256[pin.feeModel].extension);
+      expect(pin.peripheryAbiSha256).toBe(ABI_SHA256[pin.feeModel].periphery);
+      for (const bad of [
+        { ...pin, periphery: pin.extension }, { ...pin, periphery: pin.core }, { ...pin, extension: pin.core },
+        { ...pin, extension: `0x52${pin.extension.slice(4)}` }, { ...pin, periphery: NATIVE_QUOTE }, { ...pin, chainId: "0" },
+        { ...pin, extensionAbiSha256: pin.peripheryAbiSha256 }, { ...pin, deploymentBlock: "02" }, { ...pin, deploymentBlock: "-1" },
+        { ...pin, feeModel: "tick_rate_v3" }, { ...pin, feeModel: undefined },
+      ]) expect(wellFormedPin(bad as never)).toBe(false);
+    }
+    // A pin claiming the other model keeps its own ABI hashes, so it is malformed: the model is never relabelled.
+    const [v1, v2] = LOCAL_INSTANCE_PINS;
+    expect(wellFormedPin({ ...v1, feeModel: "tick_rate_v2" })).toBe(false);
+    expect(wellFormedPin({ ...v2, feeModel: "fixed_base_duration_v1" })).toBe(false);
+    expect(supportedInstances([{ ...v2, feeModel: "fixed_base_duration_v1" }], true)).toEqual([]);
+    expect(ABI_SHA256.tick_rate_v2).toEqual({ extension: "89ff4d15e5e8b4f044c4804d460df915e9206bbdbdcef22cf4afe0fbbf4eaadd",
+      periphery: "a6d43b362d04eeb4e636ee32a031fc06995a2fd8bb71fb63750f27836a0ddb07" });
+    expect(LIVE_INSTANCE_PINS).toEqual([]);
   });
 
   test("quote support: native always; an ERC-20 only from the reviewed list, which is empty on live chains", () => {

@@ -35,8 +35,9 @@ a data API and the quoter remains a route-data service.
   protocols (any of the above except Safe and launchpad-testing); see below
 - `POST/GET /mcp/safe` — dedicated Safe signer preparation; see [Safe coverage](docs/safe.md)
 - `POST/GET /mcp/launchpad-testing` — zero-seed launchpad tools for testing only
-  (evm-contracts `43d6628` interface: per-launch quote token, requested supply
-  with the exact installed maximum, any uint64 creator fee),
+  (evm-contracts `3d6378f` interface: per-launch quote token, requested supply
+  with the exact installed maximum, any uint64 creator fee decaying at a
+  per-launch tick rate toward a floor; `43d6628` deployments read-only),
   with launch support disabled so every call is refused; excluded from `/mcp` and
   not combinable. See [Launchpad](docs/launchpad.md)
 - `GET /` — service metadata, per-protocol endpoints, and canonical

@@ -1,17 +1,19 @@
-// Local, fork-free run of the zero-seed launch on anvil: deploys the 43d6628 artifacts the way a launcher would
+// Local, fork-free run of the zero-seed launch on anvil: deploys the 3d6378f (tick_rate_v2) artifacts the way a launcher would
 // (one extension at a mined CREATE2 address and its periphery, both through the deterministic deployer, in block 2,
 // exactly as the indexer's replay fixture generator does), then drives every MCP producer and owner decoder against
 // that chain, executes exactly the create and claim calls they produced, and swaps through the checkout's compiled
 // test/LaunchTestRouter.sol. Launches with a native-ETH quote and with the plain test ERC-20 quote share the one
-// extension. It also creates launches at the default 50% -> 0.3% schedule and at the maximum uint64 fee, from the
-// producer's own create, and swaps at the maximum rate, plus two token0 launches whose exact installation differs
-// from the shared liquidity helper (a low-price range and the full width at spacing 1). It writes the fixture the
-// tests replay.
+// extension. It also creates launches at the default one-day half-life (50% -> 0.3%), at decay rates 1, 0 and
+// 2^64 - 1 and at the maximum uint64 fee, from the producer's own create, and swaps on each, plus two token0
+// launches whose exact installation differs from the shared liquidity helper (a low-price range and the full width
+// at spacing 1). It writes the fixture the tests replay. The fixed_base_duration_v1 fixture
+// (zero-seed-native-local-chain.json) was written by this script at the 43d6628 revision and is kept as recorded:
+// no create is produced for that model any more.
 //
 //   anvil --port 8546 --chain-id 31337 --hardfork osaka --timestamp 1800000000 --base-fee 0 --gas-price 0 \
 //     --gas-limit 60000000
-//   EVM_CONTRACTS=<evm-contracts checkout at 43d6628, built with forge build> RPC_URL=http://127.0.0.1:8546 \
-//     bun script/zero-seed-local-chain.ts test/fixtures/launchpad/zero-seed-native-local-chain.json
+//   EVM_CONTRACTS=<evm-contracts checkout at 3d6378f, built with forge build> RPC_URL=http://127.0.0.1:8546 \
+//     bun script/zero-seed-local-chain.ts test/fixtures/launchpad/zero-seed-tick-rate-local-chain.json
 //
 // Local evidence only: no fork, no live instance, no UserOp, bundler, paymaster or real quoter.
 import { readFileSync, writeFileSync } from "node:fs";
@@ -24,9 +26,9 @@ import { mnemonicToAccount } from "viem/accounts";
 import { foundry } from "viem/chains";
 import { storeArtifact } from "../src/artifact-store.js";
 import type { Env } from "../src/core.js";
-import { CREATE_SELECTOR, extensionAbi, peripheryAbi } from "../src/launchpad/zero-seed/abi.js";
+import { CREATE_SELECTOR, extensionAbi, peripheryAbi, peripheryAbiV1 } from "../src/launchpad/zero-seed/abi.js";
 import { launchCreator } from "../src/launchpad/zero-seed/events.js";
-import { feeAt } from "../src/launchpad/zero-seed/fee.js";
+import { tickRateFeeAt } from "../src/launchpad/zero-seed/fee.js";
 import { createData, type ParametersInput } from "../src/launchpad/zero-seed/installation.js";
 import { decodeOwnerClaim, decodeOwnerCreate, localClaimBody, localCreateBody, poolIdOf } from "../src/launchpad/zero-seed/owner.js";
 import { CONTRACTS_COMMIT, EXTENSION_ABI_SHA256, type InstancePin, launchQuote, LOCAL_INSTANCE_PINS, NATIVE_QUOTE,
@@ -152,9 +154,9 @@ async function deployInstance(): Promise<InstancePin> {
   const extensionCode = (await pub.getCode({ address: extension }))!;
   const peripheryCode = (await pub.getCode({ address: periphery }))!;
   const pin: InstancePin = {
-    chainId: "31337", core: CORE, extension, periphery,
-    extensionRuntime: verifyExtensionRuntime(extensionCode, { core: CORE }),
-    peripheryRuntime: verifyPeripheryRuntime(peripheryCode, { core: CORE, extension }),
+    chainId: "31337", feeModel: "tick_rate_v2", core: CORE, extension, periphery,
+    extensionRuntime: verifyExtensionRuntime(extensionCode, { core: CORE, feeModel: "tick_rate_v2" }),
+    peripheryRuntime: verifyPeripheryRuntime(peripheryCode, { core: CORE, extension, feeModel: "tick_rate_v2" }),
     deploymentBlock: block.number.toString(), extensionAbiSha256: EXTENSION_ABI_SHA256, peripheryAbiSha256: PERIPHERY_ABI_SHA256,
   };
   const readLaunch = await pub.readContract({ address: periphery, abi: peripheryAbi, functionName: "LAUNCH" });
@@ -192,8 +194,12 @@ const FEE_03 = "55340232221128654";
 /** type(uint64).max: the largest creator fee, just under 100%. */
 const FEE_MAX = ((1n << 64n) - 1n).toString();
 const REQUESTED_SUPPLY = "1000000000000000000000000000";
-type FeeSchedule = Pick<ParametersInput, "feeDuration" | "initialFee" | "finalFee">;
-const FIXTURE_SCHEDULE: FeeSchedule = { feeDuration: 3600, initialFee: FEE_5, finalFee: FEE_03 };
+/** decayRateX32 of a one-day (the default) and a 600 s half-life, and the extremes. */
+const RATE_DAY = "68913100933";
+const RATE_600 = "9923486534471";
+const RATE_MAX = FEE_MAX;
+type FeeSchedule = Pick<ParametersInput, "decayRateX32" | "initialFee" | "finalFee">;
+const FIXTURE_SCHEDULE: FeeSchedule = { decayRateX32: RATE_600, initialFee: FEE_5, finalFee: FEE_03 };
 type Geometry = Pick<ParametersInput, "supply" | "askTick" | "upperTick" | "tickSpacing">;
 const FIXTURE_GEOMETRY: Geometry = { supply: REQUESTED_SUPPLY, askTick: -13815500, upperTick: -9210300, tickSpacing: 100 };
 /**
@@ -211,6 +217,20 @@ function parameters(label: string, quoteToken: Address, tradingStart: bigint, fe
     name: `Zero Seed ${label}`, symbol: label.toUpperCase(), decimals: 18, quoteToken, ...geometry,
     tradingStart: tradingStart.toString(), ...fees, salt: `0x${"00".repeat(31)}01`,
   };
+}
+
+/** The fixed_base_duration_v1 tuple of the same request (feeDuration 3600 in the 10th field), for the refusal probe. */
+function abiV1(input: ParametersInput) {
+  const { decayRateX32: _rate, ...rest } = input;
+  return { ...rest, salt: input.salt as Hex, quoteToken: input.quoteToken as Address, supply: BigInt(input.supply),
+    tradingStart: BigInt(input.tradingStart), feeDuration: 3600, initialFee: BigInt(input.initialFee), finalFee: BigInt(input.finalFee) };
+}
+
+/** The create calldata with its decayRateX32 word (tuple head slot 9) set to 2^64, which no uint64 encoder produces. */
+function rateAboveUint64(data: Hex): Hex {
+  // selector (4) + tuple offset (32) + 9 head words before decayRateX32.
+  const at = 2 + 8 + 64 + 9 * 64;
+  return `${data.slice(0, at)}${numberToHex(1n << 64n, { size: 32 }).slice(2)}${data.slice(at + 64)}` as Hex;
 }
 
 const json = (value: unknown) => JSON.parse(JSON.stringify(value, (_, v) =>
@@ -306,7 +326,7 @@ async function createLaunch(pin: InstancePin, quoteToken: Address, label: string
 
 const routerAbi = ROUTER_BUILD.abi;
 type Launch = { token: Address; quote: Address; poolKey: { token0: Address; token1: Address; config: Hex } };
-type Schedule = { trading_start: number; fee_duration: number; initial_fee: string; final_fee: string };
+type Schedule = { trading_start: number; decay_rate_x32: string; initial_fee: string; final_fee: string };
 
 /** One single-hop swap through LaunchTestRouter: exact input (amount > 0) or exact output (amount < 0), no partial fill. */
 async function swap(launch: Launch, schedule: Schedule, side: "buy" | "sell", exactOut: boolean, amount: bigint, time: bigint) {
@@ -326,7 +346,7 @@ async function swap(launch: Launch, schedule: Schedule, side: "buy" | "sell", ex
   const after = { quote: await balance(launch.quote, buyer.address), token: await balance(launch.token, buyer.address),
     router_eth: await pub.getBalance({ address: ROUTER }) };
   const events = decodeLogs(receipt.logs);
-  const rate = feeAt({ tradingStart: BigInt(schedule.trading_start), feeDuration: BigInt(schedule.fee_duration),
+  const rate = tickRateFeeAt({ tradingStart: BigInt(schedule.trading_start), decayRateX32: BigInt(schedule.decay_rate_x32),
     initialFee: BigInt(schedule.initial_fee), finalFee: BigInt(schedule.final_fee) }, time);
   const swapped = events.find((e) => e.event === "LaunchSwapped")!;
   if (swapped.args.feeRate !== rate.toString()) throw new Error("fee rate");
@@ -362,10 +382,11 @@ async function claim(pin: InstancePin, launch: Launch, claimer: typeof owner, to
 }
 
 // --- run --------------------------------------------------------------------------------------------------------------
-if (CONTRACTS_COMMIT !== "43d6628841b3ce91dafa048b7ceef64bed55fc8e") throw new Error("contracts pin");
+if (CONTRACTS_COMMIT !== "3d6378f585591dc7eabeea6976932c30524bb8ea") throw new Error("contracts pin");
 await placeCoreAndQuote();
 const pin = await deployInstance();
-if (LOCAL_INSTANCE_PINS.length !== 1 || !samePin(LOCAL_INSTANCE_PINS[0], pin)) {
+const localPins = LOCAL_INSTANCE_PINS.filter((entry) => entry.feeModel === "tick_rate_v2");
+if (localPins.length !== 1 || !samePin(localPins[0], pin)) {
   console.log(JSON.stringify({ discovered_pin: pin }, null, 2));
   throw new Error("LOCAL_INSTANCE_PINS differ from this deployment; update policy.ts and rerun");
 }
@@ -374,11 +395,12 @@ const native = await createLaunch(pin, NATIVE_QUOTE, "n1");
 const erc = await createLaunch(pin, ERC20_QUOTE, "e1");
 const launchOf = (c: typeof native): Launch => ({ token: c.preview.installation.token as Address, quote: c.request.quoteToken as Address,
   poolKey: c.preview.installation.poolKey as never });
-const scheduleOf = (c: typeof native): Schedule => ({ trading_start: Number(c.request.tradingStart), fee_duration: c.request.feeDuration,
-  initial_fee: c.request.initialFee, final_fee: c.request.finalFee });
+const scheduleOf = (c: typeof native): Schedule => ({ trading_start: Number(c.request.tradingStart),
+  decay_rate_x32: c.request.decayRateX32, initial_fee: c.request.initialFee, final_fee: c.request.finalFee });
 
-// Creation refusals the chain makes: a nonzero quote without code, the earlier 13-field tuple's selector, and a fee
-// schedule that rises or has no duration (InvalidFeeSchedule). There is no fee ceiling below uint64 to refuse.
+// Creation refusals the chain makes: a nonzero quote without code, the earlier 13-field tuple's selector, the
+// fixed_base_duration_v1 create (0x662af306), a rising fee (InvalidFeeSchedule) and a decay rate of 2^64 (not a
+// uint64: ABI decoding fails without data). A zero rate and the maximum fee and rate are accepted.
 const unsupported = parameters("u1", "0x00000000000000000000000000000000000000aa", clock + 600n);
 const scheduleProbe = (fees: FeeSchedule) => revertSelector({ account: owner.address, to: pin.periphery as Address,
   data: createData(parameters("f1", NATIVE_QUOTE, clock + 600n, fees)) });
@@ -388,10 +410,15 @@ const creationRefusals = {
   quote_without_code: await revertSelector({ account: owner.address, to: pin.periphery as Address, data: createData(unsupported) }),
   old_selector: await revertSelector({ account: owner.address, to: pin.periphery as Address, data: encodeFunctionData({ abi: oldTuple,
     functionName: "create", args: [[u.name, u.symbol, u.decimals, BigInt(u.supply), 0n, u.askTick, u.upperTick, u.tickSpacing,
-      BigInt(u.tradingStart), u.feeDuration, BigInt(u.initialFee), BigInt(u.finalFee), u.salt as Hex]] }) }),
-  final_above_initial: await scheduleProbe({ feeDuration: 3600, initialFee: (BigInt(FEE_MAX) - 1n).toString(), finalFee: FEE_MAX }),
-  zero_fee_duration: await scheduleProbe({ feeDuration: 0, initialFee: FEE_MAX, finalFee: FEE_MAX }),
-  max_fee_create: await scheduleProbe({ feeDuration: 3600, initialFee: FEE_MAX, finalFee: FEE_03 }),
+      BigInt(u.tradingStart), 3600, BigInt(u.initialFee), BigInt(u.finalFee), u.salt as Hex]] }) }),
+  fixed_base_duration_v1_create: await revertSelector({ account: owner.address, to: pin.periphery as Address,
+    data: encodeFunctionData({ abi: peripheryAbiV1, functionName: "create", args: [{ ...abiV1(parameters("v1", NATIVE_QUOTE, clock + 600n)) }] }) }),
+  final_above_initial: await scheduleProbe({ decayRateX32: RATE_DAY, initialFee: (BigInt(FEE_MAX) - 1n).toString(), finalFee: FEE_MAX }),
+  zero_decay_rate_create: await scheduleProbe({ decayRateX32: "0", initialFee: FEE_50, finalFee: FEE_03 }),
+  max_decay_rate_create: await scheduleProbe({ decayRateX32: RATE_MAX, initialFee: FEE_50, finalFee: FEE_03 }),
+  decay_rate_above_uint64: await revertSelector({ account: owner.address, to: pin.periphery as Address,
+    data: rateAboveUint64(createData(parameters("f1", NATIVE_QUOTE, clock + 600n, { decayRateX32: RATE_MAX, initialFee: FEE_50, finalFee: FEE_03 }))) }),
+  max_fee_create: await scheduleProbe({ decayRateX32: RATE_DAY, initialFee: FEE_MAX, finalFee: FEE_03 }),
 };
 
 await test.setBalance({ address: buyer.address, value: 10n ** 30n });
@@ -440,14 +467,30 @@ const ercSwaps = [
 ];
 const ercClaim = await claim(pin, e, owner, recipient.address, clock + 30n);
 
-// The unchanged default schedule and the maximum uint64 fee, each created from the producer's own create: max -> 0.3%
-// over 3,600 s (native), and flat at the maximum over 1 s (ERC-20). Then one buy at each maximum-rate launch.
-const defaultSchedule = await createLaunch(pin, NATIVE_QUOTE, "d1", { feeDuration: 3600, initialFee: FEE_50, finalFee: FEE_03 });
-const maxToFinal = await createLaunch(pin, NATIVE_QUOTE, "m1", { feeDuration: 3600, initialFee: FEE_MAX, finalFee: FEE_03 });
-const maxFlat = await createLaunch(pin, ERC20_QUOTE, "x1", { feeDuration: 1, initialFee: FEE_MAX, finalFee: FEE_MAX });
+// The default schedule (one-day half-life, 50% -> 0.3%), the decay-rate extremes and the maximum uint64 fee, each
+// created from the producer's own create: rate 1 (about 1.89e8 years), rate 0 (constant at the initial fee), rate
+// 2^64 - 1 (at the floor from the first second); max -> 0.3% at the default rate (native) and flat at the maximum
+// (ERC-20). Then one buy on each.
+const defaultSchedule = await createLaunch(pin, NATIVE_QUOTE, "d1", { decayRateX32: RATE_DAY, initialFee: FEE_50, finalFee: FEE_03 });
+const minRate = await createLaunch(pin, NATIVE_QUOTE, "r1", { decayRateX32: "1", initialFee: FEE_50, finalFee: FEE_03 });
+const zeroRate = await createLaunch(pin, ERC20_QUOTE, "z1", { decayRateX32: "0", initialFee: FEE_50, finalFee: FEE_03 });
+const maxRate = await createLaunch(pin, NATIVE_QUOTE, "s1", { decayRateX32: RATE_MAX, initialFee: FEE_50, finalFee: FEE_03 });
+const maxToFinal = await createLaunch(pin, NATIVE_QUOTE, "m1", { decayRateX32: RATE_DAY, initialFee: FEE_MAX, finalFee: FEE_03 });
+const maxFlat = await createLaunch(pin, ERC20_QUOTE, "x1", { decayRateX32: RATE_MAX, initialFee: FEE_MAX, finalFee: FEE_MAX });
+const after = (c: typeof native, seconds: bigint) => {
+  const time = BigInt(c.request.tradingStart) + seconds;
+  return time > clock ? time : clock + 1n;
+};
+const rateSwaps = [
+  await swap(launchOf(defaultSchedule), scheduleOf(defaultSchedule), "buy", false, 10n ** 18n, after(defaultSchedule, 1n)),
+  await swap(launchOf(minRate), scheduleOf(minRate), "buy", false, 10n ** 18n, after(minRate, 30n)),
+  await swap(launchOf(zeroRate), scheduleOf(zeroRate), "buy", false, 10n ** 18n, after(zeroRate, 30n)),
+  await swap(launchOf(maxRate), scheduleOf(maxRate), "buy", false, 10n ** 18n, after(maxRate, 1n)),
+  await swap(launchOf(defaultSchedule), scheduleOf(defaultSchedule), "buy", false, 10n ** 18n, after(defaultSchedule, 86400n)),
+];
 const maxSwaps = [
-  await swap(launchOf(maxToFinal), scheduleOf(maxToFinal), "buy", false, 10n ** 18n, BigInt(maxToFinal.request.tradingStart) + 1n),
-  await swap(launchOf(maxFlat), scheduleOf(maxFlat), "buy", false, 10n ** 18n, BigInt(maxFlat.request.tradingStart) + 30n),
+  await swap(launchOf(maxToFinal), scheduleOf(maxToFinal), "buy", false, 10n ** 18n, after(maxToFinal, 1n)),
+  await swap(launchOf(maxFlat), scheduleOf(maxFlat), "buy", false, 10n ** 18n, after(maxFlat, 30n)),
 ];
 
 // Exact token0 installation, from the producer's own preview and create (ERC-20 quote, so the launch token is token0).
@@ -455,20 +498,20 @@ const lowPrice = await createLaunch(pin, ERC20_QUOTE, "p1", FIXTURE_SCHEDULE, LO
 const fullWidth = await createLaunch(pin, ERC20_QUOTE, "w1", FIXTURE_SCHEDULE, FULL_WIDTH_GEOMETRY);
 
 const fixture = {
-  scope: "LOCAL anvil chain from evm-contracts 43d6628 artifacts. Not a fork, live instance, UserOp, bundler or real quoter output.",
+  scope: "LOCAL anvil chain from evm-contracts 3d6378f (tick_rate_v2) artifacts. Not a fork, live instance, UserOp, bundler or real quoter output.",
   contracts_commit: CONTRACTS_COMMIT,
   accounts: { launcher: lower(launcher.address), owner: lower(owner.address), buyer: lower(buyer.address),
     recipient: lower(recipient.address), new_owner: lower(newOwner.address) },
   core: CORE, router: ROUTER, erc20_quote: { address: ERC20_QUOTE, runtime: keccak256((await pub.getCode({ address: ERC20_QUOTE }))!) },
   pin, deployed, approvals,
-  launches: { native, erc20: erc, default_schedule: defaultSchedule, max_to_final: maxToFinal, max_flat: maxFlat,
-    low_price: lowPrice, full_width: fullWidth },
+  launches: { native, erc20: erc, default_schedule: defaultSchedule, min_rate: minRate, zero_rate: zeroRate,
+    max_rate: maxRate, max_to_final: maxToFinal, max_flat: maxFlat, low_price: lowPrice, full_width: fullWidth },
   swaps, first_claim: firstClaim, refusals,
   transfer: { data: transferData, receipt: { block_number: transferReceipt.blockNumber.toString(), transaction_hash: transferReceipt.transactionHash },
     events: decodeLogs(transferReceipt.logs) },
   after_transfer: { swap: afterTransferSwap, old_owner_claim: oldOwnerClaim, claim: secondClaim },
-  erc20_swaps: ercSwaps, erc20_claim: ercClaim, max_fee_swaps: maxSwaps,
+  erc20_swaps: ercSwaps, erc20_claim: ercClaim, rate_swaps: rateSwaps, max_fee_swaps: maxSwaps,
 };
 writeFileSync(OUT, `${JSON.stringify(fixture, null, 1)}\n`);
-console.log(JSON.stringify({ written: OUT, swaps: swaps.length + 1 + ercSwaps.length + maxSwaps.length, refusals, old_owner_claim: oldOwnerClaim,
+console.log(JSON.stringify({ written: OUT, swaps: swaps.length + 1 + ercSwaps.length + rateSwaps.length + maxSwaps.length, refusals, old_owner_claim: oldOwnerClaim,
   supply: { native: native.supply, erc20: erc.supply, low_price: lowPrice.supply, full_width: fullWidth.supply } }));

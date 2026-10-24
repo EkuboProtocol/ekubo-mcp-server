@@ -4,25 +4,32 @@ import { readFileSync } from "node:fs";
 import type { Hex } from "viem";
 import { z } from "zod";
 import { ZeroSeedApi } from "../../src/launchpad/zero-seed/api.js";
-import { feeAt, feePercent, feePhase } from "../../src/launchpad/zero-seed/fee.js";
+import { feeAt, feePercent, feePhase, halfLifeSeconds, saturationElapsedSeconds, tickRateFeeAt, tickRatePhase }
+  from "../../src/launchpad/zero-seed/fee.js";
 import { LOCAL_INSTANCE_PINS } from "../../src/launchpad/zero-seed/policy.js";
 import { ClaimPage, LaunchDetail, LaunchList, OwnerPage, SwapPage } from "../../src/launchpad/zero-seed/schema.js";
-import golden from "../fixtures/launchpad/zero-seed-api-v4-620aa11.golden.json";
-import openapi from "../fixtures/launchpad/zero-seed-api-v4-620aa11.openapi-launches.json";
+import golden from "../fixtures/launchpad/zero-seed-api-v5-06fc548.golden.json";
+import tickGolden from "../fixtures/launchpad/zero-seed-api-v5-06fc548-tick-rate.golden.json";
+import openapi from "../fixtures/launchpad/zero-seed-api-v5-06fc548.openapi-launches.json";
 
-// The backend's API v4 golden: actual handler output over the indexer's replayed local chain of evm-contracts
-// 43d6628 (api 620aa1154e276b829865204ba54bfc54f6c95537, src/routes/launches/fixtures/zero-seed-launch-api-v4.golden.json;
-// indexer 91a7036). Byte-identical copy. It includes the two launches created at the maximum fee 2^64 - 1 and two
-// token0 launches whose installation is the exact maximum (low price with a sink, full width with none).
-const GOLDEN_SHA256 = "e2c5c0705491b94856744a11a1db0ce733a2622da871e79624e94c499362d491";
-// `/launches*` paths of openapi.json at the same head (whole file sha256 ec1177f4…36b0f8), extracted with
+// The backend's API v5 goldens (api 06fc548f544c88a16b878212ec0a489f03a2cde0, src/routes/launches/fixtures/), each
+// actual handler output over one of the indexer's replayed local chains (indexer 7f373e5), byte-identical copies:
+// - zero-seed-launch-api-v5.golden.json: the fixed_base_duration_v1 chain of evm-contracts 43d6628 (the earlier v4
+//   golden with the model discriminator). It includes the two launches created at the maximum fee 2^64 - 1 and two
+//   token0 launches whose installation is the exact maximum (low price with a sink, full width with none).
+// - zero-seed-launch-api-v5-tick-rate.golden.json: the tick_rate_v2 chain of evm-contracts 3d6378f, at decay rates
+//   600 s, one day, 0, 2^64 - 1 and 1.
+const GOLDEN_SHA256 = "d9e6a64666ad9eb926aa9303b8b9093c22e2cea49eb38561e7c1921fc8aa53f3";
+const TICK_GOLDEN_SHA256 = "727dd25da4f71474d82c09bf5ed8f8f3d13cb54e23e6299efc11ad8c48b905fe";
+// `/launches*` paths of openapi.json at the same head (whole file sha256 4ef5e11b…3994f4), extracted with
 // json.dumps({openapi, paths}, indent=1, sort_keys=True) plus a trailing newline.
-const OPENAPI_SHA256 = "721309ef3a232cf284866443cabb6d3513894116a495f560afa52bd88dad27c5";
+const OPENAPI_SHA256 = "2d77056b54c440926340ee9729dccef4733cf4b531c24f6cec78ea3d144aedf2";
 
 type Json = any;
 const CHAIN = "31337";
 const local = { localHarness: true, instances: LOCAL_INSTANCE_PINS };
-const [pin] = LOCAL_INSTANCE_PINS;
+const pin = LOCAL_INSTANCE_PINS.find((entry) => entry.feeModel === "fixed_base_duration_v1")!;
+const tickPin = LOCAL_INSTANCE_PINS.find((entry) => entry.feeModel === "tick_rate_v2")!;
 const sha256 = (path: string) => createHash("sha256").update(readFileSync(new URL(path, import.meta.url))).digest("hex");
 
 function client(reply: (url: URL) => Json, seen: URL[] = [], instances = local) {
@@ -89,11 +96,14 @@ function normalize(schema: Json): Json {
   return unwrapNullable(out);
 }
 
-describe("API v4 contract: the backend's golden and OpenAPI", () => {
+describe("API v5 contract: the backend's goldens and OpenAPI", () => {
   test("fixtures are the published bytes", () => {
-    expect(sha256("../fixtures/launchpad/zero-seed-api-v4-620aa11.golden.json")).toBe(GOLDEN_SHA256);
-    expect(sha256("../fixtures/launchpad/zero-seed-api-v4-620aa11.openapi-launches.json")).toBe(OPENAPI_SHA256);
-    expect(g.schema_version).toBe("zero-seed-launch-api/v4");
+    expect(sha256("../fixtures/launchpad/zero-seed-api-v5-06fc548.golden.json")).toBe(GOLDEN_SHA256);
+    expect(sha256("../fixtures/launchpad/zero-seed-api-v5-06fc548-tick-rate.golden.json")).toBe(TICK_GOLDEN_SHA256);
+    expect(sha256("../fixtures/launchpad/zero-seed-api-v5-06fc548.openapi-launches.json")).toBe(OPENAPI_SHA256);
+    expect(g.schema_version).toBe("zero-seed-launch-api/v5");
+    expect((tickGolden as Json).schema_version).toBe("zero-seed-launch-api/v5");
+    expect((tickGolden as Json).source.fee_model).toBe("tick_rate_v2");
   });
 
   const responses: [string, z.ZodType][] = [
@@ -126,7 +136,7 @@ describe("API v4 contract: the backend's golden and OpenAPI", () => {
   });
 });
 
-describe("API v4 replay through the MCP client (the one local instance pin)", () => {
+describe("API v5 replay of the fixed_base_duration_v1 chain (its local instance pin)", () => {
   test("pages the block-9 list with before_event_id and returns the head list unchanged", async () => {
     const seen: URL[] = [];
     const api = client(routes, seen);
@@ -202,6 +212,9 @@ describe("API v4 replay through the MCP client (the one local instance pin)", ()
   });
 
   test("every served fee_rate and phase equals the fixed-base table at evaluated_at (600 s half-life)", () => {
+    for (const row of [g.list, g.second, g.canonicalList].flatMap((list) => list.data)) {
+      expect(row.fee_schedule.model).toBe("fixed_base_duration_v1");
+    }
     const rows = [g.list, g.second, g.canonicalList].flatMap((list) => list.data).concat([g.nativeDetail, g.erc20Detail]);
     const phases = new Set<string>();
     for (const row of rows) {
@@ -249,6 +262,8 @@ describe("API v4 replay through the MCP client (the one local instance pin)", ()
   test("rows of instances that are not pinned are dropped from lists and refused as details", async () => {
     const otherInstance = { localHarness: true, instances: [{ ...pin, deploymentBlock: "3" }] };
     await expect(client(routes, [], otherInstance).list(CHAIN)).rejects.toThrow("launch_support_disabled");
+    // The chain's other instance (tick_rate_v2) is supported, but serves none of these rows.
+    expect((await client(routes, [], { localHarness: true, instances: [tickPin] }).list(CHAIN)).data).toEqual([]);
     const other = "0x00000000000000000000000000000000000000e1";
     const foreign = { ...g.canonicalList, data: g.canonicalList.data.map((row: Json, i: number) => (i === 0 ? { ...row, controller: other } : row)) };
     expect((await client(() => foreign).list(CHAIN)).data.map((r: Json) => r.pool_id))
@@ -276,7 +291,7 @@ describe("API v4 replay through the MCP client (the one local instance pin)", ()
   });
 });
 
-describe("API v4 launches at the maximum uint64 fee (l5 native max -> 0.3%, l6 ERC-20 flat max)", () => {
+describe("API v5 fixed_base_duration_v1 launches at the maximum uint64 fee (l5 native max -> 0.3%, l6 ERC-20 flat max)", () => {
   const MAX = "18446744073709551615";
   const l5 = g.maxNativeDetail.pool_id as Hex;
   const l6 = g.maxErc20Detail.pool_id as Hex;
@@ -333,19 +348,23 @@ describe("API v4 launches at the maximum uint64 fee (l5 native max -> 0.3%, l6 E
   });
 });
 
-describe("API v4 refusals", () => {
+describe("API v5 refusals (fixed_base_duration_v1 rows)", () => {
   const detail = (change: (d: Json) => void) => client(() => tamper(g.nativeDetail, change)).detail(CHAIN, nativeId);
   const history = (kind: "swaps" | "claims" | "owners", change: (p: Json) => void) =>
     client((url) => (url.pathname.endsWith(`/${kind}`) ? tamper(pages[nativeId][kind], change) : routes(url)))[kind](CHAIN, nativeId);
 
-  test("other schema versions, v3 supply fields and v2 fee fields", async () => {
-    for (const version of ["zero-seed-launch-api/v3", "zero-seed-launch-api/v2", "zero-seed-launch-api/v5"]) {
+  test("other schema versions, a v4 schedule without the model, v3 supply fields and v2 fee fields", async () => {
+    for (const version of ["zero-seed-launch-api/v4", "zero-seed-launch-api/v3", "zero-seed-launch-api/v2", "zero-seed-launch-api/v6"]) {
       await expect(detail((d) => { d.schema_version = version; })).rejects.toThrow("api_invalid_response");
     }
     await expect(detail((d) => { d.principal.installed_supply = d.supply.installed; })).rejects.toThrow("api_invalid_response");
     await expect(detail((d) => { delete d.supply; })).rejects.toThrow("api_invalid_response");
     await expect(detail((d) => { d.supply.sink_holder = d.owner; })).rejects.toThrow("api_invalid_response");
     await expect(detail((d) => { d.supply.sink = 578; })).rejects.toThrow("api_invalid_response");
+    await expect(detail((d) => { d.schema_version = "zero-seed-launch-api/v4"; delete d.fee_schedule.model; }))
+      .rejects.toThrow("api_invalid_response");
+    await expect(detail((d) => { delete d.fee_schedule.model; })).rejects.toThrow("api_invalid_response");
+    await expect(detail((d) => { d.fee_schedule.model = "tick_rate_v2"; })).rejects.toThrow("api_invalid_response");
     await expect(detail((d) => { d.fee_schedule.decay_factor = "1"; })).rejects.toThrow("api_invalid_response");
     await expect(detail((d) => { delete d.fee_schedule.decay; })).rejects.toThrow("api_invalid_response");
     await expect(detail((d) => { d.fee_schedule.decay.half_life_seconds = 3600; })).rejects.toThrow("api_invalid_response");
@@ -435,5 +454,109 @@ describe("API v4 refusals", () => {
   test("metadata is untrusted: names and symbols never select a launch", async () => {
     const renamed = await detail((d) => { d.token.name = "Zero Seed l2"; d.token.symbol = "L2"; });
     expect(renamed.pool_id).toBe(nativeId);
+  });
+});
+
+// The tick_rate_v2 chain of evm-contracts 3d6378f, served by its own pin: l1 600 s (native), l2 one day (ERC-20),
+// l4 rate 0 (ERC-20), l5 rate 2^64 - 1 from the maximum fee (native), l6 rate 1 flat at the maximum (ERC-20).
+describe("API v5 replay of the tick_rate_v2 chain (its local instance pin)", () => {
+  const t = tickGolden as Json;
+  const labels = ["l1", "l2", "l4", "l5", "l6"] as const;
+  const tickPages: Record<string, Record<string, Json>> = Object.fromEntries(labels.map((label) =>
+    [t[label].detail.pool_id, { detail: t[label].detail, swaps: t[label].swaps, claims: t[label].claims }]));
+  const tickRoutes = (url: URL): Json => {
+    if (url.pathname === "/launches") return t.list;
+    const [, , chain, pool, kind] = url.pathname.split("/");
+    expect(chain).toBe(CHAIN);
+    return tickPages[pool]?.[kind ?? "detail"];
+  };
+  const rateSchedule = (fee: Json) => ({ tradingStart: BigInt(fee.trading_start), decayRateX32: BigInt(fee.decay_rate_x32),
+    initialFee: BigInt(fee.initial_fee), finalFee: BigInt(fee.final_fee) });
+  const l1 = t.l1.detail.pool_id as Hex;
+  const tickDetail = (change: (d: Json) => void, label: (typeof labels)[number] = "l1") =>
+    client(() => tamper(t[label].detail, change)).detail(CHAIN, t[label].detail.pool_id);
+
+  test("the list, every detail, swap page and claim page validate unchanged", async () => {
+    const api = client(tickRoutes);
+    expect(await api.list(CHAIN)).toEqual(t.list);
+    for (const label of labels) {
+      expect(await api.detail(CHAIN, t[label].detail.pool_id)).toEqual(t[label].detail);
+      expect(await api.swaps(CHAIN, t[label].detail.pool_id)).toEqual(t[label].swaps);
+      expect(await api.claims(CHAIN, t[label].detail.pool_id)).toEqual(t[label].claims);
+    }
+  });
+
+  test("the rows belong to the tick_rate_v2 pin and carry no duration or end", () => {
+    const rows = [...t.list.data, ...labels.map((label) => t[label].detail)];
+    for (const row of rows) {
+      expect(row.pool_key.extension).toBe(tickPin.extension);
+      expect(row.controller).toBe(tickPin.periphery);
+      expect(row.fee_schedule.model).toBe("tick_rate_v2");
+      expect(row.fee_schedule).not.toHaveProperty("fee_duration");
+      expect(row.fee_schedule).not.toHaveProperty("fee_end");
+    }
+    expect(labels.map((label) => t[label].detail.fee_schedule.decay_rate_x32))
+      .toEqual(["9923486534471", "68913100933", "0", "18446744073709551615", "1"]);
+  });
+
+  test("served rate, phase, half-life and saturation equal the tick-rate math from the integer rate", () => {
+    const phases = new Set<string>();
+    for (const row of [...t.list.data, ...labels.map((label) => t[label].detail)]) {
+      const fee = row.fee_schedule;
+      const rate = BigInt(fee.decay_rate_x32);
+      expect(tickRateFeeAt(rateSchedule(fee), BigInt(fee.evaluated_at)).toString()).toBe(fee.fee_rate);
+      expect(tickRatePhase(rateSchedule(fee), BigInt(fee.evaluated_at))).toBe(fee.phase);
+      expect(fee.half_life_seconds).toBe(halfLifeSeconds(rate));
+      expect(fee.saturation_elapsed_seconds).toBe(saturationElapsedSeconds(rate)?.toString() ?? null);
+      phases.add(fee.phase);
+    }
+    expect(phases).toEqual(new Set(["at_floor", "constant"]));
+  });
+
+  test("every indexed swap rate equals the tick-rate schedule at its block, including each decaying phase", () => {
+    let decaying = 0;
+    for (const label of labels) {
+      const fee = t[label].detail.fee_schedule;
+      for (const swap of t[label].swaps.data) {
+        const time = BigInt(swap.event.block_time);
+        expect(swap.fee_rate).toBe(tickRateFeeAt(rateSchedule(fee), time).toString());
+        if (tickRatePhase(rateSchedule(fee), time) === "decaying") decaying++;
+      }
+    }
+    expect(decaying).toBeGreaterThan(0);
+  });
+
+  test("the fixed-base pin does not serve tick-rate rows, and a row's model must equal its pin's", async () => {
+    const v1Only = { localHarness: true, instances: [pin] };
+    expect((await client(tickRoutes, [], v1Only).list(CHAIN)).data).toEqual([]);
+    await expect(client(tickRoutes, [], v1Only).detail(CHAIN, l1)).rejects.toThrow("api_404");
+    const asFixed = (d: Json) => {
+      const fee = d.fee_schedule;
+      d.fee_schedule = { model: "fixed_base_duration_v1", trading_start: fee.trading_start, fee_duration: 3600,
+        fee_end: fee.trading_start + 3600, initial_fee: fee.initial_fee, final_fee: fee.final_fee,
+        decay: { kind: "fixed_base_q128", half_life_seconds: 600 }, phase: "final_fee", fee_rate: fee.final_fee,
+        evaluated_at: fee.evaluated_at };
+    };
+    await expect(tickDetail(asFixed)).rejects.toThrow("api_fee_identity_mismatch");
+  });
+
+  test("refuses a rate, half-life, saturation or phase the integer rate does not give", async () => {
+    const MAX = (1n << 64n) - 1n;
+    await expect(tickDetail((d) => { d.fee_schedule.fee_rate = d.fee_schedule.initial_fee; })).rejects.toThrow("api_fee_identity_mismatch");
+    await expect(tickDetail((d) => { d.fee_schedule.phase = "decaying"; })).rejects.toThrow("api_fee_identity_mismatch");
+    await expect(tickDetail((d) => { d.fee_schedule.half_life_seconds = "600.000001"; })).rejects.toThrow("api_fee_identity_mismatch");
+    await expect(tickDetail((d) => { d.fee_schedule.half_life_seconds = null; })).rejects.toThrow("api_fee_identity_mismatch");
+    await expect(tickDetail((d) => { d.fee_schedule.saturation_elapsed_seconds = "38400"; })).rejects.toThrow("api_fee_identity_mismatch");
+    await expect(tickDetail((d) => { d.fee_schedule.decay_rate_x32 = "68913100933"; })).rejects.toThrow("api_fee_identity_mismatch");
+    await expect(tickDetail((d) => { d.fee_schedule.phase = "at_floor"; }, "l4")).rejects.toThrow("api_fee_identity_mismatch");
+    await expect(tickDetail((d) => { d.fee_schedule.half_life_seconds = "0.000000"; }, "l4")).rejects.toThrow("api_fee_identity_mismatch");
+    for (const bad of [(MAX + 1n).toString(), "-1", "01", "1.5", 9923486534471]) {
+      await expect(tickDetail((d) => { d.fee_schedule.decay_rate_x32 = bad; })).rejects.toThrow("api_invalid_response");
+    }
+    for (const extra of ["fee_duration", "fee_end", "decay"]) {
+      await expect(tickDetail((d) => { d.fee_schedule[extra] = 1; })).rejects.toThrow("api_invalid_response");
+    }
+    await expect(tickDetail((d) => { d.fee_schedule.half_life_seconds = "600"; })).rejects.toThrow("api_invalid_response");
+    await expect(tickDetail((d) => { d.fee_schedule.phase = "fee_decay"; })).rejects.toThrow("api_invalid_response");
   });
 });

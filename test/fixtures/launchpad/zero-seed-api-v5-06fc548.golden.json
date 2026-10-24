@@ -1,14 +1,14 @@
 {
-  "schema_version": "zero-seed-launch-api/v4",
+  "schema_version": "zero-seed-launch-api/v5",
   "source": {
     "fixture": "indexer tests/fixtures/zero-seed-launch/local-chain.json",
     "chain_id": "31337"
   },
   "list": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "data": [
       {
-        "schema_version": "zero-seed-launch-api/v4",
+        "schema_version": "zero-seed-launch-api/v5",
         "chain_id": "31337",
         "pool_id": "0x4b680c35b2badd8287a7bd61a44c5105c047e06496b6aa83cc95255893c7f5b3",
         "pool_key": {
@@ -46,6 +46,7 @@
         "ask_tick": -13815500,
         "upper_tick": -9210300,
         "fee_schedule": {
+          "model": "fixed_base_duration_v1",
           "trading_start": 1800001300,
           "fee_duration": 3600,
           "fee_end": 1800004900,
@@ -83,10 +84,10 @@
     }
   },
   "second": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "data": [
       {
-        "schema_version": "zero-seed-launch-api/v4",
+        "schema_version": "zero-seed-launch-api/v5",
         "chain_id": "31337",
         "pool_id": "0x4673d72a7244db78d26305352371c9e68a1ffc56366c25cb49c31f7fa88a8610",
         "pool_key": {
@@ -124,6 +125,7 @@
         "ask_tick": -13815500,
         "upper_tick": -9210300,
         "fee_schedule": {
+          "model": "fixed_base_duration_v1",
           "trading_start": 1800001000,
           "fee_duration": 600,
           "fee_end": 1800001600,
@@ -153,7 +155,7 @@
         }
       },
       {
-        "schema_version": "zero-seed-launch-api/v4",
+        "schema_version": "zero-seed-launch-api/v5",
         "chain_id": "31337",
         "pool_id": "0xa82ee3b56f026133e77e98cc48b9f80d54c934f3e38acbb50e46c1be66e3903f",
         "pool_key": {
@@ -191,6 +193,7 @@
         "ask_tick": -13815500,
         "upper_tick": -9210300,
         "fee_schedule": {
+          "model": "fixed_base_duration_v1",
           "trading_start": 1800001000,
           "fee_duration": 3600,
           "fee_end": 1800004600,
@@ -228,10 +231,10 @@
     }
   },
   "canonicalList": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "data": [
       {
-        "schema_version": "zero-seed-launch-api/v4",
+        "schema_version": "zero-seed-launch-api/v5",
         "chain_id": "31337",
         "pool_id": "0xd56a8e6fcf9b121ec98770105e1a1afb7e7ed2b5bbf6777efc128d987cecf6bf",
         "pool_key": {
@@ -269,6 +272,7 @@
         "ask_tick": -88722835,
         "upper_tick": 88722835,
         "fee_schedule": {
+          "model": "fixed_base_duration_v1",
           "trading_start": 1800005200,
           "fee_duration": 3600,
           "fee_end": 1800008800,
@@ -298,7 +302,7 @@
         }
       },
       {
-        "schema_version": "zero-seed-launch-api/v4",
+        "schema_version": "zero-seed-launch-api/v5",
         "chain_id": "31337",
         "pool_id": "0xdaa8ec7b6dd214d63110b3a3933dbf7d339f907ef4c298f91f21d6b378272202",
         "pool_key": {
@@ -336,6 +340,7 @@
         "ask_tick": -88080384,
         "upper_tick": -85983232,
         "fee_schedule": {
+          "model": "fixed_base_duration_v1",
           "trading_start": 1800005200,
           "fee_duration": 3600,
           "fee_end": 1800008800,
@@ -365,7 +370,7 @@
         }
       },
       {
-        "schema_version": "zero-seed-launch-api/v4",
+        "schema_version": "zero-seed-launch-api/v5",
         "chain_id": "31337",
         "pool_id": "0x0d0812c3541da20168eab45062e125694e7c9ffcc7f31bedb8163f92f27681c1",
         "pool_key": {
@@ -403,6 +408,7 @@
         "ask_tick": -13815500,
         "upper_tick": -9210300,
         "fee_schedule": {
+          "model": "fixed_base_duration_v1",
           "trading_start": 1800001400,
           "fee_duration": 1,
           "fee_end": 1800001401,
@@ -432,7 +438,7 @@
         }
       },
       {
-        "schema_version": "zero-seed-launch-api/v4",
+        "schema_version": "zero-seed-launch-api/v5",
         "chain_id": "31337",
         "pool_id": "0xa144205e6ed4ab091df980d7dee97229264eb018bda8e3c8b1ecc2db3db4e8d2",
         "pool_key": {
@@ -470,6 +476,7 @@
         "ask_tick": -13815500,
         "upper_tick": -9210300,
         "fee_schedule": {
+          "model": "fixed_base_duration_v1",
           "trading_start": 1800001400,
           "fee_duration": 3600,
           "fee_end": 1800005000,
@@ -499,7 +506,7 @@
         }
       },
       {
-        "schema_version": "zero-seed-launch-api/v4",
+        "schema_version": "zero-seed-launch-api/v5",
         "chain_id": "31337",
         "pool_id": "0x31ac68f6276a3805adde8ec41aeee006226b3e64d29234d4091392923136f6c0",
         "pool_key": {
@@ -537,6 +544,7 @@
         "ask_tick": -13815500,
         "upper_tick": -9210300,
         "fee_schedule": {
+          "model": "fixed_base_duration_v1",
           "trading_start": 1800001400,
           "fee_duration": 600,
           "fee_end": 1800002000,
@@ -566,7 +574,7 @@
         }
       },
       {
-        "schema_version": "zero-seed-launch-api/v4",
+        "schema_version": "zero-seed-launch-api/v5",
         "chain_id": "31337",
         "pool_id": "0x4673d72a7244db78d26305352371c9e68a1ffc56366c25cb49c31f7fa88a8610",
         "pool_key": {
@@ -604,6 +612,7 @@
         "ask_tick": -13815500,
         "upper_tick": -9210300,
         "fee_schedule": {
+          "model": "fixed_base_duration_v1",
           "trading_start": 1800001000,
           "fee_duration": 600,
           "fee_end": 1800001600,
@@ -633,7 +642,7 @@
         }
       },
       {
-        "schema_version": "zero-seed-launch-api/v4",
+        "schema_version": "zero-seed-launch-api/v5",
         "chain_id": "31337",
         "pool_id": "0xa82ee3b56f026133e77e98cc48b9f80d54c934f3e38acbb50e46c1be66e3903f",
         "pool_key": {
@@ -671,6 +680,7 @@
         "ask_tick": -13815500,
         "upper_tick": -9210300,
         "fee_schedule": {
+          "model": "fixed_base_duration_v1",
           "trading_start": 1800001000,
           "fee_duration": 3600,
           "fee_end": 1800004600,
@@ -708,7 +718,7 @@
     }
   },
   "nativeDetail": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "chain_id": "31337",
     "pool_id": "0xa82ee3b56f026133e77e98cc48b9f80d54c934f3e38acbb50e46c1be66e3903f",
     "pool_key": {
@@ -746,6 +756,7 @@
     "ask_tick": -13815500,
     "upper_tick": -9210300,
     "fee_schedule": {
+      "model": "fixed_base_duration_v1",
       "trading_start": 1800001000,
       "fee_duration": 3600,
       "fee_end": 1800004600,
@@ -811,7 +822,7 @@
     }
   },
   "nativeSwaps": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "chain_id": "31337",
     "pool_id": "0xa82ee3b56f026133e77e98cc48b9f80d54c934f3e38acbb50e46c1be66e3903f",
     "next_cursor": null,
@@ -1004,7 +1015,7 @@
     ]
   },
   "nativeClaims": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "chain_id": "31337",
     "pool_id": "0xa82ee3b56f026133e77e98cc48b9f80d54c934f3e38acbb50e46c1be66e3903f",
     "next_cursor": null,
@@ -1081,7 +1092,7 @@
     ]
   },
   "nativeOwners": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "chain_id": "31337",
     "pool_id": "0xa82ee3b56f026133e77e98cc48b9f80d54c934f3e38acbb50e46c1be66e3903f",
     "next_cursor": null,
@@ -1133,7 +1144,7 @@
     ]
   },
   "erc20Detail": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "chain_id": "31337",
     "pool_id": "0x4673d72a7244db78d26305352371c9e68a1ffc56366c25cb49c31f7fa88a8610",
     "pool_key": {
@@ -1171,6 +1182,7 @@
     "ask_tick": -13815500,
     "upper_tick": -9210300,
     "fee_schedule": {
+      "model": "fixed_base_duration_v1",
       "trading_start": 1800001000,
       "fee_duration": 600,
       "fee_end": 1800001600,
@@ -1236,7 +1248,7 @@
     }
   },
   "erc20Swaps": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "chain_id": "31337",
     "pool_id": "0x4673d72a7244db78d26305352371c9e68a1ffc56366c25cb49c31f7fa88a8610",
     "next_cursor": null,
@@ -1321,7 +1333,7 @@
     ]
   },
   "erc20Claims": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "chain_id": "31337",
     "pool_id": "0x4673d72a7244db78d26305352371c9e68a1ffc56366c25cb49c31f7fa88a8610",
     "next_cursor": null,
@@ -1350,7 +1362,7 @@
     ]
   },
   "erc20Owners": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "chain_id": "31337",
     "pool_id": "0x4673d72a7244db78d26305352371c9e68a1ffc56366c25cb49c31f7fa88a8610",
     "next_cursor": null,
@@ -1389,7 +1401,7 @@
     ]
   },
   "erc20TraderOwnedDetail": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "chain_id": "31337",
     "pool_id": "0x31ac68f6276a3805adde8ec41aeee006226b3e64d29234d4091392923136f6c0",
     "pool_key": {
@@ -1427,6 +1439,7 @@
     "ask_tick": -13815500,
     "upper_tick": -9210300,
     "fee_schedule": {
+      "model": "fixed_base_duration_v1",
       "trading_start": 1800001400,
       "fee_duration": 600,
       "fee_end": 1800002000,
@@ -1492,7 +1505,7 @@
     }
   },
   "maxNativeDetail": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "chain_id": "31337",
     "pool_id": "0xa144205e6ed4ab091df980d7dee97229264eb018bda8e3c8b1ecc2db3db4e8d2",
     "pool_key": {
@@ -1530,6 +1543,7 @@
     "ask_tick": -13815500,
     "upper_tick": -9210300,
     "fee_schedule": {
+      "model": "fixed_base_duration_v1",
       "trading_start": 1800001400,
       "fee_duration": 3600,
       "fee_end": 1800005000,
@@ -1595,7 +1609,7 @@
     }
   },
   "maxNativeSwaps": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "chain_id": "31337",
     "pool_id": "0xa144205e6ed4ab091df980d7dee97229264eb018bda8e3c8b1ecc2db3db4e8d2",
     "next_cursor": null,
@@ -1698,7 +1712,7 @@
     ]
   },
   "maxNativeClaims": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "chain_id": "31337",
     "pool_id": "0xa144205e6ed4ab091df980d7dee97229264eb018bda8e3c8b1ecc2db3db4e8d2",
     "next_cursor": null,
@@ -1727,7 +1741,7 @@
     ]
   },
   "maxErc20Detail": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "chain_id": "31337",
     "pool_id": "0x0d0812c3541da20168eab45062e125694e7c9ffcc7f31bedb8163f92f27681c1",
     "pool_key": {
@@ -1765,6 +1779,7 @@
     "ask_tick": -13815500,
     "upper_tick": -9210300,
     "fee_schedule": {
+      "model": "fixed_base_duration_v1",
       "trading_start": 1800001400,
       "fee_duration": 1,
       "fee_end": 1800001401,
@@ -1830,7 +1845,7 @@
     }
   },
   "maxErc20Swaps": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "chain_id": "31337",
     "pool_id": "0x0d0812c3541da20168eab45062e125694e7c9ffcc7f31bedb8163f92f27681c1",
     "next_cursor": null,
@@ -1879,7 +1894,7 @@
     ]
   },
   "maxErc20Claims": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "chain_id": "31337",
     "pool_id": "0x0d0812c3541da20168eab45062e125694e7c9ffcc7f31bedb8163f92f27681c1",
     "next_cursor": null,
@@ -1908,7 +1923,7 @@
     ]
   },
   "lowPriceErc20Detail": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "chain_id": "31337",
     "pool_id": "0xdaa8ec7b6dd214d63110b3a3933dbf7d339f907ef4c298f91f21d6b378272202",
     "pool_key": {
@@ -1946,6 +1961,7 @@
     "ask_tick": -88080384,
     "upper_tick": -85983232,
     "fee_schedule": {
+      "model": "fixed_base_duration_v1",
       "trading_start": 1800005200,
       "fee_duration": 3600,
       "fee_end": 1800008800,
@@ -2011,7 +2027,7 @@
     }
   },
   "fullWidthErc20Detail": {
-    "schema_version": "zero-seed-launch-api/v4",
+    "schema_version": "zero-seed-launch-api/v5",
     "chain_id": "31337",
     "pool_id": "0xd56a8e6fcf9b121ec98770105e1a1afb7e7ed2b5bbf6777efc128d987cecf6bf",
     "pool_key": {
@@ -2049,6 +2065,7 @@
     "ask_tick": -88722835,
     "upper_tick": 88722835,
     "fee_schedule": {
+      "model": "fixed_base_duration_v1",
       "trading_start": 1800005200,
       "fee_duration": 3600,
       "fee_end": 1800008800,

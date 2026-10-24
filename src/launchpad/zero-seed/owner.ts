@@ -1,11 +1,11 @@
 import { type Address, decodeFunctionData, encodeAbiParameters, encodeFunctionData, type Hex, keccak256, stringToHex } from "viem";
 import { z } from "zod";
-import { CLAIM_SELECTOR, CREATE_SELECTOR, peripheryAbi } from "./abi.js";
+import { CLAIM_SELECTOR, CREATE_SELECTOR, FEE_MODELS, MODEL_ABIS, peripheryAbi } from "./abi.js";
 import { claimStatements, createStatements, DISCLOSURE_STATUS, DISCLOSURE_VERSION, quoteText } from "./disclosures.js";
-import { decayQ128, exactOutputMultiplier, excessHalvingTime, FEE_HALF_LIFE_SECONDS, feeAt, feePercent, feePhase,
-  type FeeSchedule } from "./fee.js";
+import { exactOutputMultiplier, feePercent, halfLifeSeconds, saturationElapsedSeconds, tickRateExcessHalvingTime,
+  tickRateFeeAt, tickRatePhase, type TickRateSchedule } from "./fee.js";
 import { address, BuildContext, bytes32, createData, decimal, Parameters, type ParametersInput,
-  requireLocalPin, validateBuild, validateParameters } from "./installation.js";
+  requireCreatablePin, requireLocalPin, validateBuild, validateParameters } from "./installation.js";
 import { Installation, type InstallationInput, supplyOf, validateInstallation } from "./preview.js";
 import { type InstancePin, launchQuote, type LaunchQuote, NATIVE_DECIMALS, samePin, validateClaimRecipient,
   ZeroSeedError } from "./policy.js";
@@ -15,7 +15,7 @@ import { launchSalts } from "./token.js";
 // envelope's digest and length rules but never stored as an execution_plan.
 const SCOPE = "synthetic-local-non-executable";
 const Pin = z.strictObject({
-  chainId: decimal, core: address, extension: address, periphery: address, extensionRuntime: bytes32,
+  chainId: decimal, feeModel: z.enum(FEE_MODELS), core: address, extension: address, periphery: address, extensionRuntime: bytes32,
   peripheryRuntime: bytes32, deploymentBlock: decimal, extensionAbiSha256: z.string(), peripheryAbiSha256: z.string(),
 });
 /** The launch's own quote as resolved at build time: native ETH, or a reviewed ERC-20 and its runtime codehash. */
@@ -30,16 +30,18 @@ const Envelope = {
   scope: z.literal(SCOPE), executable: z.literal(false),
   chain_id: decimal, sender: address, target: address, data: hex, value: z.literal("0"), pin: Pin,
 };
+// v5: the tick_rate_v2 tuple (decayRateX32 replaces feeDuration) and a pin that names its fee model.
 // v4: the tuple names the launch's quote and carries the requested supply unchanged; the pin has no quote.
 export const LocalCreateBody = z.strictObject({
-  schema_version: z.literal("zero-seed-local-create/v4"), ...Envelope, quote: Quote,
+  schema_version: z.literal("zero-seed-local-create/v5"), ...Envelope, quote: Quote,
   disclosure_version: z.literal(DISCLOSURE_VERSION), build: BuildContext, requested: Parameters, installation: Installation,
   preview: z.strictObject({ count: z.literal(1), read_integrity: bytes32, read_bytes: z.number().int().positive() }),
 });
 /** The launchOwner(poolId) read the claim was built on; the periphery checks the same owner at execution. */
 const OwnerCheck = z.strictObject({ block_number: decimal, block_hash: bytes32, pool_id: bytes32, launch_owner: address });
+// v4: the pin names its fee model. The claim call itself is the same for both models.
 export const LocalClaimBody = z.strictObject({
-  schema_version: z.literal("zero-seed-local-claim/v3"), ...Envelope, quote: Quote,
+  schema_version: z.literal("zero-seed-local-claim/v4"), ...Envelope, quote: Quote,
   pool_key: PoolKey, recipient: address, owner_check: OwnerCheck,
   build: z.strictObject({ buildTime: decimal, executionExpiry: decimal }),
 });
@@ -79,17 +81,24 @@ function checkEnvelope(body: CreateBody | ClaimBody, expected: { pin: InstancePi
 
 export { feePercent };
 
-function decodeCall(data: Hex) {
+/** Decodes with the periphery ABI of the pin's fee model only. */
+function decodeCall(data: Hex, pin: InstancePin) {
   try {
-    return decodeFunctionData({ abi: peripheryAbi, data });
+    return decodeFunctionData({ abi: MODEL_ABIS[pin.feeModel].periphery, data });
   } catch {
     // Includes earlier create selectors: an old tuple never decodes as the current encoding.
     throw new ZeroSeedError("unsupported_selector");
   }
 }
 
+/** Create calldata decodes only as the tick_rate_v2 tuple: 0x662af306 (fixed_base_duration_v1) and older refuse. */
 function decodedParameters(data: Hex): ParametersInput {
-  const call = decodeCall(data);
+  let call;
+  try {
+    call = decodeFunctionData({ abi: peripheryAbi, data });
+  } catch {
+    throw new ZeroSeedError("unsupported_selector");
+  }
   if (call.functionName !== "create") throw new ZeroSeedError("calldata_method_mismatch");
   if (encodeFunctionData({ abi: peripheryAbi, functionName: "create", args: call.args }) !== data) {
     throw new ZeroSeedError("calldata_noncanonical");
@@ -98,7 +107,7 @@ function decodedParameters(data: Hex): ParametersInput {
   return {
     name: p.name, symbol: p.symbol, decimals: p.decimals,
     supply: p.supply.toString(), quoteToken: p.quoteToken.toLowerCase(), askTick: p.askTick, upperTick: p.upperTick,
-    tickSpacing: p.tickSpacing, tradingStart: p.tradingStart.toString(), feeDuration: p.feeDuration,
+    tickSpacing: p.tickSpacing, tradingStart: p.tradingStart.toString(), decayRateX32: p.decayRateX32.toString(),
     initialFee: p.initialFee.toString(), finalFee: p.finalFee.toString(), salt: p.salt.toLowerCase(),
   };
 }
@@ -125,8 +134,9 @@ export function localCreateBody(preview: {
   owner: Address; pin: InstancePin; quote: LaunchQuote; build: z.infer<typeof BuildContext>; requested: ParametersInput;
   installation: InstallationInput; preview: { reference: { integrity: { value: Hex }; bytes: number } };
 }): Sealed {
+  requireCreatablePin(preview.pin);
   return seal(LocalCreateBody.parse({
-    schema_version: "zero-seed-local-create/v4", scope: SCOPE, executable: false,
+    schema_version: "zero-seed-local-create/v5", scope: SCOPE, executable: false,
     chain_id: preview.pin.chainId, sender: preview.owner.toLowerCase(), target: preview.pin.periphery,
     data: createData(preview.requested), value: "0", pin: { ...preview.pin }, quote: { ...preview.quote },
     disclosure_version: DISCLOSURE_VERSION,
@@ -136,36 +146,44 @@ export function localCreateBody(preview: {
   }));
 }
 
-function scheduleOf(actual: ParametersInput): FeeSchedule {
+function scheduleOf(actual: ParametersInput): TickRateSchedule {
   return {
-    tradingStart: BigInt(actual.tradingStart), feeDuration: BigInt(actual.feeDuration),
+    tradingStart: BigInt(actual.tradingStart), decayRateX32: BigInt(actual.decayRateX32),
     initialFee: BigInt(actual.initialFee), finalFee: BigInt(actual.finalFee),
   };
 }
 
-const SAMPLE_SECONDS = [0n, 1n, 10n, 60n, 600n, 3600n];
+const DAY = 86400n;
+const SAMPLE_SECONDS = [0n, 1n, 60n, 3600n, DAY, 7n * DAY, 30n * DAY];
 
-/** The exact integer schedule; nothing here assumes a linear shape. */
+/**
+ * The exact integer tick_rate_v2 schedule: the decay rate, its half-life (display only), the saturation second and
+ * samples, including the second before and after saturation. finalFee is a floor the fee approaches; nothing here
+ * is an end date, and nothing assumes a linear shape.
+ */
 function feeScheduleFields(actual: ParametersInput, buildTime: bigint) {
   const schedule = scheduleOf(actual);
-  const duration = schedule.feeDuration;
-  const elapsed = [...new Set([...SAMPLE_SECONDS, duration / 2n, duration - 1n, duration]
-    .filter((t) => t >= 0n && t <= duration).map(String))].map(BigInt).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const saturation = saturationElapsedSeconds(schedule.decayRateX32);
+  const extra = saturation === null ? [] : [saturation, saturation + 1n];
+  const elapsed = [...new Set([...SAMPLE_SECONDS, ...extra].map(String))].map(BigInt)
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   const point = (time: bigint) => {
-    const fee = feeAt(schedule, time);
+    const fee = tickRateFeeAt(schedule, time);
     return { fee_q64: fee.toString(), fee_percent: feePercent(fee) };
   };
-  const halving = excessHalvingTime(schedule);
-  const afterOne = feeAt(schedule, schedule.tradingStart + 1n);
+  const halving = tickRateExcessHalvingTime(schedule);
   return {
-    curve: "fixed_half_life_endpoint_normalized" as const,
-    half_life_seconds: FEE_HALF_LIFE_SECONDS,
-    endpoint_decay_q128: decayQ128(duration).toString(),
-    excess_halving_seconds: halving === null ? null : Number(halving),
-    effective_cliff: duration > 1n && schedule.initialFee !== schedule.finalFee && afterOne === schedule.finalFee,
+    model: "tick_rate_v2" as const,
+    trading_start: Number(schedule.tradingStart),
+    initial_fee: actual.initialFee,
+    final_fee: actual.finalFee,
+    decay_rate_x32: actual.decayRateX32,
+    half_life_seconds: halfLifeSeconds(schedule.decayRateX32),
+    saturation_elapsed_seconds: saturation === null ? null : saturation.toString(),
+    excess_halving_seconds: halving === null ? null : halving.toString(),
     exact_output_multiplier_at_initial: exactOutputMultiplier(schedule.initialFee),
-    current: { evaluated_at: Number(buildTime), phase: feePhase(schedule, buildTime), ...point(buildTime) },
-    samples: elapsed.map((t) => ({ elapsed: Number(t), ...point(schedule.tradingStart + t) })),
+    current: { evaluated_at: Number(buildTime), phase: tickRatePhase(schedule, buildTime), ...point(buildTime) },
+    samples: elapsed.map((t) => ({ elapsed: t.toString(), ...point(schedule.tradingStart + t) })),
   };
 }
 
@@ -178,7 +196,8 @@ export function poolIdOf(key: { token0: string; token1: string; config: string }
 /** Instance identity and this launch's reviewed quote, shown with every summary. */
 function instanceFields(pin: InstancePin, quote: LaunchQuote) {
   return {
-    instance: { core: pin.core, extension: pin.extension, periphery: pin.periphery, controller: pin.periphery,
+    instance: { fee_model: pin.feeModel, core: pin.core, extension: pin.extension, periphery: pin.periphery,
+      controller: pin.periphery,
       extension_runtime: pin.extensionRuntime, periphery_runtime: pin.peripheryRuntime, deployment_block: pin.deploymentBlock },
     quote: quote.kind === "native"
       ? { kind: "native" as const, address: quote.address, decimals: NATIVE_DECIMALS, runtime: null, wrapping: false, approval: false }
@@ -194,7 +213,7 @@ function createFields(body: CreateBody, requested: ParametersInput) {
     owner: body.sender, ...instanceFields(body.pin, body.quote), name: requested.name, symbol: requested.symbol,
     decimals: requested.decimals, supply, liquidity: body.installation.liquidity, ask_tick: requested.askTick,
     upper_tick: requested.upperTick, tick_spacing: requested.tickSpacing, trading_start: Number(requested.tradingStart),
-    fee_duration: requested.feeDuration, initial_fee: requested.initialFee, final_fee: requested.finalFee,
+    initial_fee: requested.initialFee, final_fee: requested.finalFee, decay_rate_x32: requested.decayRateX32,
     initial_fee_percent: feePercent(BigInt(requested.initialFee)), final_fee_percent: feePercent(BigInt(requested.finalFee)),
     salt: { owner_salt: requested.salt, owner_namespaced: salts.ownerSalt, token_create2: salts.tokenSalt },
     fee_schedule: feeScheduleFields(requested, BigInt(body.build.buildTime)),
@@ -232,8 +251,10 @@ export function decodeOwnerCreate(sealed: Sealed, expected: {
   const statements = createStatements({
     requestedSupply: fields.supply.requested, installedSupply: fields.supply.installed, sinkSupply: fields.supply.sink,
     initialFeePercent: fields.initial_fee_percent, finalFeePercent: fields.final_fee_percent,
-    feeDuration: String(requested.feeDuration), tradingStart: new Date(Number(requested.tradingStart) * 1000).toISOString(),
-    excessHalvingSeconds: String(fields.fee_schedule.excess_halving_seconds ?? "none"),
+    halfLifeSeconds: fields.fee_schedule.half_life_seconds ?? "none",
+    saturationElapsedSeconds: fields.fee_schedule.saturation_elapsed_seconds ?? "none",
+    tradingStart: new Date(Number(requested.tradingStart) * 1000).toISOString(),
+    excessHalvingSeconds: fields.fee_schedule.excess_halving_seconds ?? "none",
     exactOutputMultiplier: fields.fee_schedule.exact_output_multiplier_at_initial, owner: body.sender,
     quote: quoteText(body.quote), quoteKind: body.quote.kind,
   });
@@ -243,8 +264,9 @@ export function decodeOwnerCreate(sealed: Sealed, expected: {
   });
 }
 
+// v5: the tick_rate_v2 schedule (decay rate, half-life, saturation; no duration or end) and the pin's fee model.
 // v4: per-launch quote, requested/installed/sink supply and the computed liquidity, instance without a quote.
-const OWNER_SUMMARY_VERSION = "zero-seed-launch-owner-summary/v4" as const;
+export const OWNER_SUMMARY_VERSION = "zero-seed-launch-owner-summary/v5" as const;
 const DISCLOSURE = Object.freeze({ version: DISCLOSURE_VERSION, status: DISCLOSURE_STATUS });
 
 /** keccak256 of the canonical summary JSON without this field, so a consumer can bind exactly what was shown. */
@@ -264,9 +286,9 @@ export function localClaimBody(input: {
   requireLocalPin(input.pin);
   const quote = launchQuote(input.pin.chainId, input.quoteToken.toLowerCase(), true);
   const body = LocalClaimBody.parse({
-    schema_version: "zero-seed-local-claim/v3", scope: SCOPE, executable: false, quote: { ...quote },
+    schema_version: "zero-seed-local-claim/v4", scope: SCOPE, executable: false, quote: { ...quote },
     chain_id: input.pin.chainId, sender: input.owner.toLowerCase(), target: input.pin.periphery,
-    data: encodeFunctionData({ abi: peripheryAbi, functionName: "claimFees", args: [
+    data: encodeFunctionData({ abi: MODEL_ABIS[input.pin.feeModel].periphery, functionName: "claimFees", args: [
       { token0: input.poolKey.token0 as Address, token1: input.poolKey.token1 as Address, config: input.poolKey.config as Hex },
       input.recipient,
     ] }).toLowerCase(), value: "0", pin: { ...input.pin }, pool_key: input.poolKey, recipient: input.recipient.toLowerCase(),
@@ -297,7 +319,7 @@ function checkClaim(body: ClaimBody): void {
     core: body.pin.core as Address, extension: body.pin.extension as Address, periphery: body.pin.periphery as Address,
     token0: token0 as Address, token1: token1 as Address,
   });
-  const call = decodeCall(body.data as Hex);
+  const call = decodeCall(body.data as Hex, body.pin);
   if (call.functionName !== "claimFees") throw new ZeroSeedError("calldata_method_mismatch");
   const [key, recipient] = call.args;
   const matches = key.token0.toLowerCase() === token0 && key.token1.toLowerCase() === token1 &&

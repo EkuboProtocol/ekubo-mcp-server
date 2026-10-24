@@ -1,5 +1,6 @@
-// Preview wallet shared by zero-seed tests. It replays the local anvil chain the harness recorded
-// (script/zero-seed-local-chain.ts); it is never a provider or connected wallet.
+// Preview wallet shared by zero-seed tests. It replays the local anvil chain of the tick_rate_v2 instance the harness
+// recorded (script/zero-seed-local-chain.ts at evm-contracts 3d6378f); it is never a provider or connected wallet.
+// The fixed_base_duration_v1 chain (evm-contracts 43d6628) is kept as recorded for read-only replay.
 import { expect } from "bun:test";
 import { type Address, decodeFunctionData, encodeFunctionResult, type Hex, keccak256, stringToHex } from "viem";
 import { storeArtifact } from "../../src/artifact-store.js";
@@ -9,11 +10,13 @@ import { type BuildInput, type ParametersInput } from "../../src/launchpad/zero-
 import { LOCAL_INSTANCE_PINS, NATIVE_QUOTE, type InstancePin } from "../../src/launchpad/zero-seed/policy.js";
 import { localInstallationPreview, PREVIEW_ID, type SyntheticPreviewWallet } from "../../src/launchpad/zero-seed/preview.js";
 import { predictLaunchToken } from "../../src/launchpad/zero-seed/token.js";
-import chain from "../fixtures/launchpad/zero-seed-native-local-chain.json";
+import v1Chain from "../fixtures/launchpad/zero-seed-native-local-chain.json";
+import chain from "../fixtures/launchpad/zero-seed-tick-rate-local-chain.json";
 
-export { chain };
+export { chain, v1Chain };
 export const owner = chain.accounts.owner as Address;
-export const pin = LOCAL_INSTANCE_PINS[0];
+export const pin = LOCAL_INSTANCE_PINS.find((entry) => entry.feeModel === "tick_rate_v2")!;
+export const v1Pin = LOCAL_INSTANCE_PINS.find((entry) => entry.feeModel === "fixed_base_duration_v1")!;
 export const ERC20_QUOTE = chain.erc20_quote.address;
 /** The two recorded launches of the one instance: native ETH (launch token1) and the test ERC-20 (launch token0). */
 export const KINDS = ["native", "erc20"] as const;

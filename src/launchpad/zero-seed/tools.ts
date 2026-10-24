@@ -2,7 +2,7 @@ import type { Hex } from "viem";
 import { z } from "zod";
 import { ZeroSeedApi } from "./api.js";
 import { disclosuresDocument } from "./disclosures.js";
-import { address, bytes32, decimal, Parameters } from "./installation.js";
+import { address, bytes32, CreateParameters, decimal, resolveParameters } from "./installation.js";
 import { LIVE_INSTANCE_PINS, refuseExecutableUse, ZeroSeedError } from "./policy.js";
 
 export interface LaunchpadEnv {
@@ -29,7 +29,10 @@ const listSchema = z.strictObject({ chain_id: chainId, owner: address.optional()
 const launchSchema = z.strictObject({ chain_id: chainId, pool_id: poolId });
 const historySchema = z.strictObject({ chain_id: chainId, pool_id: poolId, ...paging });
 const createSchema = z.strictObject({
-  chain_id: chainId, sender: address.describe("Calls the periphery and becomes the launch owner"), parameters: Parameters,
+  chain_id: chainId, sender: address.describe("Calls the periphery and becomes the launch owner"),
+  parameters: CreateParameters.describe(
+    "Tick-rate fee: the excess over finalFee halves every half-life, approaching finalFee, a floor with no end date. Give decayRateX32 or halfLifeSeconds, not both; default one day",
+  ),
 });
 const claimSchema = z.strictObject({ chain_id: chainId, sender: address, pool_id: poolId, recipient: address });
 const tradeSchema = z.strictObject({
@@ -85,7 +88,7 @@ async function getOwners(env: LaunchpadEnv, input: z.input<typeof historySchema>
 }
 
 async function prepareCreate(_env: LaunchpadEnv, input: z.input<typeof createSchema>) {
-  createSchema.parse(input);
+  resolveParameters(createSchema.parse(input).parameters);
   return disabled();
 }
 
@@ -122,7 +125,8 @@ export const launchpadTools: LaunchpadTool[] = [
   tool("launchpad_get_owners", "List zero-seed launch owners",
     `${HOLD} Refuses with launch_support_disabled. The creation owner, then every ownership transfer.`, historySchema, getOwners),
   tool("launchpad_prepare_create", "Prepare a zero-seed launch",
-    `${HOLD} Refuses with launch_support_disabled; returns no plan or reference.`, createSchema, prepareCreate),
+    `${HOLD} Validates the parameters, then refuses with launch_support_disabled; returns no plan or reference.`,
+    createSchema, prepareCreate),
   tool("launchpad_prepare_claim_fees", "Prepare a zero-seed launch fee claim",
     `${HOLD} Refuses with launch_support_disabled; returns no plan or reference.`, claimSchema, prepareClaim),
   tool("launchpad_prepare_trade", "Prepare a zero-seed launch trade",

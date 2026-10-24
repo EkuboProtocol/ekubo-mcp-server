@@ -1,5 +1,7 @@
 /**
- * Owner-summary statements. Version 6 describes the fixed 600 s half-life decay, the transferable launch ownership
+ * Owner-summary statements. Version 7 describes the tick-rate decay of tick_rate_v2: the excess over the final fee
+ * halves every half-life and approaches the final fee as a long-run floor, with no end date (version 6 described the
+ * fixed 600 s half-life rescaled to a duration). It also describes the transferable launch ownership
  * recorded by the periphery, the launch's own native or ERC-20 quote and the token-wide trust an ERC-20 quote needs,
  * and the requested supply split into the installed supply and the remainder, if any, minted to address(0). It is a
  * draft, not approved copy. The only interpolated
@@ -19,7 +21,7 @@ export const DISCLOSURE_CODES = [
   "quote_token_trust",
 ] as const;
 export type DisclosureCode = (typeof DISCLOSURE_CODES)[number];
-export const DISCLOSURE_VERSION = 6;
+export const DISCLOSURE_VERSION = 7;
 export const DISCLOSURE_STATUS = "draft_not_approved";
 
 export interface CreateStatementInput {
@@ -29,7 +31,10 @@ export interface CreateStatementInput {
   sinkSupply: string;
   initialFeePercent: string;
   finalFeePercent: string;
-  feeDuration: string;
+  /** Half-life of the excess over the final fee, seconds with 6 decimals, or "none" for decay rate 0. */
+  halfLifeSeconds: string;
+  /** floor(381061679028371455 / rate): after this many elapsed seconds the fee is exactly final; "none" for rate 0. */
+  saturationElapsedSeconds: string;
   /** ISO-8601 UTC trading start. */
   tradingStart: string;
   /** First elapsed second at which the excess over the final fee is at most half, or "none" for a flat fee. */
@@ -44,8 +49,12 @@ export interface CreateStatementInput {
 }
 
 const shape = (input: CreateStatementInput) => input.excessHalvingSeconds === "none"
-  ? `The fee is flat: initial and final are both ${input.finalFeePercent}.`
-  : `It is not linear: the excess over ${input.finalFeePercent} first falls to half or less ${input.excessHalvingSeconds} s after trading start.`;
+  ? `The fee is flat at ${input.initialFeePercent}.`
+  : `The excess over ${input.finalFeePercent} first falls to half or less ${input.excessHalvingSeconds} s after trading start.`;
+
+const decay = (input: CreateStatementInput) => input.halfLifeSeconds === "none"
+  ? `Creator fee: ${input.initialFeePercent} from trading start ${input.tradingStart}, constant: the decay rate is 0, so it never decays toward ${input.finalFeePercent}.`
+  : `Creator fee: ${input.initialFeePercent} at trading start ${input.tradingStart}. The excess over ${input.finalFeePercent} halves about every ${input.halfLifeSeconds} s, so the fee approaches ${input.finalFeePercent}, a long-run floor and not an end date: it reaches ${input.finalFeePercent} exactly only by rounding, or once more than ${input.saturationElapsedSeconds} s have passed since trading start. ${shape(input)}`;
 
 const remainder = ({ sinkSupply }: CreateStatementInput) => sinkSupply === "0"
   ? "the position takes the whole supply, so nothing is minted to address(0)"
@@ -59,7 +68,7 @@ const TEMPLATES: Record<DisclosureCode, (input: CreateStatementInput) => string>
   permanent_principal_lock: (input) =>
     `Permanent principal lock: of the total supply of ${input.requestedSupply} raw units, ${input.installedSupply} go into one position that nobody, including you, can withdraw, rebalance, migrate or refund, and ${remainder(input)}. Quote that buyers pay in is locked in the position too.`,
   creator_fee_recipient_and_rate: (input) =>
-    `Creator fee: ${input.initialFeePercent} at trading start ${input.tradingStart}, decaying with a fixed 600 s half-life rescaled to reach exactly ${input.finalFeePercent} after ${input.feeDuration} s, then ${input.finalFeePercent} for good. ${shape(input)} The fee is taken on the calculated side of every swap into a separate two-asset fee ledger, never into principal.`,
+    `${decay(input)} The fee is taken on the calculated side of every swap into a separate two-asset fee ledger, never into principal.`,
   transferable_launch_ownership: ({ owner }) =>
     `Launch ownership: ${owner} (this account) becomes the launch owner. Only the current owner can claim the fee ledger, and ownership can be transferred. Whoever owns the launch when it claims receives every unclaimed fee, including fees earned before a transfer.`,
   creator_fee_recapture: (input) =>
@@ -95,7 +104,8 @@ export function transferStatements(newOwner: string): string[] {
 
 const PLACEHOLDERS: CreateStatementInput = {
   requestedSupply: "<requested supply>", installedSupply: "<installed supply>", sinkSupply: "<sink supply>", initialFeePercent: "<initial fee>", finalFeePercent: "<final fee>",
-  feeDuration: "<fee duration>", tradingStart: "<trading start>", excessHalvingSeconds: "<excess halving time>",
+  halfLifeSeconds: "<half-life>", saturationElapsedSeconds: "<saturation seconds>", tradingStart: "<trading start>",
+  excessHalvingSeconds: "<excess halving time>",
   exactOutputMultiplier: "<exact-output multiplier>", owner: "<owner>", quote: "<quote>", quoteKind: "erc20",
 };
 
@@ -107,6 +117,9 @@ export function disclosuresDocument() {
       code,
       template: TEMPLATES[code](PLACEHOLDERS),
       ...(code === "quote_token_trust" ? { native_template: TEMPLATES[code]({ ...PLACEHOLDERS, quoteKind: "native" }) } : {}),
+      ...(code === "creator_fee_recipient_and_rate"
+        ? { constant_template: TEMPLATES[code]({ ...PLACEHOLDERS, halfLifeSeconds: "none", saturationElapsedSeconds: "none" }) }
+        : {}),
     })),
   };
 }

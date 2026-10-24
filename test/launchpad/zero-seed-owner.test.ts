@@ -2,12 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { type Address, decodeFunctionData, encodeFunctionData, type Hex, keccak256, parseAbi, stringToHex, zeroAddress } from "viem";
 import { peripheryAbi } from "../../src/launchpad/zero-seed/abi.js";
 import { claimStatements, createStatements, transferStatements } from "../../src/launchpad/zero-seed/disclosures.js";
-import { decayQ128, excessHalvingTime, feeAt } from "../../src/launchpad/zero-seed/fee.js";
+import { halfLifeSeconds, saturationElapsedSeconds, tickRateExcessHalvingTime, tickRateFeeAt } from "../../src/launchpad/zero-seed/fee.js";
 import { abiParameters, createData } from "../../src/launchpad/zero-seed/installation.js";
 import { decodeOwnerClaim, decodeOwnerCreate, feePercent, localClaimBody, localCreateBody, poolIdOf,
   type Sealed } from "../../src/launchpad/zero-seed/owner.js";
 import { launchSalts } from "../../src/launchpad/zero-seed/token.js";
-import { chain, ERC20_QUOTE, fixture, freshTime, KINDS, type Kind, launchOf, owner, pin, quoteOf, request } from "./zero-seed-fixture.js";
+import { chain, ERC20_QUOTE, fixture, freshTime, KINDS, type Kind, launchOf, owner, pin, quoteOf, request, v1Chain,
+  v1Pin } from "./zero-seed-fixture.js";
 
 const reseal = (body: string): Sealed =>
   ({ body, integrity: keccak256(stringToHex(body)), bytes: new TextEncoder().encode(body).length });
@@ -36,14 +37,15 @@ describe("opaque owner decoder: periphery create (local, non-executable)", () =>
   for (const kind of KINDS) test(`targets the periphery with the requested supply and shows the split (${kind})`, async () => {
     const { f, sealed, expected } = await created(kind);
     const summary = decodeOwnerCreate(sealed, expected, freshTime(kind));
-    expect(summary).toMatchObject({ schema_version: "zero-seed-launch-owner-summary/v4", chain_id: "31337",
-      target: pin.periphery, selector: "0x662af306", method: "create", disclosure: { version: 6, status: "draft_not_approved" } });
+    expect(summary).toMatchObject({ schema_version: "zero-seed-launch-owner-summary/v5", chain_id: "31337",
+      target: pin.periphery, selector: "0xf91810d2", method: "create", disclosure: { version: 7, status: "draft_not_approved" } });
     const requested = request(kind).supply;
     const installed = f.installation.installedSupply.toString();
     expect(summary.fields.supply).toEqual({ requested, installed, sink: SINK[kind], sink_holder: zeroAddress });
     expect(summary.fields).toMatchObject({ owner, liquidity: f.installation.liquidity.toString(),
       initial_fee_percent: "5.0000%", final_fee_percent: "0.3000%",
-      instance: { core: pin.core, extension: pin.extension, periphery: pin.periphery, controller: pin.periphery, deployment_block: "2" },
+      instance: { fee_model: "tick_rate_v2", core: pin.core, extension: pin.extension, periphery: pin.periphery,
+        controller: pin.periphery, deployment_block: "2" },
       ownership: { initial_owner: owner, recorded_by: pin.periphery, transferable: true, claims_by: "current_owner" },
       rounding: { supply_remainder: { asset: "launch_token", amount: SINK[kind], holder: zeroAddress, spendable: false,
         counted_in_total_supply: true } } });
@@ -51,6 +53,7 @@ describe("opaque owner decoder: periphery create (local, non-executable)", () =>
       ? { kind: "native", address: zeroAddress, decimals: 18, runtime: null, wrapping: false, approval: false }
       : { kind: "erc20", address: ERC20_QUOTE, decimals: null, runtime: chain.erc20_quote.runtime, wrapping: false, approval: true });
     expect(summary.fields).not.toHaveProperty("decay_factor");
+    expect(summary.fields).not.toHaveProperty("fee_duration");
     expect(summary.fields).not.toHaveProperty("quote_token");
     expect(summary.fields.binding).toMatchObject({ requested_supply: requested, installed_supply: installed, sink_supply: SINK[kind],
       calldata_supply: requested, installed_liquidity: f.installation.liquidity.toString(),
@@ -67,7 +70,7 @@ describe("opaque owner decoder: periphery create (local, non-executable)", () =>
     if (call.functionName !== "create") throw new Error("create");
     expect(call.args[0].supply).toBe(BigInt(requested));
     expect(call.args[0].quoteToken.toLowerCase()).toBe(quoteOf(kind));
-    expect(JSON.parse(sealed.body)).toMatchObject({ schema_version: "zero-seed-local-create/v4", scope: "synthetic-local-non-executable",
+    expect(JSON.parse(sealed.body)).toMatchObject({ schema_version: "zero-seed-local-create/v5", scope: "synthetic-local-non-executable",
       executable: false, value: "0", quote: { address: quoteOf(kind), kind } });
     expect(sealed.body).not.toContain("execution_plan");
   });
@@ -111,7 +114,10 @@ describe("opaque owner decoder: periphery create (local, non-executable)", () =>
     expect(() => decodeOwnerCreate({ ...sealed, bytes: sealed.bytes + 1 }, expected, now)).toThrow("artifact_length_mismatch");
     expect(() => decodeOwnerCreate(reseal(` ${sealed.body}`), expected, now)).toThrow("artifact_noncanonical");
     for (const change of [(b: any) => { b.executable = true; }, (b: any) => { b.extra = 1; },
-      (b: any) => { b.schema_version = "zero-seed-local-create/v3"; }, (b: any) => { b.disclosure_version = 5; },
+      (b: any) => { b.schema_version = "zero-seed-local-create/v4"; }, (b: any) => { b.disclosure_version = 6; },
+      (b: any) => { b.requested.feeDuration = 3600; }, (b: any) => { delete b.requested.decayRateX32; },
+      (b: any) => { b.requested.decayRateX32 = 9923486534471; }, (b: any) => { b.requested.decayRateX32 = "18446744073709551616"; },
+      (b: any) => { b.pin.feeModel = "tick_rate_v3"; }, (b: any) => { delete b.pin.feeModel; },
       (b: any) => { b.value = "1"; }, (b: any) => { b.requested.decayFactor = "1"; }, (b: any) => { b.requested.liquidity = "0"; },
       (b: any) => { b.pin.quote = zeroAddress; }, (b: any) => { delete b.quote; },
       (b: any) => { delete b.pin.periphery; }, (b: any) => { b.preview.count = 2; }]) {
@@ -161,61 +167,87 @@ describe("opaque owner decoder: periphery create (local, non-executable)", () =>
   });
 });
 
-describe("owner summary binds the fixed-half-life fee schedule", () => {
-  test("fees and duration come from the calldata, with the exact schedule", async () => {
+describe("owner summary binds the tick-rate fee schedule", () => {
+  test("fees and the decay rate come from the calldata, with the exact schedule, half-life and saturation", async () => {
     const { sealed, expected } = await created();
     const summary = decodeOwnerCreate(sealed, expected, freshTime());
     const call = decodeFunctionData({ abi: peripheryAbi, data: JSON.parse(sealed.body).data as Hex });
     if (call.functionName !== "create") throw new Error("create");
     const p = call.args[0];
-    expect([summary.fields.initial_fee, summary.fields.final_fee, summary.fields.fee_duration])
-      .toEqual([p.initialFee.toString(), p.finalFee.toString(), p.feeDuration]);
-    const schedule = { tradingStart: p.tradingStart, feeDuration: BigInt(p.feeDuration), initialFee: p.initialFee, finalFee: p.finalFee };
+    expect([summary.fields.initial_fee, summary.fields.final_fee, summary.fields.decay_rate_x32])
+      .toEqual([p.initialFee.toString(), p.finalFee.toString(), p.decayRateX32.toString()]);
+    expect(p.decayRateX32).toBe(9923486534471n);
+    const schedule = { tradingStart: p.tradingStart, decayRateX32: p.decayRateX32, initialFee: p.initialFee, finalFee: p.finalFee };
     const fee = summary.fields.fee_schedule;
-    expect(fee).toMatchObject({ curve: "fixed_half_life_endpoint_normalized", half_life_seconds: 600,
-      endpoint_decay_q128: decayQ128(3600n).toString(), effective_cliff: false, exact_output_multiplier_at_initial: "1.05",
+    expect(fee).toMatchObject({ model: "tick_rate_v2", trading_start: Number(p.tradingStart), initial_fee: p.initialFee.toString(),
+      final_fee: p.finalFee.toString(), decay_rate_x32: "9923486534471", half_life_seconds: "600.000000",
+      saturation_elapsed_seconds: "38399", exact_output_multiplier_at_initial: "1.05",
       current: { evaluated_at: Number(B), phase: "before_trading_start", fee_q64: p.initialFee.toString(), fee_percent: "5.0000%" } });
-    expect(fee.excess_halving_seconds).toBe(Number(excessHalvingTime(schedule)));
-    expect(fee.samples.map((s) => s.elapsed)).toEqual([0, 1, 10, 60, 600, 1800, 3599, 3600]);
-    for (const sample of fee.samples) expect(sample.fee_q64).toBe(feeAt(schedule, p.tradingStart + BigInt(sample.elapsed)).toString());
-    expect(fee.samples.at(-1)!.fee_q64).toBe(p.finalFee.toString());
-    expect(summary.statements[3]).toContain("fixed 600 s half-life");
+    expect(fee.half_life_seconds).toBe(halfLifeSeconds(p.decayRateX32));
+    expect(fee.saturation_elapsed_seconds).toBe(saturationElapsedSeconds(p.decayRateX32)!.toString());
+    expect(fee.excess_halving_seconds).toBe(tickRateExcessHalvingTime(schedule)!.toString());
+    expect(fee.samples.map((x) => x.elapsed)).toEqual(["0", "1", "60", "3600", "38399", "38400", "86400", "604800", "2592000"]);
+    for (const sample of fee.samples) {
+      expect(sample.fee_q64).toBe(tickRateFeeAt(schedule, p.tradingStart + BigInt(sample.elapsed)).toString());
+    }
+    expect(fee.samples.find((x) => x.elapsed === "38400")!.fee_q64).toBe(p.finalFee.toString());
+    for (const stale of ["fee_duration", "fee_end", "endpoint_decay_q128", "effective_cliff", "curve"]) expect(fee).not.toHaveProperty(stale);
+    expect(summary.statements[3]).toContain("halves about every 600.000000 s, so the fee approaches 0.3000%, a long-run floor and not an end date");
+    expect(summary.statements[3]).toContain("once more than 38399 s have passed since trading start");
     expect(summary.statements[3]).toContain(`falls to half or less ${fee.excess_halving_seconds} s`);
+    expect(summary.statements[3]).not.toContain("after 3600 s");
     expect(summary.fields.binding.calldata_keccak256).toBe(keccak256(JSON.parse(sealed.body).data));
     const { summary_keccak256: hash, ...rest } = summary;
     expect(hash).toBe(keccak256(stringToHex(JSON.stringify(rest))));
   });
 
-  test("a different fee or duration in the calldata refuses", async () => {
+  test("a different fee, rate or salt in the calldata refuses", async () => {
     const { f, sealed, expected } = await created();
     const preview = await f.run();
-    for (const change of [{ initialFee: "922337203685477581" }, { feeDuration: 600 }, { salt: `0x${"00".repeat(31)}02` }]) {
+    for (const change of [{ initialFee: "922337203685477581" }, { decayRateX32: "9923486534470" }, { decayRateX32: "0" },
+      { salt: `0x${"00".repeat(31)}02` }]) {
       const other = localCreateBody({ ...preview, requested: { ...preview.requested, ...change } });
       expect(() => decodeOwnerCreate(edit(sealed, (b) => { b.data = JSON.parse(other.body).data; }), expected, freshTime())).toThrow("calldata_summary_mismatch");
     }
   });
 
-  test("earlier create encodings never decode as the periphery call", async () => {
+  test("the fixed_base_duration_v1 create and earlier encodings never decode as the periphery call", async () => {
     const { sealed, expected } = await created();
     const p = abiParameters(request());
+    const v1 = parseAbi(["function create((string,string,uint8,uint128,address,int32,int32,uint32,uint64,uint32,uint64,uint64,bytes32))"]);
     const liquidityTuple = parseAbi(["function create((string,string,uint8,uint128,uint128,int32,int32,uint32,uint64,uint32,uint64,uint64,bytes32))"]);
     const quoteFirst = parseAbi(["function create((address,string,string,uint8,uint128,uint128,int32,int32,uint32,uint64,uint32,uint64,uint64,bytes32))"]);
     const withFactor = parseAbi(["function create((address,string,string,uint8,uint128,uint128,int32,int32,uint32,uint64,uint32,uint64,uint64,uint64,bytes32))"]);
     const tail = [p.name, p.symbol, p.decimals, p.supply, 1111119116089565312898036n, p.askTick, p.upperTick, p.tickSpacing, p.tradingStart,
-      p.feeDuration, p.initialFee, p.finalFee] as const;
+      600, p.initialFee, p.finalFee] as const;
     const legacy = [
+      encodeFunctionData({ abi: v1, functionName: "create", args: [[p.name, p.symbol, p.decimals, p.supply, p.quoteToken, p.askTick,
+        p.upperTick, p.tickSpacing, p.tradingStart, 600, p.initialFee, p.finalFee, p.salt]] }),
       encodeFunctionData({ abi: liquidityTuple, functionName: "create", args: [[...tail, p.salt]] }),
       encodeFunctionData({ abi: quoteFirst, functionName: "create", args: [[zeroAddress, ...tail, p.salt]] }),
       encodeFunctionData({ abi: withFactor, functionName: "create", args: [[zeroAddress, ...tail, 18425445863997925462n, p.salt]] }),
     ];
-    expect(legacy.map((data) => data.slice(0, 10))).toEqual(["0x687ba810", "0xe11b98da", "0xd5f50468"]);
+    expect(legacy.map((data) => data.slice(0, 10))).toEqual(["0x662af306", "0x687ba810", "0xe11b98da", "0xd5f50468"]);
     for (const data of legacy) {
       expect(() => decodeOwnerCreate(edit(sealed, (b) => { b.data = data; }), expected, freshTime())).toThrow("unsupported_selector");
     }
-    // The 40af6cb selector over the old 13-field body reads the uint128 liquidity as a quote address: another
-    // launch than the requested one, so it never matches the bound request.
-    const spliced = `0x662af306${legacy[0].slice(10)}` as Hex;
+    // The tick-rate selector over the v1 body reads the uint32 duration word as the uint64 rate: another launch than
+    // the requested one, so it never matches the bound request.
+    const spliced = `0xf91810d2${legacy[0].slice(10)}` as Hex;
     expect(() => decodeOwnerCreate(edit(sealed, (b) => { b.data = spliced; }), expected, freshTime())).toThrow("calldata_summary_mismatch");
+  });
+
+  test("a fixed_base_duration_v1 pin gets no create artifact and no create summary", async () => {
+    const { f, sealed, expected } = await created();
+    const preview = await f.run();
+    expect(() => localCreateBody({ ...preview, pin: v1Pin })).toThrow("unsupported_fee_model");
+    await expect(f.run(request(), undefined, v1Pin)).rejects.toThrow("unsupported_fee_model");
+    const repinned = edit(sealed, (b) => { b.pin = { ...v1Pin }; b.target = v1Pin.periphery; });
+    expect(() => decodeOwnerCreate(repinned, { ...expected, pin: v1Pin }, freshTime())).toThrow("unsupported_fee_model");
+    // The recorded v1 artifacts (zero-seed-local-create/v4, a pin without a model) are not re-read as v5.
+    const recorded = v1Chain.launches.native;
+    expect(() => decodeOwnerCreate(recorded.sealed as Sealed, { pin: v1Pin, owner, requested: recorded.request as never },
+      BigInt(recorded.build.buildTime) + 1n)).toThrow("artifact_schema_mismatch");
   });
 });
 
@@ -229,16 +261,16 @@ describe("owner statements and rates", () => {
     expect(feePercent(922337203685477n)).toBe("0.0050%");
   });
 
-  test("v6 draft statements for 50% -> 0.3% on native ETH, byte for byte", () => {
+  test("v7 draft statements for 50% -> 0.3% at the one-day half-life on native ETH, byte for byte", () => {
     expect(createStatements({ requestedSupply: "1000000000000000000000000000", installedSupply: "999999999999999999999999422",
       sinkSupply: "578", initialFeePercent: "50.0000%",
-      finalFeePercent: "0.3000%", feeDuration: "3600", tradingStart: new Date(1800000100 * 1000).toISOString(),
-      excessHalvingSeconds: "587", exactOutputMultiplier: "2.00", owner: "0x00000000000000000000000000000000c0ffee01",
+      finalFeePercent: "0.3000%", halfLifeSeconds: "86400.000001", saturationElapsedSeconds: "5529597", tradingStart: new Date(1800000100 * 1000).toISOString(),
+      excessHalvingSeconds: "86401", exactOutputMultiplier: "2.00", owner: "0x00000000000000000000000000000000c0ffee01",
       quote: "native ETH", quoteKind: "native" })).toEqual([
       "Zero initial bid: the pool starts with no native ETH. Until someone buys, selling the launch token fills nothing.",
       "Buyer-funded quote reserve: the only native ETH in the pool is what buyers pay in. Sells can withdraw only that.",
       "Permanent principal lock: of the total supply of 1000000000000000000000000000 raw units, 999999999999999999999999422 go into one position that nobody, including you, can withdraw, rebalance, migrate or refund, and the remainder of 578, too small to pay for one more unit of liquidity, is minted to address(0), where nobody can ever spend it. Quote that buyers pay in is locked in the position too.",
-      "Creator fee: 50.0000% at trading start 2027-01-15T08:01:40.000Z, decaying with a fixed 600 s half-life rescaled to reach exactly 0.3000% after 3600 s, then 0.3000% for good. It is not linear: the excess over 0.3000% first falls to half or less 587 s after trading start. The fee is taken on the calculated side of every swap into a separate two-asset fee ledger, never into principal.",
+      "Creator fee: 50.0000% at trading start 2027-01-15T08:01:40.000Z. The excess over 0.3000% halves about every 86400.000001 s, so the fee approaches 0.3000%, a long-run floor and not an end date: it reaches 0.3000% exactly only by rounding, or once more than 5529597 s have passed since trading start. The excess over 0.3000% first falls to half or less 86401 s after trading start. The fee is taken on the calculated side of every swap into a separate two-asset fee ledger, never into principal.",
       "Launch ownership: 0x00000000000000000000000000000000c0ffee01 (this account) becomes the launch owner. Only the current owner can claim the fee ledger, and ownership can be transferred. Whoever owns the launch when it claims receives every unclaimed fee, including fees earned before a transfer.",
       "Owner recapture: every fee goes to the launch owner. When the owner, or anyone buying for it, trades, it gets that fee back through its claim: on an exact-input buy at 50.0000% it can end up with the whole pre-fee output, while anyone else making the same trade gets only the net. The fee cannot tell owners, snipers and honest buyers apart.",
       "High early fee: near 50.0000%, a swap can deliver a negligible or zero amount after the fee, and an immediate round trip pays the fee twice plus price impact. A high starting fee is not protection against snipers and does not promise that anyone avoids a loss.",
@@ -248,18 +280,24 @@ describe("owner statements and rates", () => {
     ]);
     const erc20 = createStatements({ requestedSupply: "170141183460469231694794709727778658247",
       installedSupply: "170141183460469231694794709727778658247", sinkSupply: "0", initialFeePercent: "50.0000%",
-      finalFeePercent: "0.3000%", feeDuration: "3600", tradingStart: "t", excessHalvingSeconds: "587", exactOutputMultiplier: "2.00",
+      finalFeePercent: "0.3000%", halfLifeSeconds: "86400.000001", saturationElapsedSeconds: "5529597", tradingStart: "t", excessHalvingSeconds: "86401", exactOutputMultiplier: "2.00",
       owner: "c", quote: "quote token 0xffffffffffffffffffffffffffffffffffffffff", quoteKind: "erc20" });
     expect(erc20[2]).toBe("Permanent principal lock: of the total supply of 170141183460469231694794709727778658247 raw units, 170141183460469231694794709727778658247 go into one position that nobody, including you, can withdraw, rebalance, migrate or refund, and the position takes the whole supply, so nothing is minted to address(0). Quote that buyers pay in is locked in the position too.");
     expect(erc20[9]).toBe("Quote trust: quote token 0xffffffffffffffffffffffffffffffffffffffff is trusted across all of Core, not just this pool. Core keeps one balance per token, so if this token misreports balances or transfers, every pool, position and fee ledger holding it is exposed, including other launches and ordinary pools on it, and an honest token paired with it can lose that pool's own reserve. A transfer fee, rebase, blocked transfer or callback breaks every pool on it the same way. Pools that do not hold this token, including native ETH and unrelated tokens, keep their own per-token accounting and are not reachable through it.");
-    const all = createStatements({ requestedSupply: "2", installedSupply: "1", sinkSupply: "1", initialFeePercent: "5.0000%", finalFeePercent: "0.3000%", feeDuration: "3600",
+    const all = createStatements({ requestedSupply: "2", installedSupply: "1", sinkSupply: "1", initialFeePercent: "5.0000%", finalFeePercent: "0.3000%", halfLifeSeconds: "86400.000001", saturationElapsedSeconds: "5529597",
       tradingStart: "t", excessHalvingSeconds: "1", exactOutputMultiplier: "1.05", owner: "c", quote: "q", quoteKind: "erc20" }).join(" ");
-    for (const promise of ["linearly", "cannot transfer", "protects", "no loss", "guarantee", "decay factor"]) {
+    for (const promise of ["linearly", "cannot transfer", "protects", "no loss", "guarantee", "decay factor", "for good",
+      "rescaled", "after 3600 s", "ends"]) {
       expect(all.replace("No exit guarantee", "")).not.toContain(promise);
     }
-    expect(createStatements({ requestedSupply: "1", installedSupply: "1", sinkSupply: "0", initialFeePercent: "0.3000%", finalFeePercent: "0.3000%", feeDuration: "3600",
-      tradingStart: "t", excessHalvingSeconds: "none", exactOutputMultiplier: "1.00", owner: "c", quote: "q", quoteKind: "erc20" })[3])
-      .toContain("The fee is flat: initial and final are both 0.3000%.");
+    expect(createStatements({ requestedSupply: "1", installedSupply: "1", sinkSupply: "0", initialFeePercent: "0.3000%", finalFeePercent: "0.3000%",
+      halfLifeSeconds: "86400.000001", saturationElapsedSeconds: "5529597", tradingStart: "t", excessHalvingSeconds: "none", exactOutputMultiplier: "1.00", owner: "c", quote: "q", quoteKind: "erc20" })[3])
+      .toContain("The fee is flat at 0.3000%.");
+    // Decay rate 0: constant at the initial fee, with no half-life or saturation to state.
+    expect(createStatements({ requestedSupply: "1", installedSupply: "1", sinkSupply: "0", initialFeePercent: "50.0000%",
+      finalFeePercent: "0.3000%", halfLifeSeconds: "none", saturationElapsedSeconds: "none", tradingStart: "t", excessHalvingSeconds: "none",
+      exactOutputMultiplier: "2.00", owner: "c", quote: "q", quoteKind: "erc20" })[3]).toBe(
+      "Creator fee: 50.0000% from trading start t, constant: the decay rate is 0, so it never decays toward 0.3000%. The fee is taken on the calculated side of every swap into a separate two-asset fee ledger, never into principal.");
     expect(claimStatements("0x00000000000000000000000000000000c0ffee02")).toEqual([
       "Withdraws the whole two-asset fee ledger of this launch to 0x00000000000000000000000000000000c0ffee02, both assets or neither. It never touches the locked principal.",
       "Only the current launch owner can claim. Ownership is transferable, so the right to claim follows the current owner, not the account that created the launch.",
@@ -319,6 +357,22 @@ describe("opaque owner decoder: periphery claim (local, non-executable)", () => 
     expect(decodeOwnerClaim(sealed, { pin, owner }, T2 + 1n)).toEqual(erc.owner_summary as never);
     expect(() => localClaimBody({ owner, pin, quoteToken: zeroAddress, poolKey: ercKey, recipient, ownerCheck: erc.owner_check,
       build: { buildTime: T2.toString(), executionExpiry: (T2 + 300n).toString() } })).toThrow("unsupported_quote");
+  });
+
+  test("a fixed_base_duration_v1 launch still claims: the same claimFees call, byte for byte, as its chain executed", () => {
+    const v1 = v1Chain.first_claim;
+    const T1 = BigInt(v1.receipt.timestamp) - 1n;
+    const sealed = localClaimBody({ owner, pin: v1Pin, quoteToken: zeroAddress, poolKey: v1Chain.launches.native.preview.installation.poolKey,
+      recipient: v1Chain.accounts.recipient as Address, ownerCheck: v1.owner_check,
+      build: { buildTime: T1.toString(), executionExpiry: (T1 + 300n).toString() } });
+    const body = JSON.parse(sealed.body);
+    expect(body.data).toBe(JSON.parse(v1.sealed.body).data);
+    expect(body).toMatchObject({ schema_version: "zero-seed-local-claim/v4", pin: { feeModel: "fixed_base_duration_v1" } });
+    const summary = decodeOwnerClaim(sealed, { pin: v1Pin, owner }, T1 + 1n);
+    expect(summary.fields.instance.fee_model).toBe("fixed_base_duration_v1");
+    expect(summary.statements).toEqual(v1.owner_summary.statements);
+    // The recorded v3 claim body (pin without a model) is not re-read.
+    expect(() => decodeOwnerClaim(v1.sealed as Sealed, { pin: v1Pin, owner }, T1 + 1n)).toThrow("artifact_schema_mismatch");
   });
 
   test("tampered recipient, owner check, foreign pool and expiry refuse", () => {

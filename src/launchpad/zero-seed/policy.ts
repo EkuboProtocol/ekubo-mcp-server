@@ -1,12 +1,34 @@
 import { type Address, getAddress, zeroAddress } from "viem";
 import { ServiceError } from "../../core.js";
+import { FEE_MODELS, type FeeModel } from "./abi.js";
 
-// Consumer interface of evm-contracts 43d6628: ZeroSeedLaunch(Core) and ZeroSeedLaunchPeriphery(Core, extension).
-// Not deployed, released or audited.
-export const CONTRACTS_COMMIT = "43d6628841b3ce91dafa048b7ceef64bed55fc8e";
-/** sha256 of the compact, key-sorted JSON of each full compiled ABI (`jq -cS .abi`, no trailing newline). */
-export const EXTENSION_ABI_SHA256 = "efae9388aa6b1342479204ddf436fd2a310df16bf06c80c990b2d22c90d1e41e";
-export const PERIPHERY_ABI_SHA256 = "df24d9f07d45323da7e46c0f6e64ce24f8f522442d60cb07880ddf742ebe7305";
+export type { FeeModel };
+
+// Consumer interfaces of ZeroSeedLaunch(Core) and ZeroSeedLaunchPeriphery(Core, extension), one per fee model. Not
+// deployed, released or audited.
+/** evm-contracts revision of each fee model. */
+export const CONTRACTS_COMMITS: Readonly<Record<FeeModel, string>> = Object.freeze({
+  fixed_base_duration_v1: "43d6628841b3ce91dafa048b7ceef64bed55fc8e",
+  tick_rate_v2: "3d6378f585591dc7eabeea6976932c30524bb8ea",
+});
+/** The revision new launches are prepared for. */
+export const CONTRACTS_COMMIT = CONTRACTS_COMMITS.tick_rate_v2;
+/**
+ * sha256 of the compact, key-sorted JSON of each full compiled ABI (`jq -cS .abi`, no trailing newline), per fee
+ * model.
+ */
+export const ABI_SHA256: Readonly<Record<FeeModel, Readonly<{ extension: string; periphery: string }>>> = Object.freeze({
+  fixed_base_duration_v1: Object.freeze({
+    extension: "efae9388aa6b1342479204ddf436fd2a310df16bf06c80c990b2d22c90d1e41e",
+    periphery: "df24d9f07d45323da7e46c0f6e64ce24f8f522442d60cb07880ddf742ebe7305",
+  }),
+  tick_rate_v2: Object.freeze({
+    extension: "89ff4d15e5e8b4f044c4804d460df915e9206bbdbdcef22cf4afe0fbbf4eaadd",
+    periphery: "a6d43b362d04eeb4e636ee32a031fc06995a2fd8bb71fb63750f27836a0ddb07",
+  }),
+});
+export const EXTENSION_ABI_SHA256 = ABI_SHA256.tick_rate_v2.extension;
+export const PERIPHERY_ABI_SHA256 = ABI_SHA256.tick_rate_v2.periphery;
 
 /** Core's NATIVE_TOKEN_ADDRESS. A native quote has no code, decimals() or approvals and is always token0. */
 export const NATIVE_QUOTE = zeroAddress;
@@ -21,6 +43,7 @@ export const EXTENSION_CALL_POINTS_BYTE = "51";
  */
 export interface InstancePin {
   chainId: string;
+  feeModel: FeeModel;
   core: string;
   extension: string;
   periphery: string;
@@ -33,21 +56,34 @@ export interface InstancePin {
 
 const CORE = "0x00000000000014aa86c5d3c41765bb24e11bd701";
 
-// The one instance deployed on a local anvil chain from the 43d6628 artifacts, identically (same deterministic
-// deployer, salts, constructor arguments and block) by script/zero-seed-local-chain.ts and by the indexer's replay
-// fixture generator (indexer 91a7036, scripts/zeroSeedLaunchFixture.ts).
-// Not a live instance, and equal runtime alone is not provenance.
+// The instances deployed on local anvil chains, one per fee model, identically (same deterministic deployer, salts,
+// constructor arguments and block) by script/zero-seed-local-chain.ts and by the indexer's replay fixture generator:
+// the 43d6628 artifacts (indexer 91a7036, local-chain.json) and the 3d6378f artifacts (indexer 7f373e5,
+// local-chain-v2.json). Not live instances, and equal runtime alone is not provenance.
 export const LOCAL_INSTANCE_PINS: readonly Readonly<InstancePin>[] = Object.freeze([
   Object.freeze({
     chainId: "31337",
+    feeModel: "fixed_base_duration_v1",
     core: CORE,
     extension: "0x519c5f793d3f6cf9ee439e4cc38d8285cf08211f",
     periphery: "0x0df4e2a76640b52e51479b435f52d0eb0e7e8ef4",
     extensionRuntime: "0xd6b4c7ce8da56e9948fdb004a035d9b52dbd3690bcb03c1269bbf2a9981d8ed5",
     peripheryRuntime: "0x2a9329dbb064a2c031115c7c120c8b6a1f31de167f33374180e4dc73d975974b",
     deploymentBlock: "2",
-    extensionAbiSha256: EXTENSION_ABI_SHA256,
-    peripheryAbiSha256: PERIPHERY_ABI_SHA256,
+    extensionAbiSha256: ABI_SHA256.fixed_base_duration_v1.extension,
+    peripheryAbiSha256: ABI_SHA256.fixed_base_duration_v1.periphery,
+  } as const),
+  Object.freeze({
+    chainId: "31337",
+    feeModel: "tick_rate_v2",
+    core: CORE,
+    extension: "0x5135fd3e9a6056937eaf6b99454bbc2198c2263d",
+    periphery: "0xfb2e7927d3e4984dca3e390526d43c6f5a3461e9",
+    extensionRuntime: "0xe08ad382497fc9825956c2b4e9ccf463014c4ed65baf50c0a59db8d7b7aedfc3",
+    peripheryRuntime: "0xf72d3cd6b99e1b64f0b08c0f6933b4f8adb92464ded48c51bfb7d2805c09d667",
+    deploymentBlock: "2",
+    extensionAbiSha256: ABI_SHA256.tick_rate_v2.extension,
+    peripheryAbiSha256: ABI_SHA256.tick_rate_v2.periphery,
   } as const),
 ]);
 
@@ -85,7 +121,7 @@ const NATIVE: LaunchQuote = Object.freeze({ kind: "native", address: NATIVE_QUOT
 const ADDRESS = /^0x[0-9a-f]{40}$/;
 const BYTES32 = /^0x[0-9a-f]{64}$/;
 const PIN_KEYS = [
-  "chainId", "core", "extension", "periphery", "extensionRuntime", "peripheryRuntime", "deploymentBlock",
+  "chainId", "feeModel", "core", "extension", "periphery", "extensionRuntime", "peripheryRuntime", "deploymentBlock",
   "extensionAbiSha256", "peripheryAbiSha256",
 ] as const satisfies readonly (keyof InstancePin)[];
 
@@ -118,15 +154,18 @@ function distinctIdentity(pin: InstancePin): boolean {
     !contracts.includes(NATIVE_QUOTE) && pin.extension.slice(2, 4) === EXTENSION_CALL_POINTS_BYTE;
 }
 
+/** The pin's ABIs are exactly its fee model's. */
 function pinnedArtifacts(pin: InstancePin): boolean {
-  return [pin.extensionRuntime, pin.peripheryRuntime].every((h) => typeof h === "string" && BYTES32.test(h)) &&
-    pin.extensionAbiSha256 === EXTENSION_ABI_SHA256 && pin.peripheryAbiSha256 === PERIPHERY_ABI_SHA256 &&
+  const hashes = (FEE_MODELS as readonly string[]).includes(pin.feeModel) ? ABI_SHA256[pin.feeModel] : undefined;
+  return hashes !== undefined &&
+    [pin.extensionRuntime, pin.peripheryRuntime].every((h) => typeof h === "string" && BYTES32.test(h)) &&
+    pin.extensionAbiSha256 === hashes.extension && pin.peripheryAbiSha256 === hashes.periphery &&
     /^[1-9][0-9]*$/.test(pin.chainId) && /^(0|[1-9][0-9]*)$/.test(pin.deploymentBlock);
 }
 
 /**
  * Structural identity rules every pin must meet: exactly the pin fields, distinct nonzero Core, extension and
- * periphery, an extension address that encodes the launch call points, and the pinned ABIs.
+ * periphery, an extension address that encodes the launch call points, a known fee model and that model's ABIs.
  */
 export function wellFormedPin(pin: InstancePin): boolean {
   return exactKeys(pin) && distinctIdentity(pin) && pinnedArtifacts(pin);

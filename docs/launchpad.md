@@ -1,10 +1,13 @@
 # Launchpad (zero-seed, support disabled)
 
 The launchpad targets the zero-seed launch interface of evm-contracts
-`43d6628`: the `ZeroSeedLaunch(Core)` extension and the
-`ZeroSeedLaunchPeriphery(Core, extension)` that users call. One extension and
-its periphery serve every quote token; each launch names its own. It is not
-deployed, released or externally reviewed. A launcher deploys and funds its
+`3d6378f` (the `tick_rate_v2` fee model): the `ZeroSeedLaunch(Core)` extension
+and the `ZeroSeedLaunchPeriphery(Core, extension)` that users call. One
+extension and its periphery serve every quote token; each launch names its
+own. Deployments of the earlier `43d6628` revision (`fixed_base_duration_v1`)
+keep their own ABI and math for reads and claims; no create is prepared for
+them. Neither revision is deployed by this server, released or externally
+reviewed. A launcher deploys and funds its
 own pair of contracts; nothing here assumes a canonical Ekubo instance.
 
 ## Where the tools are served
@@ -44,28 +47,46 @@ provider read or caller-supplied address can add one.
 | `launchpad_prepare_claim_fees` | Refuses with `launch_support_disabled`; no plan or reference. |
 | `launchpad_prepare_trade` | Refuses with `executable_budget_not_proven`; no plan or reference. |
 
-The read tools consume the indexed launch API `zero-seed-launch-api/v4`
+The read tools consume the indexed launch API `zero-seed-launch-api/v5`
 (`src/launchpad/zero-seed/api.ts`) only for a chain with a live pin, of which
 there is none, so no hosted call reaches the API. Any other schema version is
-refused. The client re-derives the pool, the instance, the launch's quote and
-its support, the supply split, the fee rate and the owner and ledger totals
-from each response; see
+refused, including v4. Its `fee_schedule` is a union on `model`, which must be
+the model of the row's instance pin. The client re-derives the pool, the
+instance, the launch's quote and its support, the supply split, the fee rate,
+phase, half-life and saturation second with that model's math, and the owner
+and ledger totals from each response; see
 [zero-seed-checkpoint.md](zero-seed-checkpoint.md).
 
-`launchpad://disclosures` serves the ten mechanism disclosures (version 6)
+`launchpad://disclosures` serves the ten mechanism disclosures (version 7)
 every owner summary carries: zero initial bid, buyer-funded quote reserve,
 permanent principal lock (with the requested, installed and sink supply),
 creator fee rate, transferable launch ownership,
 owner fee recapture, high initial fee, exact-output gross-up, no exit
 guarantee and quote trust. The quote-trust statement has an ERC-20 form
-(`template`) and a native-ETH form (`native_template`). The wording is a
-draft and not approved.
+(`template`) and a native-ETH form (`native_template`); the creator-fee
+statement has a decaying form (`template`: the excess over the final fee
+halves every half-life and approaches the final fee, a floor with no end date)
+and a decay-rate-0 form (`constant_template`). The wording is a draft and not
+approved.
 
 ## Instances
 
-A pin (`InstancePin`) binds one launcher deployment: the chain, Core, the
-extension and its periphery, each contract by exact deployed runtime, and the
-block both were deployed in. It has no quote. The extension address must start
+A pin (`InstancePin`) binds one launcher deployment: the chain, its fee model
+(`feeModel`), Core, the extension and its periphery, each contract by exact
+deployed runtime, the block both were deployed in, and the ABI hashes of its
+model's revision. It has no quote. The fee model is fixed by the deployment's
+contract revision and is never inferred from an address, event or API row:
+each model has its own ABI, create and preview selectors, `LaunchCreated`
+topic and runtime templates, and a log, calldata or row of the other model is
+refused rather than decoded with it.
+
+| `feeModel` | evm-contracts | 10th `LaunchParameters` field | `create` / `previewInstallation` | `LaunchCreated` topic | Produced here |
+| --- | --- | --- | --- | --- | --- |
+| `tick_rate_v2` | `3d6378f` | `uint64 decayRateX32` | `0xf91810d2` / `0xb665ec4d` | `0x8f81ce1b…5888` | preview, create, claim |
+| `fixed_base_duration_v1` | `43d6628` | `uint32 feeDuration` | `0x662af306` / `0x917c1163` | `0x3a4e8111…098f` | claim only (`unsupported_fee_model` for preview and create) |
+
+`claimFees` (`0x6906b4c0`), `transferLaunch`, `launchOwner` and every other
+event are the same in both. The extension address must start
 with the call-points byte `0x51`; Core, extension and periphery must be
 distinct. `runtime.ts` accepts deployed code only when it is the compiler
 template with exactly the expected Core or extension word at every
@@ -135,20 +156,21 @@ sink.
 
 ## Calls
 
-- `create(LaunchParameters)` (`0x662af306`), `previewInstallation(owner,
-  LaunchParameters)` (`0x917c1163`) and `claimFees(PoolKey, recipient)` go to
+- `create(LaunchParameters)` (`0xf91810d2`), `previewInstallation(owner,
+  LaunchParameters)` (`0xb665ec4d`) and `claimFees(PoolKey, recipient)` go to
   the periphery, never with value. `LaunchParameters` is `(name, symbol,
   decimals, supply, quoteToken, askTick, upperTick, tickSpacing, tradingStart,
-  feeDuration, initialFee, finalFee, salt)`: the quote in slot 5, no liquidity
-  and no decay factor. The earlier `0x687ba810` tuple never decodes as a
-  create.
+  decayRateX32, initialFee, finalFee, salt)`: the quote in slot 5, no
+  liquidity, and the decay rate where `feeDuration` was. The
+  `fixed_base_duration_v1` create (`0x662af306`) and the earlier `0x687ba810`
+  tuple never decode as a create.
 - The periphery namespaces the user's salt as `keccak256(abi.encode(owner,
   salt))`; the extension namespaces it again with its controller, the
   periphery. The launch token is `CREATE2(extension, keccak256(abi.encode(
   periphery, ownerSalt)), MintableERC20 init code)`.
 - The caller of `create` becomes the launch owner, recorded by the periphery
   (`LaunchOwnerChanged(poolId, 0x0, owner)` identifies the creator;
-  `events.ts` decodes `LaunchCreated`, topic `0x3a4e8111…098f`, and
+  `events.ts` decodes `LaunchCreated` with the pin's model only and
   attributes the creator from it). Only the
   current owner can claim, and `transferLaunch` moves that right, including
   fees not yet claimed. A claim body carries the `launchOwner(poolId)` read it
@@ -165,33 +187,58 @@ sink.
 
 ## Creator fee schedule
 
-The decay has a fixed 600 s half-life: `decayQ128(t)` multiplies `2^128` by
-the table constant of every set bit of `t` in ascending order, flooring after
-each multiply, and is zero from `2^17` s. With `E = decayQ128(D)` the fee is
-`initialFee` at or before trading start,
-`finalFee + floor((initialFee - finalFee) * (decayQ128(t) - E) / (2^128 - E))`
-inside the window and `finalFee` from `D` on. Both fees are Q0.64 rates
-(`value / 2^64`) and may be any uint64, `0` to `18446744073709551615` (`2^64 - 1`,
-just under 100%; exactly 100% is `2^64`, which is not a uint64). The contract
-checks only `finalFee <= initialFee` and `feeDuration > 0`
-(`InvalidFeeSchedule()`); there is no lower ceiling and no `FeeTooHigh`.
-Both fee fields are required; the tool has no default schedule. The reference
-schedule is unchanged: 50% (`9223372036854775808`) to 0.3%
-(`55340232221128654`) over 3,600 s, whose excess first halves after 587 s,
-with the fees going to the launch owner. The maximum is a bound a caller may
-choose, not a suggestion.
+`tick_rate_v2` (`src/math/feeDecay.sol` at `3d6378f`): `decayRateX32` is an
+unsigned Q32.32 rate in ticks per second (`2^32` = 1 tick/s). After `t`
+seconds of trading the accumulated tick magnitude is
+`m = floor(decayRateX32 * t / 2^32)` and the fee is
+`finalFee + floor((initialFee - finalFee) * toFixed(tickToSqrtRatio(-m)) / 2^128)`,
+about `1.000001^(-m/2)` of the excess. In the contract's order: at or before
+trading start, and for rate `0`, the fee is `initialFee`; once
+`t > 381061679028371455 / rate` (the tick helper's range) it is exactly
+`finalFee`. `finalFee` is a long-run floor the fee approaches, reached exactly
+only by rounding or that saturation; nothing is described as an end date and
+there is no `fee_end`. Both fees are Q0.64 rates (`value / 2^64`) and may be
+any uint64, `0` to `18446744073709551615` (`2^64 - 1`, just under 100%;
+exactly 100% is `2^64`, which is not a uint64). Every uint64 rate is accepted,
+including `0` (a flat fee) and `2^64 - 1` (at the floor from the first
+second). The contract checks only `finalFee <= initialFee`
+(`InvalidFeeSchedule()`).
 
-At the tool boundary `initialFee` and `finalFee` are canonical decimal
-strings. Leading zeros, signs, whitespace, hex, exponents, fractions, empty
-strings and JSON numbers are refused as invalid input naming the field, as is
-any value above `2^64 - 1`, a final fee above the initial fee and a zero
-duration; nothing is truncated or wrapped. Owner summaries show each rate as
-the exact Q0.64 integer and as a percentage to four decimals rounded half up,
-except that no rate below `2^64` rounds up to 100%: the maximum shows as
-`99.9999%`. Owner summaries (`zero-seed-launch-owner-summary/v4`) show the
-exact schedule at sample times; sealed local bodies are
-`zero-seed-local-create/v4` and `zero-seed-local-claim/v3`, both carrying the
-launch's resolved quote.
+The excess halves every `HALF_LIFE_X32_E30 / (rate * 10^30)` seconds, with
+the normative integer
+`HALF_LIFE_X32_E30 = 5954091920683119788732747343471285361579197626`
+(`floor(2·ln2/ln1.000001 · 2^32 · 10^30)`); every conversion uses it, never a
+float. The tool takes `decayRateX32` (canonical decimal string) or
+`halfLifeSeconds` (decimal seconds with at most 6 decimals, converted exactly
+as `floor(HALF_LIFE_X32_E30 / (microseconds * 10^24))`, which must be at least
+1 and fit uint64, else `invalid_half_life`), not both; neither means the
+one-day default `68913100933`. `600` s is `9923486534471`. Owner summaries
+show `half_life_seconds` floored to 6 decimals (`86400.000001` for the
+default, `null` for rate 0) and `saturation_elapsed_seconds`
+(`floor(381061679028371455 / rate)`, `null` for rate 0). The default schedule
+is 50% (`9223372036854775808`) to 0.3% (`55340232221128654`) at the one-day
+half-life: 25.1500% after a day, 0.6883% after seven, exactly 0.3% from
+5,529,598 s, with the fees going to the launch owner. The maximum is a bound a
+caller may choose, not a suggestion.
+
+`fixed_base_duration_v1` (`43d6628`) is unchanged and used only to read
+launches of that model: a fixed 600 s half-life table rescaled to reach
+`finalFee` at `feeDuration`.
+
+At the tool boundary `initialFee`, `finalFee` and `decayRateX32` are canonical
+decimal strings. Leading zeros, signs, whitespace, hex, exponents, fractions,
+empty strings and JSON numbers are refused as invalid input naming the field,
+as is any value above `2^64 - 1`, a final fee above the initial fee and the
+old `feeDuration`; nothing is truncated or wrapped. Owner summaries show each
+rate as the exact Q0.64 integer and as a percentage to four decimals rounded
+half up, except that no rate below `2^64` rounds up to 100%: the maximum shows
+as `99.9999%`. Owner summaries (`zero-seed-launch-owner-summary/v5`) carry the
+pin's `fee_model` in `fields.instance` and the exact schedule at sample times
+(including the saturation second and the one after); sealed local bodies are
+`zero-seed-local-create/v5` and `zero-seed-local-claim/v4`, both carrying the
+launch's resolved quote and the pin with its model.
+`test/fixtures/launchpad/zero-seed-wallet-handoff-v5.json` holds the unsigned
+artifacts, summaries and refusals for wallet decoders.
 
 The quoter's `estimated_gas_cost` is never a gas limit, UserOp budget,
 affordability decision or owner assurance. Trade preparation stays refused
@@ -204,14 +251,22 @@ checks (`runtime.ts`), the periphery and extension ABI subsets (`abi.ts`),
 parameter and build validation (`installation.ts`), the single installation
 preview (`preview.ts`), the local create/claim producer and owner decoder
 (`owner.ts`), `LaunchCreated` decoding and creator attribution (`events.ts`)
-and the router plan from a quote (`swap.ts`). They accept the one local anvil
-instance only, inside an explicit local harness that the public tools never
+and the router plan from a quote (`swap.ts`). They accept the local anvil
+instances only (one per fee model), inside an explicit local harness that the public tools never
 construct. See [zero-seed-checkpoint.md](zero-seed-checkpoint.md)
 for reproduction and what remains unproven.
 
 ## Release
 
 This unpublished candidate bumps, in the same commit:
+
+- `MCP_TOOL_CATALOG_REVISION` to `2026-10-24.launchpad-zero-seed-tick-rate`
+  and the server version to `0.55.0`: the create tool's `feeDuration` was
+  replaced by `decayRateX32` or `halfLifeSeconds`, the API client moved to
+  `zero-seed-launch-api/v5`, owner summaries to v5 and the disclosures resource
+  to version 7.
+
+The earlier candidate bumped:
 
 - `MCP_TOOL_CATALOG_REVISION` in `src/version.ts`, from
   `2026-10-20.launchpad-zero-seed-hold` to

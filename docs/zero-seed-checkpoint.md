@@ -2,7 +2,63 @@
 
 Local only. Release HOLD. Every hosted tool refuses; the live pin list is empty.
 
-## Basis
+## Tick-rate revision (evm-contracts 3d6378f, `tick_rate_v2`)
+
+The consumer ABI freeze of evm-contracts `3d6378f585591dc7eabeea6976932c30524bb8ea`
+replaces `uint32 feeDuration` with `uint64 decayRateX32` (Q32.32 ticks per
+second) in the 10th `LaunchParameters` field: `create` `0xf91810d2`,
+`previewInstallation` `0xb665ec4d`, `LaunchCreated` `0x8f81ce1b…5888`, full
+ABI SHA-256 `89ff4d15…4eaadd` / `a6d43b36…0ddb07`. The fee is
+`finalFee + floor(excess * toFixed(tickToSqrtRatio(-m)) / 2^128)` with
+`m = floor(rate * t / 2^32)`, saturating to `finalFee` after
+`381061679028371455 / rate` seconds; `finalFee` is a floor, not an end. Every
+pin now names its `feeModel`; new creates and previews are prepared only for a
+`tick_rate_v2` pin, and the `43d6628` deployment below (`fixed_base_duration_v1`)
+keeps its ABI and math for reads and claims only.
+
+- **Fee math** (`fee.ts`): `tickFactorQ128` ports the negative-tick
+  `tickToSqrtRatio` and the compact `toFixed` rounding. Against the contracts'
+  own v7 vector file (vendored verbatim as
+  `test/fixtures/launchpad/zero-seed-launch-vectors-3d6378f.json`, sha256
+  `4c1245ca…66605`, from the independent 150-digit Python oracle): all 40 fee
+  rows through `uint256.max`, the five SHA-256 digest chains, the five tables,
+  the tick steps at 1/4 and just under 1/10 tick per second (fractional
+  accumulation) and the six saturation seconds.
+- **Conversions**: `HALF_LIFE_X32_E30 = 5954091920683119788732747343471285361579197626`;
+  `86400 → 68913100933`, `600 → 9923486534471`, `3600 → 1653914422411`,
+  `604800 → 9844728704`, `86400.5 → 68912702133`; displays `86400.000001`,
+  `600.000000`, `693147.527133`, `0.000322` for `2^64 - 1`, `null` for 0. Every
+  sampled integer half-life to 10^6 s and the pinned rates round-trip exactly.
+  The vector note `693151.527…` for 2 ticks/s is a typo; the constant and the
+  note's own "8.0225408233 days" give `693147.527133`.
+- **Local chain** (`script/zero-seed-local-chain.ts`, now run on the `3d6378f`
+  artifacts): writes `zero-seed-tick-rate-local-chain.json` (sha256
+  `bdf34f8c…707fcafc`; two fresh-anvil runs byte-identical). The instance is the
+  indexer's v2 replay instance (indexer `7f373e5`, `local-chain-v2.json`):
+  extension `0x5135fd3e…2263d` (runtime `0xe08ad382…dfc3`, the freeze's pin),
+  periphery `0xfb2e7927…61e9`. Ten launches from the producer's own preview and
+  create, at rates 600 s, one day, 1, 0 and `2^64 - 1` and at the maximum fee;
+  fourteen swaps whose emitted rate equals the TS schedule (decaying, constant
+  and at-floor phases); three claims and a transfer; the chain refuses the v1
+  create, a rising fee and a `2^64` rate word, and accepts rates 0 and
+  `2^64 - 1`.
+- **API**: `zero-seed-launch-api/v5` of api `06fc548f544c88a16b878212ec0a489f03a2cde0`,
+  both goldens byte-identical (`d9e6a646…aedf2` fixed-base, `727dd25d…05fe`
+  tick-rate) and the `/launches*` OpenAPI (`2d77056b…edf2`) equal to the
+  consumed schemas. v4 is refused.
+- **Parity**: `script/zero-seed-abi-parity.ts` takes either or both revisions'
+  full compiled ABIs and identifies each by hash (84 controls for both).
+- **Wallet handoff**: `test/fixtures/launchpad/zero-seed-wallet-handoff-v5.json`
+  (written by `script/zero-seed-wallet-fixtures.ts`, rebuilt byte for byte by
+  the tests): six creates with their preview read, sealed create, summary and
+  `summary_keccak256`; four claims, one of them on the v1 pin; nine refusals.
+  Unsigned and never sent.
+
+Reproduce the tick-rate chain as below with `EVM_CONTRACTS=<evm-contracts at
+3d6378f, after forge build>` and the output
+`test/fixtures/launchpad/zero-seed-tick-rate-local-chain.json`.
+
+## Basis (fixed_base_duration_v1, kept as recorded)
 
 evm-contracts `43d6628841b3ce91dafa048b7ceef64bed55fc8e` (tree `9ab869d1…`):
 extension ABI SHA-256 `efae9388…90d1e41e`, periphery ABI SHA-256
@@ -76,7 +132,7 @@ independent fee vectors, unchanged.
    `9223595582101085260` and the whole supply, with no sink mint (the helper
    was one liquidity unit short).
 
-It writes `test/fixtures/launchpad/zero-seed-native-local-chain.json` (it now
+At `43d6628` it wrote `test/fixtures/launchpad/zero-seed-native-local-chain.json` (it
 holds all seven launches; sha256 `b917c2b4…9aeba78b5`); two runs on fresh anvil
 instances, inside an OS sandbox with no network, produced byte-identical files.
 Reproduce:
@@ -114,7 +170,7 @@ and Core's `PositionUpdated` agree on the liquidity, installed supply and sink
 exactly, and the summary states that nothing is minted to address(0) when the
 sink is zero.
 
-## Backend API v4
+## Backend API v4 (superseded by v5 above)
 
 `src/launchpad/zero-seed/api.ts` consumes `zero-seed-launch-api/v4` of api
 `620aa1154e276b829865204ba54bfc54f6c95537`: list (with `owner=` and
@@ -193,6 +249,12 @@ approval and no ERC-20 quote event occurs on native trades, and sells and
 ERC-20 inputs carry the router approval.
 
 ## NOT PROVEN
+
+- Quoter output and router plans for a `tick_rate_v2` launch: the forward
+  payload, router layout and settlement are unchanged at `3d6378f` and the plan
+  computes the creator fee with the pin's model, but no quoter response for
+  the v2 chain is recorded here (the quoter's own v2 evidence is separate).
+- A cloud-wallet decoder replay of the v5 handoff fixture.
 
 - Quoter output and router plans against the `43d6628` instance, at any rate
   including the maximum: the recorded quoter plans are of `4f1a306`, replayed
