@@ -160,11 +160,14 @@ interface ZeroXQuote {
   issues?: {
     allowance?: { actual: string; spender: Address } | null;
   };
+  // Firm /quote responses carry the gas limit on the transaction; indicative
+  // /price responses carry it at the top level. Both are nullable upstream.
+  gas?: unknown;
   transaction?: {
     to: Address;
     data: Hex;
     value: string;
-    gas?: string;
+    gas?: string | null;
   };
   [key: string]: unknown;
 }
@@ -1117,7 +1120,7 @@ async function quoteZeroX(
       !exactOutput && quote.minBuyAmount ? BigInt(quote.minBuyAmount) : null,
     maximumAmountIn:
       exactOutput && quote.maxSellAmount ? BigInt(quote.maxSellAmount) : null,
-    estimatedGas: quote.transaction?.gas ? Number(quote.transaction.gas) : null,
+    estimatedGas: zeroXGasLimit(quote),
     priceImpact: null,
     transaction,
     approvalRequired: quote.issues?.allowance != null,
@@ -1996,15 +1999,39 @@ function serializeTransaction(
 
 function toUnsignedTransaction(
   chainId: string,
-  transaction: { to: Address; data: Hex; value?: string; gas?: string },
+  transaction: {
+    to: Address;
+    data: Hex;
+    value?: string;
+    gas?: string | null;
+  },
 ): UnsignedTransaction {
   return {
     chainId,
     to: getAddress(transaction.to),
     data: transaction.data,
     value: BigInt(transaction.value ?? 0),
-    ...(transaction.gas === undefined ? {} : { gas: BigInt(transaction.gas) }),
+    ...(transaction.gas == null ? {} : { gas: BigInt(transaction.gas) }),
   };
+}
+
+// The firm transaction's gas limit takes precedence over the indicative
+// top-level estimate. A missing, null, zero or malformed value is unknown
+// (null), never zero.
+function zeroXGasLimit(quote: ZeroXQuote): number | null {
+  return gasUnits(quote.transaction?.gas) ?? gasUnits(quote.gas);
+}
+
+function gasUnits(value: unknown): number | null {
+  const parsed =
+    typeof value === "string" && /^[0-9]+$/.test(value)
+      ? Number(value)
+      : typeof value === "number"
+        ? value
+        : null;
+  return parsed !== null && Number.isSafeInteger(parsed) && parsed > 0
+    ? parsed
+    : null;
 }
 
 function acrossTransaction(

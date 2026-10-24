@@ -14,6 +14,7 @@ import {
   listTokens,
   prepareSwap,
 } from "../src/core.js";
+import zeroXIndicative from "./fixtures/zero-x-indicative-price.json";
 
 const native = "0x0000000000000000000000000000000000000000";
 const tokenA = "0x0bd7d308f8e1639fab988df18a8011f41eacad73";
@@ -370,6 +371,134 @@ describe("aggregated quote providers", () => {
       });
       expect(zeroX?.normalized.amount_out).toBe("950");
     });
+  });
+
+  describe("0x gas estimates", () => {
+    const ekuboQuote = {
+      block_number: 1,
+      block_hash: "0x01",
+      total_calculated: "900",
+      estimated_gas_cost: 1,
+      price_impact: 0,
+      splits: [],
+    };
+    const intent = {
+      chainId: "1",
+      tokenIn: native,
+      tokenOut: tokenB,
+      quoteType: "exact_input",
+      amount: "1000000000000000000",
+    } as const;
+    const respond = (zeroX: unknown) =>
+      (async (input: RequestInfo | URL) =>
+        input.toString().startsWith("https://quoter.test/")
+          ? Response.json(ekuboQuote)
+          : Response.json(zeroX)) as typeof fetch;
+    const zeroXGas = async (zeroX: unknown) =>
+      (await getQuotesWithPlans(env, intent, respond(zeroX))).quotes.find(
+        (quote) => quote.source === "0x",
+      )?.normalized.estimated_gas;
+
+    it("reads the top-level gas limit of a captured indicative price", async () => {
+      const captured = zeroXIndicative.zero_x_price;
+      expect(captured.gas).toBe("1058057");
+      expect(captured).not.toHaveProperty("transaction");
+      expect(zeroXIndicative.normalized_before_fix["0x"].estimated_gas).toBeNull();
+
+      const result = await getQuotesWithPlans(env, intent, respond(captured));
+      const zeroX = result.quotes.find((quote) => quote.source === "0x");
+      expect(zeroX?.normalized).toMatchObject({
+        estimated_gas: 1058057,
+        amount_out: "2377410000",
+        minimum_amount_out: "2353635900",
+      });
+      expect(result.comparison.comparison_basis).toBe(
+        "highest_calculated_amount_out",
+      );
+    });
+
+    it("prefers the firm transaction gas limit and puts it in the plan", async () => {
+      const result = await getQuotesWithPlans(
+        env,
+        { ...intent, sender, slippageBps: 50 },
+        respond({
+          liquidityAvailable: true,
+          sellAmount: "1000000000000000000",
+          buyAmount: "950",
+          minBuyAmount: "940",
+          issues: { allowance: null },
+          transaction: {
+            to: swapTarget,
+            data: "0x1234",
+            value: "1000000000000000000",
+            gas: "240000",
+            gasPrice: "51046405",
+          },
+        }),
+      );
+      const zeroX = result.quotes.find((quote) => quote.source === "0x");
+      expect(zeroX?.normalized.estimated_gas).toBe(240000);
+      const swap = zeroX?.execution?.execution_plan.ordered_steps.find(
+        (step) => step.transaction.to === swapTarget,
+      );
+      expect(swap?.transaction).toMatchObject({
+        data: "0x1234",
+        value: "1000000000000000000",
+        gas: "240000",
+      });
+    });
+
+    it("takes the transaction gas over a conflicting top-level estimate", async () => {
+      expect(
+        await zeroXGas({
+          liquidityAvailable: true,
+          sellAmount: "1000",
+          buyAmount: "950",
+          gas: "999999",
+          transaction: { to: swapTarget, data: "0x", value: "0", gas: "240000" },
+        }),
+      ).toBe(240000);
+    });
+
+    it("plans a firm quote whose transaction gas is null, with gas unknown", async () => {
+      const result = await getQuotesWithPlans(
+        env,
+        { ...intent, sender, slippageBps: 50 },
+        respond({
+          liquidityAvailable: true,
+          sellAmount: "1000000000000000000",
+          buyAmount: "950",
+          minBuyAmount: "940",
+          issues: { allowance: null },
+          transaction: { to: swapTarget, data: "0x1234", value: "0", gas: null },
+        }),
+      );
+      const zeroX = result.quotes.find((quote) => quote.source === "0x");
+      expect(zeroX?.normalized.estimated_gas).toBeNull();
+      expect(zeroX?.execution_unavailable).toBeNull();
+      const swap = zeroX?.execution?.execution_plan.ordered_steps.find(
+        (step) => step.transaction.to === swapTarget,
+      );
+      expect(swap?.transaction).not.toHaveProperty("gas");
+    });
+
+    const base = { liquidityAvailable: true, sellAmount: "1000", buyAmount: "950" };
+    const unknown: [string, unknown][] = [
+      ["omitted", base],
+      ["null, as 0x documents when it cannot estimate", { ...base, gas: null }],
+      ["zero", { ...base, gas: "0" }],
+      ["empty", { ...base, gas: "" }],
+      ["not an integer", { ...base, gas: "1.5e6" }],
+      ["negative", { ...base, gas: "-1" }],
+      ["hex", { ...base, gas: "0x10" }],
+      ["beyond a safe integer", { ...base, gas: "9007199254740993" }],
+      ["an object", { ...base, gas: { value: "1" } }],
+    ];
+    for (const [label, zeroX] of unknown) {
+      it(`reports gas as unknown, not zero, when it is ${label}`, async () => {
+        expect(await zeroXGas(zeroX)).toBeNull();
+      });
+    }
   });
 
   it("prepares a 0x exact-output swap and approves maxSellAmount", async () => {
