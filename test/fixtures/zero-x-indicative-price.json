@@ -1,0 +1,342 @@
+{
+  "_source": "Captured get_quotes_with_plans response on Ethereum mainnet (1 ETH -> USDC, no sender), 2026-10-24: raw upstream quotes as returned with include_raw_quotes, plus the normalized values the server produced before indicative gas was read.",
+  "request": {
+    "chain_id": "1",
+    "destination_chain_id": "1",
+    "token_in": "0x0000000000000000000000000000000000000000",
+    "token_out": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "quote_type": "exact_input",
+    "amount": "1000000000000000000"
+  },
+  "ekubo_quote": {
+    "block_number": 26260876,
+    "block_hash": "0xefbb736b559fc0927ea4f65c8965104324c0082dfb003297c2db8b9eaa3756d9",
+    "total_calculated": "2362196056",
+    "estimated_gas_cost": 412468,
+    "price_impact": 0.0055657631076258835,
+    "splits": [
+      {
+        "amount_specified": "750000000000000000",
+        "amount_calculated": "1772638559",
+        "route": [
+          {
+            "swap": {
+              "type": "core",
+              "pool_key": {
+                "token0": "0x0000000000000000000000000000000000000000",
+                "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                "config": "0x00000000000000000000000000000000000000000020c49ba5e353f88000137c"
+              },
+              "sqrt_ratio_limit": "0x40006b783a2df17960ea63ae",
+              "skip_ahead": 0
+            }
+          }
+        ]
+      },
+      {
+        "amount_specified": "125000000000000000",
+        "amount_calculated": "294142417",
+        "route": [
+          {
+            "swap": {
+              "type": "core",
+              "pool_key": {
+                "token0": "0x0000000000000000000000000000000000000000",
+                "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                "config": "0x517e506700271aea091b02f42756f5e174af5230000000000000000000000000"
+              },
+              "sqrt_ratio_limit": "0x400065a8177fae27",
+              "skip_ahead": 0
+            }
+          }
+        ]
+      },
+      {
+        "amount_specified": "62500000000000000",
+        "amount_calculated": "147492278",
+        "route": [
+          {
+            "swap": {
+              "type": "core",
+              "pool_key": {
+                "token0": "0x0000000000000000000000000000000000000000",
+                "token1": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+                "config": "0x0000000000000000000000000000000000000000004189374bc6a7f0800003e8"
+              },
+              "sqrt_ratio_limit": "0x400006501b2fff1e29c920ef",
+              "skip_ahead": 0
+            }
+          },
+          {
+            "swap": {
+              "type": "core",
+              "pool_key": {
+                "token0": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+                "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+                "config": "0x0000000000000000000000000000000000000000004189374bc6a7f08000137c"
+              },
+              "sqrt_ratio_limit": "0x80000003bf432629e60fd48e",
+              "skip_ahead": 0
+            }
+          },
+          {
+            "swap": {
+              "type": "core",
+              "pool_key": {
+                "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+                "config": "0x0000000000000000000000000000000000000000000053e2d6238da480000032"
+              },
+              "sqrt_ratio_limit": "0x8000000040724b9d92de8f0e",
+              "skip_ahead": 0
+            }
+          }
+        ]
+      },
+      {
+        "amount_specified": "31250000000000000",
+        "amount_calculated": "73909530",
+        "route": [
+          {
+            "swap": {
+              "type": "forwarded",
+              "pool_key": {
+                "token0": "0x0000000000000000000000000000000000000000",
+                "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+                "config": "0x5555ff9ff2757500bf4ee020dcfd0210cffa41be000d1b71758e219680000064"
+              },
+              "sqrt_ratio_limit": "0x4000c9c5cbe3b1bd13c8044d",
+              "skip_ahead": 0
+            }
+          },
+          {
+            "swap": {
+              "type": "core",
+              "pool_key": {
+                "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+                "config": "0x0000000000000000000000000000000000000000000053e2d6238da480000032"
+              },
+              "sqrt_ratio_limit": "0x80000000407256e1029722d0",
+              "skip_ahead": 0
+            }
+          }
+        ]
+      },
+      {
+        "amount_specified": "15625417232513428",
+        "amount_calculated": "36977756",
+        "route": [
+          {
+            "swap": {
+              "type": "core",
+              "pool_key": {
+                "token0": "0x0000000000000000000000000000000000000000",
+                "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                "config": "0xd47f1b1edcfeabb08f6ebd8fc337c27e636c75ba00c49ba5e353f7ce00000000"
+              },
+              "sqrt_ratio_limit": "0x400065a8177fae27",
+              "skip_ahead": 0
+            }
+          }
+        ]
+      },
+      {
+        "amount_specified": "8056163787841797",
+        "amount_calculated": "19090719",
+        "route": [
+          {
+            "swap": {
+              "type": "core",
+              "pool_key": {
+                "token0": "0x0000000000000000000000000000000000000000",
+                "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+                "config": "0x00000000000000000000000000000000000000000020c49ba5e353f88000137c"
+              },
+              "sqrt_ratio_limit": "0x40006bd0232b1f63c22cac4b",
+              "skip_ahead": 0
+            }
+          },
+          {
+            "swap": {
+              "type": "core",
+              "pool_key": {
+                "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+                "config": "0x0000000000000000000000000000000000000000000053e2d6238da480000032"
+              },
+              "sqrt_ratio_limit": "0x80000000407259c9ccc2d5f5",
+              "skip_ahead": 0
+            }
+          }
+        ]
+      },
+      {
+        "amount_specified": "6835937500000000",
+        "amount_calculated": "16205336",
+        "route": [
+          {
+            "swap": {
+              "type": "core",
+              "pool_key": {
+                "token0": "0x0000000000000000000000000000000000000000",
+                "token1": "0x04C46E830Bb56ce22735d5d8Fc9CB90309317d0f",
+                "config": "0x517e506700271aea091b02f42756f5e174af5230000000000000000000000000"
+              },
+              "sqrt_ratio_limit": "0x400065a8177fae27",
+              "skip_ahead": 0
+            }
+          },
+          {
+            "swap": {
+              "type": "core",
+              "pool_key": {
+                "token0": "0x04C46E830Bb56ce22735d5d8Fc9CB90309317d0f",
+                "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                "config": "0xd47f1b1edcfeabb08f6ebd8fc337c27e636c75ba00c49ba5e353f7ce00000000"
+              },
+              "sqrt_ratio_limit": "0x400065a8177fae27",
+              "skip_ahead": 0
+            }
+          }
+        ]
+      },
+      {
+        "amount_specified": "732481479644775",
+        "amount_calculated": "1739461",
+        "route": [
+          {
+            "swap": {
+              "type": "core",
+              "pool_key": {
+                "token0": "0x0000000000000000000000000000000000000000",
+                "token1": "0x04C46E830Bb56ce22735d5d8Fc9CB90309317d0f",
+                "config": "0x517e506700271aea091b02f42756f5e174af5230000000000000000000000000"
+              },
+              "sqrt_ratio_limit": "0x400065a8177fae27",
+              "skip_ahead": 0
+            }
+          },
+          {
+            "swap": {
+              "type": "core",
+              "pool_key": {
+                "token0": "0x04C46E830Bb56ce22735d5d8Fc9CB90309317d0f",
+                "token1": "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3",
+                "config": "0xd47f1b1edcfeabb08f6ebd8fc337c27e636c75ba00c49ba5e353f7ce00000000"
+              },
+              "sqrt_ratio_limit": "0x400065a8177fae27",
+              "skip_ahead": 0
+            }
+          },
+          {
+            "swap": {
+              "type": "core",
+              "pool_key": {
+                "token0": "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3",
+                "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                "config": "0x00000000000000000000000000000000000000000001f75104d551d780000019"
+              },
+              "sqrt_ratio_limit": "0x4000042e4d60e675b5a4efbe",
+              "skip_ahead": 0
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "zero_x_price": {
+    "allowanceTarget": "0x0000000000001ff3684f28c67538d4d072c22734",
+    "blockNumber": "26260876",
+    "buyAmount": "2377410000",
+    "buyToken": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    "fees": {
+      "integratorFee": null,
+      "integratorFees": null,
+      "zeroExFee": null,
+      "gasFee": null
+    },
+    "issues": {
+      "allowance": null,
+      "balance": {
+        "token": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "actual": "36985941764277400",
+        "expected": "1000000000000000000"
+      },
+      "simulationIncomplete": false,
+      "invalidSourcesPassed": []
+    },
+    "liquidityAvailable": true,
+    "minBuyAmount": "2353635900",
+    "mode": "exact-in",
+    "route": {
+      "fills": [
+        {
+          "from": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+          "to": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+          "source": "bopAMM",
+          "proportionBps": "10000"
+        }
+      ],
+      "tokens": [
+        {
+          "address": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+          "symbol": "WETH"
+        },
+        {
+          "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+          "symbol": "USDC"
+        }
+      ]
+    },
+    "sellAmount": "1000000000000000000",
+    "sellToken": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "tokenMetadata": {
+      "buyToken": {
+        "buyTaxBps": "0",
+        "sellTaxBps": "0",
+        "transferTaxBps": "0"
+      },
+      "sellToken": {
+        "buyTaxBps": "0",
+        "sellTaxBps": "0",
+        "transferTaxBps": "0"
+      }
+    },
+    "totalNetworkFee": "27358473898965",
+    "zid": "0x76496cf5af6b306d862a12db",
+    "gas": "1058057",
+    "gasPrice": "51046405"
+  },
+  "zero_x_source_url": "https://api.0x.org/swap/allowance-holder/price?chainId=1&sellToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE&buyToken=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48&sellAmount=1000000000000000000",
+  "normalized_before_fix": {
+    "ekubo": {
+      "source": "ekubo",
+      "provider_quote_id": null,
+      "amount_in": "1000000000000000000",
+      "amount_out": "2362196056",
+      "minimum_amount_out": null,
+      "maximum_amount_in": null,
+      "native_fee": null,
+      "total_native_input": null,
+      "estimated_gas": 412468,
+      "price_impact": 0.0055657631076258835,
+      "quote_expiry_timestamp": null,
+      "expected_fill_time_seconds": null
+    },
+    "0x": {
+      "source": "0x",
+      "provider_quote_id": null,
+      "amount_in": "1000000000000000000",
+      "amount_out": "2377410000",
+      "minimum_amount_out": "2353635900",
+      "maximum_amount_in": null,
+      "native_fee": null,
+      "total_native_input": null,
+      "estimated_gas": null,
+      "price_impact": null,
+      "quote_expiry_timestamp": null,
+      "expected_fill_time_seconds": null
+    }
+  }
+}

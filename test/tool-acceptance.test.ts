@@ -5,6 +5,7 @@ import worker from "../src/index.js";
 import { ARTIFACT_TTL_SECONDS } from "../src/artifact-store.js";
 import { PROTOCOLS, protocolMcpPath } from "../src/protocols.js";
 import { fakeArtifactStore } from "./fake-r2.js";
+import zeroXIndicative from "./fixtures/zero-x-indicative-price.json";
 
 const store = fakeArtifactStore();
 const env = {
@@ -367,6 +368,40 @@ describe("input errors name the argument and the fix", () => {
     expect(status).toBe(404);
     expect(body.error.code).toBe("unknown_protocol");
     expect(body.error.message).toContain("/mcp/ekubo");
+  });
+});
+
+describe("normalized quote gas estimates", () => {
+  const USDC_MAINNET = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+
+  it("reports the gas limit of a captured indicative 0x price through get_quotes_with_plans", async () => {
+    const upstream = mockUpstream((url) => {
+      if (url.startsWith("https://quoter.test/")) return Response.json(zeroXIndicative.ekubo_quote);
+      if (url.startsWith("https://api.0x.org/swap/allowance-holder/price?")) {
+        return Response.json(zeroXIndicative.zero_x_price);
+      }
+      return new Response("unexpected upstream", { status: 500 });
+    });
+    const result = await callTool("/mcp/ekubo", "get_quotes_with_plans", {
+      chain_id: "1",
+      token_in: NATIVE,
+      token_out: USDC_MAINNET,
+      quote_type: "exact_input",
+      amount: "1000000000000000000",
+    });
+    expect(result.isError).toBeUndefined();
+    const quotes = result.structuredContent!.quotes as Json[];
+    const normalized = Object.fromEntries(quotes.map((quote) => [quote.source, quote.normalized]));
+    expect(normalized["0x"]).toEqual({
+      ...zeroXIndicative.normalized_before_fix["0x"],
+      estimated_gas: 1058057,
+    });
+    expect(normalized.ekubo.estimated_gas).toBe(412468);
+    expect(result.structuredContent!.comparison.comparison_basis).toBe("highest_calculated_amount_out");
+    for (const quote of quotes) expect(quote.execution).toBeNull();
+    expect(upstream.mock.calls.map(([input]) => new URL(input.toString()).pathname)).not.toContain(
+      "/swap/allowance-holder/quote",
+    );
   });
 });
 
