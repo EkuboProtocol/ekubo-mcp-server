@@ -1023,8 +1023,8 @@ async function quoteEkubo(
     quote.total_calculated,
     "total_calculated",
   );
-  const requested = BigInt(intent.amount);
   const exactOutput = intent.quoteType === "exact_output";
+  const requested = BigInt(intent.amount);
   if ((exactOutput && calculated >= 0n) || (!exactOutput && calculated <= 0n)) {
     throw new ServiceError(
       "invalid_upstream_response",
