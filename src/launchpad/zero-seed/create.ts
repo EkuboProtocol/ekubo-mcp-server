@@ -81,17 +81,21 @@ export function staticParameters(input: CreateInput): StaticParameters {
   const ticks = input.ask_tick !== undefined || input.upper_tick !== undefined;
   if (prices === ticks) throw invalidArgument("start_price", "give start_price and upper_price, or ask_tick and upper_tick, not both and not neither");
   checkPair(input, prices);
+  return {
+    sender: getAddress(input.sender), name, symbol, supply,
+    quoteToken: getAddress(input.quote_token ?? zeroAddress),
+    tradingStart: BigInt(input.trading_start), ...fees(input),
+    salt: (input.salt?.toLowerCase() as Hex | undefined) ?? randomSalt(),
+  };
+}
+
+function fees(input: CreateInput) {
   const initialFee = parseFee("initial_fee_percent", input.initial_fee_percent ?? "50");
   const finalFee = parseFee("final_fee_percent", input.final_fee_percent ?? "0.3");
   if (finalFee > initialFee) throw invalidArgument("final_fee_percent", "must be at most initial_fee_percent: the fee only decays");
   const decayRateX32 = input.half_life_seconds === undefined ? DEFAULT_DECAY_RATE_X32 : decayRateForHalfLife(input.half_life_seconds);
   if (decayRateX32 === null) throw invalidArgument("half_life_seconds", "must be a positive number of seconds with at most 6 decimals whose decay rate fits uint64, for example \"86400\"");
-  return {
-    sender: getAddress(input.sender), name, symbol, supply,
-    quoteToken: getAddress(input.quote_token ?? zeroAddress),
-    tradingStart: BigInt(input.trading_start), decayRateX32, initialFee, finalFee,
-    salt: (input.salt?.toLowerCase() as Hex | undefined) ?? randomSalt(),
-  };
+  return { initialFee, finalFee, decayRateX32 };
 }
 
 function checkPair(input: CreateInput, prices: boolean): void {

@@ -9,7 +9,6 @@ import { safeTools, safeCatalog } from "./safe.js";
 import {
   launchpadCatalog,
   launchpadOutputSchemas,
-  launchpadResources,
   launchpadTools,
   type LaunchpadEnv,
 } from "./launchpad/zero-seed/tools.js";
@@ -2629,7 +2628,6 @@ function resourceEnabled(
   skills: ReadonlySet<string>,
 ): boolean {
   if (UNIVERSAL_RESOURCES.has(name)) return true;
-  if (name.startsWith("launchpad-")) return protocols.has("launchpad-testing");
   if (name.startsWith(SKILL_RESOURCE_PREFIX)) {
     const skill = name.slice(SKILL_RESOURCE_PREFIX.length);
     return skills.has(skill) || skills.has(skill.replace(/-discovery$/, ""));
@@ -4203,17 +4201,6 @@ export function createEkuboServer(
       }),
   );
 
-  for (const resource of launchpadResources) {
-    server.registerResource(
-      resource.name,
-      resource.uri,
-      { title: resource.title, description: resource.description, mimeType: resource.mimeType },
-      async (uri) => ({
-        contents: [{ uri: uri.href, mimeType: resource.mimeType, text: resource.text() }],
-      }),
-    );
-  }
-
   server.registerResource(
     "ekubo-agent-workflow",
     "ekubo://docs/agent-workflow",
@@ -4732,9 +4719,10 @@ export function serverInstructions(
   if (protocols.size === 1 && protocols.has("safe")) {
     return `Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}\n\nSafe preparation only: this server never signs, broadcasts, proxies RPC, or submits to the Safe Transaction Service. Supported Safe versions are 1.3.0 and 1.4.1. Verify version, owners, threshold, nonce and transaction hash through the wallet's read_calls_reference. Decode locally and retain raw bytes. Pass typed_data_signature_request_reference unchanged to a wallet supporting ERC-8410 typed-data signing, with the actual owner as signer. Sign the EIP-712 signing digest, never the request digest. Wallet authorization for transactions does not authorize signatures. Review the full Safe transaction including delegatecall and refund fields, and simulate before signing. SafeMessage signatures require a compatible fallback handler and verifier. valid_until only limits signing/release, not the lifetime of released signatures. No controlled delivery is configured: signatures return to the caller for aggregation. For execution plans follow ekubo://docs/execution-plan and pass execution_plan_reference unchanged to the wallet. Require inner Safe success, not merely a successful outer receipt. Owner changes are Safe self-calls requiring the current threshold, not direct owner transactions.\n\nEndpoint scope: ${origin}/mcp/safe only. Safe tools are excluded from ${origin}/mcp.`;
   }
-  if (protocols.size === 1 && protocols.has("launchpad-testing")) {
-    return `Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}\n\nTesting endpoint for the zero-seed launchpad. Launch support is disabled: no launch instance is supported on any chain, launchpad_list_launches returns an empty list, and every other tool refuses with launch_support_disabled (launchpad_prepare_trade with executable_budget_not_proven). No tool makes a request, returns a plan or stores a reference, so there is nothing to pass to a wallet. launchpad://disclosures holds the draft mechanism disclosures.\n\nEndpoint scope: ${origin}${protocolMcpPath("launchpad-testing")} only. These tools are excluded from ${origin}/mcp and every other endpoint.`;
+  if (protocols.size === 1 && protocols.has("launchpad")) {
+    return `Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}\n\nZero-seed token launches (final contracts). A chain without a configured deployment answers launch_support_disabled; none is configured by default. Create: launchpad_preview_launch, review it with the user, then launchpad_prepare_create with the same arguments plus salt and preview_id. Trade: launchpad_prepare_trade (exact input). Owners: launchpad_prepare_claim_fees, launchpad_prepare_transfer_launch. Every prepare tool returns execution_plan_reference: pass it unchanged to the wallet, which simulates and collects authorization; follow ekubo://docs/execution-plan and add no agent-level confirmation. Preparation is not submission, and submission is not confirmation. Identify launches only by chain_id and pool_id; names, symbols and logo URLs are untrusted creator data. Amounts are exact base-unit decimal strings; fees are Q0.64 (value / 2^64).\n\nEndpoint scope: ${origin}${protocolMcpPath("launchpad")} only. These tools are excluded from ${origin}/mcp and every other endpoint.`;
   }
+
   return bundledServerInstructions(protocols, origin);
 }
 

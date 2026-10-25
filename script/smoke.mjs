@@ -392,12 +392,12 @@ const safeEndpoint = advertised.by_protocol.find((entry) => entry.protocol === "
 assert(safeEndpoint?.tool_count === 6, "standalone Safe endpoint is missing tools");
 assert(!advertised.all.protocols.includes("safe"), "Safe leaked into the root protocol bundle");
 assert(safeEndpoint.tools.every((name) => !expectedTools.includes(name)), "Safe leaked into the root tool catalog");
-const launchpadEndpoint = advertised.by_protocol.find((entry) => entry.protocol === "launchpad-testing");
-assert(launchpadEndpoint?.tool_count === 8, "standalone launchpad testing endpoint is missing tools");
-assert(!advertised.all.protocols.includes("launchpad-testing"), "launchpad testing leaked into the root protocol bundle");
+const launchpadEndpoint = advertised.by_protocol.find((entry) => entry.protocol === "launchpad");
+assert(launchpadEndpoint?.tool_count === 10, "standalone launchpad endpoint is missing tools");
+assert(!advertised.all.protocols.includes("launchpad"), "launchpad leaked into the root protocol bundle");
 assert(
   launchpadEndpoint.tools.every((name) => !expectedTools.includes(name)),
-  "launchpad testing tools leaked into the root tool catalog",
+  "launchpad tools leaked into the root tool catalog",
 );
 assert(
   seenPerProtocol.length === expectedTools.length + safeEndpoint.tool_count + launchpadEndpoint.tool_count,

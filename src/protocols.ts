@@ -13,7 +13,7 @@ export const PROTOCOL_SLUGS = [
   "sky",
   "uniswap",
   "safe",
-  "launchpad-testing",
+  "launchpad",
 ] as const;
 
 export type ProtocolSlug = (typeof PROTOCOL_SLUGS)[number];
@@ -199,10 +199,10 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
     tools: safeTools.map((tool) => tool.name),
   },
   {
-    slug: "launchpad-testing",
-    title: "Ekubo zero-seed launchpad (testing)",
+    slug: "launchpad",
+    title: "Ekubo token launchpad",
     description:
-      "Testing only: zero-seed launchpad tools with launch support disabled, so every call is refused; separate endpoint only, excluded from /mcp",
+      "Zero-seed token launches: list, preview, create, trade, claim fees and transfer ownership; disabled until a final deployment is configured; separate endpoint only, excluded from /mcp",
     skill: null,
     tools: launchpadTools.map((tool) => tool.name),
   },
@@ -212,7 +212,7 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
  * Protocols served only at their own `/mcp/<slug>` endpoint: never bundled
  * into `/mcp` and never combinable through `?protocols=`.
  */
-export const STANDALONE_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(["safe", "launchpad-testing"]);
+export const STANDALONE_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(["safe", "launchpad"]);
 
 export const ALL_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(
   PROTOCOL_SLUGS.filter((slug) => !STANDALONE_PROTOCOLS.has(slug)),

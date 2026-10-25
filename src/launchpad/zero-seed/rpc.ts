@@ -35,6 +35,18 @@ function revertData(error: { data?: unknown; message?: string }): Hex | null {
   return null;
 }
 
+function result<T>(body: { result?: T; error?: { data?: unknown; message?: string } } | null): T {
+  if (body === null || (body.result === undefined && body.error === undefined)) {
+    throw new LaunchpadError("invalid_upstream_response", "The chain RPC returned a malformed response. Retry later.", { retryable: true, upstream: "rpc" });
+  }
+  if (body.error !== undefined) {
+    const data = revertData(body.error);
+    if (data !== null) throw decodeRevert(data);
+    throw new LaunchpadError("upstream_error", "The chain RPC refused the read. Retry the same call later.", { retryable: true, upstream: "rpc" });
+  }
+  return body.result as T;
+}
+
 /** Minimal JSON-RPC client for the configured deployment's own RPC; reads only. */
 export class LaunchRpc {
   constructor(private readonly url: string, private readonly fetcher: typeof fetch = fetch) {}
@@ -57,16 +69,7 @@ export class LaunchRpc {
     if (!response.ok) {
       throw new LaunchpadError("upstream_error", `The chain RPC answered HTTP ${response.status}. Nothing was prepared; retry the same call later.`, { retryable: true, upstream: "rpc", status: response.status });
     }
-    const body = (await response.json().catch(() => null)) as { result?: T; error?: { data?: unknown; message?: string } } | null;
-    if (body === null || (body.result === undefined && body.error === undefined)) {
-      throw new LaunchpadError("invalid_upstream_response", "The chain RPC returned a malformed response. Retry later.", { retryable: true, upstream: "rpc" });
-    }
-    if (body.error !== undefined) {
-      const data = revertData(body.error);
-      if (data !== null) throw decodeRevert(data);
-      throw new LaunchpadError("upstream_error", "The chain RPC refused the read. Retry the same call later.", { retryable: true, upstream: "rpc" });
-    }
-    return body.result as T;
+    return result<T>(await response.json().catch(() => null));
   }
 
   async latestBlock(): Promise<Block> {

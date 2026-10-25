@@ -26,15 +26,15 @@ a data API and the quoter remains a route-data service.
 
 ## Public endpoints
 
-- `POST/GET /mcp` — MCP Streamable HTTP endpoint serving bundled protocols (excludes Safe and launchpad-testing)
+- `POST/GET /mcp` — MCP Streamable HTTP endpoint serving bundled protocols (excludes Safe and launchpad)
 - `POST/GET /mcp/{ekubo,aave,aerodrome,lido,merkl,morpho,sky,uniswap}` — the same MCP
   contract narrowed to one protocol
 - `POST/GET /mcp/ekubo-advanced` — Ekubo's operator tools, kept off `/mcp/ekubo`
   (see below)
 - `POST/GET /mcp?protocols=<slug>+<slug>` — one connection serving the named
-  protocols (any of the above except Safe and launchpad-testing); see below
+  protocols (any of the above except Safe and launchpad); see below
 - `POST/GET /mcp/safe` — dedicated Safe signer preparation; see [Safe coverage](docs/safe.md)
-- `POST/GET /mcp/launchpad-testing` — zero-seed launchpad tools for testing only
+- `POST/GET /mcp/launchpad` — zero-seed launchpad tools for testing only
   (evm-contracts `3d6378f` interface: per-launch quote token, requested supply
   with the exact installed maximum, any uint64 creator fee decaying at a
   per-launch tick rate toward a floor; `43d6628` deployments read-only),
@@ -62,7 +62,7 @@ without a protocol fails the build rather than quietly appearing on no
 per-protocol endpoint.
 
 `/mcp` remains the endpoint for the bundled catalog. Safe clients must add `/mcp/safe`.
-The support-disabled launchpad tools are likewise served only at `/mcp/launchpad-testing`.
+The launchpad tools are likewise served only at `/mcp/launchpad`.
 
 Ekubo itself is split in two. `/mcp/ekubo` carries the core tools most
 sessions use: tokens, quotes and swaps, pools, LP positions and deposits,

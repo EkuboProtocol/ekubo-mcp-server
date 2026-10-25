@@ -116,7 +116,7 @@ describe("tools/list schema cache", () => {
         seen.add(JSON.stringify((await toolsList(deployment, path)).result));
       }
       expect(seen.size).toBe(1);
-      if (path === "/mcp/safe" || path === "/mcp/launchpad-testing") continue;
+      if (path === "/mcp/safe" || path === "/mcp/launchpad") continue;
       for (const tool of JSON.parse([...seen][0]!).tools as { name: string }[]) {
         expect(tool).toEqual(full.find((entry) => entry.name === tool.name)!);
       }
