@@ -69,7 +69,7 @@ export class LaunchRpc {
     if (!response.ok) {
       throw new LaunchpadError("upstream_error", `The chain RPC answered HTTP ${response.status}. Nothing was prepared; retry the same call later.`, { retryable: true, upstream: "rpc", status: response.status });
     }
-    return result<T>(await response.json().catch(() => null));
+    return result<T>(await response.json().catch(() => null) as Parameters<typeof result<T>>[0]);
   }
 
   async latestBlock(): Promise<Block> {
