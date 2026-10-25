@@ -586,10 +586,18 @@ describe("Worker discovery", () => {
     );
     const document = (await spec.json()) as {
       openapi: string;
-      paths: Record<string, { post?: unknown }>;
+      paths: Record<
+        string,
+        { post?: { responses?: Record<string, { description?: string }> } }
+      >;
     };
     expect(document.openapi).toBe("3.1.0");
     expect(document.paths["/mcp"].post).toBeDefined();
+    for (const path of ["/mcp", "/mcp/{protocol}"]) {
+      expect(document.paths[path].post?.responses?.["413"]?.description).toBe(
+        `Request body larger than ${MAX_MCP_BODY_BYTES} bytes`,
+      );
+    }
     expect(document.paths["/health"]).toBeUndefined();
 
     const llms = await worker.fetch(
