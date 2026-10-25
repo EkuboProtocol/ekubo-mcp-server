@@ -54,19 +54,25 @@ const SCHEDULE = { controller: PERIPHERY, tradingStart: NOW - 100n, decayRateX32
 
 const state = { owner: OWNER as Address, fees: [10n, 20n] as [bigint, bigint], allowance: 0n, quoteOut: 5000n, rpcCalls: 0, apiCalls: 0 };
 
+// The API's v6 golden detail of a launch with the same native quote and default range, moved onto the test deployment.
+const goldenApi = JSON.parse(readFileSync(new URL("../fixtures/launchpad/zero-seed-launch-api-v6.golden.json", import.meta.url), "utf8")) as Json;
 function launchRow(overrides: Json = {}) {
+  const template = goldenApi.l1;
   return {
-    chain_id: "31337", pool_id: POOL_ID,
-    token: { address: TOKEN.toLowerCase(), name: "Zero Seed", symbol: "ZERO", decimals: 18 },
-    quote_token: { address: zeroAddress, name: "Ether", symbol: "ETH", decimals: 18 },
-    controller: PERIPHERY, owner: OWNER, creator: OWNER, logo_url: null,
-    parameters: { supply: "1000000000000000000000000000", initial_fee: SCHEDULE.initialFee.toString(), final_fee: SCHEDULE.finalFee.toString(), decay_rate_x32: "68913100933" },
-    tick_spacing: RANGE.tickSpacing, ask_tick: RANGE.alignedAskTick, upper_tick: RANGE.alignedUpperTick,
-    trading_start: SCHEDULE.tradingStart.toString(), status: "trading",
-    market: { price: "0.0000010", market_cap_usd: "1234.5", raised: "0", sold_share: "0", trades: 0 },
+    ...template, pool_id: POOL_ID,
+    pool_key: { ...template.pool_key, core_address: CORE.toLowerCase(), token1: TOKEN.toLowerCase(), config: KEY.config, extension: EXTENSION.toLowerCase() },
+    token: { ...template.token, address: TOKEN.toLowerCase(), name: "Zero Seed", symbol: "ZERO" },
+    controller: PERIPHERY.toLowerCase(), owner: OWNER.toLowerCase(), creator: OWNER.toLowerCase(), logo_url: null,
+    parameters: { ...template.parameters, initial_fee: SCHEDULE.initialFee.toString(), final_fee: SCHEDULE.finalFee.toString(), decay_rate_x32: "68913100933",
+      trading_start: SCHEDULE.tradingStart.toString() },
+    trading_start: Number(SCHEDULE.tradingStart), status: "trading",
     ...overrides,
   };
 }
+const page = (data: Json[], next: string | null, extra: Json = {}) => ({
+  schema_version: "zero-seed-launch-api/v6", chain_id: "31337", pool_id: POOL_ID, next_cursor: next, as_of: goldenApi.l1.as_of, data, ...extra,
+});
+const listBody = (data: Json[], extra: Json = {}) => ({ ...goldenApi.list, data, total: data.length, totals: { all: data.length, trading: data.length, upcoming: 0 }, next_offset: null, ...extra });
 
 function ethCall(tx: { to: string; data: Hex }): Hex {
   const to = getAddress(tx.to);
@@ -112,13 +118,13 @@ function rpcResult(body: { method: string; params: any[] }): unknown {
 }
 
 let api: (url: URL) => Response | Promise<Response> = (url) => {
-  if (url.pathname === "/launches") return Response.json({ data: [launchRow()], next_cursor: null, totals: { launches: 1 } });
+  if (url.pathname === "/launches") return Response.json(listBody([launchRow()]));
   if (url.pathname === `/launches/31337/${POOL_ID}`) return Response.json(launchRow());
   if (url.pathname.endsWith("/claims")) {
-    const claim = { transaction_hash: `0x${"aa".repeat(32)}`, log_index: 3, amount0: "10", amount1: "20" };
-    return Response.json({ data: [claim, claim], next_cursor: null });
+    const claim = goldenApi["l1/claims?limit=200"].data[0];
+    return Response.json(page([claim, claim], null, { totals: goldenApi["l1/claims?limit=200"].totals }));
   }
-  if (url.pathname.endsWith("/swaps") || url.pathname.endsWith("/owners")) return Response.json({ data: [], next_cursor: url.searchParams.get("cursor") === null ? "next" : null });
+  if (url.pathname.endsWith("/swaps") || url.pathname.endsWith("/owners")) return Response.json(page([], url.searchParams.get("after_event_id") === null ? "-42" : null));
   return new Response("{}", { status: 404 });
 };
 const defaultApi = api;
@@ -306,7 +312,7 @@ describe("reads", () => {
     const list = (await call("launchpad_list_launches", { status: "trading", sort: "market_cap_usd" })).structuredContent;
     expect(list.launches).toHaveLength(1);
     expect(list.launches[0].token.address).toBe(TOKEN);
-    expect(list.totals).toEqual({ launches: 1 });
+    expect([list.total, list.totals]).toEqual([1, { all: 1, trading: 1, upcoming: 0 }]);
     const detail = (await call("launchpad_get_launch", { chain_id: "31337", pool_id: POOL_ID })).structuredContent;
     expect(detail.onchain).toMatchObject({ owner: OWNER, owner_matches_index: true, controller: PERIPHERY, trading_open: true, current_fee_q64: "9222638624014016259",
       unclaimed_fees: { amount0: "10", amount1: "20" } });
@@ -314,17 +320,17 @@ describe("reads", () => {
     const claims = (await call("launchpad_get_claims", { chain_id: "31337", pool_id: POOL_ID })).structuredContent;
     expect(claims.claims).toHaveLength(1);
     const first = (await call("launchpad_get_swaps", { chain_id: "31337", pool_id: POOL_ID })).structuredContent;
-    expect(first).toEqual({ swaps: [], next_cursor: "next" });
-    const second = (await call("launchpad_get_owners", { chain_id: "31337", pool_id: POOL_ID, cursor: "next" })).structuredContent;
-    expect(second).toEqual({ owners: [], next_cursor: null });
+    expect(first).toEqual({ swaps: [], next_cursor: "-42", as_of: goldenApi.l1.as_of });
+    const second = (await call("launchpad_get_owners", { chain_id: "31337", pool_id: POOL_ID, cursor: "-42" })).structuredContent;
+    expect(second).toEqual({ owners: [], next_cursor: null, as_of: goldenApi.l1.as_of });
   });
 
   test("empty results, unknown launch, filter violations, upstream failure and timeout", async () => {
-    api = () => Response.json({ data: [], next_cursor: null, totals: { launches: 0 } });
+    api = () => Response.json(listBody([]));
     expect((await call("launchpad_list_launches", { owner: OWNER })).structuredContent.launches).toEqual([]);
     api = () => new Response("{}", { status: 404 });
     expect((await errorOf("launchpad_get_launch", { chain_id: "31337", pool_id: POOL_ID })).code).toBe("launch_not_found");
-    api = () => Response.json({ data: [launchRow({ status: "upcoming" })], next_cursor: null });
+    api = () => Response.json(listBody([launchRow({ status: "upcoming" })]));
     expect((await errorOf("launchpad_list_launches", { status: "trading" })).code).toBe("invalid_upstream_response");
     api = () => Response.json({ data: "nope" });
     expect((await errorOf("launchpad_list_launches", {})).code).toBe("invalid_upstream_response");

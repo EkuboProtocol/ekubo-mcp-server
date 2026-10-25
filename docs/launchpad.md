@@ -29,9 +29,9 @@ server is configured with
 
 | Tool | Input (exact strings unless noted) | Result |
 | --- | --- | --- |
-| `launchpad_list_launches` | `chain_id?`, `status?` all/trading/upcoming, `owner?` (current owner, "mine"), `sort?` newest/market_cap_usd, `cursor?`, `limit?` 1-100 (20) | `launches[]`, `next_cursor`, `totals` |
+| `launchpad_list_launches` | `chain_id?`, `status?` all/trading/upcoming, `owner?` (current owner, "mine"), `creator?` (owner at creation), `sort?` newest/market_cap_usd, `cursor?` (decimal offset from `next_cursor`), `limit?` 1-100 (20) | `launches[]` (v6 launch rows), `next_cursor`, `total`, `totals` {all, trading, upcoming}, `evaluated_at`, `heads` |
 | `launchpad_get_launch` | `chain_id`, `pool_id` | indexed `launch`, `pool_key`, `onchain` {block, owner, owner_matches_index, controller, trading_open, current_fee_q64/percent (feeAt at the latest block), unclaimed_fees}, `fee_schedule` with curve samples |
-| `launchpad_get_swaps` / `_claims` / `_owners` | `chain_id`, `pool_id`, `cursor?`, `limit?` 1-200 (50) | `swaps`/`claims`/`owners`, `next_cursor`; claims deduplicated on (transaction_hash, log_index) |
+| `launchpad_get_swaps` / `_claims` / `_owners` | `chain_id`, `pool_id`, `cursor?` (signed decimal event id from `next_cursor`), `limit?` 1-200 (50) | `swaps`/`claims`/`owners`, `next_cursor`, `as_of`; claims also `totals` {launch_token, quote_token}; rows deduplicated on `event.event_id` |
 | `launchpad_preview_launch` | `chain_id`, `sender`, `name`, `symbol`, `total_supply` (whole tokens), `quote_token?` (zero = native), `start_price`+`upper_price` or `ask_tick`+`upper_tick`, `trading_start` (Unix s), `initial_fee_percent?` (50), `final_fee_percent?` (0.3), `half_life_seconds?` (86400), `salt?` (random) | `parameters` (exact tuple values), `range` (spacing, installed bounds and prices), `installation` (previewInstallation at the latest block), `fee_schedule` + curve, `preview_id`, `block` |
 | `launchpad_prepare_create` | preview arguments + `salt`, `preview_id`, `logo_url?` | plan: `periphery.create(parameters, logoUrl)` |
 | `launchpad_prepare_trade` | `chain_id`, `sender`, `pool_id`, `side` buy/sell, `amount` (exact input, base units), `slippage_bps?` 0-5000 (50), `deadline_minutes?` 1-30 (30), `recipient?` | plan: optional exact ERC-20 approval, router swap |
@@ -92,16 +92,42 @@ current owner. The new owner receives every fee right, including accrued fees.
 ## Indexed API adapter
 
 `src/launchpad/zero-seed/api.ts` is the only code that knows the wire shape:
-`GET /launches?chain_id&status&owner&sort&cursor&limit` →
-`{data, next_cursor, totals}`; `GET /launches/{chain}/{pool_id}`; and
-`/swaps|claims|owners` pages `{data, next_cursor}` whose rows carry at least
-`transaction_hash` and `log_index`. A launch row has `chain_id`, `pool_id`,
-`token`/`quote_token` `{address, name, symbol, decimals}`, `controller`,
-`owner`, `creator`, `logo_url` (string|null), `parameters` {`supply`,
-`initial_fee`, `final_fee`, `decay_rate_x32`} as decimal strings,
-`tick_spacing`, `ask_tick`, `upper_tick`, `trading_start`, `status`
-(upcoming|trading) and `market` {price, market_cap, market_cap_usd, raised,
-sold_share, trades}. Rows outside the requested filters are rejected.
+the indexed launch API's response contract `zero-seed-launch-api/v6` (every
+body carries `schema_version`; another version is refused as
+`invalid_upstream_response`).
+
+- `GET /launches?chainId&status=all|trading|upcoming&owner&creator&order_by=market_cap|created&offset&limit`
+  → `{schema_version, data, total, totals: {all, trading, upcoming},
+  next_offset, evaluated_at, heads}`. `sort` newest maps to `order_by=created`
+  (newest first) and market_cap_usd to `order_by=market_cap` (USD market cap,
+  nulls last). The tool `cursor` is the API `offset` and `next_cursor` is
+  `next_offset` as a string.
+- `GET /launches/{chainId}/{poolId}` → a launch row plus `principal` and
+  `fee_ledger`.
+- `GET /launches/{chainId}/{poolId}/swaps|claims|owners?after_event_id&limit`
+  → `{schema_version, chain_id, pool_id, next_cursor, as_of, data}` (claims
+  add `totals`). The tool `cursor` is passed as `after_event_id`. Rows carry
+  `event` {block_number, block_hash, block_time, event_id, transaction_index,
+  event_index, transaction_hash}; claims are one row per extension
+  `CreatorFeesClaimed` with the periphery's `owner`, `recipient` and
+  `payout_event_id`.
+
+A launch row has `chain_id`, `pool_id`, `pool_key` {core_address, token0,
+token1, config, fee, tick_spacing, extension}, `token` {address, name, symbol,
+decimals: 18}, `quote_token` {…, kind native|erc20}, `launch_token_is_token1`,
+`controller`, `creator`, `owner`, `logo_url` (string|null), `parameters` (every
+`LaunchParameters` field: numbers as decimal strings, words as bytes32 hex),
+`range` {tick_spacing, aligned_ask_tick, aligned_upper_tick, pool_tick_lower,
+pool_tick_upper}, `supply`, `trading_start` (Unix seconds), `status`
+(upcoming|trading), `fee_schedule`, `market` {price_tick, price_x128,
+market_cap, market_cap_usd, raised, sold, sold_share, trade_count}, `created`
+and `as_of`. The API serves lowercase addresses; the tools return them
+checksummed. The pool key must match the configured Core and extension and
+hash to `pool_id`. Rows outside the requested filters are rejected. API
+errors are `{status, error}`; a 4xx/5xx becomes `upstream_error` with
+`details.status` and `details.upstream_message`, retryable for 5xx and 429.
+`test/launchpad/api-contract.test.ts` parses the API's own v6 golden
+responses through the adapter and the tools.
 
 ## Errors
 

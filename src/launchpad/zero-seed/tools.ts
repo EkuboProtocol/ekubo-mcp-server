@@ -19,19 +19,20 @@ const chainId = z.string().regex(/^[1-9][0-9]*$/).describe("EVM chain id");
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const poolId = z.string().regex(/^0x[0-9a-fA-F]{64}$/).describe("Launch pool id");
 const decimal = z.string().regex(/^(0|[1-9][0-9]*)$/);
-const cursor = z.string().min(1).max(200).optional().describe("next_cursor of the previous page");
+const cursor = (pattern: RegExp) => z.string().regex(pattern).optional().describe("next_cursor of the previous page");
 const sender = address.describe("Wallet that sends the transaction");
 
 const listSchema = z.strictObject({
   chain_id: chainId.optional().describe("EVM chain id; omit for every configured chain"),
   status: z.enum(["all", "trading", "upcoming"]).optional().describe("Default all"),
   owner: address.optional().describe("Only launches this address currently owns (\"mine\")"),
+  creator: address.optional().describe("Only launches this address created"),
   sort: z.enum(["newest", "market_cap_usd"]).optional().describe("Default newest; market_cap_usd = top by USD market cap"),
-  cursor,
+  cursor: cursor(/^(0|[1-9][0-9]{0,5})$/),
   limit: z.number().int().min(1).max(100).optional().describe("Default 20"),
 });
 const launchSchema = z.strictObject({ chain_id: chainId, pool_id: poolId });
-const historySchema = launchSchema.extend({ cursor, limit: z.number().int().min(1).max(200).optional().describe("Default 50") });
+const historySchema = launchSchema.extend({ cursor: cursor(/^(0|-?[1-9][0-9]{0,18})$/), limit: z.number().int().min(1).max(200).optional().describe("Default 50") });
 
 const createFields = {
   chain_id: chainId,
@@ -83,14 +84,14 @@ const tool = <T extends z.ZodObject>(
 
 export const launchpadTools: LaunchpadTool[] = [
   tool("launchpad_list_launches", "List zero-seed launches",
-    "List token launches across configured chains with totals, newest or top by USD market cap; filter by status or current owner. Each row has pool_id, token, quote_token, owner, parameters, range, status and market data.",
+    "List token launches across configured chains with totals, newest or top by USD market cap; filter by status, current owner or creator. Rows have pool_id, token, quote_token, owner, logo_url, parameters, range, status, market.",
     listSchema, listLaunches),
   tool("launchpad_get_launch", "Get a zero-seed launch",
     "One launch with on-chain owner, controller, current creator fee at the latest block, fee schedule and curve, unclaimed fees and market data.",
     launchSchema, getLaunchDetail),
   tool("launchpad_get_swaps", "List launch swaps", "Swaps of one launch, oldest first, paged.", historySchema,
     (env, input) => launchHistory(env, "swaps", input)),
-  tool("launchpad_get_claims", "List launch fee claims", "Creator fee claims of one launch, one row per claim, oldest first, paged.", historySchema,
+  tool("launchpad_get_claims", "List launch fee claims", "Creator fee claims of one launch, one row per claim, oldest first, paged, with claimed totals.", historySchema,
     (env, input) => launchHistory(env, "claims", input)),
   tool("launchpad_get_owners", "List launch owners", "Ownership history of one launch: creation, then every transfer, paged.", historySchema,
     (env, input) => launchHistory(env, "owners", input)),

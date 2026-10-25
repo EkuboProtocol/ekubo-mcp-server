@@ -31,8 +31,11 @@ export function poolKeyOf(launch: Launch, deployment: Deployment): PoolKey {
   const [token0, token1] = BigInt(launch.token.address) < BigInt(launch.quote_token.address)
     ? [launch.token.address, launch.quote_token.address]
     : [launch.quote_token.address, launch.token.address];
-  const key = { token0, token1, config: launchPoolConfig(deployment.extension, launch.tick_spacing) };
-  if (poolIdOf(key) !== launch.pool_id) {
+  const key = { token0, token1, config: launchPoolConfig(deployment.extension, launch.range.tick_spacing) };
+  const wire = launch.pool_key;
+  const sameKey = wire.token0 === token0 && wire.token1 === token1 && wire.config === key.config.toLowerCase() &&
+    wire.extension === deployment.extension && wire.core_address === deployment.core;
+  if (!sameKey || poolIdOf(key) !== launch.pool_id) {
     throw new LaunchpadError("invalid_upstream_response", "The indexed launch does not hash to its pool id on this deployment. Nothing was prepared; retry later.", { retryable: true, upstream: "launch_api" });
   }
   return key;

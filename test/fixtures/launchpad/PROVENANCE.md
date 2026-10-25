@@ -12,3 +12,12 @@ evidence). `test/launchpad/frozen.test.ts` re-checks these hashes.
 
 `local-lifecycle.json` is produced by `script/launchpad-local-chain.ts` from plans
 prepared by these tools and executed on a local anvil chain.
+
+`zero-seed-launch-api-v6.golden.json` (sha256
+553dd01d8d4b43b6840c64d8ac6064fdc0623fc068de3542dcd3539475765ba1) is copied
+verbatim from `src/routes/launches/fixtures/` of the Ekubo API at commit
+`c05481aee2d563a72d02a7c9d13d76ec141a91f8`: every response of the launch routes
+(contract `zero-seed-launch-api/v6`) as written by that repository's replay
+test from the actual handlers over the indexer's replayed local chain. Its
+`source` field names the indexer commit and chain fixture hash.
+`test/launchpad/api-contract.test.ts` parses it through the adapter and tools.

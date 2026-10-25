@@ -52,9 +52,9 @@ The ten `launchpad_*` tools of the final zero-seed launch are served only at
 `/mcp/launchpad`, so no other endpoint's budget grows for them. That endpoint
 replaced `/mcp/launchpad-testing` (eight refusing tools, 9,004 tools
 characters) with real tools that list, preview, create, trade, claim and
-transfer launches; the old disclosures resource is gone. Measured at 0.56.0:
-1,061 instructions (the create two-step, the wallet handoff and the untrusted
-metadata rule), 11,681 tools (2,253 for `launchpad_prepare_create`, whose
+transfer launches; the old disclosures resource is gone. Measured at 0.56.1:
+1,048 instructions (the create two-step, the wallet handoff and the untrusted
+metadata rule), 11,878 tools (2,253 for `launchpad_prepare_create`, whose
 fields repeat the preview's) and 272 resources characters, against budgets of
 1,100, 12,000, 2,300 and 300.
 

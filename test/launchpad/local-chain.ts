@@ -10,12 +10,12 @@ import { YUL_ROUTER_ADDRESS } from "@ekubo/yul-router-sdk";
 import {
   type Address, concatHex, createPublicClient, createTestClient, createWalletClient, decodeEventLog, defineChain,
   encodeAbiParameters, erc20Abi, getAddress, getContractAddress, type Hex, http, keccak256, numberToHex, type PublicClient,
-  stringToHex, type TransactionReceipt,
+  stringToHex, type TransactionReceipt, zeroAddress,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import worker from "../../src/index.js";
 import { extensionAbi, launchTokenAbi, peripheryAbi } from "../../src/launchpad/zero-seed/abi.js";
-import { unpackOne } from "../../src/launchpad/zero-seed/codec.js";
+import { launchRange, unpackOne } from "../../src/launchpad/zero-seed/codec.js";
 import { fakeArtifactStore } from "../fake-r2.js";
 
 const dir = new URL("../fixtures/launchpad/local-chain/", import.meta.url);
@@ -123,41 +123,69 @@ export function decodeLogs(receipt: TransactionReceipt) {
 
 const json = (value: unknown) => new Response(JSON.stringify(value, (_k, v) => (typeof v === "bigint" ? v.toString() : v)), { headers: { "content-type": "application/json" } });
 
-/** A minimal indexed launch API over the chain's own creation and owner events. */
+const ZERO_REF = { block_number: "0", block_hash: `0x${"0".repeat(64)}`, block_time: 0 };
+const VERSION = "zero-seed-launch-api/v6";
+
+/** A minimal indexed launch API (zero-seed-launch-api/v6 shape) over the chain's own creation and owner events. */
 export function mockApi(chain: LocalChain) {
   return async (url: URL): Promise<Response> => {
     const logs = await chain.pub.getLogs({ address: chain.extension, fromBlock: 0n });
     const block = await chain.pub.getBlock();
+    const asOf = { block_number: block.number.toString(), block_hash: block.hash, block_time: Number(block.timestamp) };
     const launches = await Promise.all(logs.flatMap((log) => {
       try {
         const event = decodeEventLog({ abi: extensionAbi, data: log.data, topics: log.topics as [Hex, ...Hex[]] });
-        return event.eventName === "LaunchCreated" ? [row(chain, event.args as never, block.timestamp)] : [];
+        return event.eventName === "LaunchCreated" ? [row(chain, event.args as never, asOf)] : [];
       } catch {
         return [];
       }
     }));
     const parts = url.pathname.split("/").filter(Boolean);
-    if (parts.length === 1) return json({ data: launches, next_cursor: null, totals: { launches: launches.length } });
+    if (parts.length === 1) {
+      const trading = launches.filter((entry) => entry.status === "trading").length;
+      return json({ schema_version: VERSION, data: launches, total: launches.length, totals: { all: launches.length, trading, upcoming: launches.length - trading },
+        next_offset: null, evaluated_at: asOf.block_time, heads: [{ chain_id: "31337", ...asOf }] });
+    }
     const launch = launches.find((entry) => entry.pool_id === parts[2]);
     if (launch === undefined) return new Response("{}", { status: 404 });
     if (parts.length === 3) return json(launch);
-    return json({ data: [], next_cursor: null });
+    const totals = parts[3] === "claims" ? { totals: { launch_token: "0", quote_token: "0" } } : {};
+    return json({ schema_version: VERSION, chain_id: "31337", pool_id: launch.pool_id, next_cursor: null, as_of: asOf, data: [], ...totals });
   };
 }
 
-async function row(chain: LocalChain, args: { poolId: Hex; token: Address; controller: Address; poolKey: { config: Hex }; parameters: Record<string, never>; logoUrl: string }, now: bigint) {
-  const p = args.parameters as unknown as { name: Hex; symbol: Hex; supply: bigint; quoteToken: Address; askTick: number; upperTick: number; tradingStart: bigint; decayRateX32: bigint; initialFee: bigint; finalFee: bigint };
+type Created = {
+  poolId: Hex; token: Address; controller: Address; poolKey: { token0: Address; token1: Address; config: Hex }; positionId: Hex; liquidity: bigint;
+  parameters: Record<string, never>; logoUrl: string;
+};
+
+async function row(chain: LocalChain, args: Created, asOf: { block_number: string; block_hash: Hex; block_time: number }) {
+  const p = args.parameters as unknown as { name: Hex; symbol: Hex; supply: bigint; quoteToken: Address; askTick: number; upperTick: number; tradingStart: bigint; decayRateX32: bigint; initialFee: bigint; finalFee: bigint; salt: Hex };
   const owner = await chain.pub.readContract({ address: chain.periphery, abi: peripheryAbi, functionName: "launchOwner", args: [args.poolId] }) as Address;
   const quoteDecimals = BigInt(p.quoteToken) === 0n ? 18 : await chain.pub.readContract({ address: p.quoteToken, abi: erc20Abi, functionName: "decimals" });
+  const range = launchRange(p.askTick, p.upperTick);
+  const token1 = getAddress(args.poolKey.token1) === getAddress(args.token);
+  const [lower, upper] = token1 ? [-range.alignedUpperTick, -range.alignedAskTick] : [range.alignedAskTick, range.alignedUpperTick];
+  const lc = (value: string) => value.toLowerCase();
+  const fees = { trading_start: Number(p.tradingStart), initial_fee: p.initialFee.toString(), final_fee: p.finalFee.toString(), decay_rate_x32: p.decayRateX32.toString() };
   return {
-    chain_id: "31337", pool_id: args.poolId.toLowerCase(),
-    token: { address: args.token, name: unpackOne(p.name), symbol: unpackOne(p.symbol), decimals: 18 },
-    quote_token: { address: p.quoteToken, name: null, symbol: null, decimals: quoteDecimals },
-    controller: args.controller, owner, creator: owner, logo_url: args.logoUrl === "" ? null : args.logoUrl,
-    parameters: { supply: p.supply.toString(), initial_fee: p.initialFee.toString(), final_fee: p.finalFee.toString(), decay_rate_x32: p.decayRateX32.toString(), ask_tick: p.askTick, upper_tick: p.upperTick },
-    tick_spacing: Number(BigInt(args.poolKey.config) & 0x7fffffffn), ask_tick: p.askTick, upper_tick: p.upperTick,
-    trading_start: p.tradingStart.toString(), status: now >= p.tradingStart ? "trading" : "upcoming",
-    market: { trades: 0 },
+    schema_version: VERSION, chain_id: "31337", pool_id: lc(args.poolId),
+    pool_key: { core_address: lc(CORE), token0: lc(args.poolKey.token0), token1: lc(args.poolKey.token1), config: lc(args.poolKey.config), fee: "0", tick_spacing: range.tickSpacing, extension: lc(chain.extension) },
+    token: { address: lc(args.token), name: unpackOne(p.name), symbol: unpackOne(p.symbol), decimals: 18 },
+    quote_token: { address: lc(p.quoteToken), name: null, symbol: null, decimals: quoteDecimals, kind: BigInt(p.quoteToken) === 0n ? "native" : "erc20" },
+    launch_token_is_token1: token1, controller: lc(args.controller), owner: lc(owner), creator: lc(owner), logo_url: args.logoUrl === "" ? null : args.logoUrl,
+    parameters: { name: p.name, symbol: p.symbol, supply: p.supply.toString(), quote_token: lc(p.quoteToken), ask_tick: String(p.askTick), upper_tick: String(p.upperTick),
+      trading_start: p.tradingStart.toString(), decay_rate_x32: fees.decay_rate_x32, initial_fee: fees.initial_fee, final_fee: fees.final_fee, salt: p.salt },
+    range: { tick_spacing: range.tickSpacing, aligned_ask_tick: range.alignedAskTick, aligned_upper_tick: range.alignedUpperTick, pool_tick_lower: lower, pool_tick_upper: upper },
+    supply: { requested: p.supply.toString(), installed: p.supply.toString(), sink: "0", sink_holder: zeroAddress },
+    trading_start: Number(p.tradingStart), status: BigInt(asOf.block_time) >= p.tradingStart ? "trading" : "upcoming",
+    fee_schedule: { ...fees, half_life_seconds: null, saturation_elapsed_seconds: null, phase: "constant", fee_rate: fees.initial_fee, evaluated_at: asOf.block_time },
+    market: { price_tick: range.alignedAskTick, price_x128: "0", market_cap: "0", market_cap_usd: null, raised: "0", sold: "0", sold_share: "0.000000000000000000", trade_count: 0 },
+    created: { ...ZERO_REF, event_id: "0", transaction_index: 0, event_index: 0, transaction_hash: `0x${"0".repeat(64)}` },
+    as_of: asOf,
+    principal: { position_id: args.positionId, liquidity: args.liquidity.toString(), locked: true, withdrawable: false, pool_reserves: { launch_token: "0", quote_token: "0" } },
+    fee_ledger: { holder: lc(owner), launch_token: { accrued: "0", claimed: "0", unclaimed: "0" }, quote_token: { accrued: "0", claimed: "0", unclaimed: "0" },
+      swap_count: 0, claim_count: 0, owner_change_count: 1, last_event_id: "0" },
   };
 }
 
