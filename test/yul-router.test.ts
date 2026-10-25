@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import exactIn from "./fixtures/launchpad/quoter-exact-in.json";
+import exactIn from "./fixtures/quoter-forwarded-exact-in.json";
 import { type EvmQuoterQuote, prepareSwapFromQuote } from "../src/yul-router.js";
 
 /**

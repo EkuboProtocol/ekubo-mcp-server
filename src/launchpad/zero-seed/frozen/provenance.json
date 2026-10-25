@@ -1,0 +1,22 @@
+{
+  "source": "EkuboProtocol/evm-contracts",
+  "source_commit": "853b608ec26d4c80bdad6e394cb8ba686e1ae615",
+  "note": "Compiled ABIs copied verbatim from the frozen source packet (solc 0.8.33, via-IR, 9999999 runs, osaka). Runtime templates are the expected runtimes with every immutable slot zeroed; offsets are the compiler immutableReferences. Not a deployment: no address is implied.",
+  "sha256": {
+    "ZeroSeedLaunch.abi.json": "6a131c2d2f70f85a5e2a54395b9d77c4dd5028a7a4bbf632f3d3364ac61e56eb",
+    "ZeroSeedLaunchPeriphery.abi.json": "5d05426f8190cb0bcd6a021e7aceb46f468708cb36bd5a5d818548650499c839",
+    "LaunchToken.abi.json": "4896b12cb9e4c5d0cecd7344146fff5be5bc17e2f81cbdd88fab0539584bf34c"
+  },
+  "runtime_templates": {
+    "ZeroSeedLaunch": {
+      "length": 18366,
+      "template_keccak256": "0x707be0d4e2c25c21d6d9aafec5bb58e634118c1edade48d0dc1fd5be5de2624c",
+      "immutables": { "core": [1233, 6172, 7549, 9420, 9650, 9966, 10166, 10374, 2305] }
+    },
+    "ZeroSeedLaunchPeriphery": {
+      "length": 6123,
+      "template_keccak256": "0xe6c0d086bff1c96e4f0a2e8068022795a0c74f96d15d15cd041cbea2d2e9b529",
+      "immutables": { "core": [2737, 4665, 3113, 4904, 5772], "extension": [748, 2673, 3007, 4610] }
+    }
+  }
+}
