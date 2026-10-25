@@ -275,7 +275,7 @@
             "description": "Invalid MCP request, more than 20 JSON-RPC messages in one request, or tool calls whose combined cost exceeds the 40-unit per-request ceiling"
           },
           "413": {
-            "description": "Request body larger than 262144 bytes",
+            "description": "Request body larger than 2097152 bytes",
             "$ref": "#/components/responses/Error"
           },
           "429": {
@@ -337,7 +337,7 @@
             "description": "Invalid MCP request, more than 20 JSON-RPC messages in one request, or tool calls whose combined cost exceeds the 40-unit per-request ceiling"
           },
           "413": {
-            "description": "Request body larger than 262144 bytes",
+            "description": "Request body larger than 2097152 bytes",
             "$ref": "#/components/responses/Error"
           },
           "429": {
