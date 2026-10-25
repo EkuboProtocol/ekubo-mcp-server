@@ -70,7 +70,7 @@ describe.skipIf(!enabled)("final launch lifecycle on a local anvil chain", () =>
       const url = new URL(input.toString());
       return url.origin === API ? api(url) : original(input, init);
     }) as typeof fetch);
-  });
+  }, 60_000);
   afterAll(() => {
     (globalThis.fetch as unknown as { mockRestore?: () => void }).mockRestore?.();
     chain?.stop();

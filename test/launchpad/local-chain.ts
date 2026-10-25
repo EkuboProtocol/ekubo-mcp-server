@@ -27,7 +27,7 @@ export const API = "https://launch-api.test";
 export const KEYS = [
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
   "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
-  "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3faf9a8f7f6a5b0e",
+  "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
 ] as const;
 export const ACCOUNTS = KEYS.map((key) => privateKeyToAccount(key));
 
@@ -62,7 +62,7 @@ export async function startChain(port: number): Promise<LocalChain> {
   await waitFor(rpcUrl);
   const chain = defineChain({ id: 31337, name: "anvil", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: [rpcUrl] } } });
   const transport = http(rpcUrl);
-  const pub = createPublicClient({ chain, transport }) as PublicClient;
+  const pub = createPublicClient({ chain, transport, pollingInterval: 50 }) as PublicClient;
   const test = createTestClient({ chain, transport, mode: "anvil" });
   const wallet = createWalletClient({ chain, transport, account: ACCOUNTS[0] });
   await test.setCode({ address: CORE, bytecode: hex("Core.runtime.expected.hex") });
