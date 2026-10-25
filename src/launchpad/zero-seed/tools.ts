@@ -53,7 +53,7 @@ const createFields = {
 const previewSchema = z.strictObject({ ...createFields, salt: createFields.salt.describe("Default random") });
 const createSchema = z.strictObject({
   ...createFields,
-  salt: createFields.salt.describe("parameters.salt from the preview"),
+  salt: z.string().regex(/^0x[0-9a-fA-F]{64}$/).describe("parameters.salt from the preview"),
   preview_id: z.string().regex(/^0x[0-9a-fA-F]{64}$/).describe("From launchpad_preview_launch"),
   logo_url: z.string().max(2048).optional().describe("Optional https:// or ipfs:// logo; emitted, never stored"),
 });
