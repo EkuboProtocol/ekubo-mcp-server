@@ -32,13 +32,13 @@ describe("frozen 853b608 artifacts", () => {
   test("every selector, error and topic equals the generated vectors", () => {
     const check = (abi: Abi, expected: { selectors: Record<string, string>; errors: Record<string, string>; events: Record<string, string> }) => {
       const functions = abi.filter((item) => item.type === "function");
-      expect(Object.fromEntries(functions.map((item) => [formatAbiItem(item).replace(/^function /, ""), toFunctionSelector(item)])))
+      expect(<Record<string, string>>Object.fromEntries(functions.map((item) => [formatAbiItem(item).replace(/^function /, ""), toFunctionSelector(item)])))
         .toEqual(expected.selectors);
       const errors = abi.filter((item) => item.type === "error");
-      expect(Object.fromEntries(errors.map((item) => [formatAbiItem(item).replace(/^error /, ""), toFunctionSelector(formatAbiItem(item).replace(/^error /, "function "))])))
+      expect(<Record<string, string>>Object.fromEntries(errors.map((item) => [formatAbiItem(item).replace(/^error /, ""), toFunctionSelector(formatAbiItem(item).replace(/^error /, "function "))])))
         .toEqual(expected.errors);
       const logs = abi.filter((item) => item.type === "event");
-      expect(Object.fromEntries(logs.map((item) => [formatAbiItem(item).replace(/^event /, ""), toEventSelector(item)]))).toEqual(expected.events);
+      expect(<Record<string, string>>Object.fromEntries(logs.map((item) => [formatAbiItem(item).replace(/^event /, ""), toEventSelector(item)]))).toEqual(expected.events);
     };
     check(extensionAbi, vectors.abi.ZeroSeedLaunch);
     check(peripheryAbi, vectors.abi.ZeroSeedLaunchPeriphery);
@@ -52,7 +52,7 @@ describe("frozen 853b608 artifacts", () => {
     expect(created.length).toBeGreaterThanOrEqual(2);
     for (const log of created) {
       const decoded = decodeEventLog({ abi: extensionAbi, data: log.data, topics: log.topics as [Hex, ...Hex[]] });
-      expect(decoded.eventName).toBe("LaunchCreated");
+      expect(decoded.eventName as unknown).toBe("LaunchCreated");
       const args = decoded.args as unknown as { logoUrl: string; parameters: { name: Hex; symbol: Hex } };
       expect(args.logoUrl).toBe(log.logo);
       expect(unpackOne(args.parameters.name)).toBe("Zero Seed");
@@ -80,7 +80,7 @@ describe("metadata codec", () => {
 describe("range spacing and signed alignment", () => {
   test("all installation rows follow the final rule, no 1024 snapping", () => {
     const rows = (installation.vectors as { askTick: number; upperTick: number; tickSpacing?: number; alignedAskTick?: number; alignedUpperTick?: number }[])
-      .filter((row) => row.tickSpacing !== undefined);
+      .filter((row) => row.tickSpacing !== undefined) as { askTick: number; upperTick: number; tickSpacing: number; alignedAskTick: number; alignedUpperTick: number }[];
     expect(rows.length).toBeGreaterThan(50);
     for (const row of rows) {
       expect(launchRange(row.askTick, row.upperTick)).toEqual({

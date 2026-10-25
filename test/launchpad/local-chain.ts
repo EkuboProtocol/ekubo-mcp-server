@@ -112,7 +112,7 @@ export function decodeLogs(receipt: TransactionReceipt) {
     for (const abi of ABIS) {
       try {
         const decoded = decodeEventLog({ abi, data: log.data, topics: log.topics as [Hex, ...Hex[]] });
-        return [{ address: getAddress(log.address), logIndex: log.logIndex, eventName: decoded.eventName, args: decoded.args as Record<string, unknown> }];
+        return [{ address: getAddress(log.address), logIndex: log.logIndex, eventName: decoded.eventName, args: decoded.args as unknown as Record<string, unknown> }];
       } catch {
         // another ABI
       }
