@@ -6,6 +6,13 @@ import {
 } from "./mcp-catalog.js";
 import { uniswapTools, uniswapCatalog } from "./uniswap/tools.js";
 import { safeTools, safeCatalog } from "./safe.js";
+import {
+  launchpadCatalog,
+  launchpadOutputSchemas,
+  launchpadResources,
+  launchpadTools,
+  type LaunchpadEnv,
+} from "./launchpad/zero-seed/tools.js";
 import { informationalOutputSchemas } from "./informational-output-schemas.js";
 import {
   McpServer,
@@ -1846,11 +1853,14 @@ const preparerAnnotations = {
   openWorldHint: true,
 } as const;
 
+const PREPARER_PREFIXES = ["prepare_", "launchpad_prepare_"];
+
+function isPreparer(name: string) {
+  return PREPARER_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
 function toolAnnotations(name: string) {
-  if (
-    name.startsWith("prepare_") ||
-    name === "get_quotes_with_plans"
-  ) {
+  if (isPreparer(name) || name === "get_quotes_with_plans") {
     return preparerAnnotations;
   }
   return LOCAL_TOOLS.has(name) ? localAnnotations : readerAnnotations;
@@ -1947,6 +1957,11 @@ function preparerOutputSchema(name: string) {
   return preparedPlanOutputSchema;
 }
 
+const namedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
+  ...informationalOutputSchemas,
+  ...launchpadOutputSchemas,
+};
+
 export function toolOutputSchema(name: string) {
   if (name === "get_quotes_with_plans") return quotesOutputSchema;
   if (name.startsWith("prepare_")) return preparerOutputSchema(name);
@@ -1985,7 +2000,7 @@ export function toolOutputSchema(name: string) {
           .nullish(),
       });
     default:
-      return informationalOutputSchemas[name];
+      return namedOutputSchemas[name];
   }
 }
 
@@ -2574,7 +2589,7 @@ export const publicToolCatalog = [
   },
 ] as const;
 
-export const hostedToolCatalog = [...publicToolCatalog, ...safeCatalog];
+export const hostedToolCatalog = [...publicToolCatalog, ...safeCatalog, ...launchpadCatalog];
 export const publicToolCatalogWithOutputs = hostedToolCatalog.map((entry) => {
   const outputSchema = toolOutputSchema(entry.name);
   return {
@@ -2614,6 +2629,7 @@ function resourceEnabled(
   skills: ReadonlySet<string>,
 ): boolean {
   if (UNIVERSAL_RESOURCES.has(name)) return true;
+  if (name.startsWith("launchpad-")) return protocols.has("launchpad-testing");
   if (name.startsWith(SKILL_RESOURCE_PREFIX)) {
     const skill = name.slice(SKILL_RESOURCE_PREFIX.length);
     return skills.has(skill) || skills.has(skill.replace(/-discovery$/, ""));
@@ -4134,6 +4150,11 @@ export function createEkuboServer(
   for (const tool of [...uniswapTools, ...safeTools]) {
     registerCatalogTool(tool.name, tool.schema, tool.handler);
   }
+  for (const tool of launchpadTools) {
+    registerCatalogTool(tool.name, tool.schema, (input) =>
+      tool.handler(env as Env & LaunchpadEnv, input as never),
+    );
+  }
 
   registerCatalogTool("get_lido_deployment", getLidoDeploymentSchema, () =>
     getLidoDeployment(),
@@ -4181,6 +4202,17 @@ export function createEkuboServer(
         requestId: input.request_id,
       }),
   );
+
+  for (const resource of launchpadResources) {
+    server.registerResource(
+      resource.name,
+      resource.uri,
+      { title: resource.title, description: resource.description, mimeType: resource.mimeType },
+      async (uri) => ({
+        contents: [{ uri: uri.href, mimeType: resource.mimeType, text: resource.text() }],
+      }),
+    );
+  }
 
   server.registerResource(
     "ekubo-agent-workflow",
@@ -4699,6 +4731,9 @@ export function serverInstructions(
 ): string {
   if (protocols.size === 1 && protocols.has("safe")) {
     return `Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}\n\nSafe preparation only: this server never signs, broadcasts, proxies RPC, or submits to the Safe Transaction Service. Supported Safe versions are 1.3.0 and 1.4.1. Verify version, owners, threshold, nonce and transaction hash through the wallet's read_calls_reference. Decode locally and retain raw bytes. Pass typed_data_signature_request_reference unchanged to a wallet supporting ERC-8410 typed-data signing, with the actual owner as signer. Sign the EIP-712 signing digest, never the request digest. Wallet authorization for transactions does not authorize signatures. Review the full Safe transaction including delegatecall and refund fields, and simulate before signing. SafeMessage signatures require a compatible fallback handler and verifier. valid_until only limits signing/release, not the lifetime of released signatures. No controlled delivery is configured: signatures return to the caller for aggregation. For execution plans follow ekubo://docs/execution-plan and pass execution_plan_reference unchanged to the wallet. Require inner Safe success, not merely a successful outer receipt. Owner changes are Safe self-calls requiring the current threshold, not direct owner transactions.\n\nEndpoint scope: ${origin}/mcp/safe only. Safe tools are excluded from ${origin}/mcp.`;
+  }
+  if (protocols.size === 1 && protocols.has("launchpad-testing")) {
+    return `Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}\n\nTesting endpoint for the zero-seed launchpad. Launch support is disabled: no launch instance is supported on any chain, launchpad_list_launches returns an empty list, and every other tool refuses with launch_support_disabled (launchpad_prepare_trade with executable_budget_not_proven). No tool makes a request, returns a plan or stores a reference, so there is nothing to pass to a wallet. launchpad://disclosures holds the draft mechanism disclosures.\n\nEndpoint scope: ${origin}${protocolMcpPath("launchpad-testing")} only. These tools are excluded from ${origin}/mcp and every other endpoint.`;
   }
   return bundledServerInstructions(protocols, origin);
 }
