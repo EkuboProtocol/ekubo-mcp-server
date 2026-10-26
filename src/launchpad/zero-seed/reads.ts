@@ -1,5 +1,5 @@
 import { getAddress, type Hex } from "viem";
-import { type HistoryKind, MAX_LIST_OFFSET, type Status } from "./api.js";
+import { type HistoryKind, type ListOrder, MAX_LIST_OFFSET, type QuoteAggregate, type Status } from "./api.js";
 import { blockSummary, chainContext, creatorFees, feeAtBlock, getLaunch, launchApi, launchOwner, poolKeyOf } from "./context.js";
 import { deploymentFor, deployments, type LaunchpadEnv } from "./deployment.js";
 import { invalidArgument, supportDisabled } from "./errors.js";
@@ -12,10 +12,16 @@ export interface ListInput {
   status?: Status;
   owner?: string;
   creator?: string;
-  sort?: "newest" | "market_cap_usd";
+  sort?: ListSort;
   cursor?: string;
   limit?: number;
 }
+
+/** Tool sort names to the API's order_by; newest stays the default. */
+const ORDER_BY = {
+  newest: "created", market_cap_usd: "market_cap", volume: "volume", sold_share: "sold_share", trade_count: "trade_count",
+} as const satisfies Record<string, ListOrder>;
+export type ListSort = keyof typeof ORDER_BY;
 
 export interface PageInput {
   chain_id: string;
@@ -35,6 +41,31 @@ function listOffset(cursor: string | undefined): number {
   return Number(cursor);
 }
 
+const sumUsd = (values: (string | null)[]) => {
+  const priced = values.filter((value): value is string => value !== null);
+  if (priced.length === 0) return null;
+  const micros = priced.reduce((sum, value) => sum + BigInt(value.replace(".", "")), 0n);
+  return `${micros / 1_000_000n}.${(micros % 1_000_000n).toString().padStart(6, "0")}`;
+};
+
+/** The API's aggregates restricted to the configured chains, like the rows; raw amounts stay per quote token. */
+function chainAggregates(byQuote: QuoteAggregate[], chains: Set<string>) {
+  const groups = byQuote.filter((group) => chains.has(group.chain_id));
+  const priced = groups.filter((group) => group.usd_priced);
+  const count = (list: QuoteAggregate[]) => list.reduce((sum, group) => sum + group.launch_count, 0);
+  return {
+    launch_count: count(groups),
+    trade_count: groups.reduce((sum, group) => sum + group.trade_count, 0),
+    by_quote: groups,
+    usd: {
+      volume: sumUsd(priced.map((group) => group.volume_usd)),
+      market_cap: sumUsd(priced.map((group) => group.market_cap_usd)),
+      priced_launch_count: count(priced),
+      excluded_launch_count: count(groups) - count(priced),
+    },
+  };
+}
+
 const optionalAddress = (value: string | undefined) => (value === undefined ? undefined : getAddress(value));
 
 export async function listLaunches(env: LaunchpadEnv, input: ListInput) {
@@ -45,13 +76,14 @@ export async function listLaunches(env: LaunchpadEnv, input: ListInput) {
   const chains = new Set(configured.map((entry) => entry.chainId));
   const result = await launchApi(env).list({
     chainId: input.chain_id, status: input.status ?? "all", owner: optionalAddress(input.owner), creator: optionalAddress(input.creator),
-    orderBy: input.sort === "market_cap_usd" ? "market_cap" : "created", offset, limit: input.limit ?? 20,
+    orderBy: ORDER_BY[input.sort ?? "newest"], offset, limit: input.limit ?? 20,
   });
   return {
     launches: result.data.filter((row) => chains.has(row.chain_id)),
     next_cursor: result.next_offset === null ? null : String(result.next_offset),
     total: result.total,
     totals: result.totals,
+    aggregates: chainAggregates(result.aggregates.by_quote, chains),
     evaluated_at: result.evaluated_at,
     heads: result.heads,
     note: UNTRUSTED,

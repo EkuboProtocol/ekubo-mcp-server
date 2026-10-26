@@ -18,6 +18,7 @@ import worker from "../../src/index.js";
 import { extensionAbi, launchTokenAbi, peripheryAbi } from "../../src/launchpad/zero-seed/abi.js";
 import { launchRange, unpackOne } from "../../src/launchpad/zero-seed/codec.js";
 import { fakeArtifactStore } from "../fake-r2.js";
+import { listAggregates } from "./api-aggregates.js";
 
 const dir = new URL("../fixtures/launchpad/local-chain/", import.meta.url);
 const hex = (name: string) => readFileSync(new URL(name, dir), "utf8").trim() as Hex;
@@ -145,9 +146,9 @@ export function decodeLogs(receipt: TransactionReceipt) {
 const json = (value: unknown) => new Response(JSON.stringify(value, (_k, v) => (typeof v === "bigint" ? v.toString() : v)), { headers: { "content-type": "application/json" } });
 
 const ZERO_REF = { block_number: "0", block_hash: `0x${"0".repeat(64)}`, block_time: 0 };
-const VERSION = "zero-seed-launch-api/v6";
+const VERSION = "zero-seed-launch-api/v7";
 
-/** A minimal indexed launch API (zero-seed-launch-api/v6 shape) over the chain's own creation and owner events. */
+/** A minimal indexed launch API (zero-seed-launch-api/v7 shape) over the chain's own creation and owner events. */
 export function mockApi(chain: LocalChain) {
   return async (url: URL): Promise<Response> => {
     const logs = await chain.pub.getLogs({ address: chain.extension, fromBlock: 0n });
@@ -165,6 +166,7 @@ export function mockApi(chain: LocalChain) {
     if (parts.length === 1) {
       const trading = launches.filter((entry) => entry.status === "trading").length;
       return json({ schema_version: VERSION, data: launches, total: launches.length, totals: { all: launches.length, trading, upcoming: launches.length - trading },
+        aggregates: listAggregates(launches),
         next_offset: null, evaluated_at: asOf.block_time, heads: [{ chain_id: "31337", ...asOf }] });
     }
     const launch = launches.find((entry) => entry.pool_id === parts[2]);
@@ -201,7 +203,7 @@ async function row(chain: LocalChain, args: Created, asOf: { block_number: strin
     supply: { requested: p.supply.toString(), installed: p.supply.toString(), sink: "0", sink_holder: zeroAddress },
     trading_start: Number(p.tradingStart), status: BigInt(asOf.block_time) >= p.tradingStart ? "trading" : "upcoming",
     fee_schedule: { ...fees, half_life_seconds: null, saturation_elapsed_seconds: null, phase: "constant", fee_rate: fees.initial_fee, evaluated_at: asOf.block_time },
-    market: { price_tick: range.alignedAskTick, price_x128: "0", market_cap: "0", market_cap_usd: null, raised: "0", sold: "0", sold_share: "0.000000000000000000", trade_count: 0 },
+    market: { price_tick: range.alignedAskTick, price_x128: "0", market_cap: "0", market_cap_usd: null, raised: "0", sold: "0", sold_share: "0.000000000000000000", trade_count: 0, volume: "0", volume_usd: null },
     created: { ...ZERO_REF, event_id: "0", transaction_index: 0, event_index: 0, transaction_hash: `0x${"0".repeat(64)}` },
     as_of: asOf,
     principal: { position_id: args.positionId, liquidity: args.liquidity.toString(), locked: true, withdrawable: false, pool_reserves: { launch_token: "0", quote_token: "0" } },

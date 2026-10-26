@@ -10,6 +10,7 @@ import { extensionAbi, peripheryAbi } from "../../src/launchpad/zero-seed/abi.js
 import { launchPoolConfig, launchRange, poolIdOf } from "../../src/launchpad/zero-seed/codec.js";
 import { DISCLOSURE_CODES } from "../../src/launchpad/zero-seed/disclosures.js";
 import { fakeArtifactStore } from "../fake-r2.js";
+import { listAggregates } from "./api-aggregates.js";
 
 // Acceptance through the MCP boundary (worker.fetch tools/list and tools/call) with a mocked chain RPC and indexed
 // launch API. Runtimes served by the mock are the frozen expected runtimes with their immutables set to the test
@@ -55,8 +56,8 @@ const SCHEDULE = { controller: PERIPHERY, tradingStart: NOW - 100n, decayRateX32
 
 const state = { owner: OWNER as Address, fees: [10n, 20n] as [bigint, bigint], allowance: 0n, quoteOut: 5000n, rpcCalls: 0, apiCalls: 0 };
 
-// The API's v6 golden detail of a launch with the same native quote and default range, moved onto the test deployment.
-const goldenApi = JSON.parse(readFileSync(new URL("../fixtures/launchpad/zero-seed-launch-api-v6.golden.json", import.meta.url), "utf8")) as Json;
+// The API's v7 golden detail of a launch with the same native quote and default range, moved onto the test deployment.
+const goldenApi = JSON.parse(readFileSync(new URL("../fixtures/launchpad/zero-seed-launch-api-v7.golden.json", import.meta.url), "utf8")) as Json;
 function launchRow(overrides: Json = {}) {
   const template = goldenApi.l1;
   return {
@@ -71,9 +72,10 @@ function launchRow(overrides: Json = {}) {
   };
 }
 const page = (data: Json[], next: string | null, extra: Json = {}) => ({
-  schema_version: "zero-seed-launch-api/v6", chain_id: "31337", pool_id: POOL_ID, next_cursor: next, as_of: goldenApi.l1.as_of, data, ...extra,
+  schema_version: "zero-seed-launch-api/v7", chain_id: "31337", pool_id: POOL_ID, next_cursor: next, as_of: goldenApi.l1.as_of, data, ...extra,
 });
-const listBody = (data: Json[], extra: Json = {}) => ({ ...goldenApi.list, data, total: data.length, totals: { all: data.length, trading: data.length, upcoming: 0 }, next_offset: null, ...extra });
+const listBody = (data: Json[], extra: Json = {}) => ({ ...goldenApi.list, data, total: data.length, totals: { all: data.length, trading: data.length, upcoming: 0 },
+  aggregates: listAggregates(data as never), next_offset: null, ...extra });
 
 function ethCall(tx: { to: string; data: Hex }): Hex {
   const to = getAddress(tx.to);
@@ -355,6 +357,8 @@ describe("reads", () => {
     expect(list.launches).toHaveLength(1);
     expect(list.launches[0].token.address).toBe(TOKEN);
     expect([list.total, list.totals]).toEqual([1, { all: 1, trading: 1, upcoming: 0 }]);
+    expect(list.aggregates).toMatchObject({ launch_count: 1, trade_count: goldenApi.l1.market.trade_count, by_quote: [{ quote_token: getAddress(`0x${"0".repeat(40)}`), volume: goldenApi.l1.market.volume }],
+      usd: { volume: null, market_cap: null, priced_launch_count: 0, excluded_launch_count: 1 } });
     const detail = (await call("launchpad_get_launch", { chain_id: "31337", pool_id: POOL_ID })).structuredContent;
     expect(detail.onchain).toMatchObject({ owner: OWNER, owner_matches_index: true, controller: PERIPHERY, trading_open: true, current_fee_q64: "9222638624014016259",
       unclaimed_fees: { amount0: "10", amount1: "20" } });
@@ -372,7 +376,8 @@ describe("reads", () => {
 
   test("empty results, unknown launch, filter violations, upstream failure and timeout", async () => {
     api = () => Response.json(listBody([]));
-    expect((await call("launchpad_list_launches", { owner: OWNER })).structuredContent.launches).toEqual([]);
+    const empty = (await call("launchpad_list_launches", { owner: OWNER })).structuredContent;
+    expect([empty.launches, empty.aggregates]).toEqual([[], { launch_count: 0, trade_count: 0, by_quote: [], usd: { volume: null, market_cap: null, priced_launch_count: 0, excluded_launch_count: 0 } }]);
     api = () => new Response("{}", { status: 404 });
     expect((await errorOf("launchpad_get_launch", { chain_id: "31337", pool_id: POOL_ID })).code).toBe("launch_not_found");
     api = () => Response.json(listBody([launchRow({ status: "upcoming" })]));

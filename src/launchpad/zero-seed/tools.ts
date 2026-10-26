@@ -27,7 +27,8 @@ const listSchema = z.strictObject({
   status: z.enum(["all", "trading", "upcoming"]).optional().describe("Default all"),
   owner: address.optional().describe("Only launches this address currently owns (\"mine\")"),
   creator: address.optional().describe("Only launches this address created"),
-  sort: z.enum(["newest", "market_cap_usd"]).optional().describe("Default newest; market_cap_usd = top by USD market cap"),
+  sort: z.enum(["newest", "market_cap_usd", "volume", "sold_share", "trade_count"]).optional()
+    .describe("Default newest; descending. market_cap_usd, volume: USD-priced first, then by quote amount"),
   cursor: cursor(/^(0|[1-9][0-9]{0,5})$/),
   limit: z.number().int().min(1).max(100).optional().describe("Default 20"),
 });
@@ -85,7 +86,7 @@ const tool = <T extends z.ZodObject>(
 
 export const launchpadTools: LaunchpadTool[] = [
   tool("launchpad_list_launches", "List zero-seed launches",
-    "List token launches across configured chains with totals, newest or top by USD market cap; filter by status, current owner or creator. Rows have pool_id, token, quote_token, owner, logo_url, parameters, range, status, market.",
+    "List token launches across configured chains; filter by status, current owner or creator. Rows: pool_id, token, quote_token, owner, logo_url, parameters, range, status, market. aggregates spans all matches: per-quote raw volume and market cap; USD sums priced launches only.",
     listSchema, listLaunches),
   tool("launchpad_get_launch", "Get a zero-seed launch",
     "One launch with on-chain owner, controller, current creator fee at the latest block, fee schedule and curve, unclaimed fees and market data.",
@@ -121,7 +122,7 @@ const plan = z.looseObject({ action: z.string(), details: z.looseObject({ summar
 const page = (key: string) => z.looseObject({ [key]: z.array(z.unknown()), next_cursor: z.string().nullable() });
 
 export const launchpadOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
-  launchpad_list_launches: page("launches"),
+  launchpad_list_launches: page("launches").extend({ aggregates: z.looseObject({}) }),
   launchpad_get_launch: z.looseObject({ launch: z.looseObject({}), onchain: z.looseObject({}) }),
   launchpad_get_swaps: page("swaps"),
   launchpad_get_claims: page("claims"),

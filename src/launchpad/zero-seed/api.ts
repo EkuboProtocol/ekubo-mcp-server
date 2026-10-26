@@ -2,11 +2,11 @@ import { type Address, getAddress, type Hex } from "viem";
 import { z } from "zod";
 import { LaunchpadError } from "./errors.js";
 
-// Thin adapter for the indexed launch API, response contract zero-seed-launch-api/v6 (final contract revision only).
+// Thin adapter for the indexed launch API, response contract zero-seed-launch-api/v7 (final contract revision only).
 // Only this file knows the wire shape. The API serves lowercase addresses; they leave here checksummed. Amounts,
 // Q-format values and event ids stay exact decimal strings.
 
-export const API_SCHEMA_VERSION = "zero-seed-launch-api/v6";
+export const API_SCHEMA_VERSION = "zero-seed-launch-api/v7";
 const API_TIMEOUT_MS = 10_000;
 /** The API's offset ceiling for the launch list. */
 export const MAX_LIST_OFFSET = 100_000;
@@ -43,9 +43,11 @@ const FeeSchedule = z.looseObject({
   half_life_seconds: z.string().nullable(), saturation_elapsed_seconds: U.nullable(),
   phase: z.enum(["before_trading_start", "decaying", "at_floor", "constant"]), fee_rate: U, evaluated_at: Seconds,
 });
+// USD with exactly 6 decimals, from the API's indexed quote price.
+const Usd = z.string().regex(/^(0|[1-9][0-9]*)\.[0-9]{6}$/);
 const Market = z.looseObject({
-  price_tick: Tick, price_x128: U, market_cap: U, market_cap_usd: z.string().nullable(),
-  raised: U, sold: U, sold_share: z.string(), trade_count: Count,
+  price_tick: Tick, price_x128: U, market_cap: U, market_cap_usd: Usd.nullable(),
+  raised: U, sold: U, sold_share: z.string(), trade_count: Count, volume: U, volume_usd: Usd.nullable(),
 });
 
 export const LaunchSchema = z.looseObject({
@@ -82,11 +84,23 @@ export const LaunchDetailSchema = LaunchSchema.extend({
 });
 export type LaunchDetail = z.infer<typeof LaunchDetailSchema>;
 
+// Raw amounts per (chain, quote token), never summed across quotes; USD only over priced quotes.
+const QuoteAggregate = z.looseObject({
+  chain_id: U, quote_token: Addr, launch_count: Count, trade_count: Count, volume: U, market_cap: U,
+  usd_priced: z.boolean(), volume_usd: Usd.nullable(), market_cap_usd: Usd.nullable(),
+});
+export type QuoteAggregate = z.infer<typeof QuoteAggregate>;
+const Aggregates = z.looseObject({
+  launch_count: Count, trade_count: Count, by_quote: z.array(QuoteAggregate),
+  usd: z.looseObject({ volume: Usd.nullable(), market_cap: Usd.nullable(), priced_launch_count: Count, excluded_launch_count: Count }),
+});
+
 const ListSchema = z.looseObject({
   schema_version: Version,
   data: z.array(LaunchSchema),
   total: Count,
   totals: z.looseObject({ all: Count, trading: Count, upcoming: Count }),
+  aggregates: Aggregates,
   next_offset: z.number().int().positive().nullable(),
   evaluated_at: Seconds,
   heads: z.array(BlockRef.extend({ chain_id: U })),
@@ -112,12 +126,14 @@ export type HistoryKind = keyof typeof PAGES;
 type HistoryPage = z.infer<(typeof PAGES)[HistoryKind]>;
 
 export type Status = "all" | "trading" | "upcoming";
+/** The API's order_by: descending over the whole filtered set, ties newest first. */
+export type ListOrder = "market_cap" | "volume" | "sold_share" | "trade_count" | "created";
 export interface ListQuery {
   chainId?: string;
   status: Status;
   owner?: Address;
   creator?: Address;
-  orderBy: "market_cap" | "created";
+  orderBy: ListOrder;
   offset: number;
   limit: number;
 }
@@ -165,7 +181,7 @@ export class LaunchApi {
     return parsed.data;
   }
 
-  /** GET /launches: offset paging, newest (created) or USD market cap (market_cap) first. */
+  /** GET /launches: offset paging in order_by order, with aggregates over the whole filtered set. */
   async list(query: ListQuery) {
     const result = await this.get("launches", {
       chainId: query.chainId, status: query.status, owner: query.owner, creator: query.creator,

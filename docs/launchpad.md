@@ -32,7 +32,7 @@ server is configured with
 
 | Tool | Input (exact strings unless noted) | Result |
 | --- | --- | --- |
-| `launchpad_list_launches` | `chain_id?`, `status?` all/trading/upcoming, `owner?` (current owner, "mine"), `creator?` (owner at creation), `sort?` newest/market_cap_usd, `cursor?` (decimal offset from `next_cursor`), `limit?` 1-100 (20) | `launches[]` (v6 launch rows), `next_cursor`, `total`, `totals` {all, trading, upcoming}, `evaluated_at`, `heads` |
+| `launchpad_list_launches` | `chain_id?`, `status?` all/trading/upcoming, `owner?` (current owner, "mine"), `creator?` (owner at creation), `sort?` newest/market_cap_usd/volume/sold_share/trade_count, `cursor?` (decimal offset from `next_cursor`), `limit?` 1-100 (20) | `launches[]` (v7 launch rows), `next_cursor`, `total`, `totals` {all, trading, upcoming}, `aggregates`, `evaluated_at`, `heads` |
 | `launchpad_get_launch` | `chain_id`, `pool_id` | indexed `launch`, `pool_key`, `onchain` {block, owner, owner_matches_index, controller, trading_open, current_fee_q64/percent (feeAt at the latest block), unclaimed_fees}, `fee_schedule` with curve samples, `disclosures` |
 | `launchpad_get_swaps` / `_claims` / `_owners` | `chain_id`, `pool_id`, `cursor?` (signed decimal event id from `next_cursor`), `limit?` 1-200 (50) | `swaps`/`claims`/`owners`, `next_cursor`, `as_of`; claims also `totals` {launch_token, quote_token}; rows deduplicated on `event.event_id` |
 | `launchpad_preview_launch` | `chain_id`, `sender`, `name`, `symbol`, `total_supply` (whole tokens), `quote_token?` (zero = native), `start_price`+`upper_price` or `ask_tick`+`upper_tick`, `trading_start` (Unix s), `initial_fee_percent?` (50), `final_fee_percent?` (0.3), `half_life_seconds?` (86400), `salt?` (random) | `parameters` (exact tuple values), `range` (spacing, installed bounds and prices), `installation` (previewInstallation at the latest block), `fee_schedule` + curve, `preview_id`, `block`, `disclosures` |
@@ -99,16 +99,29 @@ for its owner-review artifact) and refuses a pool key that does not hash to
 ## Indexed API adapter
 
 `src/launchpad/zero-seed/api.ts` is the only code that knows the wire shape:
-the indexed launch API's response contract `zero-seed-launch-api/v6` (every
+the indexed launch API's response contract `zero-seed-launch-api/v7` (every
 body carries `schema_version`; another version is refused as
 `invalid_upstream_response`).
 
-- `GET /launches?chainId&status=all|trading|upcoming&owner&creator&order_by=market_cap|created&offset&limit`
+- `GET /launches?chainId&status=all|trading|upcoming&owner&creator&order_by=market_cap|volume|sold_share|trade_count|created&offset&limit`
   → `{schema_version, data, total, totals: {all, trading, upcoming},
-  next_offset, evaluated_at, heads}`. `sort` newest maps to `order_by=created`
-  (newest first) and market_cap_usd to `order_by=market_cap` (USD market cap,
-  nulls last). The tool `cursor` is the API `offset` and `next_cursor` is
-  `next_offset` as a string.
+  aggregates, next_offset, evaluated_at, heads}`. `sort` newest maps to
+  `order_by=created`, market_cap_usd to `market_cap`, and volume, sold_share
+  and trade_count to the same names. The API orders the whole filtered set in
+  SQL before `offset`/`limit`, descending, ties newest first; `market_cap` and
+  `volume` put launches with a USD value first (by USD), then the rest by
+  whole quote units (`raw / 10^decimals`, unknown decimals last). The tool
+  `cursor` is the API `offset` and `next_cursor` is `next_offset` as a string.
+- `aggregates` covers the same set as `total` (every filter, never one page):
+  `{launch_count, trade_count, by_quote: [{chain_id, quote_token,
+  launch_count, trade_count, volume, market_cap, usd_priced, volume_usd,
+  market_cap_usd}], usd: {volume, market_cap, priced_launch_count,
+  excluded_launch_count}}`. Raw amounts (quote base units, exact decimal
+  strings) are summed only per (chain, quote token); `usd` sums the per-launch
+  6-decimal USD values of priced launches and is null when none is priced;
+  `excluded_launch_count` counts launches without an indexed quote price. The
+  tool keeps only the groups of configured chains, like the rows, and
+  recomputes the totals from them.
 - `GET /launches/{chainId}/{poolId}` → a launch row plus `principal` and
   `fee_ledger`.
 - `GET /launches/{chainId}/{poolId}/swaps|claims|owners?after_event_id&limit`
@@ -127,13 +140,17 @@ decimals: 18}, `quote_token` {…, kind native|erc20}, `launch_token_is_token1`,
 `range` {tick_spacing, aligned_ask_tick, aligned_upper_tick, pool_tick_lower,
 pool_tick_upper}, `supply`, `trading_start` (Unix seconds), `status`
 (upcoming|trading), `fee_schedule`, `market` {price_tick, price_x128,
-market_cap, market_cap_usd, raised, sold, sold_share, trade_count}, `created`
+market_cap, market_cap_usd, raised, sold, sold_share, trade_count, volume,
+volume_usd}, `created`
 and `as_of`. The API serves lowercase addresses; the tools return them
 checksummed. The pool key must match the configured Core and extension and
 hash to `pool_id`. Rows outside the requested filters are rejected. API
 errors are `{status, error}`; a 4xx/5xx becomes `upstream_error` with
 `details.status` and `details.upstream_message`, retryable for 5xx and 429.
-`test/launchpad/api-contract.test.ts` parses the API's own v6 golden
+`volume` is `|quote delta|` summed over every `LaunchSwapped`, buys and sells,
+fee-inclusive, in raw quote units; `volume_usd` and `market_cap_usd` are
+6-decimal USD from the API's indexed quote price, null without one.
+`test/launchpad/api-contract.test.ts` parses the API's own v7 golden
 responses through the adapter and the tools.
 
 ## Disclosures
@@ -297,7 +314,7 @@ Baseline: the interface's launch pages at `3720ebc` ("Launch pages: final
 launch contracts (evm-contracts 853b608)"), `src/pages/evm/EvmLaunch.tsx`,
 `EvmLaunches.tsx`, `EvmLaunchInfo.tsx`. They read launches from chain logs
 (`LaunchCreated`, `LaunchSwapped`) and `launchOwner`; the tools read the
-indexed API v6 and the chain.
+indexed API v7 and the chain.
 
 | UI action | Tool | Notes |
 | --- | --- | --- |
@@ -311,7 +328,15 @@ indexed API v6 and the chain.
 | Random salt | preview default | |
 | Preview, then create | `launchpad_preview_launch` → `launchpad_prepare_create` | bound by `preview_id`; disclosures in both |
 | Launch list, all/trading/upcoming/mine, totals | `launchpad_list_launches` | `mine` = current `owner` (`launchOwner`), as the UI |
-| Sort by market cap, newest | `sort` market_cap_usd / newest | |
+| Sort by market cap (default in the UI) | `sort` market_cap_usd → `order_by=market_cap` | USD first, then by quote amount, as the UI's `rankValue`; `market.market_cap` = price × requested supply, the UI's `marketCap` |
+| Sort by volume | `sort` volume | `market.volume` = Σ\|quote delta\| of `LaunchSwapped`, fee-inclusive, the UI's `summarizeSwaps`; USD first, then quote amount |
+| Sort by sold | `sort` sold_share | `market.sold_share` (see note below) |
+| Sort by trades | `sort` trade_count | `market.trade_count`, every `LaunchSwapped`, as the UI's `trades` |
+| Newest | `sort` newest (tool default) | creation order, newest first |
+| Tile: total market cap | `aggregates.usd.market_cap` | sum over priced launches, as the UI's `sumUsd`; per-quote raw sums in `by_quote[].market_cap` |
+| Tile: volume | `aggregates.usd.volume` | sum over priced launches; `excluded_launch_count` counts the rest; per-quote raw sums in `by_quote[].volume` |
+| Tile: launches | `total` / `aggregates.launch_count` | |
+| Tile: trades | `aggregates.trade_count` | |
 | Launch page: facts, owner, controller, trading start, supply, current fee, schedule, market | `launchpad_get_launch` | on-chain owner/fee at the latest block |
 | Recent trades | `launchpad_get_swaps` | |
 | Buy / sell exact input, slippage, deadline, approval | `launchpad_prepare_trade` | |
@@ -320,13 +345,16 @@ indexed API v6 and the chain.
 
 No action is new at 3720ebc relative to b22982e; the change is the final ABI
 (packed metadata, contract-derived spacing, logo argument, `previewInstallation`).
-Gaps: the UI's sorts by volume, sold share and trade count and its total
-volume/trade-count tiles (the API v6 list orders only by `market_cap` or
-`created`, and the tools expose those two); exact-output trades are offered by
-neither. Market data and USD values come only from the indexed API. The API v6
-shape is no longer an assumption: `test/launchpad/api-contract.test.ts` parses
-the API's own golden responses (API `a0738c4`, byte-identical response data to
-`c05481a`) through the adapter and every read tool.
+The UI computes its tiles over every launch regardless of the selected
+tab; the tools' aggregates follow the request's filters, so `status` all
+with no `owner`/`creator` gives the UI's tiles. Differences from the UI:
+`sold_share` is `sold / installed` from the pool's launch-token balance,
+while the UI derives its sold fraction from the pool tick; USD comes from the
+API's indexed price rather than the interface token list. Exact-output trades
+are offered by neither. Market data and USD values come only from the
+indexed API. The API v7 shape is no longer an assumption:
+`test/launchpad/api-contract.test.ts` parses the API's own golden responses (API `90d13a6`) through the adapter and every
+read tool.
 
 ## Verification
 

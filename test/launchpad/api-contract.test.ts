@@ -7,10 +7,10 @@ import { API_SCHEMA_VERSION, LaunchApi } from "../../src/launchpad/zero-seed/api
 import { poolKeyOf } from "../../src/launchpad/zero-seed/context.js";
 import { fakeArtifactStore } from "../fake-r2.js";
 
-// The indexed launch API's own golden responses (zero-seed-launch-api/v6, written by its replay test from the actual
+// The indexed launch API's own golden responses (zero-seed-launch-api/v7, written by its replay test from the actual
 // handlers over a replayed local chain; see test/fixtures/launchpad/PROVENANCE.md) parsed through the MCP adapter.
 type Json = Record<string, any>;
-const GOLDEN = readFileSync(new URL("../fixtures/launchpad/zero-seed-launch-api-v6.golden.json", import.meta.url));
+const GOLDEN = readFileSync(new URL("../fixtures/launchpad/zero-seed-launch-api-v7.golden.json", import.meta.url));
 const golden = JSON.parse(GOLDEN.toString("utf8")) as Json;
 const LABELS = ["l1", "l2", "l4", "l5", "l6", "l7", "l8"];
 const API = "https://launch-api.test";
@@ -28,7 +28,7 @@ const env: Json = {
 };
 const byPool = new Map(LABELS.map((label) => [golden[label].pool_id as string, label]));
 
-/** Serves the golden bodies at the v6 paths; the list is sliced by offset/limit like the API's OFFSET/LIMIT + 1. */
+/** Serves the golden bodies at the v7 paths; the list is sliced by offset/limit like the API's OFFSET/LIMIT + 1. */
 function goldenApi(url: URL): Response {
   const parts = url.pathname.split("/").filter(Boolean);
   if (parts.length === 1 && parts[0] === "launches") {
@@ -75,11 +75,11 @@ async function call(name: string, args: Json) {
   return body.result as { isError?: boolean; structuredContent: Json; content: { text: string }[] };
 }
 
-describe("adapter against the v6 golden responses", () => {
+describe("adapter against the v7 golden responses", () => {
   const client = new LaunchApi(API, fetcher);
 
-  test("the fixture is the v6 golden", () => {
-    expect(createHash("sha256").update(GOLDEN).digest("hex")).toBe("553dd01d8d4b43b6840c64d8ac6064fdc0623fc068de3542dcd3539475765ba1");
+  test("the fixture is the v7 golden", () => {
+    expect(createHash("sha256").update(GOLDEN).digest("hex")).toBe("8eb9e7537158561d5a937866e5b8af36d28b51030d0aa574deb7adfd1a5b92b1");
     expect(golden.list.schema_version).toBe(API_SCHEMA_VERSION);
     expect(golden.list.data).toHaveLength(7);
   });
@@ -131,14 +131,21 @@ describe("adapter against the v6 golden responses", () => {
   });
 
   test("a different schema version or launch is refused", async () => {
-    api = () => Response.json({ ...golden.list, schema_version: "zero-seed-launch-api/v5" });
+    for (const version of ["zero-seed-launch-api/v5", "zero-seed-launch-api/v6"]) {
+      api = () => Response.json({ ...golden.list, schema_version: version });
+      await expect(client.list({ status: "all", orderBy: "created", offset: 0, limit: 5 })).rejects.toMatchObject({ code: "invalid_upstream_response" });
+    }
+    const { aggregates: _dropped, ...withoutAggregates } = golden.list;
+    api = () => Response.json(withoutAggregates);
+    await expect(client.list({ status: "all", orderBy: "created", offset: 0, limit: 5 })).rejects.toMatchObject({ code: "invalid_upstream_response" });
+    api = () => Response.json({ ...golden.list, aggregates: { ...golden.list.aggregates, usd: { ...golden.list.aggregates.usd, volume: "1.5" } } });
     await expect(client.list({ status: "all", orderBy: "created", offset: 0, limit: 5 })).rejects.toMatchObject({ code: "invalid_upstream_response" });
     api = () => Response.json(golden.l2);
     await expect(client.launch("31337", golden.l1.pool_id)).rejects.toMatchObject({ code: "invalid_upstream_response" });
   });
 });
 
-describe("tools over the v6 golden responses", () => {
+describe("tools over the v7 golden responses", () => {
   test("list maps filters and pages the offset through cursor", async () => {
     const owner = getAddress(golden.l8.owner);
     const first = (await call("launchpad_list_launches", { chain_id: "31337", status: "trading", sort: "newest", limit: 3 })).structuredContent;
@@ -169,6 +176,42 @@ describe("tools over the v6 golden responses", () => {
     const owners = (await call("launchpad_get_owners", { chain_id: "31337", pool_id: golden.l1.pool_id })).structuredContent;
     expect(owners.owners[0].previous_owner).toBeNull();
     expect(owners.as_of).toEqual(golden.l1.as_of);
+  });
+
+  test("every sort maps to its API order_by; aggregates pass through", async () => {
+    const orders = { newest: "created", market_cap_usd: "market_cap", volume: "volume", sold_share: "sold_share", trade_count: "trade_count" };
+    for (const [sort, orderBy] of Object.entries(orders)) {
+      requests.length = 0;
+      const result = await call("launchpad_list_launches", { sort });
+      expect(result.isError).toBeUndefined();
+      expect(requests[0].searchParams.get("order_by")).toBe(orderBy);
+      expect(result.structuredContent.aggregates).toEqual({
+        ...golden.list.aggregates,
+        by_quote: golden.list.aggregates.by_quote.map((group: Json) => ({ ...group, quote_token: getAddress(group.quote_token) })),
+      });
+    }
+    requests.length = 0;
+    expect((await call("launchpad_list_launches", { sort: "price" })).isError).toBe(true);
+    expect(requests).toHaveLength(0);
+  });
+
+  test("mixed quotes: raw totals stay per quote token, USD covers priced launches only", async () => {
+    const priced = golden.list_by_volume_native_priced;
+    api = () => Response.json(priced);
+    const result = (await call("launchpad_list_launches", { sort: "volume", limit: 100 })).structuredContent;
+    const { by_quote: groups, usd } = result.aggregates;
+    expect(groups.map((group: Json) => [group.quote_token, group.usd_priced])).toEqual([[getAddress(`0x${"0".repeat(40)}`), true], [getAddress(`0x${"f".repeat(40)}`), false]]);
+    expect(groups.map((group: Json) => group.volume)).toEqual(priced.aggregates.by_quote.map((group: Json) => group.volume));
+    expect(usd).toEqual(priced.aggregates.usd);
+    expect(usd.volume).toBe(groups[0].volume_usd);
+    expect(usd.excluded_launch_count).toBe(groups[1].launch_count);
+    expect(result.launches.map((row: Json) => row.market.volume)).toEqual(priced.data.map((row: Json) => row.market.volume));
+    // a quote group of a chain this server does not serve is dropped like its rows, and the sums follow
+    const foreign = { ...priced.aggregates.by_quote[0], chain_id: "8453" };
+    api = () => Response.json({ ...priced, aggregates: { ...priced.aggregates, launch_count: 9, by_quote: [...priced.aggregates.by_quote, foreign] } });
+    const served = (await call("launchpad_list_launches", { sort: "volume", limit: 100 })).structuredContent.aggregates;
+    expect(served.by_quote).toHaveLength(2);
+    expect([served.launch_count, served.usd]).toEqual([priced.aggregates.launch_count, priced.aggregates.usd]);
   });
 
   test("bad cursors fail before any request; API errors map to structured codes", async () => {
