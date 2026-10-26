@@ -353,7 +353,7 @@ while the UI derives its sold fraction from the pool tick; USD comes from the
 API's indexed price rather than the interface token list. Exact-output trades
 are offered by neither. Market data and USD values come only from the
 indexed API. The API v7 shape is no longer an assumption:
-`test/launchpad/api-contract.test.ts` parses the API's own golden responses (API `90d13a6`) through the adapter and every
+`test/launchpad/api-contract.test.ts` parses the API's own golden responses (API `75ee5be`) through the adapter and every
 read tool.
 
 ## Verification

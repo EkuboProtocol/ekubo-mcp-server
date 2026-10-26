@@ -79,7 +79,7 @@ describe("adapter against the v7 golden responses", () => {
   const client = new LaunchApi(API, fetcher);
 
   test("the fixture is the v7 golden", () => {
-    expect(createHash("sha256").update(GOLDEN).digest("hex")).toBe("8eb9e7537158561d5a937866e5b8af36d28b51030d0aa574deb7adfd1a5b92b1");
+    expect(createHash("sha256").update(GOLDEN).digest("hex")).toBe("df609c30c394c9278f6a89d9bf9690bbf7190adf9eb5640232921567904ea244");
     expect(golden.list.schema_version).toBe(API_SCHEMA_VERSION);
     expect(golden.list.data).toHaveLength(7);
   });

@@ -76,8 +76,8 @@ const transferSchema = z.strictObject({
   new_owner: address.describe("Receives ownership and every fee right, accrued fees included"),
 });
 
-const PLAN = "Returns a summary and execution_plan_reference: pass it unchanged to the wallet to simulate and authorize.";
-const REVIEW = `${PLAN} Also owner_review for the wallet.`;
+const PLAN = "Pass the returned execution_plan_reference unchanged to the wallet to simulate and authorize.";
+const REVIEW = "Pass the returned execution_plan_reference and owner_review unchanged to the wallet to simulate and authorize.";
 
 const tool = <T extends z.ZodObject>(
   name: string, title: string, description: string, schema: T,
@@ -86,10 +86,10 @@ const tool = <T extends z.ZodObject>(
 
 export const launchpadTools: LaunchpadTool[] = [
   tool("launchpad_list_launches", "List zero-seed launches",
-    "List token launches across configured chains; filter by status, current owner or creator. Rows: pool_id, token, quote_token, owner, logo_url, parameters, range, status, market. aggregates spans all matches: per-quote raw volume and market cap; USD sums priced launches only.",
+    "Launches across configured chains, filtered by status, current owner or creator. Rows: pool_id, token, quote_token, owner, logo_url, parameters, range, status, market. aggregates spans all matches: per-quote raw volume and market cap; USD sums priced launches only.",
     listSchema, listLaunches),
   tool("launchpad_get_launch", "Get a zero-seed launch",
-    "One launch with on-chain owner, controller, current creator fee at the latest block, fee schedule and curve, unclaimed fees and market data.",
+    "One launch with on-chain owner, controller, creator fee at the latest block, fee schedule and curve, unclaimed fees and market data.",
     launchSchema, getLaunchDetail),
   tool("launchpad_get_swaps", "List launch swaps", "Swaps of one launch, oldest first, paged.", historySchema,
     (env, input) => launchHistory(env, "swaps", input)),
@@ -98,13 +98,13 @@ export const launchpadTools: LaunchpadTool[] = [
   tool("launchpad_get_owners", "List launch owners", "Ownership history of one launch: creation, then every transfer, paged.", historySchema,
     (env, input) => launchHistory(env, "owners", input)),
   tool("launchpad_preview_launch", "Preview a token launch",
-    "Step 1 of creating a token: validates the launch, derives the tick range and spacing, and returns the contract's installation preview, fee curve and preview_id. No quote deposit; supply sells along the range. Then call launchpad_prepare_create.",
+    "Step 1 of a token launch: validates it, derives the tick range and spacing, and returns the contract's installation preview, fee curve and preview_id. No quote deposit; supply sells along the range. Then call launchpad_prepare_create.",
     previewSchema, (env, input) => previewLaunch(env, input as CreateInput)),
   tool("launchpad_prepare_create", "Prepare a token launch",
-    `Step 2: the same arguments as the preview plus its salt and preview_id; refuses if the launch no longer matches the preview. ${REVIEW}`,
+    `Step 2: the preview's arguments plus its salt and preview_id; refuses if the launch no longer matches it. ${REVIEW}`,
     createSchema, (env, input) => prepareCreate(env, input as CreateInput)),
   tool("launchpad_prepare_trade", "Prepare a launch trade",
-    `Exact-input buy or sell of a launch token through the router, quoted at the latest block including the creator fee, with a minimum output and deadline; adds an ERC-20 approval when needed. ${PLAN}`,
+    `Exact-input buy or sell of a launch token, quoted at the latest block including the creator fee, with a minimum output and deadline; adds an ERC-20 approval when needed. ${PLAN}`,
     tradeSchema, (env, input) => prepareTrade(env, input as TradeInput)),
   tool("launchpad_prepare_claim_fees", "Prepare a launch fee claim",
     `Owner only: claim all unclaimed creator fees of a launch, both tokens. ${REVIEW}`,

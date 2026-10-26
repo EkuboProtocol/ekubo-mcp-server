@@ -18,9 +18,9 @@ artifacts, owner summaries and negative cases in the shape the Cloud Wallet's
 verifier tests consume (see docs/launchpad.md, Owner review).
 
 `zero-seed-launch-api-v7.golden.json` (sha256
-8eb9e7537158561d5a937866e5b8af36d28b51030d0aa574deb7adfd1a5b92b1) is copied
+df609c30c394c9278f6a89d9bf9690bbf7190adf9eb5640232921567904ea244) is copied
 verbatim from `src/routes/launches/fixtures/` of the Ekubo API at commit
-`90d13a6e83de5f0df69539586f243a050e573f32`: every response of the launch routes
+`75ee5bea794e5dd9fd160a85b913b2c694e9d6c3`: every response of the launch routes
 (contract `zero-seed-launch-api/v7`) as written by that repository's replay
 test from the actual handlers over the indexer's replayed local chain, plus
 `list_by_volume_native_priced`, the list ordered by volume while only the

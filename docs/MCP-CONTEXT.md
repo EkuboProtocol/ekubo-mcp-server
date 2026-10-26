@@ -54,12 +54,9 @@ replaced `/mcp/launchpad-testing` (eight refusing tools, 9,004 tools
 characters) with real tools that list, preview, create, trade, claim and
 transfer launches; the old disclosures resource is gone. Measured at 0.58.0:
 1,054 instructions (the create two-step, the wallet handoff and the untrusted
-metadata rule), 12,104 tools (2,276 for `launchpad_prepare_create`, whose
+metadata rule), 11,936 tools (2,227 for `launchpad_prepare_create`, whose
 fields repeat the preview's) and 272 resources characters, against budgets of
-1,100, 12,200, 2,300 and 300. The tools budget rose from 12,000 for the
-launch list's volume, sold-share and trade-count sorts and its aggregates
-(per-quote raw totals and USD sums over priced launches only), which the
-interface's list shows and an agent otherwise could not rank or total.
+1,100, 12,000, 2,300 and 300.
 
 ## How the catalog is kept small
 
