@@ -39,18 +39,20 @@ async function now() {
   return (await chain.pub.getBlock()).timestamp;
 }
 
+const withLogo = (label: string) => label.includes("logo") && !label.includes("empty logo");
+
 async function create(label: string, extra: Record<string, unknown>) {
   const args = { chain_id: "31337", sender: OWNER, total_supply: "1000000000", trading_start: String((await now()) + 600n), ...extra };
   const preview = await prepared("launchpad_preview_launch", args);
   const { result, events } = await run(label, "launchpad_prepare_create", {
-    ...args, salt: preview.parameters.salt, preview_id: preview.preview_id, ...(label.includes("logo") ? { logo_url: "https://example.org/logo.png" } : {}),
+    ...args, salt: preview.parameters.salt, preview_id: preview.preview_id, ...(withLogo(label) ? { logo_url: "https://example.org/logo.png" } : {}),
   });
   const created = events.find((event) => event.eventName === "LaunchCreated")!;
   const install = preview.installation;
   expect(created.args.poolId).toBe(install.pool_id);
   expect(getAddress(created.args.token as Address)).toBe(install.token);
   expect((created.args.liquidity as bigint).toString()).toBe(install.liquidity);
-  expect(created.args.logoUrl).toBe(label.includes("logo") ? "https://example.org/logo.png" : "");
+  expect(created.args.logoUrl).toBe(withLogo(label) ? "https://example.org/logo.png" : "");
   expect(getAddress(created.args.controller as Address)).toBe(chain.periphery);
   const owner = events.find((event) => event.eventName === "LaunchOwnerChanged")!;
   expect([owner.args.previousOwner, owner.args.newOwner]).toEqual([zeroAddress, OWNER]);
