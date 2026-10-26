@@ -336,7 +336,8 @@ indexed API v7 and the chain.
 | Tile: total market cap | `aggregates.usd.market_cap` | sum over priced launches, as the UI's `sumUsd`; per-quote raw sums in `by_quote[].market_cap` |
 | Tile: volume | `aggregates.usd.volume` | sum over priced launches; `excluded_launch_count` counts the rest; per-quote raw sums in `by_quote[].volume` |
 | Tile: launches | `total` / `aggregates.launch_count` | |
-| Tile: trades | `aggregates.trade_count` | |
+| Tile: trades | `aggregates.trade_count` | swaps of listed (periphery-controlled) launches only; the UI tile at 3720ebc counts every extension `LaunchSwapped`, which differs only if another controller creates a launch |
+| Top launches (top 3 by market cap over all launches) | `sort` market_cap_usd, `status` all, `limit` 3 | no `owner`/`creator` filter |
 | Launch page: facts, owner, controller, trading start, supply, current fee, schedule, market | `launchpad_get_launch` | on-chain owner/fee at the latest block |
 | Recent trades | `launchpad_get_swaps` | |
 | Buy / sell exact input, slippage, deadline, approval | `launchpad_prepare_trade` | |
