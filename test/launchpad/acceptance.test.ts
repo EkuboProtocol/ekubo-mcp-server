@@ -8,6 +8,7 @@ import worker from "../../src/index.js";
 import { ARTIFACT_TTL_SECONDS } from "../../src/artifact-store.js";
 import { extensionAbi, peripheryAbi } from "../../src/launchpad/zero-seed/abi.js";
 import { launchPoolConfig, launchRange, poolIdOf } from "../../src/launchpad/zero-seed/codec.js";
+import { DISCLOSURE_CODES } from "../../src/launchpad/zero-seed/disclosures.js";
 import { fakeArtifactStore } from "../fake-r2.js";
 
 // Acceptance through the MCP boundary (worker.fetch tools/list and tools/call) with a mocked chain RPC and indexed
@@ -218,6 +219,17 @@ describe("support disabled by default", () => {
     expect((await errorOf("launchpad_get_launch", { chain_id: "31337", pool_id: POOL_ID }, foreign)).code).toBe("launch_deployment_mismatch");
     expect((await errorOf("launchpad_list_launches", {}, { ...env, LAUNCHPAD_DEPLOYMENTS: "not json" })).code).toBe("launch_deployment_invalid");
   });
+
+  test("deployment_block is required and must be the block the periphery was deployed in", async () => {
+    const { deployment_block: _, ...withoutBlock } = DEPLOYMENT;
+    const missing = { ...env, LAUNCHPAD_DEPLOYMENTS: JSON.stringify([withoutBlock]) };
+    expect((await errorOf("launchpad_get_launch", { chain_id: "31337", pool_id: POOL_ID }, missing)).code).toBe("launch_deployment_invalid");
+    for (const block of ["1", "3"]) {
+      const wrong = { ...env, LAUNCHPAD_DEPLOYMENTS: JSON.stringify([{ ...DEPLOYMENT, deployment_block: block }]) };
+      const error = await errorOf("launchpad_get_launch", { chain_id: "31337", pool_id: POOL_ID }, wrong);
+      expect([error.code, error.message.includes("deployment_block")]).toEqual(["launch_deployment_mismatch", true]);
+    }
+  });
 });
 
 describe("create: preview then prepare", () => {
@@ -267,6 +279,10 @@ describe("create: preview then prepare", () => {
     expect(preview.parameters.salt).toMatch(/^0x[0-9a-f]{64}$/);
     expect(preview.fee_schedule.curve[3]).toEqual({ seconds_after_start: "86400", fee_q64: "4639356258918185573", fee_percent: "25.1500%" });
     expect(preview.installation.uninstalled_remainder).toBe("492");
+    expect(preview.disclosures.version).toBe(7);
+    expect(preview.disclosures.statements.map((entry: Json) => entry.code)).toEqual(DISCLOSURE_CODES);
+    expect(preview.disclosures.statements.at(-1).text).toContain("native ETH");
+    expect(JSON.stringify(preview.disclosures)).not.toContain("Zero Seed");
     const args = { ...createArgs, salt: preview.parameters.salt, preview_id: preview.preview_id };
 
     const mismatch = await errorOf("launchpad_prepare_create", { ...args, trading_start: String(NOW + 601n) });
@@ -286,6 +302,31 @@ describe("create: preview then prepare", () => {
     expect((decoded.args as any[])[0].salt).toBe(preview.parameters.salt);
     expect(plan.ordered_steps[0].transaction.to).toBe(PERIPHERY);
     expect(first.details.summary).toContain("becomes the owner");
+    expect(first.details.disclosures).toEqual(preview.disclosures);
+
+    // Owner review: the sealed create v6 body describes exactly the planned call, bound to the sealed preview read.
+    const review = first.owner_review;
+    expect(keccak256(stringToHex(review.artifact.body))).toBe(review.artifact.integrity);
+    expect(new TextEncoder().encode(review.artifact.body).length).toBe(review.artifact.bytes);
+    const artifact = JSON.parse(review.artifact.body);
+    expect(JSON.stringify(artifact)).toBe(review.artifact.body);
+    expect(Object.keys(artifact)).toEqual(["schema_version", "scope", "executable", "chain_id", "sender", "target", "data", "value", "pin", "quote",
+      "disclosure_version", "build", "requested", "logo_url", "installation", "preview"]);
+    expect(artifact).toMatchObject({ schema_version: "zero-seed-local-create/v6", executable: false, sender: OWNER.toLowerCase(), target: PERIPHERY.toLowerCase(),
+      data: plan.ordered_steps[0].transaction.data.toLowerCase(), value: "0", logo_url: "https://example.org/a.png", disclosure_version: 7,
+      quote: { kind: "native", address: zeroAddress, runtime: null } });
+    expect(artifact.pin).toEqual({ chainId: "31337", feeModel: "tick_rate_final", core: CORE.toLowerCase(), extension: EXTENSION.toLowerCase(),
+      periphery: PERIPHERY.toLowerCase(), extensionRuntime: keccak256(EXTENSION_CODE as Hex), peripheryRuntime: keccak256(PERIPHERY_CODE as Hex), deploymentBlock: "2",
+      extensionAbiSha256: "6a131c2d2f70f85a5e2a54395b9d77c4dd5028a7a4bbf632f3d3364ac61e56eb", peripheryAbiSha256: "5d05426f8190cb0bcd6a021e7aceb46f468708cb36bd5a5d818548650499c839" });
+    expect(artifact.build).toEqual({ buildTime: NOW.toString(), executionExpiry: (NOW + 300n).toString(), blockNumber: "16", blockHash: `0x${"cd".repeat(32)}`, blockTime: NOW.toString() });
+    expect(artifact.preview).toEqual({ count: 1, read_integrity: review.preview_read.integrity, read_bytes: review.preview_read.bytes });
+    expect(JSON.parse(review.preview_read.body)).toMatchObject({ schema_version: "zero-seed-preview-read/v1", block_hash: `0x${"cd".repeat(32)}`, to: PERIPHERY.toLowerCase() });
+    const summary = review.owner_summary;
+    const { summary_keccak256: hash, ...unhashed } = summary;
+    expect(hash).toBe(keccak256(stringToHex(JSON.stringify(unhashed))));
+    expect(summary).toMatchObject({ schema_version: "zero-seed-launch-owner-summary/v6", method: "create", selector: "0x9a09bd5d" });
+    expect(summary.statements).toEqual(first.details.disclosures.statements.map((entry: Json) => entry.text));
+    expect(summary.fields.binding.preview_read_integrity).toBe(review.preview_read.integrity);
 
     const retry = (await call("launchpad_prepare_create", { ...args, logo_url: "https://example.org/a.png" })).structuredContent;
     expect(retry.execution_plan_reference.integrity).toEqual(reference.integrity);
@@ -318,6 +359,9 @@ describe("reads", () => {
     expect(detail.onchain).toMatchObject({ owner: OWNER, owner_matches_index: true, controller: PERIPHERY, trading_open: true, current_fee_q64: "9222638624014016259",
       unclaimed_fees: { amount0: "10", amount1: "20" } });
     expect(detail.fee_schedule.half_life_seconds).toBe("86400.000001");
+    expect(detail.disclosures.statements.map((entry: Json) => entry.code)).toEqual(DISCLOSURE_CODES);
+    expect(detail.disclosures.statements[4].text).toContain(`${OWNER.toLowerCase()} is the current launch owner`);
+    expect(detail.disclosures.statements.at(-1).text).toBe("Quote trust: the quote is native ETH, which Core accounts for itself. No quote token contract is trusted.");
     const claims = (await call("launchpad_get_claims", { chain_id: "31337", pool_id: POOL_ID })).structuredContent;
     expect(claims.claims).toHaveLength(1);
     const first = (await call("launchpad_get_swaps", { chain_id: "31337", pool_id: POOL_ID })).structuredContent;
@@ -371,12 +415,21 @@ describe("trade and owner actions", () => {
   test("claim and transfer check the on-chain owner", async () => {
     const claim = (await call("launchpad_prepare_claim_fees", { chain_id: "31337", sender: OWNER, pool_id: POOL_ID })).structuredContent;
     expect(claim.details.unclaimed).toMatchObject({ amount0: "10", amount1: "20" });
+    const claimBody = JSON.parse(claim.owner_review.artifact.body);
+    expect(claimBody).toMatchObject({ schema_version: "zero-seed-local-claim/v5", recipient: OWNER.toLowerCase(), pool_key: { token0: zeroAddress, token1: TOKEN.toLowerCase() },
+      owner_check: { block_number: "16", pool_id: POOL_ID, launch_owner: OWNER.toLowerCase() }, build: { buildTime: NOW.toString(), executionExpiry: (NOW + 300n).toString() } });
+    expect(claim.owner_review.owner_summary).toMatchObject({ method: "claimFees", fields: { recipient: OWNER.toLowerCase() } });
     expect((await errorOf("launchpad_prepare_claim_fees", { chain_id: "31337", sender: TRADER, pool_id: POOL_ID })).code).toBe("not_launch_owner");
     expect((await errorOf("launchpad_prepare_claim_fees", { chain_id: "31337", sender: OWNER, pool_id: POOL_ID, recipient: TOKEN })).details.argument).toBe("recipient");
     state.fees = [0n, 0n];
     expect((await errorOf("launchpad_prepare_claim_fees", { chain_id: "31337", sender: OWNER, pool_id: POOL_ID })).code).toBe("no_fees_to_claim");
     const transfer = (await call("launchpad_prepare_transfer_launch", { chain_id: "31337", sender: OWNER, pool_id: POOL_ID, new_owner: TRADER })).structuredContent;
     expect(transfer.details).toMatchObject({ previous_owner: OWNER, new_owner: TRADER });
+    const transferBody = JSON.parse(transfer.owner_review.artifact.body);
+    expect(Object.keys(transferBody)).toEqual(["schema_version", "scope", "executable", "chain_id", "sender", "target", "data", "value", "pin", "quote",
+      "pool_key", "pool_id", "new_owner", "owner_check", "build"]);
+    expect(transferBody).toMatchObject({ schema_version: "zero-seed-local-transfer/v1", pool_id: POOL_ID, new_owner: TRADER.toLowerCase(), owner_check: { launch_owner: OWNER.toLowerCase() } });
+    expect(transfer.owner_review.owner_summary).toMatchObject({ method: "transferLaunch", selector: "0x8b1cb36f", fields: { new_owner: TRADER.toLowerCase() } });
     expect((await errorOf("launchpad_prepare_transfer_launch", { chain_id: "31337", sender: OWNER, pool_id: POOL_ID, new_owner: zeroAddress })).details.argument).toBe("new_owner");
     expect((await errorOf("launchpad_prepare_transfer_launch", { chain_id: "31337", sender: OWNER, pool_id: POOL_ID, new_owner: OWNER })).details.argument).toBe("new_owner");
     expect((await errorOf("launchpad_prepare_transfer_launch", { chain_id: "31337", sender: TRADER, pool_id: POOL_ID, new_owner: OWNER })).code).toBe("not_launch_owner");

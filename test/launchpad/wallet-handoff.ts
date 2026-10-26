@@ -28,7 +28,7 @@ function expectedOf(plan: Json, quotes: Json[], body: Json) {
     ...(body.requested === undefined ? {} : { requested: body.requested }) };
 }
 
-function entry(plan: Json, kind: string, quotes: Json[]) {
+function entry(plan: Json, kind: string, quotes: Json[]): Json {
   const review = plan.owner_review;
   const body = JSON.parse(review.artifact.body);
   return {
