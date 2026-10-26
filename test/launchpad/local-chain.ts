@@ -6,6 +6,7 @@
 // only; nothing here touches a live chain.
 import { type ChildProcess, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { YUL_ROUTER_ADDRESS } from "@ekubo/yul-router-sdk";
 import {
   type Address, concatHex, createPublicClient, createTestClient, createWalletClient, decodeEventLog, defineChain,
@@ -55,11 +56,30 @@ async function waitFor(url: string): Promise<void> {
   throw new Error("anvil did not start");
 }
 
-export async function startChain(port: number): Promise<LocalChain> {
+/** A port the OS just handed out, so the chain never attaches to another process's anvil. */
+async function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      server.close(() => (typeof address === "object" && address !== null ? resolve(address.port) : reject(new Error("no port"))));
+    });
+  });
+}
+
+export async function startChain(): Promise<LocalChain> {
+  const port = await freePort();
   const child: ChildProcess = spawn("anvil", ["--port", String(port), "--chain-id", "31337", "--hardfork", "osaka",
     "--timestamp", "1800000000", "--silent"], { stdio: "ignore" });
   const rpcUrl = `http://127.0.0.1:${port}`;
+  let exited = false;
+  child.once("exit", () => { exited = true; });
   await waitFor(rpcUrl);
+  if (exited) throw new Error(`anvil exited before serving port ${port}`);
+  if ((await fetch(rpcUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] }) }).then((r) => r.json()) as { result: string }).result !== "0x0") {
+    throw new Error(`port ${port} is served by a chain that is not fresh`);
+  }
   const chain = defineChain({ id: 31337, name: "anvil", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: [rpcUrl] } } });
   const transport = http(rpcUrl);
   const pub = createPublicClient({ chain, transport, pollingInterval: 50 }) as PublicClient;

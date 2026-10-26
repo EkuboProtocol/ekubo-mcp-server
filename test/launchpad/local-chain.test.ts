@@ -75,7 +75,7 @@ async function create(label: string, extra: Record<string, unknown>) {
 
 describe.skipIf(!enabled)("final launch lifecycle on a local anvil chain", () => {
   beforeAll(async () => {
-    chain = await startChain(8600 + Math.floor(Math.random() * 300));
+    chain = await startChain();
     const api = mockApi(chain);
     spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(input.toString());
