@@ -39,7 +39,7 @@ connection instead of once per protocol (0.50.0 measurements):
 | `ekubo+ekubo-advanced`                      |               19,026 |            17,818 | 1,208 |
 | `ekubo+uniswap`                             |               18,914 |            17,941 |   973 |
 
-Every endpoint except `/mcp/safe` carries the CLO jurisdiction notice and the
+Every endpoint except `/mcp/safe` and `/mcp/launchpad` carries the CLO jurisdiction notice and the
 jurisdiction-metadata paragraph verbatim, about 480 tokens, and
 `get_quotes_with_plans` carries the notice again in its description. Raise a
 budget only with a reason the extra tokens buy. One such raise: every non-Safe
@@ -47,6 +47,16 @@ instructions budget grew by 550 characters (about 115 tokens) for the opening
 scope sentence, after agents read the handoff rules as a ban on the user's own
 cast/sncast work outside this server. Restrictive rules in this text are scoped
 to this server's tools and plans; do not write one as a blanket prohibition.
+
+The ten `launchpad_*` tools of the final zero-seed launch are served only at
+`/mcp/launchpad`, so no other endpoint's budget grows for them. That endpoint
+replaced `/mcp/launchpad-testing` (eight refusing tools, 9,004 tools
+characters) with real tools that list, preview, create, trade, claim and
+transfer launches; the old disclosures resource is gone. Measured at 0.58.0:
+1,054 instructions (the create two-step, the wallet handoff and the untrusted
+metadata rule), 11,936 tools (2,227 for `launchpad_prepare_create`, whose
+fields repeat the preview's) and 272 resources characters, against budgets of
+1,100, 12,000, 2,300 and 300.
 
 ## How the catalog is kept small
 

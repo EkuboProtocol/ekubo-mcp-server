@@ -1,7 +1,7 @@
-export const MCP_SERVER_VERSION = "0.53.2";
+export const MCP_SERVER_VERSION = "0.58.0";
 
 // Change this whenever public MCP tool schemas or response contracts change.
 // It is exposed in HTTP discovery and in the server instructions so clients
 // and smoke tests can detect a cached catalog independently of the
 // application version.
-export const MCP_TOOL_CATALOG_REVISION = "2026-10-21.legacy-route-removal";
+export const MCP_TOOL_CATALOG_REVISION = "2026-10-25.launchpad-list-metrics";

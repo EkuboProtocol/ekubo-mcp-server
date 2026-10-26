@@ -1,0 +1,14 @@
+[
+  {
+    "id": "launch-previews-before-create",
+    "prior_tool_results": [{ "tool": "wallet_list", "result": "$accounts" }],
+    "user": "Launch a token called Zero Seed (ZERO) on chain 4663 with a one billion supply, priced in ETH from 0.000001 to 0.0001, trading in one hour.",
+    "expect": { "tool": "launchpad_preview_launch", "args_match": { "chain_id": "4663", "name": "Zero Seed", "symbol": "ZERO", "total_supply": "1000000000" } }
+  },
+  {
+    "id": "launch-ownership-transfer",
+    "prior_tool_results": [{ "tool": "wallet_list", "result": "$accounts" }],
+    "user": "Transfer my launch 0x6a5f0d5ab4b6cf2d30fbb8a8a0c4b4b4c7fd0a3a0a5c1f7b9b2e0d1c3f4a5b6c on chain 4663 to 0x2222222222222222222222222222222222222222.",
+    "expect": { "tool": "launchpad_prepare_transfer_launch", "args_match": { "chain_id": "4663", "new_owner": { "address": "0x2222222222222222222222222222222222222222" } } }
+  }
+]

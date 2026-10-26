@@ -1,5 +1,6 @@
 import { uniswapTools } from "./uniswap/tools.js";
 import { safeTools } from "./safe.js";
+import { launchpadTools } from "./launchpad/zero-seed/tools.js";
 
 export const PROTOCOL_SLUGS = [
   "ekubo",
@@ -12,6 +13,7 @@ export const PROTOCOL_SLUGS = [
   "sky",
   "uniswap",
   "safe",
+  "launchpad",
 ] as const;
 
 export type ProtocolSlug = (typeof PROTOCOL_SLUGS)[number];
@@ -196,9 +198,25 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
     skill: null,
     tools: safeTools.map((tool) => tool.name),
   },
+  {
+    slug: "launchpad",
+    title: "Ekubo token launchpad",
+    description:
+      "Zero-seed token launches: list, preview, create, trade, claim fees and transfer ownership; disabled until a final deployment is configured; separate endpoint only, excluded from /mcp",
+    skill: null,
+    tools: launchpadTools.map((tool) => tool.name),
+  },
 ];
 
-export const ALL_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(PROTOCOL_SLUGS.filter((slug) => slug !== "safe"));
+/**
+ * Protocols served only at their own `/mcp/<slug>` endpoint: never bundled
+ * into `/mcp` and never combinable through `?protocols=`.
+ */
+export const STANDALONE_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(["safe", "launchpad"]);
+
+export const ALL_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(
+  PROTOCOL_SLUGS.filter((slug) => !STANDALONE_PROTOCOLS.has(slug)),
+);
 
 const TOOL_PROTOCOLS: ReadonlyMap<string, ProtocolSlug> = new Map(
   PROTOCOLS.flatMap((protocol) =>
@@ -290,8 +308,9 @@ export function parseProtocolFacet(query: URLSearchParams): FacetSelection | nul
   }
   const protocols = new Set<ProtocolSlug>();
   for (const name of names) {
-    if (name === "safe") {
-      return { error: "Safe is served only at /mcp/safe and cannot be combined with other protocols." };
+    if (STANDALONE_PROTOCOLS.has(name as ProtocolSlug)) {
+      const title = protocolBySlug(name)!.title;
+      return { error: `${title} is served only at /mcp/${name} and cannot be combined with other protocols.` };
     }
     const protocol = protocolBySlug(name);
     if (protocol === undefined) {

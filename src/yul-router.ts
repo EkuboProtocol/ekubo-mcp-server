@@ -28,6 +28,10 @@ export type EvmQuoterRouteNode =
         pool_key: EvmQuoterPoolKey;
         sqrt_ratio_limit: Hex;
         skip_ahead: number;
+        /** Core forward target of a forwarded hop, when it differs from or restates the pool extension. */
+        forwardee?: Address;
+        /** Refused when true: every prepared swap must fill its full specified amount. */
+        allow_partial?: boolean;
       };
       wrapped_token?: never;
     }
@@ -196,14 +200,13 @@ export function prepareSwapFromQuote({
   ) {
     throw new Error("total_calculated has the wrong sign for the quote type");
   }
-  const amountIn = isExactOutput ? -quotedCalculated : requestedAmount;
-  const amountOut = isExactOutput ? requestedAmount : quotedCalculated;
-
   const specifiedTotal = quote.splits.reduce(
     (total, split) =>
       total + parseSignedRawAmount(split.amount_specified, "amount_specified"),
     0n,
   );
+  const amountIn = isExactOutput ? -quotedCalculated : requestedAmount;
+  const amountOut = isExactOutput ? requestedAmount : quotedCalculated;
   const calculatedTotal = quote.splits.reduce(
     (total, split) =>
       total +
@@ -318,11 +321,23 @@ function quoterNodeToHop(node: EvmQuoterRouteNode): Hop {
     sqrtRatioLimit: BigInt(node.swap.sqrt_ratio_limit),
     skipAhead: node.swap.skip_ahead,
   };
+  if (node.swap.allow_partial === true) {
+    throw new Error("a partial-fill hop is not supported");
+  }
   switch (node.swap.type) {
     case "core":
+      if (node.swap.forwardee !== undefined) {
+        throw new Error("a core hop cannot name a forwardee");
+      }
       return { type: "core", ...common };
     case "forwarded":
-      return { type: "forwarded", ...common };
+      return {
+        type: "forwarded",
+        ...common,
+        ...(node.swap.forwardee === undefined
+          ? {}
+          : { forwardee: getAddress(node.swap.forwardee) }),
+      };
     default:
       throw new Error(
         `unsupported EVM quoter swap type: ${String(node.swap.type)}`,
