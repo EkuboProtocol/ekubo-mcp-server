@@ -10,13 +10,18 @@ evidence). `test/launchpad/frozen.test.ts` re-checks these hashes.
 | zero-seed-launch-events.json | 24dd5883ce242ec523517c9f38cfd5e8ca29740974aeded5740ac3608e1e7066 |
 | zero-seed-launch-installation.json | 5cf44854cbf00abb700936b2e22782c27dac5e68cf892edc8f5aa7090067a555 |
 
-`local-lifecycle.json` is produced by `script/launchpad-local-chain.ts` from plans
-prepared by these tools and executed on a local anvil chain.
+`local-lifecycle.json` and `wallet-handoff-final.json` are written by
+`LAUNCHPAD_ANVIL=1 LAUNCHPAD_WRITE_FIXTURE=1 bun test test/launchpad/local-chain.test.ts`
+from plans prepared by these tools and executed on a local anvil chain (frozen
+853b608 init code). `wallet-handoff-final.json` records the sealed owner-review
+artifacts, owner summaries and negative cases in the shape the Cloud Wallet's
+verifier tests consume (see docs/launchpad.md, Owner review).
 
 `zero-seed-launch-api-v6.golden.json` (sha256
 553dd01d8d4b43b6840c64d8ac6064fdc0623fc068de3542dcd3539475765ba1) is copied
 verbatim from `src/routes/launches/fixtures/` of the Ekubo API at commit
-`c05481aee2d563a72d02a7c9d13d76ec141a91f8`: every response of the launch routes
+`a0738c4d18436faa6d571b242b2f665f80ee432d` (byte-identical there; at `c05481aee2d563a72d02a7c9d13d76ec141a91f8`
+the file differs only in `source.indexer_commit`): every response of the launch routes
 (contract `zero-seed-launch-api/v6`) as written by that repository's replay
 test from the actual handlers over the indexer's replayed local chain. Its
 `source` field names the indexer commit and chain fixture hash.

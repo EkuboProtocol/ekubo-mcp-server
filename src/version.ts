@@ -1,7 +1,7 @@
-export const MCP_SERVER_VERSION = "0.56.1";
+export const MCP_SERVER_VERSION = "0.57.0";
 
 // Change this whenever public MCP tool schemas or response contracts change.
 // It is exposed in HTTP discovery and in the server instructions so clients
 // and smoke tests can detect a cached catalog independently of the
 // application version.
-export const MCP_TOOL_CATALOG_REVISION = "2026-10-25.launchpad-api-v6";
+export const MCP_TOOL_CATALOG_REVISION = "2026-10-25.launchpad-owner-review";

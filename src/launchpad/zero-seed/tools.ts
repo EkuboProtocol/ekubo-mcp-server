@@ -75,7 +75,8 @@ const transferSchema = z.strictObject({
   new_owner: address.describe("Receives ownership and every fee right, accrued fees included"),
 });
 
-const PLAN = "Returns a summary and execution_plan_reference; pass the reference unchanged to the wallet to simulate and authorize.";
+const PLAN = "Returns a summary and execution_plan_reference: pass it unchanged to the wallet to simulate and authorize.";
+const REVIEW = `${PLAN} Also owner_review for the wallet.`;
 
 const tool = <T extends z.ZodObject>(
   name: string, title: string, description: string, schema: T,
@@ -99,16 +100,16 @@ export const launchpadTools: LaunchpadTool[] = [
     "Step 1 of creating a token: validates the launch, derives the tick range and spacing, and returns the contract's installation preview, fee curve and preview_id. No quote deposit; supply sells along the range. Then call launchpad_prepare_create.",
     previewSchema, (env, input) => previewLaunch(env, input as CreateInput)),
   tool("launchpad_prepare_create", "Prepare a token launch",
-    `Step 2: the same arguments as the preview plus its salt and preview_id; refuses if the launch no longer matches the preview. ${PLAN}`,
+    `Step 2: the same arguments as the preview plus its salt and preview_id; refuses if the launch no longer matches the preview. ${REVIEW}`,
     createSchema, (env, input) => prepareCreate(env, input as CreateInput)),
   tool("launchpad_prepare_trade", "Prepare a launch trade",
     `Exact-input buy or sell of a launch token through the router, quoted at the latest block including the creator fee, with a minimum output and deadline; adds an ERC-20 approval when needed. ${PLAN}`,
     tradeSchema, (env, input) => prepareTrade(env, input as TradeInput)),
   tool("launchpad_prepare_claim_fees", "Prepare a launch fee claim",
-    `Owner only: claim all unclaimed creator fees of a launch, both tokens. ${PLAN}`,
+    `Owner only: claim all unclaimed creator fees of a launch, both tokens. ${REVIEW}`,
     claimSchema, (env, input) => prepareClaimFees(env, input as ClaimInput)),
   tool("launchpad_prepare_transfer_launch", "Prepare a launch ownership transfer",
-    `Owner only: transfer a launch and all its fee rights to a new owner. ${PLAN}`,
+    `Owner only: transfer a launch and all its fee rights to a new owner. ${REVIEW}`,
     transferSchema, (env, input) => prepareTransferLaunch(env, input as TransferInput)),
 ];
 
