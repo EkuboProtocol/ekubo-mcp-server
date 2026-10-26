@@ -84,8 +84,8 @@ export class LaunchRpc {
     return hexToBigInt(await this.request<Hex>("eth_chainId", []));
   }
 
-  async code(address: Address): Promise<Hex> {
-    return this.request<Hex>("eth_getCode", [address, "latest"]);
+  async code(address: Address, block?: bigint): Promise<Hex> {
+    return this.request<Hex>("eth_getCode", [address, block === undefined ? "latest" : `0x${block.toString(16)}`]);
   }
 
   /** eth_call at a block (hash-pinned when given); a revert throws Reverted with the decoded frozen-ABI error. */
@@ -95,7 +95,7 @@ export class LaunchRpc {
       ...(options.from === undefined ? {} : { from: options.from }),
       ...(options.value === undefined ? {} : { value: `0x${options.value.toString(16)}` }),
     };
-    const tag = options.block === undefined ? "latest" : `0x${options.block.number.toString(16)}`;
+    const tag = options.block === undefined ? "latest" : { blockHash: options.block.hash, requireCanonical: true };
     return this.request<Hex>("eth_call", [tx, tag]);
   }
 }

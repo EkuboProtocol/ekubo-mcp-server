@@ -17,14 +17,14 @@ const API = "https://launch-api.test";
 const sample = golden.list.data[0];
 const DEPLOYMENT = {
   chainId: "31337", rpcUrl: "https://rpc.launch.test/", core: getAddress(sample.pool_key.core_address),
-  extension: getAddress(sample.pool_key.extension), periphery: getAddress(sample.controller), router: getAddress(`0x${"7".repeat(40)}`),
+  extension: getAddress(sample.pool_key.extension), periphery: getAddress(sample.controller), router: getAddress(`0x${"7".repeat(40)}`), deploymentBlock: "2",
 };
 const env: Json = {
   ARTIFACT_STORE: fakeArtifactStore(), EKUBO_API_URL: "https://api.test", EKUBO_QUOTER_URL: "https://quoter.test",
   ZERO_X_API_KEY: "unused", ACROSS_API_KEY: "unused", ACROSS_INTEGRATOR_ID: "unused", LAYER_ZERO_API_KEY: "unused",
   LI_FI_API_KEY: "unused", DUNE_API_KEY: "unused", LAUNCHPAD_API_URL: API,
   LAUNCHPAD_DEPLOYMENTS: JSON.stringify([{ chain_id: "31337", rpc_url: DEPLOYMENT.rpcUrl, core: DEPLOYMENT.core,
-    extension: DEPLOYMENT.extension, periphery: DEPLOYMENT.periphery, router: DEPLOYMENT.router }]),
+    extension: DEPLOYMENT.extension, periphery: DEPLOYMENT.periphery, router: DEPLOYMENT.router, deployment_block: DEPLOYMENT.deploymentBlock }]),
 };
 const byPool = new Map(LABELS.map((label) => [golden[label].pool_id as string, label]));
 

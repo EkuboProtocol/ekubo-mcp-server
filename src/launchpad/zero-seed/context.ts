@@ -2,7 +2,7 @@ import { type Address, decodeFunctionResult, encodeFunctionData, erc20Abi, getAd
 import { abiFunction, extensionAbi, peripheryAbi } from "./abi.js";
 import { LaunchApi, type Launch } from "./api.js";
 import { type PoolKey, launchPoolConfig, poolIdOf } from "./codec.js";
-import { type Deployment, deploymentFor, type LaunchpadEnv, verifiedRpc } from "./deployment.js";
+import { type DeployedRuntimes, type Deployment, deploymentFor, type LaunchpadEnv, verifiedRpc } from "./deployment.js";
 import { LaunchpadError } from "./errors.js";
 import type { FeeSchedule } from "./fee.js";
 import { type Block, type LaunchRpc, Reverted } from "./rpc.js";
@@ -10,12 +10,13 @@ import { type Block, type LaunchRpc, Reverted } from "./rpc.js";
 export interface ChainContext {
   deployment: Deployment;
   rpc: LaunchRpc;
+  runtimes: DeployedRuntimes;
 }
 
 /** The chain's deployment and verified RPC; launch_support_disabled before any request when none is configured. */
 export async function chainContext(env: LaunchpadEnv, chainId: string): Promise<ChainContext> {
   const deployment = deploymentFor(env, chainId);
-  return { deployment, rpc: await verifiedRpc(deployment) };
+  return { deployment, ...await verifiedRpc(deployment) };
 }
 
 export function launchApi(env: LaunchpadEnv): LaunchApi {

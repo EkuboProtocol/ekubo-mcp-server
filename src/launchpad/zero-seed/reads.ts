@@ -3,6 +3,8 @@ import { type HistoryKind, MAX_LIST_OFFSET, type Status } from "./api.js";
 import { blockSummary, chainContext, creatorFees, feeAtBlock, getLaunch, launchApi, launchOwner, poolKeyOf } from "./context.js";
 import { deploymentFor, deployments, type LaunchpadEnv } from "./deployment.js";
 import { invalidArgument, supportDisabled } from "./errors.js";
+import { disclosureHeader, launchStatements } from "./disclosures.js";
+import { statementInput } from "./review.js";
 import { describeSchedule, feeCurve, feePercent } from "./fee.js";
 
 export interface ListInput {
@@ -79,6 +81,7 @@ export async function getLaunchDetail(env: LaunchpadEnv, input: { chain_id: stri
       unclaimed_fees: { token0: key.token0, amount0: unclaimed[0].toString(), token1: key.token1, amount1: unclaimed[1].toString() },
     },
     fee_schedule: { ...describeSchedule(onchain.schedule), curve: feeCurve(onchain.schedule) },
+    disclosures: { ...disclosureHeader(), statements: launchStatements(statementInput(onchain.schedule, launch.supply, owner, launch.quote_token)) },
     note: UNTRUSTED,
   };
 }

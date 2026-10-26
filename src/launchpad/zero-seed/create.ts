@@ -6,6 +6,8 @@ import { LAUNCH_DECIMALS, launchRange, MAX_SUPPLY, MAX_TICK, MIN_TICK, packOne, 
 import type { LaunchpadEnv } from "./deployment.js";
 import { invalidArgument, LaunchpadError } from "./errors.js";
 import { DEFAULT_DECAY_RATE_X32, decayRateForHalfLife, describeSchedule, feeCurve, feePercent, percentToQ64 } from "./fee.js";
+import { createStatements, disclosureHeader } from "./disclosures.js";
+import { createBody, createOwnerSummary, ownerReview, type PreviewRead, previewReadRecord, reviewQuote, seal, statementInput } from "./review.js";
 import { type Block, Reverted } from "./rpc.js";
 
 /** Producer start window: at least 5 minutes and at most one day after the latest block. */
@@ -107,12 +109,12 @@ function checkPair(input: CreateInput, prices: boolean): void {
   if (input.ask_tick >= input.upper_tick) throw invalidArgument("upper_tick", "must be greater than ask_tick");
 }
 
-async function quoteDecimals(context: ChainContext, quote: Address, block: Block): Promise<number> {
-  if (quote === zeroAddress) return 18;
+async function quoteDecimals(context: ChainContext, quote: Address, block: Block): Promise<{ decimals: number; code: Hex }> {
+  if (quote === zeroAddress) return { decimals: 18, code: "0x" };
   const code = await context.rpc.code(quote);
   if (code === "0x") throw invalidArgument("quote_token", "has no contract code on this chain; use the zero address for the native token or an ERC-20 address");
   try {
-    return Number(await erc20Read(context, quote, "decimals", [], block));
+    return { decimals: Number(await erc20Read(context, quote, "decimals", [], block)), code };
   } catch (error) {
     if (error instanceof Reverted) throw invalidArgument("quote_token", "does not answer decimals(); it is not a usable ERC-20 quote");
     throw error;
@@ -167,19 +169,20 @@ const PREVIEW_ERRORS: Record<string, [string, string]> = {
   LaunchTokenExists: ["salt", "a launch token with this name, symbol and salt already exists; omit salt for a new random one"],
 };
 
-async function preview(context: ChainContext, sender: Address, parameters: Tuple, block: Block): Promise<Installation> {
+async function preview(context: ChainContext, sender: Address, parameters: Tuple, block: Block): Promise<{ installation: Installation; read: PreviewRead }> {
   const fn = abiFunction(peripheryAbi, "previewInstallation");
+  const request = encodeFunctionData({ abi: [fn], functionName: fn.name, args: [sender, parameters] });
   let data: Hex;
   try {
-    data = await context.rpc.call(context.deployment.periphery,
-      encodeFunctionData({ abi: [fn], functionName: fn.name, args: [sender, parameters] }), { block });
+    data = await context.rpc.call(context.deployment.periphery, request, { block });
   } catch (error) {
     if (!(error instanceof Reverted)) throw error;
     const known = error.errorName === null ? undefined : PREVIEW_ERRORS[error.errorName];
     if (known !== undefined) throw invalidArgument(known[0], `the contract refused the preview with ${error.errorName}: ${known[1]}`, { contract_error: error.errorName });
     throw new LaunchpadError("preview_reverted", `previewInstallation reverted${error.errorName === null ? "" : ` with ${error.errorName}`}. Nothing was prepared; change the parameters.`, { retryable: false, contract_error: error.errorName });
   }
-  return decodeFunctionResult({ abi: [fn], functionName: fn.name, data }) as unknown as Installation;
+  const installation = decodeFunctionResult({ abi: [fn], functionName: fn.name, data }) as unknown as Installation;
+  return { installation, read: { block, to: context.deployment.periphery, data: request, result: data } };
 }
 
 function installationView(installation: Installation, supply: bigint) {
@@ -202,11 +205,11 @@ export async function buildPreview(env: LaunchpadEnv, input: CreateInput) {
   const p = staticParameters(input);
   const context = await chainContext(env, input.chain_id);
   const block = await context.rpc.latestBlock();
-  const decimals = await quoteDecimals(context, p.quoteToken, block);
+  const { decimals, code } = await quoteDecimals(context, p.quoteToken, block);
   const { ask, upper } = economicRange(input, decimals);
   checkStart(p.tradingStart, block);
   const parameters = tuple(p, ask, upper);
-  const installation = await preview(context, p.sender, parameters, block);
+  const { installation, read } = await preview(context, p.sender, parameters, block);
   const range = launchRange(ask, upper);
   if (installation.tickSpacing !== range.tickSpacing || installation.askTick !== range.alignedAskTick || installation.upperTick !== range.alignedUpperTick) {
     throw new LaunchpadError("preview_mismatch", "The contract's installed range differs from the final spacing rule; this deployment is not the final launch contract. Nothing was prepared.", { retryable: false });
@@ -228,15 +231,20 @@ export async function buildPreview(env: LaunchpadEnv, input: CreateInput) {
     fee_schedule: { ...describeSchedule(p), curve: feeCurve(p) },
   };
   const previewId = keccak256(stringToHex(JSON.stringify({ periphery: context.deployment.periphery, ...view })));
-  return { context, parameters, view, previewId, block };
+  const quote = await reviewQuote(context, p.quoteToken, code);
+  const disclosures = { ...disclosureHeader(), statements: createStatements(statementInput(p, {
+    requested: p.supply.toString(), installed: installation.installedSupply.toString(), sink: view.installation.uninstalled_remainder,
+  }, p.sender, quote)) };
+  return { context, parameters, view, previewId, block, installation, read, quote, disclosures };
 }
 
 export async function previewLaunch(env: LaunchpadEnv, input: CreateInput) {
-  const { view, previewId, block } = await buildPreview(env, input);
+  const { view, previewId, block, disclosures } = await buildPreview(env, input);
   return {
     ...view,
     preview_id: previewId,
     block: blockSummary(block),
+    disclosures,
     next_step: "To create, call launchpad_prepare_create with exactly these arguments plus salt (parameters.salt) and preview_id. Preview is installation math at this block, not a dry run or inclusion guarantee.",
   };
 }
@@ -260,22 +268,27 @@ export async function prepareCreate(env: LaunchpadEnv, input: CreateInput) {
   if (input.salt === undefined) throw invalidArgument("salt", "required: pass parameters.salt from launchpad_preview_launch");
   if (input.preview_id === undefined) throw invalidArgument("preview_id", "required: pass preview_id from launchpad_preview_launch");
   const logo = logoUrl(input.logo_url);
-  const { context, parameters, view, previewId } = await buildPreview(env, input);
+  const { context, parameters, view, previewId, block, installation, read, quote, disclosures } = await buildPreview(env, input);
   if (previewId !== input.preview_id.toLowerCase()) {
     throw new LaunchpadError("preview_mismatch", "These arguments or the chain no longer produce the previewed launch. Nothing was prepared; call launchpad_preview_launch again and review the new preview.", { argument: "preview_id", retryable: false });
   }
   const data = encodeFunctionData({ abi: [abiFunction(peripheryAbi, "create")], functionName: "create", args: [parameters, logo] });
   const sender = getAddress(input.sender);
   const install = view.installation;
-  return preparedUiAction({
+  const previewRead = previewReadRecord(context, read);
+  const body = createBody({ context, sender, data, quote, block, parameters, logoUrl: logo, installation, previewRead });
+  const review = ownerReview(seal(body), createOwnerSummary(body), { preview_read: previewRead });
+  const plan = preparedUiAction({
     action: "launchpad_create",
     chainId: input.chain_id,
     sender,
     request: { chain_id: input.chain_id, sender, preview_id: previewId, logo_url: logo === "" ? null : logo },
     transaction: preparedTransaction(input.chain_id, context.deployment.periphery, data, 0n),
     details: {
-      summary: `Create ${input.name} (${input.symbol}): ${view.parameters.supply} base units (18 decimals), ${install.installed_supply} installed for sale from ${view.range.installed_start_price} to ${view.range.installed_upper_price} quote per token; trading opens at Unix ${view.parameters.trading_start}; creator fee ${feePercent(parameters.initialFee)} decaying toward ${feePercent(parameters.finalFee)}. ${sender} becomes the owner. No quote deposit; principal is locked forever.`,
+      summary: `Create ${input.name} (${input.symbol}): ${view.parameters.supply} base units (18 decimals), ${install.installed_supply} installed for sale from ${view.range.installed_start_price} to ${view.range.installed_upper_price} quote per token; trading opens at Unix ${view.parameters.trading_start}; creator fee ${feePercent(parameters.initialFee)} decaying toward ${feePercent(parameters.finalFee)}. ${sender} becomes the owner. No quote deposit; principal is locked forever. details.disclosures lists every risk, including the quote-token trust.`,
       token: install.token, pool_id: install.pool_id, owner: sender, logo_url: logo === "" ? null : logo,
+      disclosures,
     },
   });
+  return { ...plan, owner_review: review };
 }

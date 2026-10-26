@@ -55,6 +55,36 @@ export function feeAt(schedule: FeeSchedule, timestamp: bigint): bigint {
   return finalFee + (((initialFee - finalFee) * tickFactorQ128((decayRateX32 * elapsed) >> 32n)) >> 128n);
 }
 
+export type FeePhase = "before_trading_start" | "decaying" | "at_floor" | "constant";
+
+/** before_trading_start; at_floor once the fee equals the floor; constant for rate 0 above the floor; else decaying. */
+export function feePhase(schedule: FeeSchedule, timestamp: bigint): FeePhase {
+  if (timestamp < schedule.tradingStart) return "before_trading_start";
+  if (feeAt(schedule, timestamp) === schedule.finalFee) return "at_floor";
+  return schedule.decayRateX32 === 0n ? "constant" : "decaying";
+}
+
+/** The first elapsed second at which the excess over the floor is at most half the initial excess; null when flat. */
+export function excessHalvingSeconds(schedule: FeeSchedule): bigint | null {
+  const spread = schedule.initialFee - schedule.finalFee;
+  const saturation = saturationSeconds(schedule.decayRateX32);
+  if (spread === 0n || saturation === null) return null;
+  let low = 1n;
+  let high = saturation + 1n;
+  while (low < high) {
+    const middle = (low + high) / 2n;
+    if (2n * (feeAt(schedule, schedule.tradingStart + middle) - schedule.finalFee) <= spread) high = middle;
+    else low = middle + 1n;
+  }
+  return low;
+}
+
+/** 2^64 / (2^64 - fee) to two decimals, rounded down: the exact-output input multiplier at that fee. */
+export function exactOutputMultiplier(fee: bigint): string {
+  const hundredths = (Q64 * 100n) / (Q64 - fee);
+  return `${hundredths / 100n}.${(hundredths % 100n).toString().padStart(2, "0")}`;
+}
+
 /** The last elapsed second evaluated through the curve; after it the fee is exactly finalFee. Null for rate 0. */
 export function saturationSeconds(decayRateX32: bigint): bigint | null {
   return decayRateX32 === 0n ? null : MAX_DECAY_PRODUCT / decayRateX32;

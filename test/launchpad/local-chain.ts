@@ -93,7 +93,8 @@ export async function startChain(port: number): Promise<LocalChain> {
     ZERO_X_API_KEY: "unused", ACROSS_API_KEY: "unused", ACROSS_INTEGRATOR_ID: "unused", LAYER_ZERO_API_KEY: "unused",
     LI_FI_API_KEY: "unused", DUNE_API_KEY: "unused",
     LAUNCHPAD_API_URL: API,
-    LAUNCHPAD_DEPLOYMENTS: JSON.stringify([{ chain_id: "31337", rpc_url: rpcUrl, core: CORE, extension, periphery, router: YUL_ROUTER_ADDRESS }]),
+    LAUNCHPAD_DEPLOYMENTS: JSON.stringify([{ chain_id: "31337", rpc_url: rpcUrl, core: CORE, extension, periphery, router: YUL_ROUTER_ADDRESS,
+      deployment_block: peripheryReceipt.blockNumber.toString() }]),
   };
   return { rpcUrl, pub, test, extension: getAddress(extension), periphery, quote, env, stop: () => child.kill() };
 }

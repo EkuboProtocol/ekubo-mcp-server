@@ -4,9 +4,10 @@ import { abiFunction, peripheryAbi } from "./abi.js";
 import { blockSummary, type ChainContext, chainContext, creatorFees, getLaunch, launchApi, launchOwner, poolKeyOf } from "./context.js";
 import type { LaunchpadEnv } from "./deployment.js";
 import { invalidArgument, LaunchpadError } from "./errors.js";
+import { claimBody, claimOwnerSummary, ownerReview, reviewQuote, seal, transferBody, transferOwnerSummary } from "./review.js";
 import type { Block } from "./rpc.js";
 
-async function requireOwner(context: ChainContext, poolId: Hex, sender: Address, block: Block): Promise<void> {
+async function requireOwner(context: ChainContext, poolId: Hex, sender: Address, block: Block): Promise<Address> {
   await getLaunch(context, poolId, block);
   const owner = await launchOwner(context, poolId, block);
   if (owner === zeroAddress) {
@@ -15,6 +16,7 @@ async function requireOwner(context: ChainContext, poolId: Hex, sender: Address,
   if (owner !== sender) {
     throw new LaunchpadError("not_launch_owner", `Only the current owner ${owner} can do this; sender is ${sender}. Nothing was prepared.`, { argument: "sender", retryable: false, owner });
   }
+  return owner;
 }
 
 export interface ClaimInput {
@@ -35,13 +37,15 @@ export async function prepareClaimFees(env: LaunchpadEnv, input: ClaimInput) {
     throw invalidArgument("recipient", "must not be the zero address, Core, the launch contracts or either pool token (the periphery refuses them with InvalidRecipient)");
   }
   const block = await context.rpc.latestBlock();
-  await requireOwner(context, launch.pool_id, sender, block);
+  const owner = await requireOwner(context, launch.pool_id, sender, block);
   const [amount0, amount1] = await creatorFees(context, key, block);
   if (amount0 === 0n && amount1 === 0n) {
     throw new LaunchpadError("no_fees_to_claim", "This launch has no unclaimed creator fees at the latest block. Nothing was prepared; fees accrue as people trade.", { retryable: true });
   }
   const data = encodeFunctionData({ abi: [abiFunction(peripheryAbi, "claimFees")], functionName: "claimFees", args: [key, recipient] });
-  return preparedUiAction({
+  const quote = await reviewQuote(context, getAddress(launch.quote_token.address));
+  const body = claimBody({ context, sender, data, quote, poolKey: key, recipient, block, owner });
+  const plan = preparedUiAction({
     action: "launchpad_claim_fees",
     chainId: input.chain_id,
     sender,
@@ -53,6 +57,7 @@ export async function prepareClaimFees(env: LaunchpadEnv, input: ClaimInput) {
       as_of: blockSummary(block),
     },
   });
+  return { ...plan, owner_review: ownerReview(seal(body), claimOwnerSummary(body)) };
 }
 
 export interface TransferInput {
@@ -68,11 +73,15 @@ export async function prepareTransferLaunch(env: LaunchpadEnv, input: TransferIn
   if (newOwner === zeroAddress) throw invalidArgument("new_owner", "must not be the zero address (the periphery refuses it with InvalidOwner)");
   if (newOwner === sender) throw invalidArgument("new_owner", "is already the owner; give a different address");
   const context = await chainContext(env, input.chain_id);
-  const poolId = input.pool_id.toLowerCase() as Hex;
+  const launch = await launchApi(env).launch(input.chain_id, input.pool_id.toLowerCase() as Hex);
+  const key = poolKeyOf(launch, context.deployment);
+  const poolId = launch.pool_id;
   const block = await context.rpc.latestBlock();
-  await requireOwner(context, poolId, sender, block);
+  const owner = await requireOwner(context, poolId, sender, block);
   const data = encodeFunctionData({ abi: [abiFunction(peripheryAbi, "transferLaunch")], functionName: "transferLaunch", args: [poolId, newOwner] });
-  return preparedUiAction({
+  const quote = await reviewQuote(context, getAddress(launch.quote_token.address));
+  const body = transferBody({ context, sender, data, quote, poolKey: key, newOwner, block, owner });
+  const plan = preparedUiAction({
     action: "launchpad_transfer_launch",
     chainId: input.chain_id,
     sender,
@@ -83,4 +92,5 @@ export async function prepareTransferLaunch(env: LaunchpadEnv, input: TransferIn
       previous_owner: sender, new_owner: newOwner,
     },
   });
+  return { ...plan, owner_review: ownerReview(seal(body), transferOwnerSummary(body)) };
 }

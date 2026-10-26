@@ -25,7 +25,7 @@ const OWNER = getAddress("0x1111111111111111111111111111111111111111");
 const TRADER = getAddress("0x2222222222222222222222222222222222222222");
 const TOKEN = getAddress("0xbede2b5c9f579f31dbc0c3bdda97cabc8ca5f9a1");
 const NOW = 1_800_000_000n;
-const DEPLOYMENT = { chain_id: "31337", rpc_url: RPC, core: CORE, extension: EXTENSION, periphery: PERIPHERY, router: ROUTER };
+const DEPLOYMENT = { chain_id: "31337", rpc_url: RPC, core: CORE, extension: EXTENSION, periphery: PERIPHERY, router: ROUTER, deployment_block: "2" };
 const baseEnv = {
   ARTIFACT_STORE: store, EKUBO_API_URL: "https://api.test", EKUBO_QUOTER_URL: "https://quoter.test",
   ZERO_X_API_KEY: "unused", ACROSS_API_KEY: "unused", ACROSS_INTEGRATOR_ID: "unused", LAYER_ZERO_API_KEY: "unused",
@@ -110,6 +110,7 @@ function rpcResult(body: { method: string; params: any[] }): unknown {
     case "eth_getBlockByNumber": return { number: "0x10", hash: `0x${"cd".repeat(32)}`, timestamp: numberToHex(NOW) };
     case "eth_getCode": {
       const address = getAddress(body.params[0]);
+      if (body.params[1] === "0x1" && address === PERIPHERY) return "0x";
       return address === EXTENSION ? EXTENSION_CODE : address === PERIPHERY ? PERIPHERY_CODE : "0x";
     }
     case "eth_call": return ethCall(body.params[0]);

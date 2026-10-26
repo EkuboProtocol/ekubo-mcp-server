@@ -6,8 +6,9 @@ import { LaunchRpc } from "./rpc.js";
 
 export interface LaunchpadEnv {
   /**
-   * JSON array of final-contract deployments, each {chain_id, rpc_url, core, extension, periphery, router}. Absent
-   * or empty means launch support is disabled. No deployment is built in: none of the final contracts is deployed.
+   * JSON array of final-contract deployments, each {chain_id, rpc_url, core, extension, periphery, router,
+   * deployment_block}. Absent or empty means launch support is disabled. No deployment is built in: none of the final
+   * contracts is deployed.
    */
   LAUNCHPAD_DEPLOYMENTS?: string;
   /** The indexed launch API base URL. */
@@ -21,6 +22,14 @@ export interface Deployment {
   extension: Address;
   periphery: Address;
   router: Address;
+  /** Decimal block number in which the periphery (deployed after the extension it binds) was deployed. */
+  deploymentBlock: string;
+}
+
+/** The runtimes the deployment check read: keccak256 of the extension's and the periphery's deployed code. */
+export interface DeployedRuntimes {
+  extension: Hex;
+  periphery: Hex;
 }
 
 /**
@@ -41,6 +50,7 @@ const DeploymentSchema = z.strictObject({
   chain_id: z.string().regex(/^[1-9][0-9]*$/),
   rpc_url: z.url({ protocol: /^https?$/ }),
   core: addr, extension: addr, periphery: addr, router: addr,
+  deployment_block: z.string().regex(/^[1-9][0-9]{0,19}$/),
 });
 
 function misconfigured(reason: string): LaunchpadError {
@@ -69,7 +79,7 @@ export function deployments(env: LaunchpadEnv): Deployment[] {
     }
     if (new Set(contracts).size !== 4) throw misconfigured(`chain ${entry.chain_id} repeats a contract`);
     return { chainId: entry.chain_id, rpcUrl: entry.rpc_url, core: entry.core, extension: entry.extension,
-      periphery: entry.periphery, router: entry.router };
+      periphery: entry.periphery, router: entry.router, deploymentBlock: entry.deployment_block };
   });
 }
 
@@ -98,24 +108,43 @@ export function matchesTemplate(code: Hex, template: { length: number; template_
   return keccak256(zeroed) === template.template_keccak256;
 }
 
-const verified = new Set<string>();
+const verified = new Map<string, DeployedRuntimes>();
+
+function mismatch(deployment: Deployment, what: string): LaunchpadError {
+  return new LaunchpadError("launch_deployment_mismatch", `The configured chain ${deployment.chainId} deployment ${what}. Nothing was prepared; launch support stays disabled there.`, { retryable: false });
+}
+
+/** Both contracts have code at the deployment block, and the periphery, deployed last, has none in the block before. */
+async function checkDeploymentBlock(rpc: LaunchRpc, deployment: Deployment, codes: [Hex, Hex]): Promise<void> {
+  const block = BigInt(deployment.deploymentBlock);
+  const [extensionAt, peripheryAt, peripheryBefore] = await Promise.all([
+    rpc.code(deployment.extension, block), rpc.code(deployment.periphery, block), rpc.code(deployment.periphery, block - 1n),
+  ]);
+  if (extensionAt !== codes[0] || peripheryAt !== codes[1] || peripheryBefore !== "0x") {
+    throw mismatch(deployment, `was not deployed in block ${deployment.deploymentBlock} (deployment_block)`);
+  }
+}
 
 /**
- * The deployment's RPC, after checking once per isolate that it serves the configured chain and that the extension
- * and periphery run the frozen final runtime bound to the configured Core and extension.
+ * The deployment's RPC and deployed runtime hashes, after checking once per isolate that it serves the configured
+ * chain, that the extension and periphery run the frozen final runtime bound to the configured Core and extension,
+ * and that the periphery was deployed in deployment_block.
  */
-export async function verifiedRpc(deployment: Deployment, fetcher: typeof fetch = fetch): Promise<LaunchRpc> {
+export async function verifiedRpc(deployment: Deployment, fetcher: typeof fetch = fetch): Promise<{ rpc: LaunchRpc; runtimes: DeployedRuntimes }> {
   const rpc = new LaunchRpc(deployment.rpcUrl, fetcher);
   const key = JSON.stringify(deployment);
-  if (verified.has(key)) return rpc;
+  const cached = verified.get(key);
+  if (cached !== undefined) return { rpc, runtimes: cached };
   const [chain, extensionCode, peripheryCode] = await Promise.all([
     rpc.chainId(), rpc.code(deployment.extension), rpc.code(deployment.periphery),
   ]);
   if (chain.toString() !== deployment.chainId ||
     !matchesTemplate(extensionCode, RUNTIME_TEMPLATES.ZeroSeedLaunch, { core: deployment.core }) ||
     !matchesTemplate(peripheryCode, RUNTIME_TEMPLATES.ZeroSeedLaunchPeriphery, { core: deployment.core, extension: deployment.extension })) {
-    throw new LaunchpadError("launch_deployment_mismatch", `The configured chain ${deployment.chainId} deployment does not run the final launch contracts. Nothing was prepared; launch support stays disabled there.`, { retryable: false });
+    throw mismatch(deployment, "does not run the final launch contracts");
   }
-  verified.add(key);
-  return rpc;
+  await checkDeploymentBlock(rpc, deployment, [extensionCode, peripheryCode]);
+  const runtimes = { extension: keccak256(extensionCode), periphery: keccak256(peripheryCode) };
+  verified.set(key, runtimes);
+  return { rpc, runtimes };
 }
