@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { type Address, erc20Abi, getAddress, type Hex, parseEther, zeroAddress } from "viem";
+import { walletHandoff } from "./wallet-handoff.js";
 import { ACCOUNTS, API, CORE, callTool, decodeLogs, execute, type LocalChain, loadPlan, mined, mockApi, startChain } from "./local-chain.js";
 
 // Runs only with LAUNCHPAD_ANVIL=1 and anvil on PATH; LAUNCHPAD_WRITE_FIXTURE=1 also rewrites
@@ -20,12 +22,19 @@ async function prepared(name: string, args: Record<string, unknown>) {
 async function run(label: string, name: string, args: Record<string, unknown>) {
   const result = await prepared(name, args);
   const plan = await loadPlan(chain.env, result.execution_plan_reference);
+  if (name === "launchpad_prepare_trade") expect(result.owner_review).toBeUndefined();
+  else {
+    const body = JSON.parse(result.owner_review.artifact.body);
+    const step = plan.ordered_steps.at(-1)!.transaction;
+    expect([body.target, body.data, body.value]).toEqual([step.to.toLowerCase(), step.data.toLowerCase(), step.value]);
+  }
   const receipts = await execute(chain, plan);
   const events = receipts.flatMap(decodeLogs);
   recorded.push({
     label, tool: name, arguments: args, details: result.details,
     steps: plan.ordered_steps.map((step) => ({ kind: step.kind, to: step.transaction.to, data: step.transaction.data, value: step.transaction.value })),
-    receipts: receipts.map((receipt) => ({ status: receipt.status, block: receipt.blockNumber.toString() })),
+    ...(result.owner_review === undefined ? {} : { owner_review: result.owner_review }),
+    receipts: receipts.map((receipt) => ({ status: receipt.status, block: receipt.blockNumber.toString(), transaction_hash: receipt.transactionHash })),
     events: events.map((event) => ({ address: event.address, event: event.eventName, args: event.args })),
   });
   return { result, plan, events };
@@ -82,6 +91,9 @@ describe.skipIf(!enabled)("final launch lifecycle on a local anvil chain", () =>
         deployment: { core: CORE, extension: chain.extension, periphery: chain.periphery, erc20_quote: chain.quote },
         plans: recorded,
       }, (_k, v) => (typeof v === "bigint" ? v.toString() : v), 2)}\n`);
+      const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+      const plans = JSON.parse(JSON.stringify(recorded, (_k, v) => (typeof v === "bigint" ? v.toString() : v)));
+      writeFileSync(new URL("../fixtures/launchpad/wallet-handoff-final.json", import.meta.url), `${JSON.stringify(walletHandoff(plans, commit), null, 2)}\n`);
     }
   });
 
