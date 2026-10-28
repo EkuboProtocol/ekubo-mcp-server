@@ -1,0 +1,126 @@
+{
+  "source_commit": "d384334cc90d7199a96da177f6c687ae2738484d",
+  "dependencies": {
+    "morpho": "8.1.0",
+    "uniswap_v3": "3.31.5",
+    "mcp_server": "2.3.1"
+  },
+  "catalog_hash": "0x6a3d42c68cbe1effd1c4bb703ca3a42993936145d126a4312589ab7497f5f129",
+  "plan_hashes": [
+    "0xbf65338a992b55d43b0a1ed9ce0279b9456ace1feeaea29cfc17e041e7f4ca71",
+    "0xf9ad0aad6b92ef57739a8b7c18e83788f7d5e7e49973467fcf9ef49b9ff62e98",
+    "0x8f17e02d856ad97ee5b51f997df3ccbd52b88e966b2c9aeb4a2c8a7904e2cd2d",
+    "0x951ce02ab3f930b060527f0be77cbc341840b16787737913d4d41ff88b36d02f",
+    "0x00f69daeaf14608d2ec193585f2759ac38938e3e8149444184aea533aa85a322",
+    "0x52a6e315fb1528dda3f8282211aed4b976eed5bf84724206aefc8ef51f3d623c",
+    "0xb6ef2a43127f68ed5f2364894d737660c7ded9830eab09d2667a6f517a5e5a93",
+    "0x72e9c57299117c956bd9aa7e203cb4cf2e61f2ec04466e22bb18d20229b901df",
+    "0xff4d580564dd54235557f6584997ab40252ec6a32809b54aa8a2425f9d2da7d5",
+    "0xfdaa3cdf039aacd99b973b72b6e901bdf3fe421a1273a7f86633ccefad14c4f4",
+    "0xb6fba5ea337f1f76a3ebbb1bfb2cdd930d1fe0c204e22c6c9dfe5dc20f7bc4fa",
+    "0xf497655edba424677690b740c57d6c393e3fa506e45f1318388996eafcd0fe30",
+    "0x4f1219611d410b4d51229d5de7777e3ccceccbc172510fd225715a2f0864bf38"
+  ],
+  "quotes": [
+    {
+      "liquidity": "1501272682848150490",
+      "mint_amount0": "9007199254740993",
+      "mint_amount1": "0",
+      "amount0_max": "9008099974666468",
+      "amount1_max": "0",
+      "amount0_min": "9006298534815517",
+      "amount1_min": "0",
+      "input_snapshot": {
+        "tick_lower": -60,
+        "tick_upper": 60,
+        "tick_spacing": 60,
+        "sqrt_price_x96": "4295128739",
+        "amount0": "9007199254740993",
+        "amount1": "9007199254740995",
+        "slippage_bps": 1
+      },
+      "live_state_queried": false,
+      "instructions": "Raw amounts for this supplied price/range snapshot. V4 uses exact liquidity plus maxima; V3 uses mint amounts as desired inputs. Bounds are token-amount tolerances, not a price quote or fee estimate. Maxima may exceed the input budgets by slippage. A zero bound on one side does not permit spending that currency; reprepare if price crosses the range. Refresh state and simulate before execution."
+    },
+    {
+      "liquidity": "1501272682848150490",
+      "mint_amount0": "9007199254740993",
+      "mint_amount1": "0",
+      "amount0_max": "9008099974666468",
+      "amount1_max": "0",
+      "amount0_min": "9006298534815517",
+      "amount1_min": "0",
+      "input_snapshot": {
+        "tick_lower": -60,
+        "tick_upper": 60,
+        "tick_spacing": 60,
+        "sqrt_price_x96": "78990846045029531151608375686",
+        "amount0": "9007199254740993",
+        "amount1": "9007199254740995",
+        "slippage_bps": 1
+      },
+      "live_state_queried": false,
+      "instructions": "Raw amounts for this supplied price/range snapshot. V4 uses exact liquidity plus maxima; V3 uses mint amounts as desired inputs. Bounds are token-amount tolerances, not a price quote or fee estimate. Maxima may exceed the input budgets by slippage. A zero bound on one side does not permit spending that currency; reprepare if price crosses the range. Refresh state and simulate before execution."
+    },
+    {
+      "liquidity": "3007055720380299292",
+      "mint_amount0": "9007199254740993",
+      "mint_amount1": "9007199254740993",
+      "amount0_max": "9008099974666468",
+      "amount1_max": "9008099974666468",
+      "amount0_min": "9006298534815517",
+      "amount1_min": "9006298534815517",
+      "input_snapshot": {
+        "tick_lower": -60,
+        "tick_upper": 60,
+        "tick_spacing": 60,
+        "sqrt_price_x96": "79228162514264337593543950336",
+        "amount0": "9007199254740993",
+        "amount1": "9007199254740995",
+        "slippage_bps": 1
+      },
+      "live_state_queried": false,
+      "instructions": "Raw amounts for this supplied price/range snapshot. V4 uses exact liquidity plus maxima; V3 uses mint amounts as desired inputs. Bounds are token-amount tolerances, not a price quote or fee estimate. Maxima may exceed the input budgets by slippage. A zero bound on one side does not permit spending that currency; reprepare if price crosses the range. Refresh state and simulate before execution."
+    },
+    {
+      "liquidity": "1501272682848150824",
+      "mint_amount0": "0",
+      "mint_amount1": "9007199254740995",
+      "amount0_max": "0",
+      "amount1_max": "9008099974666470",
+      "amount0_min": "0",
+      "amount1_min": "9006298534815519",
+      "input_snapshot": {
+        "tick_lower": -60,
+        "tick_upper": 60,
+        "tick_spacing": 60,
+        "sqrt_price_x96": "79466191966197645195421774833",
+        "amount0": "9007199254740993",
+        "amount1": "9007199254740995",
+        "slippage_bps": 1
+      },
+      "live_state_queried": false,
+      "instructions": "Raw amounts for this supplied price/range snapshot. V4 uses exact liquidity plus maxima; V3 uses mint amounts as desired inputs. Bounds are token-amount tolerances, not a price quote or fee estimate. Maxima may exceed the input budgets by slippage. A zero bound on one side does not permit spending that currency; reprepare if price crosses the range. Refresh state and simulate before execution."
+    },
+    {
+      "liquidity": "1501272682848150824",
+      "mint_amount0": "0",
+      "mint_amount1": "9007199254740995",
+      "amount0_max": "0",
+      "amount1_max": "9008099974666470",
+      "amount0_min": "0",
+      "amount1_min": "9006298534815519",
+      "input_snapshot": {
+        "tick_lower": -60,
+        "tick_upper": 60,
+        "tick_spacing": 60,
+        "sqrt_price_x96": "1461446703485210103287273052203988822378723970341",
+        "amount0": "9007199254740993",
+        "amount1": "9007199254740995",
+        "slippage_bps": 1
+      },
+      "live_state_queried": false,
+      "instructions": "Raw amounts for this supplied price/range snapshot. V4 uses exact liquidity plus maxima; V3 uses mint amounts as desired inputs. Bounds are token-amount tolerances, not a price quote or fee estimate. Maxima may exceed the input budgets by slippage. A zero bound on one side does not permit spending that currency; reprepare if price crosses the range. Refresh state and simulate before execution."
+    }
+  ]
+}
