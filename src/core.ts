@@ -65,7 +65,8 @@ export interface QuoteIntent {
 }
 
 export interface SwapPreparationIntent extends QuoteIntent {
-  slippageBps: number;
+  slippageBps?: number;
+  maxOutputLoss?: string;
   recipient?: Address;
   sender: Address;
   swapDeadlineMinutes?: number;
@@ -77,6 +78,7 @@ export interface PrepareSwapIntent extends SwapPreparationIntent {
 
 export interface QuoteDiscoveryIntent extends QuoteIntent {
   slippageBps?: number;
+  maxOutputLoss?: string;
   recipient?: Address;
   sender?: Address;
   swapDeadlineMinutes?: number;
@@ -86,6 +88,7 @@ export interface QuoteDiscoveryIntent extends QuoteIntent {
 type QuoteSelectionIntent = QuoteIntent & {
   source: QuoteCollectionSource;
   slippageBps?: number;
+  maxOutputLoss?: string;
   sender?: Address;
   recipient?: Address;
 };
@@ -604,16 +607,27 @@ export async function getQuotesWithPlans(
 function swapPreparationIntent(
   intent: QuoteDiscoveryIntent,
 ): SwapPreparationIntent | null {
-  if (intent.sender === undefined && intent.slippageBps === undefined) {
+  validateSwapProtection(intent);
+  if (intent.sender === undefined && intent.slippageBps === undefined && intent.maxOutputLoss === undefined) {
     return null;
   }
-  if (intent.sender === undefined || intent.slippageBps === undefined) {
+  if (intent.sender === undefined || (intent.slippageBps === undefined && intent.maxOutputLoss === undefined)) {
     throw new ServiceError(
       "incomplete_execution_request",
-      "sender and slippage_bps must be supplied together: a sender has no bound to write into calldata without a tolerance, and a tolerance has no calldata to write without a sender. Supply both to receive execution plans, or neither for an indicative comparison.",
+      "Supply sender with exactly one of slippage_bps or max_output_loss (output-token base units) for execution plans, or omit all three for an indicative comparison.",
     );
   }
-  return { ...intent, sender: intent.sender, slippageBps: intent.slippageBps };
+  return { ...intent, sender: intent.sender };
+}
+
+function validateSwapProtection(intent: QuoteDiscoveryIntent) {
+  if (intent.maxOutputLoss === undefined) return;
+  if (!/^(0|[1-9][0-9]{0,77})$/.test(intent.maxOutputLoss)) {
+    throw new ServiceError("invalid_input", "max_output_loss must be a nonnegative decimal integer string in output-token base units (at most 78 digits)");
+  }
+  if (intent.slippageBps !== undefined || intent.quoteType !== "exact_input") {
+    throw new ServiceError("invalid_input", "max_output_loss requires quote_type=exact_input and omission of slippage_bps; never combine protection modes");
+  }
 }
 
 function quoteExecutionGuidance(preparation: SwapPreparationIntent | null) {
@@ -621,7 +635,7 @@ function quoteExecutionGuidance(preparation: SwapPreparationIntent | null) {
     ? {
         execution_plans_included: false,
         instruction:
-          "These quotes are indicative and carry no calldata, because this request named no sender. Once the user has settled on swapping, call this tool again with sender and slippage_bps and every option arrives with the execution_plan that executes it.",
+          "Indicative quotes carry no calldata. Once the user decides to swap, call again with sender and exactly one of slippage_bps or exact-input max_output_loss for execution plans.",
         client_execution: null,
       }
     : {
@@ -630,7 +644,7 @@ function quoteExecutionGuidance(preparation: SwapPreparationIntent | null) {
           "Each quote carries the execution_plan_reference that executes it. Choose one option and pass that quote's execution.execution_plan_reference envelope unchanged as the wallet's reference argument, which fetches and verifies the plan body itself. Do not call this tool again for the option you just chose: it would buy a fresh quote and restart the clock on a plan you already hold. Call it again only after a revert, an expiry, or a change to the amount, tokens, sender, recipient, or slippage.",
         sender: getAddress(preparation.sender),
         recipient: getAddress(preparation.recipient ?? preparation.sender),
-        slippage_bps: preparation.slippageBps.toString(),
+        ...serializedProtection(preparation),
         client_execution: clientExecution(),
       };
 }
@@ -640,6 +654,7 @@ export async function prepareSwap(
   intent: PrepareSwapIntent,
   fetcher: Fetcher = fetch,
 ) {
+  swapPreparationIntent(intent);
   const quoted = await selectQuote(env, intent, fetcher);
   const selected = quoted.selected;
   const selection = quoteSelection(intent, quoted);
@@ -679,6 +694,7 @@ function prepareCandidate(
   intent: SwapPreparationIntent,
   selected: QuoteCandidate,
 ): PreparedCandidate {
+  validateOutputLoss(intent, selected.amountOut);
   const recipient = getAddress(intent.recipient ?? intent.sender);
   let mainTransaction: UnsignedTransaction;
   let approvals: UnsignedTransaction[];
@@ -698,7 +714,8 @@ function prepareCandidate(
       tokenOut: intent.tokenOut,
       quoteType: intent.quoteType,
       amount: intent.amount,
-      slippageBps: intent.slippageBps,
+      slippageBps: intent.slippageBps ?? 0,
+      maxOutputLoss: intent.maxOutputLoss,
       recipient,
       deadline: swapDeadline(intent.swapDeadlineMinutes),
     });
@@ -825,7 +842,7 @@ function preparedQuote(
     maximum_amount_in: prepared.maximumAmountIn?.toString() ?? null,
     native_fee: nativeFee(intent, selected)?.toString() ?? null,
     total_native_input: selected.transaction?.value.toString() ?? null,
-    slippage_bps: intent.slippageBps.toString(),
+    ...serializedProtection(intent),
     price_impact: prepared.priceImpact,
     estimated_route_gas: prepared.estimatedRouteGas,
     block_number: prepared.blockNumber,
@@ -833,6 +850,19 @@ function preparedQuote(
     quote_expiry_timestamp: prepared.quoteExpiryTimestamp,
     expected_fill_time_seconds: selected.expectedFillTime,
   };
+}
+
+function serializedProtection(intent: SwapPreparationIntent) {
+  return {
+    slippage_bps: intent.slippageBps?.toString() ?? null,
+    ...(intent.maxOutputLoss === undefined ? {} : { max_output_loss: intent.maxOutputLoss }),
+  };
+}
+
+function validateOutputLoss(intent: SwapPreparationIntent, amountOut: bigint) {
+  if (intent.maxOutputLoss !== undefined && BigInt(intent.maxOutputLoss) >= amountOut) {
+    throw new ServiceError("invalid_swap_protection", "max_output_loss must be less than quoted amount_out; reduce the budget and re-quote");
+  }
 }
 
 function clientExecution() {
@@ -902,12 +932,15 @@ async function collectQuotes(
       : [source];
 
   const settled = await Promise.allSettled(
-    requestedSources.map((requestedSource) => {
+    requestedSources.map(async (requestedSource) => {
+      if (intent.maxOutputLoss !== undefined && requestedSource !== "ekubo" && requestedSource !== "0x") {
+        throw new ServiceError("unsupported_swap_protection", `${requestedSource} cannot enforce max_output_loss through this adapter. Choose an Ekubo exact-input route; do not substitute 0 bps, widen the bound, or modify provider calldata.`);
+      }
       switch (requestedSource) {
         case "ekubo":
           return quoteEkubo(env, intent, fetcher);
         case "0x":
-          return quoteZeroX(env, intent, fetcher);
+          return quoteZeroXWithProtection(env, intent, fetcher);
         case "across":
           return quoteAcross(env, intent, fetcher);
         case "layerzero":
@@ -933,7 +966,8 @@ async function collectQuotes(
           ? result.reason.message
           : String(result.reason),
       retry_recommended:
-        requestedSource === "ekubo" || requestedSource === "0x",
+        failureCode(result.reason) !== "unsupported_swap_protection" &&
+        (requestedSource === "ekubo" || requestedSource === "0x"),
     });
   });
 
@@ -1057,6 +1091,7 @@ async function quoteZeroX(
   env: Env,
   intent: QuoteSelectionIntent,
   fetcher: Fetcher,
+  slippagePpm?: bigint,
 ): Promise<QuoteCandidate> {
   if (!env.ZERO_X_API_KEY) {
     throw new ServiceError(
@@ -1081,6 +1116,8 @@ async function quoteZeroX(
     url.searchParams.set("recipient", getAddress(intent.recipient));
   if (intent.slippageBps !== undefined)
     url.searchParams.set("slippageBps", intent.slippageBps.toString());
+  if (slippagePpm !== undefined)
+    url.searchParams.set("slippagePpm", slippagePpm.toString());
 
   const quote = await fetchJson<ZeroXQuote>(url.toString(), fetcher, {
     headers: {
@@ -1114,12 +1151,12 @@ async function quoteZeroX(
     sourceUrl: url.toString(),
     raw: quote,
     providerQuoteId: null,
-    amountIn: BigInt(amountInRaw),
-    amountOut: BigInt(quote.buyAmount),
+    amountIn: zeroXAmount(amountInRaw, "sellAmount"),
+    amountOut: zeroXAmount(quote.buyAmount, "buyAmount"),
     minimumAmountOut:
-      !exactOutput && quote.minBuyAmount ? BigInt(quote.minBuyAmount) : null,
+      !exactOutput && quote.minBuyAmount ? zeroXAmount(quote.minBuyAmount, "minBuyAmount") : null,
     maximumAmountIn:
-      exactOutput && quote.maxSellAmount ? BigInt(quote.maxSellAmount) : null,
+      exactOutput && quote.maxSellAmount ? zeroXAmount(quote.maxSellAmount, "maxSellAmount") : null,
     estimatedGas: zeroXGasLimit(quote),
     priceImpact: null,
     transaction,
@@ -1133,6 +1170,50 @@ async function quoteZeroX(
     quoteExpiryTimestamp: null,
     expectedFillTime: null,
   };
+}
+
+function zeroXAmount(value: unknown, field: string): bigint {
+  if (typeof value !== "string" || !/^(0|[1-9][0-9]{0,77})$/.test(value)) {
+    throw new ServiceError("invalid_upstream_response", `0x ${field} must be a nonnegative decimal integer string; re-quote before wallet simulation`);
+  }
+  return BigInt(value);
+}
+
+async function quoteZeroXWithProtection(
+  env: Env,
+  intent: QuoteSelectionIntent,
+  fetcher: Fetcher,
+): Promise<QuoteCandidate> {
+  if (intent.maxOutputLoss === undefined) return quoteZeroX(env, intent, fetcher);
+  // First establish a fresh output basis. Neither this quote nor its calldata
+  // is handed off when a positive budget was requested.
+  const baseline = await quoteZeroX(env, { ...intent, slippageBps: 0 }, fetcher);
+  if (baseline.amountOut <= 0n) {
+    throw new ServiceError("invalid_upstream_response", "0x buyAmount must be positive; re-quote before wallet simulation");
+  }
+  const budget = BigInt(intent.maxOutputLoss);
+  const ppm = budget * 1_000_000n / baseline.amountOut;
+  if (budget === 0n) return checkedZeroXOutputLoss(baseline, budget);
+  if (ppm === 0n || ppm >= 1_000_000n) {
+    throw new ServiceError("unsupported_swap_protection", "0x max_output_loss must allow at least 1 ppm of quoted output and be less than amount_out. Choose an Ekubo route for finer precision; never substitute zero or widen the budget.");
+  }
+  const candidate = await quoteZeroX(env, { ...intent, slippageBps: undefined }, fetcher, ppm);
+  return checkedZeroXOutputLoss(candidate, budget);
+}
+
+function checkedZeroXOutputLoss(
+  candidate: QuoteCandidate,
+  budget: bigint,
+): QuoteCandidate {
+  const minimum = candidate.minimumAmountOut;
+  if (minimum === null || minimum <= 0n || minimum > candidate.amountOut) {
+    throw new ServiceError("invalid_upstream_response", "0x omitted or returned an invalid minBuyAmount; re-quote before wallet simulation");
+  }
+  const permittedLoss = candidate.amountOut - minimum;
+  if (permittedLoss > budget || (budget > 0n && permittedLoss === 0n)) {
+    throw new ServiceError("unsupported_swap_protection", "0x minBuyAmount cannot enforce a nonzero loss within max_output_loss at current price/precision. Re-quote or choose Ekubo; never widen protection or retry these bytes.");
+  }
+  return candidate;
 }
 
 async function quoteAcross(

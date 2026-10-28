@@ -1,5 +1,14 @@
 [
   {
+    "id": "gas-sized-absolute-swap-protection",
+    "prior_tool_results": [{ "tool": "wallet_list", "result": "$accounts" }],
+    "user": "Get executable quotes selling exactly 168413941673 base units of Ethereum token 0xe343167631d89b6ffc58b88d6b7fb0228795491d for USDT 0xdac17f958d2ee523a2206206994597c13d831ec7. My maximum loss from quoted output is exactly 265170 USDT base units (USDT has 6 decimals). Use that absolute bound, not 0 or 1 whole bps. Do not send.",
+    "expect": {
+      "tool": "get_quotes_with_plans",
+      "args_match": { "chain_id": "1", "amount": "168413941673", "max_output_loss": "265170", "quote_type": "exact_input" }
+    }
+  },
+  {
     "id": "swap-resolves-tokens-first",
     "prior_tool_results": [
       {

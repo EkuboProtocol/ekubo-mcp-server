@@ -391,10 +391,17 @@ export const getValueTransferStatusSchema = z.object({
 });
 
 export const getQuotesWithPlansSchema = quoteRequestSchema.extend({
+  max_output_loss: z
+    .string()
+    .regex(/^(0|[1-9][0-9]{0,77})$/)
+    .optional()
+    .describe(
+      "Exact-input loss budget from quoted output, output-token base units as a decimal integer string; requires sender, omit slippage_bps. Ekubo: exact subtraction. 0x: two quotes, floor budget to whole ppm, verify final minBuyAmount; positive budgets below 1 ppm fail, never become zero. Others unsupported. Convert gas value to output base units rounding down; never widen to 1 bps.",
+    ),
   sender: address
     .optional()
     .describe(
-      "Transaction sender; pass with slippage_bps once the user has decided, so every option carries its plan",
+      "Transaction sender; pass with exactly one of slippage_bps or max_output_loss for plans",
     ),
   recipient: address
     .optional()
@@ -408,7 +415,7 @@ export const getQuotesWithPlansSchema = quoteRequestSchema.extend({
     .max(10_000)
     .optional()
     .describe(
-      "Slippage bound written into the calldata, in basis points: 0.1% = 10, 0.3% = 30. Required with sender. Honor the user's preference. Otherwise keep the maximum slippage loss near one gas fee: slippage_bps ~= 10,000 * gas-cost value / swap-notional value, both in the same currency. Never use a generic 50 bps (0.5%) default, especially on Ethereum mainnet. After a slippage failure, re-quote rather than widen the bound.",
+      "Whole-bps calldata bound: 0.1% = 10. With sender supply this OR max_output_loss. Honor user preference; size near gas value / notional * 10,000. For positive sub-bps budgets use max_output_loss, not 0 or 1 bps. No generic 50 bps default. After slippage failure re-quote, never widen or retry reverted bytes.",
     ),
   swap_deadline_minutes: swapDeadlineMinutes,
   include_raw_quotes: z
@@ -420,6 +427,7 @@ export const getQuotesWithPlansSchema = quoteRequestSchema.extend({
 });
 
 export const prepareSwapSchema = quoteRequestSchema.extend({
+  max_output_loss: getQuotesWithPlansSchema.shape.max_output_loss,
   source: quoteSource.describe("Provider selected from a quote response"),
   sender: address.describe(
     "Transaction sender/taker/depositor used for firm quotes and validation",
@@ -432,6 +440,7 @@ export const prepareSwapSchema = quoteRequestSchema.extend({
     .int()
     .min(0)
     .max(10_000)
+    .optional()
     .describe("User-selected slippage tolerance in basis points"),
   swap_deadline_minutes: swapDeadlineMinutes,
 });
@@ -2022,7 +2031,7 @@ export const publicToolCatalog = [
     name: "get_quotes_with_plans",
     title: "Get swap or bridge quotes with execution plans",
     description:
-      QUOTE_JURISDICTION_NOTICE_V2 + " " + "The whole non-browser swap path for onchain swap, trade, exchange, or convert requests on supported EVM chains: one call returns every available quote (Ekubo and 0x same-chain; Across, LayerZero and LI.FI cross-chain), each carrying the execution_plan_reference that executes it. Pass the chosen option's execution.execution_plan_reference unchanged as the wallet's reference argument; there is no second preparation step. Do not call this tool again for an option it already prepared; call again only after a revert, an expiry, or a change to the request. Omit sender and slippage_bps for an indicative comparison; supply both for plans. Size slippage_bps by its own rule. Never retry reverted calldata unchanged. For an all, max, or entire-balance swap, quote the exact input-token balance from the wallet's balance tool. Simulate the chosen plan once, show the user that result, and send that same simulation. Compare options on amount_out together with native_fee, which LayerZero charges outside amount_out. Confirm LayerZero or LI.FI delivery with get_value_transfer_status. Failed providers are listed in unavailable_sources.",
+      QUOTE_JURISDICTION_NOTICE_V2 + " " + "Quote EVM swaps: Ekubo/0x same-chain; Across/LayerZero/LI.FI cross-chain. For plans, supply sender and exactly one protection: whole slippage_bps or exact-input max_output_loss in output base units. Omit all three for indicative quotes. Pass the chosen execution.execution_plan_reference unchanged to wallet simulation; show that result and send the same simulation for owner authorization. Re-quote only after revert, expiry or changed request; never retry reverted bytes or widen protection. For all/max swaps use the wallet's exact balance. Compare amount_out and native_fee (LayerZero charges it separately). Track LayerZero/LI.FI delivery with get_value_transfer_status. unavailable_sources reports provider failures; execution_unavailable reports plan failures.",
     inputSchema: z.toJSONSchema(getQuotesWithPlansSchema),
   },
   {
@@ -2885,6 +2894,7 @@ export function createEkuboServer(
         quoteType: input.quote_type,
         amount: input.amount,
         slippageBps: input.slippage_bps,
+        maxOutputLoss: input.max_output_loss,
         swapDeadlineMinutes: input.swap_deadline_minutes,
         recipient: input.recipient as Address | undefined,
         sender: input.sender as Address | undefined,
@@ -4652,7 +4662,7 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
   },
   {
     protocols: ["ekubo"],
-    text: `Swaps: once the user decides, call get_quotes_with_plans once with sender and slippage_bps (sized per that parameter, never a generic 50 bps); each option carries its execution_plan_reference. Simulate the chosen one once and send that simulation; re-quote only after a revert, expiry, or changed request.`,
+    text: `Swaps: call get_quotes_with_plans with sender and either slippage_bps or exact-input max_output_loss (output base units; use for gas-sized sub-bps bounds, never round to 0 or 1 bps; never a generic 50 bps). Pass its execution_plan_reference unchanged. Simulate once and send that simulation; re-quote after revert, expiry or changed request, never widen.`,
   },
   {
     protocols: null,
@@ -4765,7 +4775,7 @@ const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 1. Search the token list when resolving a name or symbol. For exact identifiers, use get_token for one chain/address pair or get_tokens for up to 1,000 pairs in one batch. Show the chosen chains and addresses to the user.
 2. Convert the user amount to base units without floating-point arithmetic.
 3. Set destination_chain_id explicitly for a bridge. Raw addresses and eip155:<chain>:<address> token IDs are accepted.
-4. Request an exact-input or exact-output quote. Once the user has decided to swap, pass sender and slippage_bps so every option arrives with the calldata that executes it; omit both only for an indicative "what would I get" comparison. Honor the user's explicit slippage preference. If none was given, estimate gas cost and swap notional in the same currency and use slippage_bps approximately equal to 10,000 * gas-cost value / swap-notional value, so the maximum tolerated slippage loss is near one gas fee. Do not default to 50 bps (0.5%), especially on Ethereum mainnet; prefer re-quoting and preparing a new transaction after failure to widening the bound. For same-chain requests, inspect every entry in quotes and choose a source; the tool does not accept or select one. The normalized amounts expose amount_out for exact input and amount_in for exact output. Cross-chain requests return Across, LayerZero, and LI.FI options where each is configured; compare them as you would any other options. After executing a LayerZero or LI.FI option, poll get_value_transfer_status with source set to that option's source until settled is true, because a successful origin receipt does not mean the transfer was delivered: LayerZero is polled with the quote's provider_quote_id and the origin transaction hash, LI.FI with the origin transaction hash and origin_chain_id. unavailable_sources reports individual provider failures without invalidating successful quote options, and a single option that could not be made executable reports its own execution_unavailable while the rest stand.
+4. Request an exact-input or exact-output quote. For plans pass sender and exactly one of whole slippage_bps or exact-input max_output_loss in output-token base units; omit all three for indicative quotes. Honor user preference. Otherwise size near gas value: convert to output base units rounding down for max_output_loss, or use whole bps approximately 10,000 * gas value / notional. Never round a positive sub-bps budget to 0 or widen to 1 bps; no generic 50 bps default. Ekubo subtracts the absolute budget exactly. 0x floors it to whole ppm using a baseline quote, requests new provider calldata, and verifies final minBuyAmount; below-1-ppm positive budgets fail explicitly. Cross-chain absolute budgets are unsupported. Inspect every quote; the tool does not select a source. Compare amount_out plus native_fee. Track LayerZero delivery by provider_quote_id and origin transaction hash, LI.FI by origin transaction hash and origin_chain_id, using get_value_transfer_status until settled. unavailable_sources lists provider failures; execution_unavailable lists plan failures.
 5. Take the chosen option's execution.execution_plan_reference as it is. Do not call the tool again to obtain a plan you were already given: it fetches fresh quotes, which spends a round trip and an agent turn inside the window where the plan in hand is still good, and leaves the user having approved a quote that is not the one executed. Call it again only after an expiry, a revert, or a change to the amount, tokens, sender, recipient, or slippage.
 6. Include the provider, exact plan ID, token amounts, chains, slippage bound, recipient, approvals, execution transaction, and any allowance reset in the wallet handoff.
 7. Pass the execution_plan_reference envelope unchanged as the wallet's reference argument and let its own simulation establish balances, allowances, policy, and the exact transaction outcome. The wallet fetches and verifies the plan body itself; never restate it. Do not read allowances or validate the transaction separately first, and do not ask for separate agent-level confirmation; both only spend the quote's remaining life.
