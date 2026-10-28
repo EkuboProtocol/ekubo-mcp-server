@@ -70,6 +70,7 @@ export interface PrepareSwapFromQuoteParameters {
   quoteType: EvmQuoterQuoteType;
   amount: string | bigint;
   slippageBps: number | bigint;
+  maxOutputLoss?: string;
   recipient?: Address;
   deadline: number;
   routerAddress?: Address;
@@ -151,6 +152,7 @@ export function prepareSwapFromQuote({
   quoteType,
   amount,
   slippageBps,
+  maxOutputLoss,
   recipient,
   deadline,
   routerAddress = YUL_ROUTER_ADDRESS,
@@ -221,9 +223,9 @@ export function prepareSwapFromQuote({
     );
   }
 
-  const calculatedAmountThreshold = isExactOutput
-    ? -divideRoundingUp(amountIn * (10_000n + bps), 10_000n)
-    : maxBigInt(1n, (amountOut * 10_000n) / (10_000n + bps));
+  const calculatedAmountThreshold = swapAmountThreshold({
+    isExactOutput, amountIn, amountOut, bps, maxOutputLoss,
+  });
   assertInt128(calculatedAmountThreshold, "calculatedAmountThreshold");
 
   const specifiedToken = isExactOutput ? tokenOut : tokenIn;
@@ -370,6 +372,28 @@ function parseSlippageBps(value: number | bigint): bigint {
     throw new Error("slippageBps must be at most 10000");
   }
   return bps;
+}
+
+function swapAmountThreshold(input: {
+  isExactOutput: boolean;
+  amountIn: bigint;
+  amountOut: bigint;
+  bps: bigint;
+  maxOutputLoss?: string;
+}): bigint {
+  if (input.maxOutputLoss !== undefined) {
+    if (input.isExactOutput || input.bps !== 0n) {
+      throw new Error("max_output_loss requires exact_input without slippage_bps");
+    }
+    const loss = parseUnsignedRawAmount(input.maxOutputLoss, "max_output_loss");
+    if (loss >= input.amountOut) {
+      throw new Error("max_output_loss must be less than quoted amount_out; reduce the budget and re-quote");
+    }
+    return input.amountOut - loss;
+  }
+  return input.isExactOutput
+    ? -divideRoundingUp(input.amountIn * (10_000n + input.bps), 10_000n)
+    : maxBigInt(1n, (input.amountOut * 10_000n) / (10_000n + input.bps));
 }
 
 function assertInt128(value: bigint, name: string) {

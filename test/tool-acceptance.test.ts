@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { decodeFunctionData, erc20Abi, keccak256, stringToHex } from "viem";
-import { YUL_ROUTER_ADDRESS } from "@ekubo/yul-router-sdk";
+import { decodeFunctionData, encodeFunctionData, erc20Abi, keccak256, parseAbi, stringToHex } from "viem";
+import { encodeRoutes, YUL_ROUTER_ADDRESS } from "@ekubo/yul-router-sdk";
 import worker from "../src/index.js";
 import { ARTIFACT_TTL_SECONDS } from "../src/artifact-store.js";
 import { PROTOCOLS, protocolMcpPath } from "../src/protocols.js";
@@ -101,6 +101,209 @@ function walkProperties(
 
 afterEach(() => {
   (globalThis.fetch as unknown as { mockRestore?: () => void }).mockRestore?.();
+});
+
+describe("absolute swap protection through MCP", () => {
+  const USDG = "0xe343167631d89b6ffc58b88d6b7fb0228795491d";
+  const USDT = "0xdac17f958d2ee523a2206206994597c13d831ec7";
+  const output = 168620010171n;
+  const amount = "168413941673";
+  const args = { chain_id: "1", token_in: USDG, token_out: USDT,
+    quote_type: "exact_input", amount, sender: OWNER };
+  const poolKey = { token0: USDT, token1: USDG, config: `0x${"00".repeat(32)}` } as const;
+  // Synthetic offline provider fixture using 0x's public ABI, not a live route.
+  const settlerAbi = parseAbi(["function execute((address recipient, address buyToken, uint256 minAmountOut) slippage, bytes[] actions, bytes32 zid) payable"]);
+  const holderAbi = parseAbi(["function exec(address operator, address token, uint256 amount, address target, bytes data) payable returns (bytes)"]);
+  const holder = "0x0000000000001fF3684f28c67538d4D072C22734";
+
+  function providerBytes(minimum: bigint) {
+    const inner = encodeFunctionData({ abi: settlerAbi, functionName: "execute", args: [
+      { recipient: OWNER, buyToken: USDT, minAmountOut: minimum }, [], `0x${"00".repeat(32)}`,
+    ] });
+    return encodeFunctionData({ abi: holderAbi, functionName: "exec", args: [OWNER, USDG, BigInt(amount), OWNER, inner] });
+  }
+
+  function upstream(options: { extraLoss?: bigint; noMinimum?: boolean; zeroLoss?: boolean; amountOut?: bigint; minimum?: unknown; finalOutput?: bigint } = {}) {
+    const output = options.amountOut ?? 168620010171n;
+    return mockUpstream((input) => {
+      const url = new URL(input);
+      if (url.hostname === "quoter.test") return Response.json({
+        block_number: 26289373, block_hash: "0x01", total_calculated: output.toString(),
+        estimated_gas_cost: 25000, price_impact: 0,
+        splits: [{ amount_specified: amount, amount_calculated: output.toString(), route: [{ swap: {
+          type: "core", pool_key: poolKey, sqrt_ratio_limit: "0x000000000000000000000000", skip_ahead: 0,
+        } }] }],
+      });
+      const finalOutput = url.searchParams.has("slippagePpm") ? (options.finalOutput ?? output) : output;
+      const ppm = BigInt(url.searchParams.get("slippagePpm") ?? "0");
+      const loss = options.zeroLoss ? 0n : finalOutput * ppm / 1_000_000n + (options.extraLoss ?? 0n);
+      return Response.json({ liquidityAvailable: true, sellAmount: amount, buyAmount: finalOutput.toString(),
+        ...(options.noMinimum ? {} : { minBuyAmount: options.minimum ?? (finalOutput - loss).toString() }),
+        issues: { allowance: null },
+        transaction: { to: holder, data: providerBytes(finalOutput - loss), value: "0", gas: "25000" },
+      });
+    });
+  }
+
+  async function quote(protection: Json) {
+    const result = await callTool("/mcp/ekubo", "get_quotes_with_plans", { ...args, ...protection });
+    expect(result.isError).toBeUndefined();
+    return result.structuredContent!;
+  }
+
+  it("discovers the absolute base-unit alternative and limitations", async () => {
+    const tool = (await listTools("/mcp/ekubo")).find((t) => t.name === "get_quotes_with_plans")!;
+    expect(tool.inputSchema.properties.max_output_loss.type).toBe("string");
+    expect(tool.inputSchema.properties.max_output_loss.description).toMatch(/base units/);
+    expect(tool.inputSchema.properties.max_output_loss.description).toContain("ppm");
+    expect(tool.description).toContain("max_output_loss");
+  });
+
+  it("encodes the $0.26517 budget exactly in Ekubo and conservatively in unchanged 0x calldata", async () => {
+    const fetcher = upstream();
+    const result = await quote({ max_output_loss: "265170" });
+    const ekubo = result.quotes.find((q: Json) => q.source === "ekubo");
+    const zeroX = result.quotes.find((q: Json) => q.source === "0x");
+    expect(ekubo.execution.quote.minimum_amount_out).toBe("168619745001");
+    expect(zeroX.execution.quote.minimum_amount_out).toBe("168619841551");
+    expect(zeroX.execution.quote.slippage_bps).toBeNull();
+    expect(zeroX.execution.quote.max_output_loss).toBe("265170");
+    const urls = fetcher.mock.calls.map(([url]) => new URL(String(url))).filter((url) => url.hostname !== "quoter.test");
+    expect(urls).toHaveLength(2);
+    expect(urls[0].searchParams.get("slippageBps")).toBe("0");
+    expect(urls[1].searchParams.get("slippagePpm")).toBe("1");
+    expect(urls[1].searchParams.has("slippageBps")).toBe(false);
+    for (const entry of [ekubo, zeroX]) {
+      const loss = output - BigInt(entry.execution.quote.minimum_amount_out);
+      expect(loss > 0n && loss <= 265170n).toBe(true);
+      const ref = entry.execution.execution_plan_reference;
+      const body = await (await fetchArtifact(ref.url)).text();
+      expect(keccak256(stringToHex(body))).toBe(ref.integrity.value);
+      const plan = JSON.parse(body);
+      const data = plan.ordered_steps.at(-1).transaction.data;
+      if (entry.source === "0x") {
+        expect(data).toBe(providerBytes(168619841551n));
+        const outer = decodeFunctionData({ abi: holderAbi, data });
+        const inner = decodeFunctionData({ abi: settlerAbi, data: outer.args[4] });
+        expect(inner.args[0].minAmountOut).toBe(BigInt(entry.execution.quote.minimum_amount_out));
+      }
+      else expect(data).toBe(encodeRoutes({
+        specifiedToken: USDG, calculatedToken: USDT, recipient: OWNER,
+        calculatedAmountThreshold: 168619745001n,
+        deadline: ekubo.execution.quote.quote_expiry_timestamp,
+        multiHops: [{ specifiedAmount: BigInt(amount), hops: [{ type: "core", poolKey, sqrtRatioLimit: 0n, skipAhead: 0 }] }],
+      }));
+      expect(plan.simulation_failure_policy.execution_reverted.action).toBe("reprepare_plan");
+      expect(plan.simulation_failure_policy.rpc_error.action).toBe("retry_same_plan");
+    }
+  });
+
+  for (const loss of ["0", "1", "168620", "168621", "265170"]) {
+    it(`keeps integer-safe budget ${loss} and rejects sub-ppm rather than substituting zero`, async () => {
+      upstream();
+      const result = await quote({ max_output_loss: loss });
+      const ekubo = result.quotes.find((q: Json) => q.source === "ekubo");
+      expect(ekubo.execution.quote.minimum_amount_out).toBe((output - BigInt(loss)).toString());
+      if (loss === "1" || loss === "168620") {
+        expect(result.unavailable_sources).toMatchObject([{ source: "0x", code: "unsupported_swap_protection", retry_recommended: false }]);
+      } else {
+        const zeroX = result.quotes.find((q: Json) => q.source === "0x");
+        const actualLoss = output - BigInt(zeroX.execution.quote.minimum_amount_out);
+        expect(actualLoss <= BigInt(loss)).toBe(true);
+      }
+    });
+  }
+
+  for (const bps of [0, 1]) {
+    it(`preserves exact whole-bps behavior at ${bps}`, async () => {
+      upstream();
+      const result = await quote({ slippage_bps: bps });
+      const ekubo = result.quotes.find((q: Json) => q.source === "ekubo");
+      expect(ekubo.execution.quote.minimum_amount_out).toBe((output * 10000n / (10000n + BigInt(bps))).toString());
+      expect(ekubo.execution.quote.slippage_bps).toBe(String(bps));
+      expect(ekubo.execution.quote).not.toHaveProperty("max_output_loss");
+    });
+  }
+
+  for (const largeOutput of [9007199254740993n, 10n ** 30n]) {
+    it(`preserves single-base-unit bounds above Number.MAX_SAFE_INTEGER: ${largeOutput}`, async () => {
+      upstream({ amountOut: largeOutput });
+      const result = await quote({ max_output_loss: "1" });
+      expect(result.quotes[0].execution.quote.minimum_amount_out).toBe((largeOutput - 1n).toString());
+      expect(result.unavailable_sources[0].code).toBe("unsupported_swap_protection");
+    });
+  }
+
+  for (const invalid of [
+    { max_output_loss: "-1" }, { max_output_loss: "0.27" }, { max_output_loss: 265170 },
+    { max_output_loss: "01" }, { max_output_loss: "1e3" }, { max_output_loss: "1".repeat(79) },
+    { max_output_loss: "265170", slippage_bps: 0 },
+    { max_output_loss: "265170", quote_type: "exact_output" },
+    { max_output_loss: "265170", sender: undefined }, { slippage_bps: 0.015745 },
+    { sender: OWNER },
+  ]) {
+    it(`rejects malformed or incomplete protection before upstream: ${JSON.stringify(invalid)}`, async () => {
+      const fetcher = upstream();
+      const result = await callTool("/mcp/ekubo", "get_quotes_with_plans", { ...args, ...invalid });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toMatch(/max_output_loss|slippage_bps/);
+      expect(fetcher).not.toHaveBeenCalled();
+    });
+  }
+
+  it("rejects unsupported cross-chain absolute budgets without upstream calls", async () => {
+    const fetcher = upstream();
+    const result = await callTool("/mcp/ekubo", "get_quotes_with_plans", { ...args, destination_chain_id: "8453", max_output_loss: "265170" });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain("unsupported_swap_protection");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  for (const options of [{ extraLoss: 265171n }, { noMinimum: true }, { zeroLoss: true }, { minimum: "1.5" }, { minimum: 123 }, { finalOutput: 500000000000n }]) {
+    it(`never hands off 0x bytes when the returned bound is unsafe: ${Object.keys(options)}`, async () => {
+      upstream(options);
+      const result = await quote({ max_output_loss: "265170" });
+      expect(result.quotes.map((q: Json) => q.source)).toEqual(["ekubo"]);
+      expect(result.unavailable_sources[0].source).toBe("0x");
+      expect(result.unavailable_sources[0].message).toMatch(/minBuyAmount/);
+    });
+  }
+
+  it("expires references and re-quotes changed state, without relaxing the budget", async () => {
+    const fetcher = upstream();
+    const first = await quote({ max_output_loss: "265170" });
+    const ref = first.quotes[0].execution.execution_plan_reference;
+    const id = ref.url.split("/artifact/")[1];
+    store.entries.get(`artifact/${id}`)!.uploaded = new Date(Date.now() - (ARTIFACT_TTL_SECONDS + 1) * 1000);
+    expect((await fetchArtifact(ref.url)).status).toBe(404);
+    fetcher.mockRestore();
+    upstream({ amountOut: output - 100n });
+    const fresh = await quote({ max_output_loss: "265170" });
+    expect(fresh.quotes[0].execution.quote.max_output_loss).toBe("265170");
+    expect(fresh.quotes[0].execution.quote.minimum_amount_out).toBe((output - 100n - 265170n).toString());
+    expect(fresh.quotes[0].execution.execution_plan_reference.integrity).not.toEqual(ref.integrity);
+    expect((await fetchArtifact(fresh.quotes[0].execution.execution_plan_reference.url)).status).toBe(200);
+  });
+
+  it("rejects budgets at or above quoted output without an executable plan", async () => {
+    upstream();
+    const result = await quote({ max_output_loss: output.toString() });
+    expect(result.quotes[0].execution).toBeNull();
+    expect(result.quotes[0].execution_unavailable.code).toBe("invalid_swap_protection");
+    expect(result.quotes.every((q: Json) => q.execution === null)).toBe(true);
+  });
+
+  it("returns explicit empty-liquidity and timeout errors without fallback protection", async () => {
+    mockUpstream((url) => {
+      if (url.startsWith("https://quoter.test")) throw new DOMException("timed out", "TimeoutError");
+      return Response.json({ liquidityAvailable: false });
+    });
+    const result = await callTool("/mcp/ekubo", "get_quotes_with_plans", { ...args, max_output_loss: "265170" });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain("upstream_timeout");
+    expect(JSON.stringify(result)).toContain("quote_unavailable");
+    expect(JSON.stringify(result)).not.toContain("execution_plan_reference");
+  });
 });
 
 describe("tool discoverability", () => {

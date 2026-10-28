@@ -344,15 +344,15 @@ describe("Worker discovery", () => {
     const swapTool = catalog.tools.find(
       (tool) => tool.name === "get_quotes_with_plans",
     );
-    expect(swapTool?.description).toContain("Size slippage_bps by its own rule");
-    expect(swapTool?.description).toContain("entire-balance swap");
+    expect(swapTool?.description).toContain("exact-input max_output_loss in output base units");
+    expect(swapTool?.description).toContain("all/max swaps use the wallet's exact balance");
     const slippage = (
       (swapTool?.inputSchema.properties as Record<string, unknown>)
         .slippage_bps as { description?: string }
     ).description;
-    expect(slippage).toContain("Honor the user's preference");
-    expect(slippage).toContain("near one gas fee");
-    expect(slippage).toContain("Never use a generic 50 bps (0.5%) default");
+    expect(slippage).toContain("Honor user preference");
+    expect(slippage).toContain("size near gas value");
+    expect(slippage).toContain("No generic 50 bps default");
     const annotationFor = (name: string) =>
       catalog.tools.find((tool) => tool.name === name)?.annotations;
     expect(annotationFor("get_pool")).toMatchObject({
@@ -531,9 +531,9 @@ describe("Worker discovery", () => {
       (listTokens?.inputSchema as { properties?: Record<string, unknown> })
         .properties,
     ).toHaveProperty("min_visibility_priority");
-    expect(swap?.description).toContain("The whole non-browser swap path");
+    expect(swap?.description).toContain("Quote EVM swaps");
     expect(swap?.description).toContain(
-      "Do not call this tool again for an option it already prepared",
+      "Re-quote only after revert, expiry or changed request",
     );
     expect(
       prepareVe33VoteSchema.shape.current_vote.safeParse(null).success,
@@ -669,7 +669,7 @@ describe("Worker discovery", () => {
     );
     for (const rule of [
       MCP_TOOL_CATALOG_REVISION,
-      "call get_quotes_with_plans once with sender and slippage_bps",
+      "call get_quotes_with_plans with sender and either slippage_bps or exact-input max_output_loss",
       "never a generic 50 bps",
       "send that simulation",
       "Pass each envelope unchanged as the wallet tool's reference argument",
@@ -693,7 +693,7 @@ describe("Worker discovery", () => {
     const describes = (name: string) =>
       publicToolCatalog.find((tool) => tool.name === name)!.description;
     for (const [name, rule] of [
-      ["get_quotes_with_plans", "entire-balance swap"],
+      ["get_quotes_with_plans", "all/max swaps use the wallet's exact balance"],
       ["get_stonx_allocation_recommendation", "strategy=compact_max_lock"],
       ["prepare_ve33_reallocation", "pass its exact state_id"],
       ["prepare_ve33_reinvest", "never a pre-existing balance"],
