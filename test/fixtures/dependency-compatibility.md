@@ -29,3 +29,15 @@ discovery, not a fictitious modern initialization handshake.
 Update a golden only after reviewing the intended public contract or calldata
 change. Do not regenerate it from a failing dependency candidate merely to make
 that candidate pass.
+
+## V4 follow-up
+
+`dependency-v4-compatibility.json` was captured at unchanged source
+`00a0b7ea7b2076a5d5bdc854cef9de837ed744c5` using viem 2.57.7,
+v4-sdk 2.4.1 and sdk-core 7.19.4, before the next dependency updates.
+`dependencyV4PlanCases` defines four native-currency cases: mint, increase,
+collect and remove, with exact amounts and token IDs above 2^53. The same fixed
+clock, complete-plan hashing, fetched-byte integrity checks and three MCP
+protocol versions apply. V4 catalog entries are hashed separately so the older
+golden stays unchanged. `uniswap.test.ts` independently decodes the action stream,
+Permit2 approvals, settlement, native refunds and minimum withdrawal amounts.

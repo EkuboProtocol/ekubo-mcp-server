@@ -1,4 +1,6 @@
 import { MORPHO_VAULT_V2_CATALOG } from "../src/morpho.js";
+import { zeroAddress } from "viem";
+import { v4PoolId } from "../src/uniswap/reads.js";
 
 const sender = "0x1111111111111111111111111111111111111111";
 const recipient = "0x2222222222222222222222222222222222222222";
@@ -49,3 +51,26 @@ export const dependencyQuoteCases = [
   tick_lower: -60, tick_upper: 60, tick_spacing: 60, sqrt_price_x96,
   amount0: "9007199254740993", amount1: "9007199254740995", slippage_bps: 1,
 }));
+
+const v4 = {
+  ...v3, token0: zeroAddress, fee: 3000, tick_spacing: 60,
+  tick_lower: -120, tick_upper: 120,
+  pool_id: v4PoolId({ token0: zeroAddress, token1: v3.token1 as `0x${string}`,
+    fee: 3000, tick_spacing: 60, hooks: zeroAddress }),
+};
+
+export const dependencyV4PlanCases = [
+  ...[undefined, "9007199254740993"].map((token_id) => ({
+    name: "prepare_uniswap_v4_add_liquidity", arguments: {
+      ...v4, ...(token_id ? { token_id } : {}), liquidity: "9007199254740993",
+      amount0_max: "9007199254740995", amount1_max: "9007199254740997",
+    },
+  })),
+  { name: "prepare_uniswap_v4_collect_fees", arguments: {
+    ...v4, token_id: "9007199254740993",
+  } },
+  { name: "prepare_uniswap_v4_remove_liquidity", arguments: {
+    ...v4, token_id: "9007199254740993", liquidity: "9007199254740993",
+    amount0_min: "9007199254740001", amount1_min: "9007199254740003",
+  } },
+];
