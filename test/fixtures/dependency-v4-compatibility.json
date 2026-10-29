@@ -1,0 +1,15 @@
+{
+  "source_commit": "00a0b7ea7b2076a5d5bdc854cef9de837ed744c5",
+  "dependencies": {
+    "viem": "2.57.7",
+    "v4_sdk": "2.4.1",
+    "sdk_core": "7.19.4"
+  },
+  "catalog_hash": "0xd320b62b0f34e31a152a6f267929a306722dd39166f13cc0e9a68a6544bbdb46",
+  "plan_hashes": [
+    "0x2d72bc57a86cec12a72454b65d6e7a7c9773d6043d45444a5225b4fbcb895539",
+    "0x32720fe0cb136595ae34fc962468fe101c7fbe85e58bf77df80931466b4b4913",
+    "0x9d7f52fe4b122fd96beafa690e0b7f86abcdcaac1215fd3e6ee4449815f9a3c2",
+    "0x412bdcd2864fa77e0f29bcedbcc9f608600c3c5837d0be9ac824686ad7c0cf59"
+  ]
+}

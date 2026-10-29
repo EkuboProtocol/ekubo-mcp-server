@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, setSystemTime } from "bun:
 import { keccak256, stringToHex } from "viem";
 import worker from "../src/index.js";
 import { fakeArtifactStore } from "./fake-r2.js";
-import { dependencyFixtureNow, dependencyPlanCases, dependencyQuoteCases } from "./dependency-cases.js";
+import { dependencyFixtureNow, dependencyPlanCases, dependencyQuoteCases, dependencyV4PlanCases } from "./dependency-cases.js";
 import golden from "./fixtures/dependency-compatibility.json";
+import v4Golden from "./fixtures/dependency-v4-compatibility.json";
 
 const env = {
   ARTIFACT_STORE: fakeArtifactStore(), EKUBO_API_URL: "https://api.test", EKUBO_QUOTER_URL: "https://quoter.test",
@@ -58,11 +59,17 @@ describe("dependency compatibility against the pre-update source fixtures", () =
       expect(hash(tools)).toBe(golden.catalog_hash);
       expect(tools).toHaveLength(names.size);
       expect(tools.every((tool: Json) => tool.outputSchema.type === "object")).toBe(true);
+      const v4Names = new Set(dependencyV4PlanCases.map((entry) => entry.name));
+      const v4Tools = catalog.body.result.tools.filter((tool: Json) => v4Names.has(tool.name));
+      expect(v4Tools).toHaveLength(v4Names.size);
+      expect(hash(v4Tools)).toBe(v4Golden.catalog_hash);
       const allNames = catalog.body.result.tools.map((tool: Json) => tool.name);
       expect(allNames.join(" ")).not.toMatch(/launchpad|moonpay|coinbase_onramp/);
     });
 
-    for (const [index, input] of dependencyPlanCases.entries()) {
+    const cases = [...dependencyPlanCases, ...dependencyV4PlanCases];
+    const planHashes = [...golden.plan_hashes, ...v4Golden.plan_hashes];
+    for (const [index, input] of cases.entries()) {
       it(`${version} preserves exact unsigned bytes for ${input.name} case ${index}`, async () => {
         const { body } = await rpc(version, "tools/call", input);
         expect(body.error).toBeUndefined();
@@ -77,7 +84,7 @@ describe("dependency compatibility against the pre-update source fixtures", () =
         const bytes = await artifact.text();
         expect(keccak256(stringToHex(bytes))).toBe(reference.integrity.value);
         expect(new TextEncoder().encode(bytes).length).toBe(reference.bytes);
-        expect(hash(JSON.parse(bytes))).toBe(golden.plan_hashes[index]);
+        expect(hash(JSON.parse(bytes))).toBe(planHashes[index]);
         expect(JSON.stringify(content)).not.toMatch(/"(signature|transaction_hash|submitted|confirmed)":/);
       });
     }
