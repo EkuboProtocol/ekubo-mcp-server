@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, setSystemTime } from "bun:test";
 import { keccak256, stringToHex } from "viem";
+import { AbiCoder, Interface } from "ethers";
 import worker from "../src/index.js";
 import { fakeArtifactStore } from "./fake-r2.js";
 import { dependencyFixtureNow, dependencyPlanCases, dependencyQuoteCases, dependencyV4PlanCases } from "./dependency-cases.js";
@@ -36,6 +37,9 @@ async function rpc(version: string, method: string, params: Json) {
 }
 
 const hash = (value: unknown): string => keccak256(stringToHex(JSON.stringify(value)));
+// Decode fetched bytes with a separate ABI implementation, not the generating SDK.
+const positionManager = new Interface(["function modifyLiquidities(bytes unlockData,uint256 deadline) payable"]);
+const abiCoder = AbiCoder.defaultAbiCoder();
 
 describe("dependency compatibility against the pre-update source fixtures", () => {
   beforeEach(() => { setSystemTime(new Date(dependencyFixtureNow)); });
@@ -86,6 +90,31 @@ describe("dependency compatibility against the pre-update source fixtures", () =
         expect(new TextEncoder().encode(bytes).length).toBe(reference.bytes);
         expect(hash(JSON.parse(bytes))).toBe(planHashes[index]);
         expect(JSON.stringify(content)).not.toMatch(/"(signature|transaction_hash|submitted|confirmed)":/);
+      });
+    }
+
+    for (const input of dependencyV4PlanCases.slice(2)) {
+      it(`${version} independently decodes fetched ${input.name} above 2^53`, async () => {
+        const { body } = await rpc(version, "tools/call", input);
+        const artifact = await worker.fetch(new Request(body.result.structuredContent.execution_plan_reference.url), env, context);
+        expect(artifact.status).toBe(200);
+        const plan = await artifact.json() as Json;
+        const steps = plan.ordered_steps;
+        expect(steps).toHaveLength(1);
+        const tx = steps[0].transaction;
+        expect(tx.to.toLowerCase()).toBe("0x7c5f5a4bbd8fd63184577525326123b519429bdc");
+        expect(tx.value).toBe("0");
+        const decoded = positionManager.decodeFunctionData("modifyLiquidities", tx.data);
+        expect(decoded[1]).toBe(1800001800n);
+        const [actions, params] = abiCoder.decode(["bytes", "bytes[]"], decoded[0]);
+        expect(actions).toBe("0x0111");
+        const decrease = abiCoder.decode(["uint256", "uint256", "uint128", "uint128", "bytes"], params[0]);
+        const expected = input.name === "prepare_uniswap_v4_collect_fees"
+          ? [9007199254740993n, 0n, 0n, 0n, "0x"]
+          : [9007199254740993n, 9007199254740993n, 9007199254740001n, 9007199254740003n, "0x"];
+        expect([...decrease]).toEqual(expected);
+        const take = abiCoder.decode(["address", "address", "address"], params[1]);
+        expect([...take]).toEqual([input.arguments.token0, input.arguments.token1, input.arguments.sender]);
       });
     }
 
