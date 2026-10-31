@@ -15,11 +15,12 @@ const env = {
 const context = {} as ExecutionContext;
 type Json = Record<string, any>;
 
-async function rpc(version: string, method: string, params: Json) {
+async function rpc(version: string, method: string, params: Json, extraHeaders: Record<string, string> = {}) {
   const modern = version === "2026-07-28";
   const headers: Record<string, string> = {
     "content-type": "application/json", accept: "application/json, text/event-stream",
     "mcp-protocol-version": version, "mcp-method": method,
+    ...extraHeaders,
   };
   if (params.name) headers["mcp-name"] = params.name;
   const response = await worker.fetch(new Request("https://mcp.ekubo.org/mcp", {
@@ -40,6 +41,26 @@ const hash = (value: unknown): string => keccak256(stringToHex(JSON.stringify(va
 // Decode fetched bytes with a separate ABI implementation, not the generating SDK.
 const positionManager = new Interface(["function modifyLiquidities(bytes unlockData,uint256 deadline) payable"]);
 const abiCoder = AbiCoder.defaultAbiCoder();
+const v3PositionManager = new Interface([
+  "function multicall(bytes[] data) payable returns (bytes[] results)",
+  "function mint((address,address,uint24,int24,int24,uint256,uint256,uint256,uint256,address,uint256) params) payable",
+  "function decreaseLiquidity((uint256,uint128,uint256,uint256,uint256) params) payable",
+  "function collect((uint256,address,uint128,uint128) params) payable",
+  "function burn(uint256 tokenId) payable",
+  "function refundETH() payable",
+]);
+
+function expectedV3Calls(input: typeof dependencyPlanCases[number]): unknown[][] {
+  const args = input.arguments as Record<string, any>;
+  const collect = [9007199254740993n, args.sender, (1n << 128n) - 1n, (1n << 128n) - 1n];
+  if (input.name === "prepare_uniswap_v3_collect_fees") return [collect];
+  if (input.name === "prepare_uniswap_v3_remove_liquidity") {
+    return [[9007199254740993n, 100n, 1n, 2n, 1800001800n], collect, [9007199254740993n]];
+  }
+  const mint = [args.token0, args.token1, 3000n, -120n, 120n,
+    9007199254740993n, 2000000n, 9007199254740000n, 1900000n, args.sender, 1800001800n];
+  return args.use_native ? [mint, []] : [mint];
+}
 
 describe("dependency compatibility against the pre-update source fixtures", () => {
   beforeEach(() => { setSystemTime(new Date(dependencyFixtureNow)); });
@@ -71,6 +92,18 @@ describe("dependency compatibility against the pre-update source fixtures", () =
       expect(allNames.join(" ")).not.toMatch(/launchpad|moonpay|coinbase_onramp/);
     });
 
+    it(`${version} keeps the public catalog unchanged without echoing caller-supplied auth headers`, async () => {
+      const plain = await rpc(version, "tools/list", {});
+      const forged = await rpc(version, "tools/list", {}, {
+        authorization: "Bearer synthetic-unverified-token",
+        "x-auth-info": JSON.stringify({ token: "synthetic-unverified-token", clientId: "forged-client" }),
+      });
+      expect(forged.response.status).toBe(200);
+      expect(forged.body).toEqual(plain.body);
+      expect(JSON.stringify(forged.body)).not.toContain("synthetic-unverified-token");
+      expect(forged.response.headers.get("mcp-session-id")).toBeNull();
+    });
+
     const cases = [...dependencyPlanCases, ...dependencyV4PlanCases];
     const planHashes = [...golden.plan_hashes, ...v4Golden.plan_hashes];
     for (const [index, input] of cases.entries()) {
@@ -90,6 +123,28 @@ describe("dependency compatibility against the pre-update source fixtures", () =
         expect(new TextEncoder().encode(bytes).length).toBe(reference.bytes);
         expect(hash(JSON.parse(bytes))).toBe(planHashes[index]);
         expect(JSON.stringify(content)).not.toMatch(/"(signature|transaction_hash|submitted|confirmed)":/);
+      });
+    }
+
+    for (const input of dependencyPlanCases.filter((entry) => entry.name.startsWith("prepare_uniswap_v3_"))) {
+      it(`${version} independently decodes fetched ${input.name} native=${"use_native" in input.arguments && input.arguments.use_native}`, async () => {
+        const { body } = await rpc(version, "tools/call", input);
+        const artifact = await worker.fetch(new Request(body.result.structuredContent.execution_plan_reference.url), env, context);
+        expect(artifact.status).toBe(200);
+        const plan = await artifact.json() as Json;
+        const actions = plan.ordered_steps.filter((step: Json) => step.transaction.to.toLowerCase() === "0x03a520b32c04bf3beef7beb72e919cf822ed34f1");
+        expect(actions).toHaveLength(1);
+        const tx = actions[0].transaction;
+        expect(tx.to.toLowerCase()).toBe("0x03a520b32c04bf3beef7beb72e919cf822ed34f1");
+        expect(tx.value).toBe("use_native" in input.arguments && input.arguments.use_native ? "9007199254740993" : "0");
+        const calls = v3PositionManager.decodeFunctionData("multicall", tx.data)[0];
+        const decoded = [...calls].map((data: string) => v3PositionManager.parseTransaction({ data })!);
+        const values = decoded.map((call) => call.fragment.name === "burn" || call.args.length === 0 ? [...call.args] : [...call.args[0]]);
+        expect(values).toEqual(expectedV3Calls(input));
+        const expectedNames = input.name === "prepare_uniswap_v3_remove_liquidity"
+          ? ["decreaseLiquidity", "collect", "burn"] : [input.name === "prepare_uniswap_v3_collect_fees" ? "collect" : "mint"];
+        if ("use_native" in input.arguments && input.arguments.use_native) expectedNames.push("refundETH");
+        expect(decoded.map((call) => call.name)).toEqual(expectedNames);
       });
     }
 
