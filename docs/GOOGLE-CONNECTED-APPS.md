@@ -11,8 +11,8 @@ bump is needed for this change.
 | Milestone | Status |
 | --- | --- |
 | Source-ready integration | Not yet: baseline regression checks pass; catalog lifecycle and policy questions below remain |
-| Deployed integration changes | No changes deployed; existing public endpoint inspected read-only |
-| Gemini validated | No; Developer Mode access not established |
+| Deployed integration changes | Transport-path Browser Integrity Check exception applied; no Worker/code deployment |
+| Gemini validated | No; Developer Mode opens, but the chosen Workspace account is unsupported for custom app connections |
 | Submitted | No |
 | Published | No |
 
@@ -24,6 +24,13 @@ Primary sources checked 2026-10-31:
 - [Developer Mode procedure](https://developers.google.com/connected-apps/mcp/dev-mode/usage)
 - [Platform policy](https://developers.google.com/connected-apps/connected-apps-policy)
 - [Registration](https://developers.google.com/connected-apps/gpc)
+
+Account eligibility checked separately on 2026-11-02:
+[Connect and manage custom apps](https://support.google.com/gemini/answer/17209137).
+Google currently requires a personal Google Account, age 18 or over, US presence,
+and Keep Activity enabled. Work/school accounts are explicitly unsupported for
+custom app connections. A visible Developer Mode pane is not proof of connection
+eligibility. Do not switch accounts or enable activity recording implicitly.
 
 | Source clause | Existing behavior / evidence | Remaining action |
 | --- | --- | --- |
@@ -128,7 +135,26 @@ This does not establish that another authorized organization/account lacks acces
 The runtime connection-search route returned HTTP 401; it was not retried or
 bypassed. No console registration or custom-app connection was created.
 
-Once authorized access is supplied, use Developer Mode's schema and event logs:
+On 2026-11-02, the authorized Workspace account opened Developer Mode, but the
+core custom-app connection failed with “Verify the URL and try again.” A captured
+Google connection response returned HTTP 200 with RPC error code `9` and
+`BardErrorInfo [1040]`; no tool telemetry or available-actions list appeared.
+Google does not document that code here, so it is not assigned a specific meaning.
+The independently documented personal-account requirement above prevents treating
+the Workspace session as an eligible custom-app test client.
+
+A separate machine-client problem was demonstrated and fixed: zone Browser
+Integrity Check blocked default Python urllib MCP requests with HTTP 403 / Error
+1010. An edge rule now skips only that product on the MCP
+hostname's `/mcp` and `/mcp/…` transport paths, preserving existing rules, WAF,
+rate limits and other paths. After propagation, the unchanged client negotiated
+`2025-11-25`, discovered 34 core tools and called `get_token` for Ether, with JSON
+TextContent matching structuredContent. The Workspace retry still failed. This
+is transport-reachability evidence, not Gemini ingestion or reference-provenance
+acceptance. Artifact paths are outside this exception and were not live-tested.
+
+Once an authorized, eligible client is supplied, use Developer Mode's schema and
+event logs:
 
 1. Connect the agreed producer catalog; check discovery and safety badges.
 2. Ask for Ether metadata on Ethereum; compare actual arguments/result with the
