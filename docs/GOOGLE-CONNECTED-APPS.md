@@ -3,16 +3,18 @@
 ## Status
 
 This is a **compatibility baseline, not a completed integration or launch**.
-Source baseline: `1d1d359ac42931f2a475531c0c483fd6db2edf4f` (remote main).
+Source baseline: `1d1d359ac42931f2a475531c0c483fd6db2edf4f` (remote main), merged
+up to `c2fc62e07150b29d300419c9213b523b9c0d6755` on 2026-11-04.
 No runtime contract, tool schema, transport, authorization or deployment changes
-are introduced by the baseline tests. Consequently no package/catalog version
-bump is needed for this change.
+are introduced by the baseline tests or the ADK harness. Consequently no
+package/catalog version bump is needed for this change.
 
 | Milestone | Status |
 | --- | --- |
-| Source-ready integration | Not yet: baseline regression checks pass; catalog lifecycle and policy questions below remain |
+| Source-ready integration | Not yet: baseline regression checks pass; real-model scenarios, catalog lifecycle and policy questions below remain |
 | Deployed integration changes | Transport-path Browser Integrity Check exception applied; no Worker/code deployment |
-| Gemini validated | No; Developer Mode opens, but the chosen Workspace account is unsupported for custom app connections |
+| Gemini validated (Gemini API through ADK) | Partly: Google ADK's MCP client discovers, converts and calls both facets with verified references; scenarios against a real Gemini model are pending a Gemini API key |
+| Gemini validated (Gemini app) | No: custom app connections require a personal Google Account with Keep Activity on, and work accounts are unsupported; outstanding external requirement |
 | Submitted | No |
 | Published | No |
 
@@ -78,14 +80,6 @@ bun run build
 bun run lint
 ```
 
-In a multi-repository harness workspace, plain lint can traverse harness-owned
-repositories and load their unrelated ESLint configs. Exclude only those paths
-without editing or deleting them:
-
-```sh
-bun run lint --ignore-pattern '.paperclip-repositories/**' --ignore-pattern '.paperclip-runtime/**'
-```
-
 The new digest checks cover instructions plus complete `tools/list` schemas,
 descriptions, annotations and output schemas. They are drift alarms, not an
 immutable endpoint implementation. Inspect any drift instead of blindly updating
@@ -124,6 +118,64 @@ Ether on chain `"1"`; parsed TextContent exactly matched structuredContent.
 Inspector's `legacy` era flag is not proof of exact negotiated version; the
 separate wire regression explicitly checks `2025-11-25`.
 
+Re-run on 2026-11-04 with Inspector 2.13.0 after the transport fix: core lists 34
+tools (42 `type-union` and one `untyped-schema` warning) and advanced lists 16
+(21 `type-union` warnings), both with zero errors. `get_token` for Ether, an
+empty `get_positions_by_owner` page, `prepare_wrap_unwrap` on Base and `get_pool`
+on Ethereum succeeded with TextContent equal to structuredContent; the returned
+`execution_plan_reference` and `read_calls_reference` fetched with matching byte
+counts and keccak256 integrity. A malformed `chain_id` returned `isError` with a
+message naming the argument (Inspector exit 5, `tool_is_error`).
+
+### Gemini through Google ADK
+
+`script/gemini-adk-acceptance.py` drives the endpoint through Google ADK's
+`McpToolset` (Streamable HTTP), the MCP client in Google's agent stack. It pins
+`google-adk` and runs with `uv`:
+
+```sh
+uv run script/gemini-adk-acceptance.py --out gemini-adk.json
+uv run script/gemini-adk-acceptance.py --url https://mcp.ekubo.org/mcp/ekubo-advanced
+GEMINI_API_KEY=… uv run script/gemini-adk-acceptance.py \
+  --wallet-catalog ../cloud-wallet/apps/api/src/reference/tools.json
+```
+
+Without a key it checks discovery, the conversion of every tool to the Gemini
+function declaration ADK sends, the older OpenAPI-subset conversion, and
+representative calls through ADK's session, verifying every returned reference
+against the stored bytes. With `GEMINI_API_KEY` or `GOOGLE_API_KEY` set it also
+runs four scenarios against a real Gemini model (default `gemini-3.5-flash`):
+an Ether metadata read, a wrap plan and a swap quote handed to wallet
+simulation, and a pool's read bundle handed to `wallet_batch_eth_call`. The
+model gets the server's initialize instructions and TextContent only, since
+Connected Apps does not consume structuredContent yet. The wallet tools are
+local stand-ins declared from the Cloud Wallet catalog snapshot: they check that
+the reference the model passed equals the producer's envelope and that the
+stored bytes match its length and keccak256 digest. They never simulate, sign or
+send, and no send tool is offered. Report fields never include the key.
+
+Results on 2026-11-04 (ADK 2.13.0, google-genai 2.34.0, MCP SDK 2.3.0), without
+a model:
+
+- Both facets negotiate `2025-11-25`; core lists 34 tools and advanced 16. ADK
+  declares every tool with `parameters_json_schema` and `response_json_schema`,
+  and the request configuration builds.
+- The OpenAPI-subset conversion succeeds for all 50 tools. It narrows each
+  `["integer", "string"]` union (`chain_id`, `tick_spacing`) to `INTEGER` and
+  keeps `["object", "null"]` as a nullable object. Integer chain IDs remain valid
+  input, so a client on that dialect loses only the string spelling.
+- Core direct calls pass: Ether metadata with TextContent equal to
+  structuredContent, a malformed `chain_id` error naming the argument, an empty
+  positions page, and plan and read-bundle references whose fetched bytes match
+  their declared length and digest. The same check rejects copies with altered
+  integrity, length, URL, chain or sender.
+
+Model scenarios have not run yet: they need a Gemini API key.
+
+Artifact fetches with the default Python urllib user agent still return 403
+from Browser Integrity Check, which the transport exception does not cover;
+httpx and curl fetch them. The Cloud Wallet fetches artifacts server-side.
+
 ### Real-client access evidence and remaining journey
 
 Existing shared-browser access was checked without adding credentials, changing
@@ -151,10 +203,14 @@ rate limits and other paths. After propagation, the unchanged client negotiated
 `2025-11-25`, discovered 34 core tools and called `get_token` for Ether, with JSON
 TextContent matching structuredContent. The Workspace retry still failed. This
 is transport-reachability evidence, not Gemini ingestion or reference-provenance
-acceptance. Artifact paths are outside this exception and were not live-tested.
+acceptance. Artifact paths are outside this exception (see the user-agent note
+under the ADK results).
 
-Once an authorized, eligible client is supplied, use Developer Mode's schema and
-event logs:
+Gemini app validation therefore stays an outstanding external requirement: it
+needs an eligible personal account with Keep Activity on, which this project
+does not use. Real-model validation runs through the Gemini API with ADK
+instead (above). When an eligible client is available, use Developer Mode's
+schema and event logs:
 
 1. Connect the agreed producer catalog; check discovery and safety badges.
 2. Ask for Ether metadata on Ethereum; compare actual arguments/result with the
