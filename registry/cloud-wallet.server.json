@@ -1,0 +1,14 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.EkuboProtocol/cloud-wallet",
+  "title": "Cloud Wallet by Ekubo",
+  "description": "EVM wallet reads, simulation, and transaction execution under user-defined authorization policies.",
+  "version": "1.0.0",
+  "websiteUrl": "https://cloud.ekubo.org/about",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://cloud.ekubo.org/mcp"
+    }
+  ]
+}
