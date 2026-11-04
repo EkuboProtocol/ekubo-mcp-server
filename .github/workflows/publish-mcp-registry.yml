@@ -1,0 +1,96 @@
+name: Publish MCP Registry
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: publish-mcp-registry
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'EkuboProtocol/ekubo-mcp-server' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install pinned publisher
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl --fail --silent --show-error --location \
+            https://github.com/modelcontextprotocol/registry/releases/download/v1.8.7/mcp-publisher_linux_amd64.tar.gz \
+            --output mcp-publisher.tar.gz
+          echo '00b21004149a4ce66f0782508ae4a2bce67d1bea395a8da0bd8028159fb59579  mcp-publisher.tar.gz' | sha256sum --check
+          mkdir -p mcp-publisher-bin
+          tar -xzf mcp-publisher.tar.gz -C mcp-publisher-bin mcp-publisher
+          echo "$PWD/mcp-publisher-bin" >> "$GITHUB_PATH"
+
+      - name: Validate both manifests
+        run: |
+          mcp-publisher validate registry/ekubo.server.json
+          mcp-publisher validate registry/cloud-wallet.server.json
+
+      - name: Authenticate with GitHub Actions OIDC
+        run: mcp-publisher login github-oidc --registry https://registry.modelcontextprotocol.io
+
+      - name: Verify organization publishing grant
+        run: |
+          python3 - <<'PY'
+          import base64
+          import json
+          import time
+          from pathlib import Path
+
+          stored = json.loads((Path.home() / ".config/mcp-publisher/token.json").read_text())
+          assert stored["method"] == "github-oidc", "Expected GitHub Actions OIDC"
+          assert stored["registry"] == "https://registry.modelcontextprotocol.io", "Unexpected registry"
+          payload = stored["token"].split(".")[1]
+          claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+          grant = {"action": "publish", "resource": "io.github.EkuboProtocol/*"}
+          assert grant in claims.get("permissions", []), "Organization publishing grant is missing"
+          assert claims["exp"] > time.time(), "Registry token has expired"
+          print("Verified publish grant for io.github.EkuboProtocol/*")
+          PY
+
+      - name: Publish Ekubo Protocol
+        run: mcp-publisher publish registry/ekubo.server.json
+
+      - name: Publish Cloud Wallet
+        run: mcp-publisher publish registry/cloud-wallet.server.json
+
+      - name: Verify public registry records
+        run: |
+          python3 - <<'PY'
+          import json
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+
+          for path in ("registry/ekubo.server.json", "registry/cloud-wallet.server.json"):
+              expected = json.loads(Path(path).read_text())
+              name = urllib.parse.quote(expected["name"], safe="")
+              version = urllib.parse.quote(expected["version"], safe="")
+              url = f"https://registry.modelcontextprotocol.io/v0.1/servers/{name}/versions/{version}"
+              with urllib.request.urlopen(url, timeout=30) as response:
+                  record = json.load(response)
+              for key, value in expected.items():
+                  assert record["server"][key] == value, f"Published {key} differs for {expected['name']}"
+              assert record["_meta"]["io.modelcontextprotocol.registry/official"]["status"] == "active"
+              print(f"Verified {expected['name']} {expected['version']}: {url}")
+          PY
+
+      - name: Remove publisher credentials
+        if: always()
+        run: rm -f "$HOME/.config/mcp-publisher/token.json"
