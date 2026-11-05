@@ -11,9 +11,9 @@ package/catalog version bump is needed for this change.
 
 | Milestone | Status |
 | --- | --- |
-| Source-ready integration | Not yet: baseline regression checks pass; real-model scenarios, catalog lifecycle and policy questions below remain |
+| Source-ready integration | Not yet: regression checks and real-model scenarios pass; the registration catalog lifecycle, policy questions and registration links below remain |
 | Deployed integration changes | Transport-path Browser Integrity Check exception applied; no Worker/code deployment |
-| Gemini validated (Gemini API through ADK) | Partly: Google ADK's MCP client discovers, converts and calls both facets with verified references; scenarios against a real Gemini model are pending a Gemini API key |
+| Gemini validated (Gemini API through ADK) | Yes, core facet: Google ADK's MCP client discovers, converts and calls both facets with verified references, and real Gemini models completed every scenario on TextContent only, passing every wallet reference unchanged (results below) |
 | Gemini validated (Gemini app) | No: custom app connections require a personal Google Account with Keep Activity on, and work accounts are unsupported; outstanding external requirement |
 | Submitted | No |
 | Published | No |
@@ -152,7 +152,10 @@ Connected Apps does not consume structuredContent yet. The wallet tools are
 local stand-ins declared from the Cloud Wallet catalog snapshot: they check that
 the reference the model passed equals the producer's envelope and that the
 stored bytes match its length and keccak256 digest. They never simulate, sign or
-send, and no send tool is offered. Report fields never include the key.
+send, and no send tool is offered. Report fields never include the key; the
+report is also scrubbed of both key formats, standard (`AIza…`) and the auth keys
+AI Studio has issued by default since May 2026 (`AQ.…`). Pick the model with
+`--model` (repeatable).
 
 Results on 2026-11-04 (ADK 2.13.0, google-genai 2.34.0, MCP SDK 2.3.0), without
 a model:
@@ -170,7 +173,40 @@ a model:
   their declared length and digest. The same check rejects copies with altered
   integrity, length, URL, chain or sender.
 
-Model scenarios have not run yet: they need a Gemini API key.
+Model scenarios ran on 2026-11-05 (UTC) against the production core endpoint
+with a free-tier Gemini API key, same client versions:
+
+| Scenario | `gemini-3.5-flash` | `gemini-3-flash-preview` | `gemini-3.5-flash-lite` |
+| --- | --- | --- | --- |
+| Ether metadata read | Pass | Pass | Pass |
+| Wrap plan to wallet simulation | Pass | Reference verified, then Google 503 before the final answer | Pass |
+| Swap quote to wallet simulation | Google 503 twice (the retry made the correct quote call first) | Pass | Reference verified, then Google 503 before the final answer |
+| Pool read bundle to `wallet_batch_eth_call` | Google 503, then the free-tier daily limit | Pass | Pass |
+
+- Every simulation or batch-read call the models made, 7 of 7, carried the
+  producer's `execution_plan_reference` or `read_calls_reference` with `kind`,
+  `artifact_type`, `url`, `bytes` and `integrity` unchanged. The fetched bytes
+  matched the declared length and keccak256 digest, and the stored chain (and,
+  for plans, the sender) matched the request. No model passed an inline plan or
+  call list. None forwarded the envelope's `instruction` text either, as
+  expected: the wallet's input schema declares only those five fields.
+- Producer arguments were correct in every run: `chain_id` as an integer, which
+  the `["integer", "string"]` union accepts; exact base-unit amounts as strings;
+  the requested slippage; and USDC resolved with `list_tokens` before quoting.
+- `gemini-3.5-flash-lite` added undeclared top-level arguments to
+  `wallet_simulate_execution_plan` (`sender`, `schema_version`,
+  `required_capabilities`), once with a mistyped sender. The reference and
+  `account_id` were correct. A wallet must ignore or reject undeclared arguments
+  and take the sender only from the verified plan bytes.
+- The failures were Google capacity and quota errors, not server errors:
+  `503 UNAVAILABLE` ("high demand") for free-tier requests, and the free tier's
+  20 requests per day per Flash model. `gemini-3.8-flash` returned 503 on the
+  first request of every scenario. Google counts `gemini-3.5-flash` requests
+  against its Gemini 3.6 Flash free-tier limit.
+- Each model request carries the full core catalog and instructions, about
+  24,000 prompt tokens, so one scenario takes two to six requests and 49,000 to
+  130,000 tokens. That cost is evidence for the tool-granularity review item
+  above.
 
 Artifact fetches with the default Python urllib user agent still return 403
 from Browser Integrity Check, which the transport exception does not cover;
