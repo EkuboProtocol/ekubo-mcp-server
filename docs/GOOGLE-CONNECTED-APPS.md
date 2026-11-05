@@ -153,9 +153,33 @@ local stand-ins declared from the Cloud Wallet catalog snapshot: they check that
 the reference the model passed equals the producer's envelope and that the
 stored bytes match its length and keccak256 digest. They never simulate, sign or
 send, and no send tool is offered. Report fields never include the key; the
-report is also scrubbed of both key formats, standard (`AIza…`) and the auth keys
-AI Studio has issued by default since May 2026 (`AQ.…`). Pick the model with
-`--model` (repeatable).
+report and Python stdout/stderr are scrubbed of both key formats, standard
+(`AIza…`) and the auth keys AI Studio has issued by default since May 2026
+(`AQ.…`). Console protection is installed before SDK imports and covers logging,
+CLI diagnostics and uncaught tracebacks. Incomplete console lines stay buffered
+until a newline or process exit, even on flush, so split writes cannot expose a
+key. Captured errors/answers are scrubbed before truncation. The `--out` report
+is the harness's only file write; SDK sessions stay in memory. This protection
+does not cover the `uv` launcher, shell tracing or separately configured SDK file
+loggers; keep credentials in environment injection and do not enable those
+capture paths. Pick the model with `--model` (repeatable).
+
+#### AI Studio browser capture
+
+Before **any DOM text/HTML or input/attribute values leave the browser**, redact
+both `AIza[0-9A-Za-z_-]{30,}` and `AQ\.[0-9A-Za-z_-]{20,}` **in-page**, plus generic
+long tokens such as `[0-9A-Za-z_+/=-]{30,}`. Never return a key-details dialog
+unredacted, including in browser snapshots or screenshots; mask it in-page or
+close it first. Scrubbing a returned tool result is too late.
+
+Prefer RSA-OAEP encrypted capture: encrypt the key in-page with the authorized
+recipient's public key and return only ciphertext. Keep decryption and the
+private key in the authorized local process, and never print the plaintext.
+
+Offline redaction regressions use only fabricated values and Python's standard
+library: `python3 -I -B -m unittest discover -s script -p test_gemini_redaction.py`.
+They also run in the existing `bun test` CI suite, without ADK, credentials or
+network requests.
 
 Results on 2026-11-04 (ADK 2.13.0, google-genai 2.34.0, MCP SDK 2.3.0), without
 a model:
