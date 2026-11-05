@@ -30,8 +30,13 @@ They never simulate, sign or send, and no send tool is offered.
     op run --env-file gemini.env -- uv run script/gemini-adk-acceptance.py \\
       --wallet-catalog ../cloud-wallet/apps/api/src/reference/tools.json
 
-The API key is read by the Gemini SDK from the environment and is never
-written to the report.
+The API key is read by the Gemini SDK from the environment. Report and Python
+console output redact both Gemini key formats (including SDK errors/logging).
+
+AI Studio browser capture: redact AIza... and AQ.... keys AND generic long
+tokens in-page before any DOM text/HTML or input values leave the browser.
+Never return an unredacted key-details dialog. Prefer RSA-OAEP encrypted capture
+(return ciphertext only); see docs/GOOGLE-CONNECTED-APPS.md for the operator rule.
 """
 
 from __future__ import annotations
@@ -42,13 +47,17 @@ import hashlib
 import json
 import os
 import platform
-import re
 import sys
 import time
 from datetime import datetime, timezone
 from importlib import metadata
 from pathlib import Path
 from typing import Any
+
+from gemini_redaction import install_console_redaction, redact, write_report
+
+if __name__ == "__main__":
+    install_console_redaction()
 
 import httpx
 from Crypto.Hash import keccak
@@ -74,7 +83,6 @@ ETH_USDC_POOL = {
 }
 WALLET_TOOLS = ("wallet_list", "wallet_simulate_execution_plan", "wallet_batch_eth_call")
 VERIFIED_FIELDS = ("kind", "artifact_type", "url", "bytes", "integrity")
-SECRET_PATTERN = re.compile(r"AIza[0-9A-Za-z_\-]{30,}|AQ\.[0-9A-Za-z_\-]{20,}")
 
 SCENARIOS = [
     {
@@ -220,7 +228,7 @@ def openapi_subset(tools: list[BaseTool]) -> dict[str, Any]:
             type_unions(schema, parameters.model_dump(mode="json", exclude_none=True), report["type_unions"])
             report["converted"] += 1
         except Exception as error:  # recorded per tool
-            report["failed"].append({"tool": tool.name, "error": f"{type(error).__name__}: {error}"[:300]})
+            report["failed"].append({"tool": tool.name, "error": redact(f"{type(error).__name__}: {error}")[:300]})
     return report
 
 
@@ -287,7 +295,7 @@ async def direct_calls(tools: list[BaseTool]) -> list[dict[str, Any]]:
     async def malformed_chain_id() -> dict[str, Any]:
         result, parsed = await call("get_token", {"chain_id": "ethereum", "address": NATIVE})
         message = parsed if isinstance(parsed, str) else canonical(parsed)
-        return {"ok": bool(result.get("isError")) and "chain_id" in message, "is_error": bool(result.get("isError")), "message": message[:400]}
+        return {"ok": bool(result.get("isError")) and "chain_id" in message, "is_error": bool(result.get("isError")), "message": redact(message)[:400]}
 
     async def empty_positions_page() -> dict[str, Any]:
         result, parsed = await call("get_positions_by_owner", {"owner": SENDER})
@@ -426,7 +434,7 @@ async def run_scenario(toolset: McpToolset, instructions: str, wallet_entries: l
                     if part.text and event.author == agent.name and not part.thought:
                         texts.append(part.text)
         except Exception as error:  # recorded, not raised: one failing scenario must not hide the others
-            errors.append(f"{type(error).__name__}: {error}"[:1000])
+            errors.append(redact(f"{type(error).__name__}: {error}")[:1000])
             break
         wallet = scenario.get("wallet")
         if wallet and len(turns) == 1 and not any(call["tool"] == wallet["tool"] for call in run["wallet_calls"]):
@@ -456,7 +464,7 @@ async def run_scenario(toolset: McpToolset, instructions: str, wallet_entries: l
         "producer_calls": producer_calls,
         "wallet_calls": run["wallet_calls"],
         "wallet_verifications": run["verifications"],
-        "answer": answer[:2000],
+        "answer": redact(answer)[:2000],
         "usage_tokens": usage,
         "seconds": round(time.monotonic() - started, 1),
         "errors": errors,
@@ -517,7 +525,7 @@ async def main() -> int:
         "model_runs_passed": sum(1 for outcome in report["model_runs"] if outcome["pass"]),
         "model_runs": len(report["model_runs"]),
     }
-    Path(opts.out).write_text(SECRET_PATTERN.sub("<redacted>", json.dumps(report, indent=2, ensure_ascii=False)) + "\n")
+    write_report(opts.out, report)
     print(json.dumps(report["summary"]), file=sys.stderr)
     failed = report["summary"]["direct_calls_passed"] < report["summary"]["direct_calls"] or (
         report["summary"]["model_runs_passed"] < report["summary"]["model_runs"]
