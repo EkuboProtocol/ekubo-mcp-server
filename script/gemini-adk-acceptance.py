@@ -74,7 +74,7 @@ ETH_USDC_POOL = {
 }
 WALLET_TOOLS = ("wallet_list", "wallet_simulate_execution_plan", "wallet_batch_eth_call")
 VERIFIED_FIELDS = ("kind", "artifact_type", "url", "bytes", "integrity")
-SECRET_PATTERN = re.compile(r"AIza[0-9A-Za-z_\-]{30,}")
+SECRET_PATTERN = re.compile(r"AIza[0-9A-Za-z_\-]{30,}|AQ\.[0-9A-Za-z_\-]{20,}")
 
 SCENARIOS = [
     {
