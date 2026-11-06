@@ -163,6 +163,100 @@ describe("Google Connected Apps wire contract", () => {
   });
 });
 
+describe("pool config decoding through MCP", () => {
+  const path = "/mcp/ekubo-advanced";
+  const regressionConfig = "0x000000000000000000000000000000000000000000000000000000008000003c";
+  const extension = "0xD18685a514E59b06d59824e16Db07e73345d9953";
+  const cases = [
+    { type_config: "0x8000003c", pool_type: "concentrated", discriminator_bit_set: true,
+      tick_spacing: 60, stableswap_params: null },
+    { type_config: "0x0affffff", pool_type: "stableswap", discriminator_bit_set: false,
+      tick_spacing: null, stableswap_params: { center_tick: -16, amplification: 10 } },
+    { type_config: "0x00000000", pool_type: "full_range", discriminator_bit_set: false,
+      tick_spacing: null, stableswap_params: { center_tick: 0, amplification: 0 } },
+  ];
+
+  for (const endpoint of ["/mcp", path, "/mcp?protocols=ekubo+ekubo-advanced"]) {
+    it(`discovers and calls the established decoded_config envelope at ${endpoint}`, async () => {
+      const fetcher = mockUpstream(() => { throw new Error("decoder must stay local"); });
+      const tools = await listTools(endpoint);
+      const decode = tools.find((tool) => tool.name === "decode_pool_config")!;
+      const derive = tools.find((tool) => tool.name === "derive_pool_id")!;
+      expect(decode.annotations?.readOnlyHint).toBe(true);
+      expect(decode.description).toContain("uint64 Q64 fee");
+      expect(decode.inputSchema.required).toEqual(["config"]);
+      expect(decode.inputSchema.properties.config.description).toBe("bytes32 hex");
+      expect(decode.outputSchema?.properties.decoded_config).toEqual(
+        derive.outputSchema?.properties.decoded_config,
+      );
+      expect(decode.outputSchema?.properties.decoded_config.properties.fee.type).toBe("string");
+      expect(decode.outputSchema?.properties.decoded_config.properties.pool_type.enum).toEqual(
+        ["concentrated", "stableswap", "full_range"],
+      );
+      const result = await callTool(endpoint, decode.name, { config: regressionConfig });
+      expect(result.isError).toBeUndefined();
+      expect(googleTextResult(result)).toMatchObject({ decoded_config: {
+        config: regressionConfig, extension: NATIVE, fee: "0", fee_hex: "0x0000000000000000",
+        ...cases[0],
+      } });
+      expect(fetcher).not.toHaveBeenCalled();
+    });
+  }
+
+  for (const pool of cases) {
+    for (const fee of ["0", "9007199254740991", "9007199254740992", "9007199254740993", "18446744073709551615"]) {
+      it(`returns schema-valid ${pool.pool_type} with exact Q64 fee ${fee}`, async () => {
+        const fetcher = mockUpstream(() => { throw new Error("decoder must stay local"); });
+        const feeHex = BigInt(fee).toString(16).padStart(16, "0");
+        const config = `${extension.toLowerCase()}${feeHex}${pool.type_config.slice(2)}`;
+        const result = await callTool(path, "decode_pool_config", { config });
+        expect(result.isError).toBeUndefined();
+        const decoded = googleTextResult(result).decoded_config;
+        expect(decoded).toEqual({ config, extension, fee, fee_hex: `0x${feeHex}`, ...pool,
+          exact_integer_note: expect.stringContaining("never a JSON number") });
+        expect(fetcher).not.toHaveBeenCalled();
+      });
+    }
+
+    it(`preserves derive_pool_id decoded_config for ${pool.pool_type}`, async () => {
+      const fetcher = mockUpstream(() => { throw new Error("pool key tools must stay local"); });
+      const config = `${extension.toLowerCase()}ffffffffffffffff${pool.type_config.slice(2)}`;
+      const poolKey = { token0: NATIVE, token1: OWNER, config };
+      const derived = await callTool(path, "derive_pool_id", { pool_key: poolKey });
+      expect(derived.isError).toBeUndefined();
+      const value = googleTextResult(derived);
+      expect(value.pool_key).toEqual(poolKey);
+      expect(value.pool_id_decimal).toBe(BigInt(value.pool_id).toString());
+      expect(value.decoded_config).toMatchObject({ ...pool, fee: "18446744073709551615" });
+      const decoded = await callTool(path, "decode_pool_config", { config: value.pool_key.config });
+      expect(decoded.isError).toBeUndefined();
+      expect(googleTextResult(decoded)).toEqual({ decoded_config: value.decoded_config });
+      expect(fetcher).not.toHaveBeenCalled();
+    });
+  }
+
+  for (const args of [
+    {}, { config: null }, { config: 1 }, { config: [] }, { config: {} },
+    { config: "" }, { config: "0x" }, { config: `0x${"00".repeat(31)}` },
+    { config: `0x${"00".repeat(33)}` }, { config: "00".repeat(32) },
+    { config: `0x${"gg".repeat(32)}` },
+  ]) {
+    it(`rejects invalid config before upstream and allows a corrected call: ${JSON.stringify(args)}`, async () => {
+      const fetcher = mockUpstream(() => { throw new Error("decoder must stay local"); });
+      const result = await callTool(path, "decode_pool_config", args);
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toBeUndefined();
+      expect(result.content[0]!.text).toContain("config");
+      expect(result.content[0]!.text).toMatch(/expected string|must be exactly 32 bytes/i);
+      expect(result.content[0]!.text).not.toContain("Output validation error");
+      const retry = await callTool(path, "decode_pool_config", { config: regressionConfig });
+      expect(retry.isError).toBeUndefined();
+      expect(googleTextResult(retry).decoded_config.config).toBe(regressionConfig);
+      expect(fetcher).not.toHaveBeenCalled();
+    });
+  }
+});
+
 describe("absolute swap protection through MCP", () => {
   const USDG = "0xe343167631d89b6ffc58b88d6b7fb0228795491d";
   const USDT = "0xdac17f958d2ee523a2206206994597c13d831ec7";

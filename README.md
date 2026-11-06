@@ -232,7 +232,9 @@ additional upstream fields.
   PoolKey before it is reported
 - `derive_pool_id` — pack a PoolKey and derive its exact Keccak pool ID
 - `decode_pool_config` — decode the extension, exact uint64 Q64 fee,
-  v3 discriminator, and concentrated or stableswap parameters
+  v3 discriminator, and concentrated, stableswap or full-range parameters.
+  Returns `{ "decoded_config": { ... } }`, matching `derive_pool_id`'s
+  `decoded_config`; `fee` is a decimal string and `fee_hex` is exact uint64 hex.
 
 ### Aave V3
 
