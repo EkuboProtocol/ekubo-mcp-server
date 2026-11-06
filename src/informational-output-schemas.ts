@@ -92,7 +92,7 @@ export const informationalOutputSchemas: Readonly<Record<string, z.ZodObject>> =
     pool_key: z.looseObject({ token0: z.string(), token1: z.string(), config: z.string() }),
     decoded_config: poolConfig,
   }),
-  decode_pool_config: poolConfig,
+  decode_pool_config: z.looseObject({ decoded_config: poolConfig }),
   get_position_pool_candidates: z.looseObject({
     chain_id: z.string(),
     pair: z.looseObject({ token0: z.string(), token1: z.string() }),
