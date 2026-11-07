@@ -66,6 +66,30 @@ function authProbe() {
 
 describe("Agents transport and auth compatibility", () => {
   for (const version of versions) {
+    it(`${version} recovers after cancelling a response and rejects session methods`, async () => {
+      const response = await worker.fetch(request(version, "cancel", "tools/list", {}), env, {} as ExecutionContext);
+      expect(response.status).toBe(200);
+      await response.body!.cancel("synthetic disconnected client");
+      for (const method of ["GET", "DELETE"]) {
+        const unsupported = await worker.fetch(new Request("https://mcp.ekubo.org/mcp", {
+          method, headers: { host: "mcp.ekubo.org", "mcp-protocol-version": version, "mcp-session-id": "synthetic-stale" },
+        }), env, {} as ExecutionContext);
+        expect(unsupported.status).toBe(405);
+        expect(unsupported.headers.get("mcp-session-id")).toBeNull();
+        await unsupported.text();
+      }
+      const recovered = await worker.fetch(request(version, "recovered", "tools/call", {
+        name: "decode_pool_config", arguments: {
+          config: "0x000000000000000000000000000000000000000000000000000000008000003c",
+        },
+      }), env, {} as ExecutionContext);
+      expect(recovered.status).toBe(200);
+      const body = await reply(recovered);
+      expect(body.id).toBe("recovered");
+      expect(body.result.structuredContent.decoded_config.tick_spacing).toBe(60);
+      expect(recovered.headers.get("mcp-session-id")).toBeNull();
+    });
+
     it(`${version} preserves host/origin rejection with an admitted positive control`, async () => {
       const invoke = (headers: Record<string, string>) => worker.fetch(request(version, "policy", "tools/list", {}, headers), env, {} as ExecutionContext);
       const admitted = await invoke({ origin: "https://client.test" });
