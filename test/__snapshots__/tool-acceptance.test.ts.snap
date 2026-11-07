@@ -1,0 +1,14 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`Google Connected Apps wire contract pins registration-relevant tools and instructions for each Ekubo facet 1`] = `
+{
+  "/mcp/ekubo": {
+    "count": 34,
+    "sha256": "5c6ca8e2efe076438c180b86e126eb7dfbb4283bbb25ddb27966059ed6ede5d5",
+  },
+  "/mcp/ekubo-advanced": {
+    "count": 16,
+    "sha256": "7c343a2f7dd6631b28397f844ea5358858fe6fa0c7cf31babba4e393b3ae0261",
+  },
+}
+`;
