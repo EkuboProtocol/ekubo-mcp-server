@@ -42,6 +42,23 @@ jobs:
           mcp-publisher validate registry/ekubo.server.json
           mcp-publisher validate registry/cloud-wallet.server.json
 
+      - name: Verify existing Ekubo Protocol record
+        run: |
+          python3 - <<'PY'
+          import json
+          import urllib.request
+          from pathlib import Path
+
+          expected = json.loads(Path("registry/ekubo.server.json").read_text())
+          url = "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.EkuboProtocol%2Fekubo/versions/0.54.0"
+          with urllib.request.urlopen(url, timeout=30) as response:
+              record = json.load(response)
+          for key, value in expected.items():
+              assert record["server"][key] == value, f"Published {key} differs for Ekubo Protocol"
+          assert record["_meta"]["io.modelcontextprotocol.registry/official"]["status"] == "active"
+          print(f"Verified existing Ekubo Protocol 0.54.0: {url}")
+          PY
+
       - name: Authenticate with GitHub Actions OIDC
         run: mcp-publisher login github-oidc --registry https://registry.modelcontextprotocol.io
 
@@ -64,9 +81,6 @@ jobs:
           print("Verified publish grant for io.github.EkuboProtocol/*")
           PY
 
-      - name: Publish Ekubo Protocol
-        run: mcp-publisher publish registry/ekubo.server.json
-
       - name: Publish Cloud Wallet
         run: mcp-publisher publish registry/cloud-wallet.server.json
 
@@ -88,6 +102,7 @@ jobs:
               for key, value in expected.items():
                   assert record["server"][key] == value, f"Published {key} differs for {expected['name']}"
               assert record["_meta"]["io.modelcontextprotocol.registry/official"]["status"] == "active"
+              assert record["_meta"]["io.modelcontextprotocol.registry/official"]["isLatest"]
               print(f"Verified {expected['name']} {expected['version']}: {url}")
           PY
 
