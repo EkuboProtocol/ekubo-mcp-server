@@ -606,6 +606,33 @@ describe("preparation journey: transfers handoff", () => {
     ],
   };
 
+  it("keeps canonical bridged EKUBO unheld without unclassifying a nearby token", async () => {
+    const canonical = "0x9bdf2327e1ea6eddf1add2048d4c9df2cc8c7cc6";
+    const unknown = `0x${(BigInt(canonical) + 1n).toString(16)}`;
+    const upstream = mockUpstream(() => {
+      throw new Error("transfer preparation must not call an upstream");
+    });
+    for (const token of [canonical, unknown]) {
+      const result = await callTool("/mcp/ekubo", "prepare_transfers", {
+        chain_id: "4663", sender: OWNER,
+        transfers: [{ kind: "erc20", token, recipient: RECIPIENT, amount: "1" }],
+      });
+      expect(result.isError).toBeUndefined();
+      const content = googleTextResult(result);
+      if (token === canonical) {
+        expect(content.jurisdiction).toBeUndefined();
+      } else {
+        expect(content.jurisdiction).toMatchObject({ coverage: "unknown", execution_hold: true, restricted_jurisdictions: null });
+      }
+      const response = await fetchArtifact(content.execution_plan_reference.url);
+      expect(response.status).toBe(200);
+      const plan = JSON.parse(await response.text());
+      expect(plan.chain_id).toBe("4663");
+      expect(BigInt(plan.ordered_steps[0].transaction.to)).toBe(BigInt(token));
+    }
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
   it("prepares an unsigned plan that travels only as a verifiable reference", async () => {
     const upstream = mockUpstream(() => {
       throw new Error("preparation must not call an upstream");
