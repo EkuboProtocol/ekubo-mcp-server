@@ -84,6 +84,17 @@
               "observed_at": "2026-10-06"
             }
           ]
+        },
+        {
+          "address": "0x9bdf2327e1ea6eddf1add2048d4c9df2cc8c7cc6",
+          "symbol": "EKUBO",
+          "provenance": [
+            {
+              "source": "onchain-verification",
+              "ref": "Ethereum EKUBO 0x04c46e830bb56ce22735d5d8fc9cb90309317d0f; canonical deposit 0x4618e919ecff0858a7c014588b11bd6f0a4fd444be13e3e76d83e93fb770a6f5; provenance/ekubo-canonical-bridges.json",
+              "observed_at": "2026-11-09"
+            }
+          ]
         }
       ],
       "rhj_stock_token": [

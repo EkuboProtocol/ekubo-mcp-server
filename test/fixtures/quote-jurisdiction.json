@@ -7,7 +7,7 @@
     "other_token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
-      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "policy_digest": "842f18d157deb548290c9da6402bb89f00406f1a0f48ec3a84944ae4dada7a09",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -142,7 +142,7 @@
     "other_token": "0x0000000000000000000000000000000000000000",
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
-      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "policy_digest": "842f18d157deb548290c9da6402bb89f00406f1a0f48ec3a84944ae4dada7a09",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -277,7 +277,7 @@
     "other_token": "0x0000000000000000000000000000000000000000",
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
-      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "policy_digest": "842f18d157deb548290c9da6402bb89f00406f1a0f48ec3a84944ae4dada7a09",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -412,7 +412,7 @@
     "other_token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
-      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "policy_digest": "842f18d157deb548290c9da6402bb89f00406f1a0f48ec3a84944ae4dada7a09",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -547,7 +547,7 @@
     "other_token": "0xff080c8ce2e5feadaca0da81314ae59d232d4afd",
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
-      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "policy_digest": "842f18d157deb548290c9da6402bb89f00406f1a0f48ec3a84944ae4dada7a09",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -729,7 +729,7 @@
     "other_token": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
-      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "policy_digest": "842f18d157deb548290c9da6402bb89f00406f1a0f48ec3a84944ae4dada7a09",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [],
@@ -769,7 +769,7 @@
     "other_token": "0x1111111111111111111111111111111111111111",
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
-      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "policy_digest": "842f18d157deb548290c9da6402bb89f00406f1a0f48ec3a84944ae4dada7a09",
       "coverage": "unknown",
       "execution_hold": true,
       "restricted_jurisdictions": null,
@@ -816,7 +816,7 @@
     "destination_chain_id": null,
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
-      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "policy_digest": "842f18d157deb548290c9da6402bb89f00406f1a0f48ec3a84944ae4dada7a09",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -947,7 +947,7 @@
     "destination_chain_id": null,
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
-      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "policy_digest": "842f18d157deb548290c9da6402bb89f00406f1a0f48ec3a84944ae4dada7a09",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [
@@ -1073,7 +1073,7 @@
     "destination_chain_id": null,
     "expected": {
       "policy_version": "ekubo-token-jurisdictions-v2",
-      "policy_digest": "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a",
+      "policy_digest": "842f18d157deb548290c9da6402bb89f00406f1a0f48ec3a84944ae4dada7a09",
       "coverage": "complete",
       "execution_hold": false,
       "restricted_jurisdictions": [],

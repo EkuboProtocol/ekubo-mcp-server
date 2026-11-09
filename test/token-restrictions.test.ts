@@ -21,6 +21,8 @@ const AAPL = "0xAF3D76F1834A1D425780943C99EA8A608F8A93F9";
 const USDG = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
 const WETH = "0x0bd7d308f8e1639fab988df18a8011f41eacad73";
 const STONX = "0x570c5aa79c798e7a418412cc8399ae5bcce570c5";
+/** Verified canonical bridge of Ethereum EKUBO, not an RHJ Stock Token. */
+const EKUBO = "0x9bdf2327e1ea6eddf1add2048d4c9df2cc8c7cc6";
 /** Issuer-registry listings that v1 missed (EKU-851). */
 const AMC = "0x05a3d1cd21d0c88145e82600e62e7e496e0f222b";
 const GLD = "0xc9a981fee1f9dec688bb123ccdecc63d0debfc4e";
@@ -51,7 +53,7 @@ const V2_COUNTRIES = [
  * the same digest; change all three together.
  */
 const POLICY_SHA256 =
-  "2897e242c7030f9d0c5b99a548bb62bfefc91f4b665785814bbeca8a41eb776a";
+  "842f18d157deb548290c9da6402bb89f00406f1a0f48ec3a84944ae4dada7a09";
 
 /** The CLO EKU-853 §3 notice, copied from the decision, not from the source. */
 const CLO_NOTICE = "A quote, execution plan, simulation or wallet approval is not permission to trade. Robinhood Stock Tokens are tokenised debt securities subject to issuer restrictions and applicable law. Before requesting signatures or submitting approvals or trades, establish the user's relevant jurisdiction and eligibility, including location, residence or entity incorporation, US-person status under Regulation S, any person for whose account or benefit the transaction is made, and issuer Prohibited Investor restrictions. Never infer these facts from an agent or server IP. If required facts or asset-policy coverage are unknown, do not proceed. Only the user or an authorized representative of the actual investor may provide an explicit factual attestation; an agent must not attest on their behalf. A known prohibited fact cannot be overridden by attestation. An attestation is not a license, legal exemption or substitute for required screening. Keep the attestation client-side; do not send it to the quote API or MCP server. No blanket disposal exemption applies.";
@@ -96,8 +98,8 @@ describe("jurisdiction policy v2 data", () => {
         continue;
       }
       // A sibling checkout on another branch may legitimately lag; only a
-      // checkout that already carries this policy shape must match.
-      if (text.includes('"non_class"')) {
+      // checkout that already classifies canonical EKUBO must match this revision.
+      if (text.includes(EKUBO)) {
         expect(createHash("sha256").update(text).digest("hex")).toBe(POLICY_SHA256);
       }
     }
@@ -113,7 +115,7 @@ describe("jurisdiction policy v2 data", () => {
   });
 
   it("carries provenance on every class and non-class entry", () => {
-    for (const address of [...CLASS_ADDRESSES, NATIVE, WETH, USDG, STONX]) {
+    for (const address of [...CLASS_ADDRESSES, NATIVE, WETH, USDG, STONX, EKUBO]) {
       const { provenance } = classifyAsset(ROBINHOOD_CHAIN, address);
       expect(provenance.length).toBeGreaterThan(0);
       for (const entry of provenance) {
@@ -153,13 +155,14 @@ describe("jurisdiction policy v2 data", () => {
   it("places only the verified exact addresses outside the class", () => {
     const sources = (address: string) =>
       classifyAsset(ROBINHOOD_CHAIN, address).provenance.map((entry) => entry.source);
-    for (const address of [NATIVE, WETH, USDG, STONX]) {
+    for (const address of [NATIVE, WETH, USDG, STONX, EKUBO]) {
       expect(classifyAsset(ROBINHOOD_CHAIN, address).classification).toBe("non_class");
     }
     expect(sources(NATIVE)).toEqual(["native"]);
     expect(sources(WETH)).toEqual(["issuer-token-contracts-page", "onchain-verification"]);
     expect(sources(USDG)).toEqual(["issuer-token-contracts-page"]);
     expect(sources(STONX)).toEqual(["ekubo-issued"]);
+    expect(sources(EKUBO)).toEqual(["onchain-verification"]);
   });
 
   it("holds an unknown or spoofed address on the covered chain", () => {
@@ -192,13 +195,23 @@ describe("quote jurisdiction metadata", () => {
     expect(QUOTE_JURISDICTION_NOTICE_V2).toBe(CLO_NOTICE);
   });
 
-  it("reports the four non-class tokens with an empty list and no notice", () => {
-    for (const token of [NATIVE, WETH, USDG, STONX]) {
+  it("reports the five non-class tokens with an empty list and no notice", () => {
+    for (const token of [NATIVE, WETH, USDG, STONX, EKUBO]) {
       const result = quoteJurisdiction([{ chainId: ROBINHOOD_CHAIN, token, side: "buy" }]);
       expect(result).toMatchObject({
         coverage: "complete", execution_hold: false, restricted_jurisdictions: [],
         jurisdiction_names: {}, execution_notice: null,
       });
+    }
+  });
+
+  it("does not hold canonical EKUBO on either side, but still holds a nearby unclassified address", () => {
+    for (const side of ["buy", "sell"] as const) {
+      const result = quoteJurisdiction([{ chainId: ROBINHOOD_CHAIN, token: EKUBO, side }]);
+      expect(result.assets[0]).toMatchObject({ classification: "non_class", execution_hold: false });
+      expect(result.restricted_jurisdictions).toEqual([]);
+      const nearby = quoteJurisdiction([{ chainId: ROBINHOOD_CHAIN, token: BigInt(EKUBO) + 1n, side }]);
+      expect(nearby).toMatchObject({ coverage: "unknown", execution_hold: true, restricted_jurisdictions: null });
     }
   });
 
