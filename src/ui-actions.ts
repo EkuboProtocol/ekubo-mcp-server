@@ -32,9 +32,10 @@ const NATIVE_TOKEN = getAddress("0x0000000000000000000000000000000000000000");
 // contract that does not implement the WETH9 interface this tool encodes.
 //
 // The symbol is carried alongside the address because the wrapped native is
-// not ether everywhere: BNB Chain wraps BNB, Polygon wraps POL, and Monad
-// wraps MON. Naming the asset in the response keeps a caller from telling a
-// user they are wrapping ETH on a chain where they are not.
+// not ether everywhere: BNB Chain wraps BNB, Polygon wraps POL, Monad
+// wraps MON, and Elysium wraps HYPE. Naming the asset in the response keeps a
+// caller from telling a user they are wrapping ETH on a chain where they are
+// not.
 //
 // A chain absent from this map is one whose wrapped native has not been
 // verified, not one that is known to lack it.
@@ -61,6 +62,7 @@ const WRAPPED_NATIVE_BY_CHAIN: Record<
   "763373": { address: getAddress("0x4200000000000000000000000000000000000006"), symbol: "WETH" },
   "11155111": { address: getAddress("0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9"), symbol: "WETH" },
   "11155420": { address: getAddress("0x4200000000000000000000000000000000000006"), symbol: "WETH" },
+  "99901": { address: getAddress("0xbA876237B0F021A6c6D852d6c26E107997cC5E81"), symbol: "WHYPE" },
 };
 const ORACLE_V3 = getAddress("0x517E506700271AEa091b02f42756F5E174Af5230");
 const TWAMM_V3 = getAddress("0xd47f1B1eDCfEaBb08F6eBd8FC337c27E636C75BA");

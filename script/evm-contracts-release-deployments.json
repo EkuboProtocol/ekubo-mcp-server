@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "tag": "v3.2.0",
-  "url": "https://github.com/EkuboProtocol/evm-contracts/releases/tag/v3.2.0",
+  "tag": "v3.4.0",
+  "url": "https://github.com/EkuboProtocol/evm-contracts/releases/tag/v3.4.0",
   "deployment_groups": [
     {
       "chain_ids": [

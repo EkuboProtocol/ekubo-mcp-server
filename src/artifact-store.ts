@@ -131,8 +131,9 @@ export async function referenceWalletArtifacts(
   env: Env,
   origin: string,
   value: unknown,
-): Promise<{ value: unknown; replaced: number }> {
+): Promise<{ value: unknown; replaced: number; chainIds: string[] }> {
   let replaced = 0;
+  const chainIds = new Set<string>();
 
   async function walk(node: unknown): Promise<unknown> {
     if (Array.isArray(node)) {
@@ -149,6 +150,7 @@ export async function referenceWalletArtifacts(
           }
           if (key === "execution_plan" && isExecutionPlan(entry)) {
             replaced += 1;
+            chainIds.add(entry.chain_id);
             return [
               "execution_plan_reference",
               await storeArtifact(env, origin, {
@@ -159,6 +161,7 @@ export async function referenceWalletArtifacts(
           }
           if (key === "read_calls" && isStorableReadCalls(entry)) {
             replaced += 1;
+            chainIds.add(String(entry.chain_id));
             return [
               "read_calls_reference",
               await storeArtifact(env, origin, {
@@ -174,7 +177,8 @@ export async function referenceWalletArtifacts(
     return Object.fromEntries(rewritten);
   }
 
-  return { value: await walk(value), replaced };
+  const walked = await walk(value);
+  return { value: walked, replaced, chainIds: [...chainIds] };
 }
 
 function isSignatureRequest(value: unknown): value is Record<string, unknown> {

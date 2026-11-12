@@ -145,6 +145,17 @@ describe("EVM interface action preparation", () => {
       amount: "100",
     });
     expect(monad.request.wrapped_token_symbol).toBe("WMON");
+
+    const elysium = prepareWrapUnwrap({
+      chainId: "99901",
+      sender,
+      direction: "wrap",
+      amount: "100",
+    });
+    expect(elysium.request.wrapped_token_symbol).toBe("WHYPE");
+    expect(planTransactions(elysium)[0]?.to).toBe(
+      "0xbA876237B0F021A6c6D852d6c26E107997cC5E81",
+    );
   });
 
   it("refuses a chain whose wrapped native token has not been verified", () => {

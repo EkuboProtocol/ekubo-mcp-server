@@ -116,6 +116,7 @@ import {
   referenceWalletArtifacts,
   storeArtifact,
 } from "./artifact-store.js";
+import { withWalletSupportNotices } from "./chain-support.js";
 import { MCP_SERVER_VERSION, MCP_TOOL_CATALOG_REVISION } from "./version.js";
 import { PROTOCOL_SKILLS } from "./protocol-skills.js";
 import {
@@ -2700,16 +2701,17 @@ export function createEkuboServer(
       if (result?.isError === true || result?.structuredContent === undefined) {
         return result;
       }
-      const { value, replaced } = await referenceWalletArtifacts(
+      const { value, replaced, chainIds } = await referenceWalletArtifacts(
         env,
         origin,
         result.structuredContent,
       );
       if (replaced === 0) return result;
+      const structured = withWalletSupportNotices(value, chainIds);
       return {
         ...result,
-        content: [{ type: "text" as const, text: JSON.stringify(value) }],
-        structuredContent: value,
+        content: [{ type: "text" as const, text: JSON.stringify(structured) }],
+        structuredContent: structured,
       };
     });
   }) as typeof server.registerTool;
