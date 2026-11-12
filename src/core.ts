@@ -15,6 +15,11 @@ import {
   type EvmQuoterQuoteType,
   prepareSwapFromQuote,
 } from "./yul-router.js";
+import {
+  chainLabel,
+  chainSupports,
+  unsupportedIntegrationMessage,
+} from "./chain-support.js";
 import { swapDeadline } from "./swap-deadline.js";
 import {
   type PreparedTransaction,
@@ -708,6 +713,12 @@ function prepareCandidate(
   let quoteExpiryTimestamp = selected.quoteExpiryTimestamp;
 
   if (selected.source === "ekubo") {
+    if (!chainSupports(intent.chainId, "ekubo_router")) {
+      throw new ServiceError(
+        "unsupported_chain",
+        `The Ekubo swap router is not deployed on ${chainLabel(intent.chainId)} yet, so this Ekubo quote is indicative only and no swap plan can be prepared from it`,
+      );
+    }
     const prepared = prepareSwapFromQuote({
       quote: selected.raw as EvmQuoterQuote,
       tokenIn: intent.tokenIn,
@@ -894,6 +905,14 @@ async function selectQuote(
   return { ...result, selected: result.candidates[0] };
 }
 
+// A source that answered definitively: asking again returns the same answer
+// until the pools or the request change, so an agent must not be told to retry.
+const NON_RETRYABLE_QUOTE_FAILURES = new Set([
+  "unsupported_swap_protection",
+  "insufficient_liquidity",
+  "unsupported_chain",
+]);
+
 async function collectQuotes(
   env: Env,
   intent: QuoteSelectionIntent,
@@ -966,7 +985,7 @@ async function collectQuotes(
           ? result.reason.message
           : String(result.reason),
       retry_recommended:
-        failureCode(result.reason) !== "unsupported_swap_protection" &&
+        !NON_RETRYABLE_QUOTE_FAILURES.has(failureCode(result.reason)) &&
         (requestedSource === "ekubo" || requestedSource === "0x"),
     });
   });
@@ -1221,13 +1240,21 @@ async function quoteAcross(
   intent: QuoteSelectionIntent,
   fetcher: Fetcher,
 ): Promise<QuoteCandidate> {
+  const destinationChainId = intent.destinationChainId ?? intent.chainId;
+  for (const chainId of [intent.chainId, destinationChainId]) {
+    if (!chainSupports(chainId, "across")) {
+      throw new ServiceError(
+        "unsupported_chain",
+        `${unsupportedIntegrationMessage(chainId, "across")}, so Across cannot quote this transfer`,
+      );
+    }
+  }
   if (!env.ACROSS_API_KEY || !env.ACROSS_INTEGRATOR_ID) {
     throw new ServiceError(
       "provider_not_configured",
       "Across is not configured for this deployment",
     );
   }
-  const destinationChainId = intent.destinationChainId ?? intent.chainId;
   const depositor = intent.sender
     ? getAddress(intent.sender)
     : ACROSS_PREVIEW_DEPOSITOR;

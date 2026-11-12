@@ -435,6 +435,19 @@ arguments accept raw EVM addresses or
 `eip155:<chain_id>:<address>` identifiers. The output token's EIP-155 chain
 must match `destination_chain_id`.
 
+Some integrations do not cover every chain Ekubo is deployed on, and
+`src/chain-support.ts` records the known gaps so a tool states them instead of
+relaying a provider error. On Elysium (`99901`) the core protocol, API and
+quoter are live, but the Yul swap router is not deployed yet, so Ekubo quotes
+there are indicative and report `execution_unavailable` with
+`unsupported_chain`, and `prepare_fix_pool_price` refuses the chain. Across
+does not support Elysium and reports `unsupported_chain` without an upstream
+call. Cloud Wallet does not support it either: a result whose plans or read
+bundles target Elysium carries a root `wallet_support` notice, and the
+references themselves stay valid for any other wallet that implements the same
+handoff. An Ekubo `insufficient_liquidity` answer is definitive and is reported
+with `retry_recommended: false`.
+
 The catalog explicitly contains read tools and unsigned preparation tools. All
 server operations are non-custodial and idempotent: the Worker has no wallet,
 key material, signing function, or broadcast function. Preparation tools return

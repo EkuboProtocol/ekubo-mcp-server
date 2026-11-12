@@ -1,7 +1,7 @@
-export const MCP_SERVER_VERSION = "0.54.1";
+export const MCP_SERVER_VERSION = "0.55.0";
 
 // Change this whenever public MCP tool schemas or response contracts change.
 // It is exposed in HTTP discovery and in the server instructions so clients
 // and smoke tests can detect a cached catalog independently of the
 // application version.
-export const MCP_TOOL_CATALOG_REVISION = "2026-11-06.pool-config-output";
+export const MCP_TOOL_CATALOG_REVISION = "2026-11-12.elysium-chain-support";

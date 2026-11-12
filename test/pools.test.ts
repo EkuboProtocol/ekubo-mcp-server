@@ -546,7 +546,7 @@ describe("pool and position reads", () => {
   it("returns an empty page without on-chain index metadata where PoolKeyIndex is not deployed", async () => {
     const result = await listPoolKeys(
       env,
-      { chainId: "4663", coreAddress: core, pageSize: 100 },
+      { chainId: "46630", coreAddress: core, pageSize: 100 },
       emptyPage,
     );
     expect(result.pools).toHaveLength(0);
@@ -562,6 +562,21 @@ describe("pool and position reads", () => {
       emptyPage,
     );
     expect(result.onchain_index).toMatchObject({ contract: "PoolKeyIndex" });
+  });
+
+  it("lists Elysium's empty pool set against its pair-indexed PoolKeyIndex", async () => {
+    const result = await listPoolKeys(
+      env,
+      { chainId: "99901", coreAddress: core, pageSize: 100 },
+      emptyPage,
+    );
+    expect(result.chain_id).toBe("99901");
+    expect(result.pools).toHaveLength(0);
+    expect(result.page.has_more).toBe(false);
+    expect(result.onchain_index).toMatchObject({
+      address: "0x827A68AC37AA3715c865F2E0704a63118496986f",
+      contract: "PoolKeyIndex",
+    });
   });
 
   it("returns tick liquidity deltas with their reconstruction semantics", async () => {

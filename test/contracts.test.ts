@@ -27,6 +27,7 @@ const productionChainIds = [
   "8453",
   "42161",
   "57073",
+  "99901",
 ];
 const tokenDataFetcherAddress =
   "0x305Cf9A34dCb265522780D1D64544d3f7C450407";
@@ -46,10 +47,10 @@ describe("contract resource provenance", () => {
       expect(provenance.source_repository).toBe("evm-contracts");
       expect(provenance.source_commit).toMatch(/^[0-9a-f]{40}$/);
       expect(provenance.source_tag).toMatch(/^v/);
-      expect(provenance.source_release.tag).toBe("v3.2.0");
+      expect(provenance.source_release.tag).toBe("v3.4.0");
       expect(provenance.source_release.commit).toMatch(/^[0-9a-f]{40}$/);
       expect(provenance.source_release.url).toBe(
-        "https://github.com/EkuboProtocol/evm-contracts/releases/tag/v3.2.0",
+        "https://github.com/EkuboProtocol/evm-contracts/releases/tag/v3.4.0",
       );
       expect(typeof provenance.source_worktree_dirty_at_snapshot).toBe(
         "boolean",
