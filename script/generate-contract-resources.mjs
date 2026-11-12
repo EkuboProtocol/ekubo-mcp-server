@@ -18,6 +18,12 @@ const releaseSnapshot = JSON.parse(
     "utf8",
   ),
 );
+const directDeployments = JSON.parse(
+  await readFile(
+    new URL("./evm-contracts-direct-deployments.json", import.meta.url),
+    "utf8",
+  ),
+);
 const broadcastRoot = path.join(repository, "broadcast");
 const artifactRoot = path.join(repository, "out");
 const sourceCommit = (
@@ -112,6 +118,15 @@ for (const file of broadcastFiles.sort()) {
       deploymentScript: script,
     });
   }
+}
+
+for (const deployment of directDeployments.deployments) {
+  recordDeployment({
+    chainId: deployment.chain_id,
+    address: deployment.address,
+    name: deployment.name,
+    deploymentScript: deployment.deployment_script,
+  });
 }
 
 const names = [...new Set([...deployments.values()].map(({ name }) => name))]

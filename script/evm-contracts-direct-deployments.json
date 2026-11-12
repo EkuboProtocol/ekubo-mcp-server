@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "description": "evm-contracts deployments sent without a Foundry broadcast, each replaying the CREATE2 input of an existing broadcast so the address and code match the chains that broadcast covers.",
+  "deployments": [
+    {
+      "chain_id": "99901",
+      "name": "MEVCaptureRouter",
+      "address": "0xd26f20001a72a18C002b00e6710000d68700ce00",
+      "deployment_script": "DeployAll.s.sol",
+      "transaction_hash": "0x415436f99f0cd79cb7f2fd7dadfb39c5f2b71ec8edf6796071fe44c35c03c898",
+      "block_number": "5337055",
+      "init_code_source": "broadcast/DeployAll.s.sol/4663"
+    }
+  ]
+}

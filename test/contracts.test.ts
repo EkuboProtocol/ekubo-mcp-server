@@ -11,6 +11,7 @@ import {
   positionsV3Address,
   tokenDataFetcherContract,
 } from "../src/contracts.js";
+import directDeployments from "../script/evm-contracts-direct-deployments.json";
 import releaseDeployments from "../script/evm-contracts-release-deployments.json";
 
 const productionChainIds = [
@@ -123,6 +124,20 @@ describe("contract resource provenance", () => {
         )?.name,
       }).toEqual({ chainId, router: "YulRouter" });
     }
+  });
+
+  it("lists deployments sent without a Foundry broadcast", () => {
+    for (const deployment of directDeployments.deployments) {
+      expect(
+        contractAddressResource(deployment.chain_id, deployment.address),
+      ).toMatchObject({ name: deployment.name });
+    }
+    expect(
+      contractAddressResource(
+        "99901",
+        "0xd26f20001a72a18C002b00e6710000d68700ce00",
+      ),
+    ).toMatchObject({ name: "MEVCaptureRouter" });
   });
 
   it("recognizes a position or order from either generation on any chain", () => {

@@ -3073,6 +3073,12 @@
           "DeployAll.s.sol"
         ]
       },
+      "0xd26f20001a72a18C002b00e6710000d68700ce00": {
+        "name": "MEVCaptureRouter",
+        "deployment_scripts": [
+          "DeployAll.s.sol"
+        ]
+      },
       "0xd47f1B1eDCfEaBb08F6eBd8FC337c27E636C75BA": {
         "name": "TWAMM",
         "deployment_scripts": [
