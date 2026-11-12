@@ -18,7 +18,6 @@ import {
   sqrtRatioFloatSemanticCodec,
 } from "./abi-decode.js";
 import { type Env, getTokens, ServiceError } from "./core.js";
-import { chainLabel, chainSupports } from "./chain-support.js";
 import { coreDataFetcherContract } from "./contracts.js";
 import { decodePoolConfig, getPool } from "./pools.js";
 import { swapDeadline } from "./swap-deadline.js";
@@ -87,12 +86,6 @@ export async function prepareFixPoolPrice(
     throw new ServiceError(
       "unsupported_core",
       "The interface's fix-price action supports the current v3 Core only",
-    );
-  }
-  if (!chainSupports(input.chainId, "ekubo_router")) {
-    throw new ServiceError(
-      "unsupported_chain",
-      `The Ekubo swap router is not deployed on ${chainLabel(input.chainId)} yet, and fixing a pool's price quotes and swaps through it`,
     );
   }
   const pool = await getPool(

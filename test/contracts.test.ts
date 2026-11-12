@@ -113,6 +113,18 @@ describe("contract resource provenance", () => {
     }
   });
 
+  it("lists the Yul router that swap plans target on every chain", () => {
+    for (const chainId of productionChainIds) {
+      expect({
+        chainId,
+        router: contractAddressResource(
+          chainId,
+          "0x03c8B90854b90AA22448b11e885F692972DA441C",
+        )?.name,
+      }).toEqual({ chainId, router: "YulRouter" });
+    }
+  });
+
   it("recognizes a position or order from either generation on any chain", () => {
     for (const address of POSITIONS_V3_ADDRESSES) {
       expect(isPositionsV3Address(address)).toBe(true);

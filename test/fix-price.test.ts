@@ -348,20 +348,4 @@ describe("prepare_fix_pool_price quote acceptance", () => {
       ),
     ).rejects.toMatchObject({ code: "target_already_reached" });
   });
-
-  it("refuses Elysium, where the router it quotes and swaps through is not deployed", async () => {
-    const neverFetch = (async () => {
-      throw new Error("must not fetch");
-    }) as unknown as typeof fetch;
-    await expect(
-      prepareFixPoolPrice(
-        env,
-        { ...ethUsd.common, chainId: "99901" },
-        neverFetch,
-      ),
-    ).rejects.toMatchObject({
-      code: "unsupported_chain",
-      message: expect.stringContaining("Elysium (chain 99901)"),
-    });
-  });
 });
