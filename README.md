@@ -442,12 +442,15 @@ Some integrations do not cover every chain Ekubo is deployed on, and
 relaying a provider error. On Elysium (`99901`) the core protocol, API,
 quoter and Yul swap router are live, so Ekubo quotes there carry swap plans.
 Across does not support Elysium and reports `unsupported_chain` without an upstream
-call. 0x does not cover Elysium either, so a same-chain quote there asks only
-the Ekubo quoter. Cloud Wallet does not support it: a result whose plans or read
+call. 0x does cover Elysium, so a same-chain quote there asks both the Ekubo
+quoter and 0x. Cloud Wallet does not support it: a result whose plans or read
 bundles target Elysium carries a root `wallet_support` notice, and the
 references themselves stay valid for any other wallet that implements the same
 handoff. An Ekubo `insufficient_liquidity` answer is definitive and is reported
-with `retry_recommended: false`.
+with `retry_recommended: false`. So is a 0x `INPUT_INVALID` rejection, which is
+reported as `invalid_request` with 0x's field reason; for example, 0x refuses
+any `taker` at or below `0x000000000000000000000000000000000000ffff`, such as
+`0x…dEaD`, on every chain.
 
 The catalog explicitly contains read tools and unsigned preparation tools. All
 server operations are non-custodial and idempotent: the Worker has no wallet,
