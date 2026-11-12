@@ -904,6 +904,7 @@ const NON_RETRYABLE_QUOTE_FAILURES = new Set([
   "unsupported_swap_protection",
   "insufficient_liquidity",
   "unsupported_chain",
+  "invalid_request",
 ]);
 
 async function collectQuotes(
@@ -1150,6 +1151,8 @@ async function quoteZeroX(
       "0x-api-key": env.ZERO_X_API_KEY,
       "0x-version": "v2",
     },
+  }).catch((error: unknown) => {
+    throw zeroXInputError(error) ?? error;
   });
   if (!quote.liquidityAvailable) {
     throw new ServiceError(
@@ -2153,6 +2156,39 @@ function acrossTransaction(
   transaction: AcrossTransaction,
 ): UnsignedTransaction {
   return toUnsignedTransaction(transaction.chainId.toString(), transaction);
+}
+
+/**
+ * 0x answers a request it will never accept, such as a taker at or below
+ * 0x000000000000000000000000000000000000ffff, with INPUT_INVALID and the
+ * offending field. Repeating the same request cannot succeed, so this is
+ * reported as `invalid_request` with 0x's field reasons instead of a generic
+ * "The input is invalid" that reads as a transient failure.
+ */
+function zeroXInputError(error: unknown): ServiceError | null {
+  if (!(error instanceof ServiceError) || error.code !== "INPUT_INVALID") {
+    return null;
+  }
+  const details = (error.details as { data?: { details?: unknown } } | undefined)
+    ?.data?.details;
+  const reasons = Array.isArray(details)
+    ? details.flatMap((detail) => {
+        const { field, reason } = (detail ?? {}) as {
+          field?: unknown;
+          reason?: unknown;
+        };
+        return typeof reason === "string"
+          ? [typeof field === "string" ? `${field}: ${reason}` : reason]
+          : [];
+      })
+    : [];
+  return new ServiceError(
+    "invalid_request",
+    reasons.length > 0
+      ? `0x rejected the request (${reasons.join("; ")})`
+      : "0x rejected the request as invalid input",
+    error.details,
+  );
 }
 
 function zeroXToken(token: Address): string {

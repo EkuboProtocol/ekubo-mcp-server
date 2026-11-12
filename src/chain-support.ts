@@ -21,7 +21,7 @@ interface ChainGaps {
 const CHAIN_GAPS: Readonly<Record<string, ChainGaps>> = {
   "99901": {
     name: "Elysium",
-    unsupported: new Set(["across", "cloud_wallet", "zero_x"]),
+    unsupported: new Set(["across", "cloud_wallet"]),
   },
 };
 
