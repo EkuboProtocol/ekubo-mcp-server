@@ -940,7 +940,15 @@ async function collectQuotes(
         ]
       : [source]
     : source === "all"
-      ? ["ekubo", ...(env.ZERO_X_API_KEY ? (["0x"] as const) : [])]
+      ? [
+          "ekubo",
+          // Only offer 0x where it can answer: on a chain it does not cover it
+          // rejects the request as invalid input, which reads as a transient
+          // failure and tells the agent to retry.
+          ...(env.ZERO_X_API_KEY && chainSupports(intent.chainId, "zero_x")
+            ? (["0x"] as const)
+            : []),
+        ]
       : [source];
 
   const settled = await Promise.allSettled(
@@ -1105,6 +1113,12 @@ async function quoteZeroX(
   fetcher: Fetcher,
   slippagePpm?: bigint,
 ): Promise<QuoteCandidate> {
+  if (!chainSupports(intent.chainId, "zero_x")) {
+    throw new ServiceError(
+      "unsupported_chain",
+      `${unsupportedIntegrationMessage(intent.chainId, "zero_x")}, so 0x cannot quote this swap`,
+    );
+  }
   if (!env.ZERO_X_API_KEY) {
     throw new ServiceError(
       "provider_not_configured",

@@ -11,7 +11,7 @@
  * A chain absent from this table is not claimed to support everything; the
  * table only records gaps that are known.
  */
-export type ChainIntegration = "across" | "cloud_wallet";
+export type ChainIntegration = "across" | "cloud_wallet" | "zero_x";
 
 interface ChainGaps {
   name: string;
@@ -21,13 +21,14 @@ interface ChainGaps {
 const CHAIN_GAPS: Readonly<Record<string, ChainGaps>> = {
   "99901": {
     name: "Elysium",
-    unsupported: new Set(["across", "cloud_wallet"]),
+    unsupported: new Set(["across", "cloud_wallet", "zero_x"]),
   },
 };
 
 const INTEGRATION_NAMES: Record<ChainIntegration, string> = {
   across: "Across",
   cloud_wallet: "Cloud Wallet",
+  zero_x: "0x",
 };
 
 export function chainSupports(

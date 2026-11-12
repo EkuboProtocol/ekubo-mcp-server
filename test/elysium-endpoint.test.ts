@@ -3,7 +3,7 @@ import worker from "../src/index.js";
 import { fakeArtifactStore } from "./fake-r2.js";
 
 // Elysium has the Ekubo core protocol, API, quoter and Yul swap router, but
-// not Across or Cloud Wallet. These calls go through the MCP boundary so
+// not Across, 0x or Cloud Wallet. These calls go through the MCP boundary so
 // the agent-visible result of each gap is what is asserted.
 const env = {
   ARTIFACT_STORE: fakeArtifactStore(),
@@ -31,6 +31,7 @@ const YUL_ROUTER = "0x03c8B90854b90AA22448b11e885F692972DA441C";
 async function callTool(
   name: string,
   args: Record<string, unknown>,
+  workerEnv: Record<string, unknown> = env,
 ): Promise<{ isError?: boolean; structuredContent: Record<string, unknown> }> {
   const response = await worker.fetch(
     new Request("https://mcp.ekubo.org/mcp", {
@@ -49,7 +50,7 @@ async function callTool(
         params: { name, arguments: args },
       }),
     }),
-    env,
+    workerEnv as never,
     context,
   );
   expect(response.status).toBe(200);
@@ -211,6 +212,44 @@ describe("Elysium (99901) over the MCP endpoint", () => {
         });
       }
       expect(mocked).not.toHaveBeenCalled();
+    } finally {
+      mocked.mockRestore();
+    }
+  });
+
+  it("does not ask 0x to quote Elysium even when 0x is configured", async () => {
+    const withZeroX = { ...env, ZERO_X_API_KEY: "zero-x-test-key" };
+    const urls: string[] = [];
+    const mocked = mockFetch((url) => {
+      urls.push(url);
+      return url.startsWith("https://quoter.test/")
+        ? Response.json(
+            {
+              code: "insufficient_liquidity",
+              error: `Insufficient liquidity in the routes from ${NATIVE} to ${USDC.toLowerCase()}`,
+            },
+            { status: 404 },
+          )
+        : new Response("not found", { status: 404 });
+    });
+    const request = {
+      chain_id: ELYSIUM,
+      token_in: NATIVE,
+      token_out: USDC,
+      quote_type: "exact_input",
+      amount: "1000000000000000000",
+    };
+    try {
+      const all = await callTool("get_quotes_with_plans", request, withZeroX);
+      expect(all.isError).toBe(true);
+      const error = all.structuredContent.error as {
+        message: string;
+        details: { source: string }[];
+      };
+      expect(error.message).not.toContain("retry");
+      expect(error.details.map((detail) => detail.source)).toEqual(["ekubo"]);
+
+      expect(urls.some((url) => url.includes("0x.org"))).toBe(false);
     } finally {
       mocked.mockRestore();
     }
