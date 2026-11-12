@@ -396,7 +396,9 @@ workflow even though the complete ABI resource describes them.
 
 The checked-in snapshot merges the latest `../evm-contracts` GitHub release
 deployment tables with all non-dry-run Foundry broadcasts and current
-artifacts. Every contract resource includes the source release, source commit,
+artifacts. Contracts deployed without a Foundry broadcast, by replaying the
+CREATE2 input of an existing broadcast, are listed with their transaction in
+`script/evm-contracts-direct-deployments.json`. Every contract resource includes the source release, source commit,
 nearest tag, snapshot worktree state, and per-ABI hash. A release or broadcast
 address remains discoverable when a legacy contract no longer has an artifact
 in the current checkout; its address resource explicitly marks the ABI as
