@@ -16,7 +16,6 @@ import {
   prepareSwapFromQuote,
 } from "./yul-router.js";
 import {
-  chainLabel,
   chainSupports,
   unsupportedIntegrationMessage,
 } from "./chain-support.js";
@@ -713,12 +712,6 @@ function prepareCandidate(
   let quoteExpiryTimestamp = selected.quoteExpiryTimestamp;
 
   if (selected.source === "ekubo") {
-    if (!chainSupports(intent.chainId, "ekubo_router")) {
-      throw new ServiceError(
-        "unsupported_chain",
-        `The Ekubo swap router is not deployed on ${chainLabel(intent.chainId)} yet, so this Ekubo quote is indicative only and no swap plan can be prepared from it`,
-      );
-    }
     const prepared = prepareSwapFromQuote({
       quote: selected.raw as EvmQuoterQuote,
       tokenIn: intent.tokenIn,

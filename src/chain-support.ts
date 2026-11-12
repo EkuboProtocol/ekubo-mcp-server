@@ -11,10 +11,7 @@
  * A chain absent from this table is not claimed to support everything; the
  * table only records gaps that are known.
  */
-export type ChainIntegration =
-  | "across"
-  | "cloud_wallet"
-  | "ekubo_router";
+export type ChainIntegration = "across" | "cloud_wallet";
 
 interface ChainGaps {
   name: string;
@@ -24,17 +21,13 @@ interface ChainGaps {
 const CHAIN_GAPS: Readonly<Record<string, ChainGaps>> = {
   "99901": {
     name: "Elysium",
-    // The core protocol is deployed but the Yul router every Ekubo swap
-    // plan targets has no code yet: a plan would send the swap, and any
-    // native value, to an empty address.
-    unsupported: new Set(["across", "cloud_wallet", "ekubo_router"]),
+    unsupported: new Set(["across", "cloud_wallet"]),
   },
 };
 
 const INTEGRATION_NAMES: Record<ChainIntegration, string> = {
   across: "Across",
   cloud_wallet: "Cloud Wallet",
-  ekubo_router: "The Ekubo swap router",
 };
 
 export function chainSupports(

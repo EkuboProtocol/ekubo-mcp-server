@@ -2,8 +2,8 @@ import { describe, expect, it, spyOn } from "bun:test";
 import worker from "../src/index.js";
 import { fakeArtifactStore } from "./fake-r2.js";
 
-// Elysium has the Ekubo core protocol, API and quoter, but not the Yul swap
-// router, Across or Cloud Wallet. These calls go through the MCP boundary so
+// Elysium has the Ekubo core protocol, API, quoter and Yul swap router, but
+// not Across or Cloud Wallet. These calls go through the MCP boundary so
 // the agent-visible result of each gap is what is asserted.
 const env = {
   ARTIFACT_STORE: fakeArtifactStore(),
@@ -26,6 +26,7 @@ const NATIVE = "0x0000000000000000000000000000000000000000";
 const USDC = "0xb47c4C8F73F009CC0C0d3f92B388d13E293F0B65";
 const WHYPE = "0xbA876237B0F021A6c6D852d6c26E107997cC5E81";
 const SENDER = "0x1111111111111111111111111111111111111111";
+const YUL_ROUTER = "0x03c8B90854b90AA22448b11e885F692972DA441C";
 
 async function callTool(
   name: string,
@@ -138,7 +139,7 @@ describe("Elysium (99901) over the MCP endpoint", () => {
     }
   });
 
-  it("returns an Ekubo quote but no swap plan while the router is not deployed", async () => {
+  it("prepares an Ekubo swap plan through the Yul router", async () => {
     const mocked = mockFetch((url) =>
       url.startsWith("https://quoter.test/")
         ? Response.json(executableQuote)
@@ -163,13 +164,16 @@ describe("Elysium (99901) over the MCP endpoint", () => {
       expect(quotes[0]).toMatchObject({
         source: "ekubo",
         normalized: { amount_out: "900" },
-        execution: null,
-        execution_unavailable: { code: "unsupported_chain" },
+        execution_unavailable: null,
       });
-      expect(
-        (quotes[0]!.execution_unavailable as { message: string }).message,
-      ).toContain("not deployed on Elysium (chain 99901)");
-      expect(env.ARTIFACT_STORE.entries.size).toBe(0);
+      expect(quotes[0]!.execution).not.toBeNull();
+      const plans = [...env.ARTIFACT_STORE.entries.values()].map(
+        (entry) => entry.value,
+      );
+      expect(plans.some((plan) => plan.includes(YUL_ROUTER))).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        wallet_support: [{ chain_id: ELYSIUM, cloud_wallet_supported: false }],
+      });
     } finally {
       mocked.mockRestore();
     }
