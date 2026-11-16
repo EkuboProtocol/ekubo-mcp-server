@@ -2172,14 +2172,14 @@ export const publicToolCatalog = [
     name: "get_position_pool_candidates",
     title: "Find pools for an LP position",
     description:
-      "List indexed pools for a token pair with verified PoolKeys and pool IDs, Core generation, pool type, extension, 24-hour TVL/volume/fee stats and the right Positions or Ve33Positions manager.",
+      "List indexed pools eligible for new deposits (excluding retired Ethereum MEVCapture v2.1) for a token pair with verified PoolKeys and pool IDs, Core generation, pool type, extension, 24-hour TVL/volume/fee stats and the right Positions or Ve33Positions manager.",
     inputSchema: z.toJSONSchema(getPositionPoolCandidatesSchema),
   },
   {
     name: "prepare_lp_position_deposit",
     title: "Prepare an LP position deposit",
     description:
-      "Prepare a v3 position mint or add_liquidity, initializing a new pool at initial_tick when requested, with every approval, refund and cleanup step. Ekubo ticks use base 1.000001, so tick = ln(price in base units) x 10^6 and a Uniswap-style 1.0001 calculation is 100x too small. The token ratio follows the range and current price: do every swap first, re-read the tick with the pool's current_state_query, then mint once. If the wallet lacks one side, execute that swap separately and size the deposit from the measured balance after its receipt, never a quoted output. See ekubo://docs/lp-position-workflow.",
+      "Retired Ethereum MEVCapture v2.1 deposits are rejected; reads, claims and withdrawals remain available. Prepare a v3 position mint or add_liquidity, initializing a new pool at initial_tick when requested, with every approval, refund and cleanup step. Ekubo ticks use base 1.000001, so tick = ln(price in base units) x 10^6 and a Uniswap-style 1.0001 calculation is 100x too small. The token ratio follows the range and current price: do every swap first, re-read the tick with the pool's current_state_query, then mint once. If the wallet lacks one side, execute that swap separately and size the deposit from the measured balance after its receipt, never a quoted output. See ekubo://docs/lp-position-workflow.",
     inputSchema: z.toJSONSchema(prepareLpPositionDepositSchema),
   },
   {
@@ -2347,7 +2347,7 @@ export const publicToolCatalog = [
     name: "prepare_pool_initialization",
     title: "Prepare standalone pool initialization",
     description:
-      "Prepare one permissionless maybeInitializePool transaction for a v3 PoolKey and initial tick; prepare_lp_position_deposit with pool_initialized=false does the same atomically with the mint.",
+      "Rejects retired Ethereum MEVCapture v2.1. Prepare one permissionless maybeInitializePool transaction for a v3 PoolKey and initial tick; prepare_lp_position_deposit with pool_initialized=false does the same atomically with the mint.",
     inputSchema: z.toJSONSchema(preparePoolInitializationSchema),
   },
   {

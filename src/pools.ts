@@ -30,6 +30,7 @@ import {
   type IndexedPosition,
   positionTokenIdentifiers,
 } from "./position-state.js";
+import { isRetiredLiquidityExtension } from "./retired-extensions.js";
 import { assertWalletBatchEthCallInput } from "./wallet-compatibility.js";
 
 export interface PoolKeyInput {
@@ -760,6 +761,7 @@ export async function getPositionPoolCandidates(
     .map((entry, index) =>
       normalizePoolCandidate(input.chainId, token0, token1, entry, index),
     )
+    .filter((candidate) => !isRetiredLiquidityExtension(input.chainId, candidate.extension.address))
     .filter(
       (candidate) =>
         (coreFilter === undefined || candidate.core_address === coreFilter) &&

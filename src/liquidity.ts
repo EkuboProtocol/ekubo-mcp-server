@@ -23,6 +23,7 @@ import {
   readCallsBundle,
 } from "./abi-decode.js";
 import { positionsV3Address } from "./contracts.js";
+import { isRetiredLiquidityExtension } from "./retired-extensions.js";
 import { type Env, getTokens, ServiceError } from "./core.js";
 import { quoteJurisdiction } from "./token-restrictions.js";
 import {
@@ -323,6 +324,7 @@ export function preparePoolInitialization(input: {
   }
 
   const pool = derivePoolId(input.poolKey);
+  assertLiquidityExtensionActive(input.chainId, pool.pool_key.config);
   const decodedConfig = decodePoolConfig(pool.pool_key.config);
   const positionsAddress = positionsAddressForExtension(
     input.chainId,
@@ -403,6 +405,17 @@ export function preparePoolInitialization(input: {
   };
 }
 
+function assertLiquidityExtensionActive(chainId: string, config: Hex) {
+  if (
+    isRetiredLiquidityExtension(chainId, decodePoolConfig(config).extension)
+  ) {
+    throw new ServiceError(
+      "retired_extension",
+      "pool_key.config uses retired Ethereum MEVCapture v2.1. Choose an ordinary or MEVCapture v1 pool for initialization or deposits; existing positions remain readable, collectible and withdrawable.",
+    );
+  }
+}
+
 export async function prepareLpPositionDeposit(
   env: Env,
   input: {
@@ -468,6 +481,9 @@ export async function prepareLpPositionDeposit(
           token1: input.poolKey.token1,
           config: input.poolKey.config,
         });
+  if (suppliedPool !== undefined) {
+    assertLiquidityExtensionActive(input.chainId, suppliedPool.pool_key.config);
+  }
   if (
     suppliedPool !== undefined &&
     input.poolId !== undefined &&
@@ -519,6 +535,7 @@ export async function prepareLpPositionDeposit(
       "The indexed pool key does not match the supplied exact pool_key",
     );
   }
+  assertLiquidityExtensionActive(input.chainId, pool.pool_key.config);
   const jurisdiction = quoteJurisdiction([
     { chainId: input.chainId, token: pool.pool_key.token0, side: "buy" },
     { chainId: input.chainId, token: pool.pool_key.token1, side: "buy" },
