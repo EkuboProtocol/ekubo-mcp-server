@@ -1,4 +1,11 @@
 [
+{
+  "id": "retired-mevcapture-deposit",
+  "user": "Initialize a new Ethereum pool using retired MEVCapture v2.1 extension 0x51f831c23fa4051862881Ef8EfC0c3C37905Ce49. Do not switch extensions or submit transactions.",
+  "expect": {
+    "tool": null
+  }
+},
   {
     "id": "gas-sized-absolute-swap-protection",
     "prior_tool_results": [{ "tool": "wallet_list", "result": "$accounts" }],

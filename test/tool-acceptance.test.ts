@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { decodeFunctionData, encodeFunctionData, erc20Abi, keccak256, parseAbi, stringToHex } from "viem";
 import { encodeRoutes, YUL_ROUTER_ADDRESS } from "@ekubo/yul-router-sdk";
 import worker from "../src/index.js";
+import { derivePoolId } from "../src/pools.js";
 import { ARTIFACT_TTL_SECONDS } from "../src/artifact-store.js";
 import { PROTOCOLS, protocolMcpPath } from "../src/protocols.js";
 import { fakeArtifactStore } from "./fake-r2.js";
@@ -77,6 +78,80 @@ async function callTool(path: string, name: string, args: Json) {
 async function fetchArtifact(url: string) {
   return worker.fetch(new Request(url), env, context);
 }
+
+describe("MEVCapture v2.1 retirement", () => {
+  const core = "0x00000000000014aA86C5d3c41765bb24e11bd701";
+  const extension = "0x51f831c23fa4051862881Ef8EfC0c3C37905Ce49";
+  const pool = derivePoolId({
+    token0: NATIVE, token1: USDC_BASE, extension, fee: "1", tickSpacing: 1,
+  });
+  const base = { chain_id: "1", sender: OWNER, core_address: core };
+  const deposit = {
+    ...base, pool_key: pool.pool_key, pool_initialized: false,
+    initial_tick: 0, mode: "mint_new", tick_lower: -10, tick_upper: 10,
+    max_amount0: "1", max_amount1: "1", slippage_bps: 10,
+  };
+
+  it("discovers retirement and rejects exact-key initialization and both deposit modes before upstream calls", async () => {
+    const tools = await listTools("/mcp?protocols=ekubo+ekubo-advanced");
+    for (const name of ["prepare_pool_initialization", "prepare_lp_position_deposit"]) {
+      expect(tools.find((tool) => tool.name === name)?.description.toLowerCase()).toContain("retired ethereum mevcapture v2.1");
+    }
+    const upstream = mockUpstream(() => { throw new Error("unexpected upstream call"); });
+    for (const [name, args] of [
+      ["prepare_pool_initialization", { ...base, pool_key: pool.pool_key, initial_tick: 0 }],
+      ["prepare_lp_position_deposit", deposit],
+      ["prepare_lp_position_deposit", { ...deposit, mode: "add_liquidity", token_id: "1", pool_initialized: true }],
+    ] as const) {
+      const result = await callTool("/mcp?protocols=ekubo+ekubo-advanced", name, args);
+      expect(result.isError).toBe(true);
+      expect(googleTextResult(result).error.code).toBe("retired_extension");
+    }
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("rejects an indexed retired pool without generating a plan", async () => {
+    mockUpstream(() => Response.json({
+      pool_id: pool.pool_id,
+      pool_key: { token0: NATIVE, token1: USDC_BASE, extension, fee: "0x1", tick_spacing: "0x1", stableswap_params: null },
+      state: { sqrt_ratio: "340282366920938463463374607431768211456", tick: 0, liquidity: "1000" },
+    }));
+    const { pool_key: _key, ...args } = deposit;
+    const result = await callTool("/mcp/ekubo", "prepare_lp_position_deposit", {
+      ...args, pool_id: pool.pool_id, pool_initialized: true,
+    });
+    expect(result.isError).toBe(true);
+    expect(googleTextResult(result).error.code).toBe("retired_extension");
+  });
+
+  it("excludes retirement from deposit candidates without hiding ordinary or v1 pools", async () => {
+    const extensions = [extension, NATIVE, "0x553a2efc570c9e104942cec6ac1c18118e54c091"];
+    mockUpstream((url) => {
+      if (url.includes("/tokens/batch")) return Response.json([]);
+      return Response.json({ topPools: extensions.map((ext) => ({
+        pool_id: derivePoolId({ token0: NATIVE, token1: USDC_BASE, extension: ext, fee: "1", tickSpacing: 1 }).pool_id_decimal,
+        core_address: BigInt(core).toString(), extension: BigInt(ext).toString(),
+        fee: "1", tick_spacing: 1, stableswap_params: null, tvl0_total: "1", tvl1_total: "1",
+      })) });
+    });
+    const result = await callTool("/mcp/ekubo", "get_position_pool_candidates", {
+      chain_id: "1", token_a: NATIVE, token_b: USDC_BASE,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(googleTextResult(result).candidate_count).toBe(2);
+  });
+
+  it("keeps ordinary and v1 initialization handoffs available", async () => {
+    for (const active of [NATIVE, "0x553a2efc570c9e104942cec6ac1c18118e54c091"]) {
+      const key = derivePoolId({ token0: NATIVE, token1: USDC_BASE, extension: active, fee: "1", tickSpacing: 1 }).pool_key;
+      const result = await callTool("/mcp?protocols=ekubo+ekubo-advanced", "prepare_pool_initialization", { ...base, pool_key: key, initial_tick: 0 });
+      expect(result.isError).toBeUndefined();
+      const plan = googleTextResult(result);
+      expect(plan.execution_plan_reference.kind).toBe("artifact_reference");
+      expect((await fetchArtifact(plan.execution_plan_reference.url)).status).toBe(200);
+    }
+  });
+});
 
 // Google's current client ignores structuredContent. Consume only TextContent,
 // while retaining a parity check for clients that use the structured channel.
@@ -734,7 +809,7 @@ describe("input errors name the argument and the fix", () => {
       const upstream = mockUpstream(() => {
         throw new Error("invalid input must not reach an upstream");
       });
-      const result = await callTool("/mcp/ekubo", name, args);
+      const result = await callTool("/mcp?protocols=ekubo+ekubo-advanced", name, args);
       expect(upstream).not.toHaveBeenCalled();
       expect(result.isError).toBe(true);
       expect(result.content[0]!.text).toContain(expected);
