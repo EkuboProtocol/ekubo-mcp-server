@@ -1,6 +1,6 @@
 {
   "name": "@ekubo/mcp-worker",
-  "version": "0.55.5",
+  "version": "0.55.6",
   "private": true,
   "license": "MIT",
   "type": "module",

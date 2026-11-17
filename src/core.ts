@@ -821,7 +821,7 @@ function prepareCandidate(
         execution_reverted: {
           action: "reprepare_plan",
           instruction:
-            "The swap or bridge reverted against current state, including slippage or price movement. Do not retry these bytes; request a fresh quote and prepare new calldata.",
+            "The swap or bridge reverted against current state, including slippage or price movement. Do not retry these bytes or widen autonomously. A user-authorized bound change requires a fresh quote/plan, validated minimum output and new wallet simulation/authorization.",
         },
         simulation_setup_error: {
           action: "user_review",
@@ -955,7 +955,7 @@ async function collectQuotes(
   const settled = await Promise.allSettled(
     requestedSources.map(async (requestedSource) => {
       if (intent.maxOutputLoss !== undefined && requestedSource !== "ekubo" && requestedSource !== "0x") {
-        throw new ServiceError("unsupported_swap_protection", `${requestedSource} cannot enforce max_output_loss through this adapter. Choose an Ekubo exact-input route; do not substitute 0 bps, widen the bound, or modify provider calldata.`);
+        throw new ServiceError("unsupported_swap_protection", `${requestedSource} cannot enforce max_output_loss through this adapter. Choose an Ekubo exact-input route; do not substitute 0 bps, widen without user authorization, or modify provider calldata.`);
       }
       switch (requestedSource) {
         case "ekubo":
@@ -1224,7 +1224,7 @@ async function quoteZeroXWithProtection(
   const ppm = budget * 1_000_000n / baseline.amountOut;
   if (budget === 0n) return checkedZeroXOutputLoss(baseline, budget);
   if (ppm === 0n || ppm >= 1_000_000n) {
-    throw new ServiceError("unsupported_swap_protection", "0x max_output_loss must allow at least 1 ppm of quoted output and be less than amount_out. Choose an Ekubo route for finer precision; never substitute zero or widen the budget.");
+    throw new ServiceError("unsupported_swap_protection", "0x max_output_loss must allow at least 1 ppm of quoted output and be less than amount_out. Choose an Ekubo route for finer precision; never substitute zero or widen without user authorization; an authorized change needs a fresh quote/plan and simulation.");
   }
   const candidate = await quoteZeroX(env, { ...intent, slippageBps: undefined }, fetcher, ppm);
   return checkedZeroXOutputLoss(candidate, budget);
@@ -1240,7 +1240,7 @@ function checkedZeroXOutputLoss(
   }
   const permittedLoss = candidate.amountOut - minimum;
   if (permittedLoss > budget || (budget > 0n && permittedLoss === 0n)) {
-    throw new ServiceError("unsupported_swap_protection", "0x minBuyAmount cannot enforce a nonzero loss within max_output_loss at current price/precision. Re-quote or choose Ekubo; never widen protection or retry these bytes.");
+    throw new ServiceError("unsupported_swap_protection", "0x minBuyAmount cannot enforce a nonzero loss within max_output_loss at current price/precision. Re-quote or choose Ekubo; never widen without user authorization or retry these bytes; an authorized change needs a fresh quote/plan and simulation.");
   }
   return candidate;
 }
