@@ -413,10 +413,10 @@ select a quote. Same-chain requests return every Ekubo and 0x option in
 choose. Supply `sender` and `slippage_bps` together and each option also
 carries the `execution_plan_reference` that executes it, so a chosen plan goes
 straight to a wallet with no second round trip and the compared quote is the
-executed one. Unless the user specifies a tolerance, choose `slippage_bps` so
-the maximum value exposed to slippage is approximately one estimated gas fee
+executed one. When the user has not specified a tolerance, an optional heuristic is to
+size the maximum value exposed to slippage near one estimated gas fee
 (`10_000 * gas cost / swap notional`, with both values in the same currency),
-not a generic 50 bps/0.5%. After a slippage failure, re-quote without autonomously widening the bound.
+This is not a server default or a required strategy. After a slippage failure, re-quote without autonomously widening the bound.
 Honor explicit initial or revised numeric tolerance exactly over gas-sized defaults.
 If the user delegates choosing an increase, choose and disclose a reasonable finite
 bound, not unlimited slippage. Changed terms require a fresh quote/plan, validated
@@ -671,8 +671,9 @@ workflow. First call `get_stonx_allocation_recommendation` and require
 `target_total_weight_bps=10000`. Then fetch and
 validate the wallet's complete current allocation as above. Finally pass its
 exact `state_id`, the recommendation's `targets`, and
-`strategy=compact_max_lock` to
-`prepare_ve33_reallocation`. Recommendation rows that do not yet have an
+an optional strategy to `prepare_ve33_reallocation`. Its default
+`preserve_existing_locks` keeps lock expiries; `compact_max_lock` extends locks
+and burns merged source NFTs and is not implied by accepting suggested weights. Recommendation rows that do not yet have an
 initialized canonical pool are reported separately; their weight is
 redistributed along with weight below the 25-target priority cutoff without
 exceeding any selected row's allocation cap. The recommendation tool

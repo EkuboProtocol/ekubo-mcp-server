@@ -351,7 +351,7 @@ describe("Worker discovery", () => {
         .slippage_bps as { description?: string }
     ).description;
     expect(slippage).toContain("Honor explicit initial/revised tolerance exactly");
-    expect(slippage).toContain("gas-sized defaults only if unspecified");
+    expect(slippage).toContain("gas-sized budgets are optional if unspecified");
     expect(slippage).toContain("No autonomous widening");
     const annotationFor = (name: string) =>
       catalog.tools.find((tool) => tool.name === name)?.annotations;
@@ -662,7 +662,7 @@ describe("Worker discovery", () => {
     expect(initializeResult.result.serverInfo.version).toBe(MCP_SERVER_VERSION);
     const instructions = String(initializeResult.result.instructions);
     expect(instructions).toContain(
-      "use this MCP before any browser or website tool",
+      "does not require exclusive routing",
     );
     expect(instructions.replaceAll("Robinhood Stock Token", "")).not.toContain(
       "Robinhood",
@@ -694,7 +694,7 @@ describe("Worker discovery", () => {
       publicToolCatalog.find((tool) => tool.name === name)!.description;
     for (const [name, rule] of [
       ["get_quotes_with_plans", "All/max: exact wallet balance"],
-      ["get_stonx_allocation_recommendation", "strategy=compact_max_lock"],
+      ["get_stonx_allocation_recommendation", "default preserves existing locks"],
       ["prepare_ve33_reallocation", "pass its exact state_id"],
       ["prepare_ve33_reinvest", "never a pre-existing balance"],
       ["prepare_ve33_extend", "max_duration=true must be the user's explicit choice"],

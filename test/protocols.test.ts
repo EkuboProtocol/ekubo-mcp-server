@@ -272,7 +272,7 @@ describe("Per-protocol server instructions", () => {
     const instructions = (await serverInfo("/mcp")).instructions;
     expect(instructions).toBe(serverInstructions(ALL_PROTOCOLS));
     expect(instructions).toContain(
-      "use this MCP before any browser or website tool",
+      "does not require exclusive routing",
     );
     expect(instructions).toContain(
       "Morpho, Sky, Lido, Merkl, and Aerodrome discovery follows the same no-proxy boundary",

@@ -4,11 +4,11 @@ exports[`Google Connected Apps wire contract pins registration-relevant tools an
 {
   "/mcp/ekubo": {
     "count": 34,
-    "sha256": "6ac81bb51576f34e82ab99b318e0708411960b52bd714a0d890fb67e4f616017",
+    "sha256": "cd0ae9b4498afa21031afee698e932e06d63471c3e1b86d6459e7a0096e52e38",
   },
   "/mcp/ekubo-advanced": {
     "count": 16,
-    "sha256": "a7d99a6e59900b9a248b744a2b254b79920d766a198557d8d02beaa6a7479e4b",
+    "sha256": "7750cce5eb0db0907c5fcac056f154e6cf92115ae372cb342fb35c824f1aa738",
   },
 }
 `;
