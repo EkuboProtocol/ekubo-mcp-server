@@ -635,5 +635,112 @@
       }
     ],
     "user": "Retype the full execution plan reference for option 1 as JSON so I can save it in my notes."
+  },
+  {
+    "id": "slippage-recovery-numeric",
+    "prior_tool_results": [
+      {
+        "tool": "wallet_list",
+        "result": "$accounts"
+      },
+      {
+        "tool": "list_tokens",
+        "args": {
+          "chain_id": "8453",
+          "search": "USDC"
+        },
+        "result": "$tokens_base"
+      }
+    ],
+    "user": "The previous swap failed TooMuchSlippage with 1 bps. I now authorize exactly 0.3% slippage for selling exactly 0.1 ETH (0x0000000000000000000000000000000000000000) for USDC (0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913) on Base. Get a fresh quote/plan, do not send.",
+    "expect": {
+      "tool": "get_quotes_with_plans",
+      "args_match": {
+        "chain_id": "8453",
+        "amount": "100000000000000000",
+        "quote_type": "exact_input",
+        "slippage_bps": "30"
+      }
+    }
+  },
+  {
+    "id": "slippage-recovery-absolute",
+    "prior_tool_results": [
+      {
+        "tool": "wallet_list",
+        "result": "$accounts"
+      },
+      {
+        "tool": "list_tokens",
+        "args": {
+          "chain_id": "8453",
+          "search": "USDC"
+        },
+        "result": "$tokens_base"
+      }
+    ],
+    "user": "The previous swap failed TooMuchSlippage with max_output_loss=25000. I now authorize exactly 265170 USDC base units of output loss for selling exactly 0.1 ETH (0x0000000000000000000000000000000000000000) for USDC (0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913) on Base. Get a fresh quote/plan, not 0 or 1 bps; do not send.",
+    "expect": {
+      "tool": "get_quotes_with_plans",
+      "args_match": {
+        "chain_id": "8453",
+        "amount": "100000000000000000",
+        "quote_type": "exact_input",
+        "max_output_loss": "265170"
+      }
+    }
+  },
+  {
+    "id": "slippage-recovery-unchanged",
+    "prior_tool_results": [
+      {
+        "tool": "wallet_list",
+        "result": "$accounts"
+      },
+      {
+        "tool": "list_tokens",
+        "args": {
+          "chain_id": "8453",
+          "search": "USDC"
+        },
+        "result": "$tokens_base"
+      }
+    ],
+    "user": "The previous swap failed TooMuchSlippage with exactly 1 bps. Re-quote selling exactly 0.1 ETH (0x0000000000000000000000000000000000000000) for USDC (0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913) on Base at the SAME bound. Do not send.",
+    "expect": {
+      "tool": "get_quotes_with_plans",
+      "args_match": {
+        "chain_id": "8453",
+        "amount": "100000000000000000",
+        "quote_type": "exact_input",
+        "slippage_bps": "1"
+      }
+    }
+  },
+  {
+    "id": "slippage-recovery-delegated",
+    "prior_tool_results": [
+      {
+        "tool": "wallet_list",
+        "result": "$accounts"
+      },
+      {
+        "tool": "list_tokens",
+        "args": {
+          "chain_id": "8453",
+          "search": "USDC"
+        },
+        "result": "$tokens_base"
+      }
+    ],
+    "user": "The previous swap failed TooMuchSlippage with 1 bps. You may choose and disclose a reasonable bounded higher tolerance for selling exactly 0.1 ETH (0x0000000000000000000000000000000000000000) for USDC (0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913) on Base. Get a fresh quote/plan. This is not unlimited slippage; do not send.",
+    "expect": {
+      "tool": "get_quotes_with_plans",
+      "args_match": {
+        "chain_id": "8453",
+        "amount": "100000000000000000",
+        "quote_type": "exact_input"
+      }
+    }
   }
 ]

@@ -345,14 +345,14 @@ describe("Worker discovery", () => {
       (tool) => tool.name === "get_quotes_with_plans",
     );
     expect(swapTool?.description).toContain("exact-input max_output_loss in output base units");
-    expect(swapTool?.description).toContain("all/max swaps use the wallet's exact balance");
+    expect(swapTool?.description).toContain("All/max: exact wallet balance");
     const slippage = (
       (swapTool?.inputSchema.properties as Record<string, unknown>)
         .slippage_bps as { description?: string }
     ).description;
-    expect(slippage).toContain("Honor user preference");
-    expect(slippage).toContain("size near gas value");
-    expect(slippage).toContain("No generic 50 bps default");
+    expect(slippage).toContain("Honor explicit initial/revised tolerance exactly");
+    expect(slippage).toContain("gas-sized defaults only if unspecified");
+    expect(slippage).toContain("No autonomous widening");
     const annotationFor = (name: string) =>
       catalog.tools.find((tool) => tool.name === name)?.annotations;
     expect(annotationFor("get_pool")).toMatchObject({
@@ -533,7 +533,7 @@ describe("Worker discovery", () => {
     ).toHaveProperty("min_visibility_priority");
     expect(swap?.description).toContain("Quote EVM swaps");
     expect(swap?.description).toContain(
-      "Re-quote only after revert, expiry or changed request",
+      "Changed terms need fresh plans, validated minimum output and new simulation/authorization",
     );
     expect(
       prepareVe33VoteSchema.shape.current_vote.safeParse(null).success,
@@ -669,9 +669,9 @@ describe("Worker discovery", () => {
     );
     for (const rule of [
       MCP_TOOL_CATALOG_REVISION,
-      "call get_quotes_with_plans with sender and either slippage_bps or exact-input max_output_loss",
-      "never a generic 50 bps",
-      "send that simulation",
+      "get_quotes_with_plans: sender, slippage_bps or exact-input max_output_loss",
+      "Honor initial/revised numeric bounds exactly over defaults",
+      "new simulation/authorization",
       "Pass each envelope unchanged as the wallet tool's reference argument",
       "as a value in the code block that received it",
       "add no agent-level confirmation",
@@ -693,7 +693,7 @@ describe("Worker discovery", () => {
     const describes = (name: string) =>
       publicToolCatalog.find((tool) => tool.name === name)!.description;
     for (const [name, rule] of [
-      ["get_quotes_with_plans", "all/max swaps use the wallet's exact balance"],
+      ["get_quotes_with_plans", "All/max: exact wallet balance"],
       ["get_stonx_allocation_recommendation", "strategy=compact_max_lock"],
       ["prepare_ve33_reallocation", "pass its exact state_id"],
       ["prepare_ve33_reinvest", "never a pre-existing balance"],

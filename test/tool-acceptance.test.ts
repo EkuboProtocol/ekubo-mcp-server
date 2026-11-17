@@ -388,6 +388,62 @@ describe("absolute swap protection through MCP", () => {
     expect(tool.description).toContain("max_output_loss");
   });
 
+  it("publishes user-revision recovery through initialize, tools/list and resources/read", async () => {
+    const init = (await rpc("/mcp/ekubo", "initialize", {
+      protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "slippage", version: "1" },
+    })).body.result;
+    expect(init.instructions).toContain("initial/revised numeric bounds");
+    expect(init.instructions).toContain("No autonomous widening");
+    const tool = (await listTools("/mcp/ekubo")).find((t) => t.name === "get_quotes_with_plans")!;
+    expect(tool.description).toContain("reasonable finite bound, not unlimited slippage");
+    expect(tool.description).toContain("new simulation/authorization");
+    expect(tool.inputSchema.properties.slippage_bps.description).toContain("initial/revised");
+    expect(tool.inputSchema.properties.max_output_loss.description).toContain("initial/revised");
+    const resource = (await rpc("/mcp/ekubo", "resources/read", { uri: "ekubo://docs/execution-plan" })).body.result;
+    const text = resource.contents[0].text;
+    expect(text).toContain("Never widen autonomously");
+    expect(text).toContain("explicit user-authorized numeric change exactly");
+    expect(text).toContain("never edit a prepared plan or reuse old simulations/authorization");
+    expect(text).toContain("Reconcile uncertain broadcasts");
+    expect(text).toContain("Price impact is not execution slippage");
+  });
+
+  for (const scenario of [
+    { name: "initial numeric bps", before: { slippage_bps: 30 }, after: { slippage_bps: 30 } },
+    { name: "failure without new bps instruction", before: { slippage_bps: 1 }, after: { slippage_bps: 1 } },
+    { name: "explicit numeric bps increase", before: { slippage_bps: 1 }, after: { slippage_bps: 30 } },
+    { name: "delegated finite bps increase disclosed as 10 bps", before: { slippage_bps: 1 }, after: { slippage_bps: 10 } },
+    { name: "initial numeric absolute loss", before: { max_output_loss: "265170" }, after: { max_output_loss: "265170" } },
+    { name: "failure without new absolute instruction", before: { max_output_loss: "25000" }, after: { max_output_loss: "25000" } },
+    { name: "explicit numeric absolute increase", before: { max_output_loss: "25000" }, after: { max_output_loss: "265170" } },
+    { name: "delegated finite absolute increase disclosed as 265170 base units", before: { max_output_loss: "25000" }, after: { max_output_loss: "265170" } },
+  ]) {
+    it(`prepares fresh protection for ${scenario.name}`, async () => {
+      const fetcher = upstream();
+      const first = (await quote(scenario.before)).quotes.find((q: Json) => q.source === "ekubo");
+      const oldRef = first.execution.execution_plan_reference;
+      const oldBody = await (await fetchArtifact(oldRef.url)).json() as Json;
+      expect(oldBody.simulation_failure_policy.execution_reverted.action).toBe("reprepare_plan");
+      fetcher.mockRestore();
+      upstream({ amountOut: output - 100n });
+      const fresh = (await quote(scenario.after)).quotes.find((q: Json) => q.source === "ekubo");
+      const protection = scenario.after;
+      const minimum = "max_output_loss" in protection
+        ? output - 100n - BigInt(protection.max_output_loss!)
+        : (output - 100n) * 10000n / (10000n + BigInt(protection.slippage_bps!));
+      expect(fresh.execution.quote.minimum_amount_out).toBe(minimum.toString());
+      const ref = fresh.execution.execution_plan_reference;
+      expect(ref.integrity).not.toEqual(oldRef.integrity);
+      const body = await (await fetchArtifact(ref.url)).text();
+      expect(keccak256(stringToHex(body))).toBe(ref.integrity.value);
+      expect(JSON.parse(body).ordered_steps.at(-1).transaction.data).not.toBe(oldBody.ordered_steps.at(-1).transaction.data);
+      expect(body).not.toContain("simulation_id");
+      // Producer never authorizes a simulation: changed plans must cross the wallet boundary again.
+      expect(fresh.execution).not.toHaveProperty("simulation_id");
+      expect(fresh.execution).not.toHaveProperty("authorization");
+    });
+  }
+
   it("encodes the $0.26517 budget exactly in Ekubo and conservatively in unchanged 0x calldata", async () => {
     const fetcher = upstream();
     const result = await quote({ max_output_loss: "265170" });

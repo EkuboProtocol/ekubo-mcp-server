@@ -416,9 +416,13 @@ straight to a wallet with no second round trip and the compared quote is the
 executed one. Unless the user specifies a tolerance, choose `slippage_bps` so
 the maximum value exposed to slippage is approximately one estimated gas fee
 (`10_000 * gas cost / swap notional`, with both values in the same currency),
-not a generic 50 bps/0.5%. Prefer re-quoting and preparing new calldata after
-a slippage failure to widening that bound; never resubmit reverted calldata
-unchanged. Omit both for an indicative comparison, and set `include_raw_quotes` to
+not a generic 50 bps/0.5%. After a slippage failure, re-quote without autonomously widening the bound.
+Honor explicit initial or revised numeric tolerance exactly over gas-sized defaults.
+If the user delegates choosing an increase, choose and disclose a reasonable finite
+bound, not unlimited slippage. Changed terms require a fresh quote/plan, validated
+minimum output and new wallet simulation/authorization. Never edit a plan or reuse
+reverted/expired calldata or old simulation/authorization. Price impact is not
+execution slippage. Omit both for an indicative comparison, and set `include_raw_quotes` to
 add the untouched provider responses, which are otherwise left out as the
 largest and least useful part of a response.
 If a configured provider fails, the response reports it in
