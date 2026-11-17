@@ -11,7 +11,7 @@
         "@morpho-org/morpho-sdk": "9.5.1",
         "@uniswap/sdk-core": "7.22.0",
         "@uniswap/v3-sdk": "3.31.11",
-        "@uniswap/v4-sdk": "2.4.6",
+        "@uniswap/v4-sdk": "2.4.7",
         "agents": "0.33.0",
         "jsbi": "3.2.5",
         "viem": "2.57.19",
@@ -530,7 +530,7 @@
 
     "@uniswap/v3-staker": ["@uniswap/v3-staker@1.0.0", "", { "dependencies": { "@openzeppelin/contracts": "3.4.1-solc-0.7-2", "@uniswap/v3-core": "1.0.0", "@uniswap/v3-periphery": "^1.0.1" } }, "sha512-JV0Qc46Px5alvg6YWd+UIaGH9lDuYG/Js7ngxPit1SPaIP30AlVer1UYB7BRYeUVVxE+byUyIeN5jeQ7LLDjIw=="],
 
-    "@uniswap/v4-sdk": ["@uniswap/v4-sdk@2.4.6", "", { "dependencies": { "@ethersproject/abi": "^5.5.0", "@ethersproject/abstract-signer": "^5.7.0", "@ethersproject/solidity": "^5.0.9", "@uniswap/sdk-core": "^7.21.0", "@uniswap/v3-periphery": "^1.1.1", "@uniswap/v3-sdk": "^3.31.10", "ethers": "^5.7.0", "jsbi": "^3.1.4", "tiny-invariant": "^1.1.0", "tiny-warning": "^1.0.3", "tslib": "^2.3.0" } }, "sha512-ZtUArMlOPtEF/f09GFQqIAt5b1tTu1vp38OxNPqB2/69ed7iuOmUhY3dzX8bKNaqn/5VmIzzBij58b1aIVwXMA=="],
+    "@uniswap/v4-sdk": ["@uniswap/v4-sdk@2.4.7", "", { "dependencies": { "@ethersproject/abi": "^5.5.0", "@ethersproject/abstract-signer": "^5.7.0", "@ethersproject/solidity": "^5.0.9", "@uniswap/sdk-core": "^7.22.0", "@uniswap/v3-periphery": "^1.1.1", "@uniswap/v3-sdk": "^3.31.11", "ethers": "^5.7.0", "jsbi": "^3.1.4", "tiny-invariant": "^1.1.0", "tiny-warning": "^1.0.3", "tslib": "^2.3.0" } }, "sha512-/EK2tlk9VblMHDvZVUYsXk0NRJVWI/nlLVvU8kvgOyK1s/EK7pwVflkBei2ZYdJvKa+GB2Di56JD/fxgyjk7jQ=="],
 
     "abitype": ["abitype@1.2.3", "", { "peerDependencies": { "typescript": ">=5.0.4", "zod": "^3.22.0 || ^4.0.0" }, "optionalPeers": ["typescript", "zod"] }, "sha512-Ofer5QUnuUdTFsBRwARMoWKOH1ND5ehwYhJ3OJ/BQO+StkwQjHw0XyVh4vDttzHB7QOFhPHa/o413PJ82gU/Tg=="],
 
