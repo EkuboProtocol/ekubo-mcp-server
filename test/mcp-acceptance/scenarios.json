@@ -742,5 +742,22 @@
         "quote_type": "exact_input"
       }
     }
+  },
+{
+  "id": "explicit-short-stake-duration",
+  "prior_tool_results": [
+    {
+      "tool": "wallet_list",
+      "result": "$accounts"
+    }
+  ],
+  "user": "Prepare a new STONX stake for 1000000000000000000 base units with duration 604800 seconds, not the maximum lock. Do not sign or send.",
+  "expect": {
+    "tool": "prepare_ve33_stake",
+    "args_match": {
+      "amount": "1000000000000000000",
+      "duration_seconds": 604800
+    }
   }
+}
 ]

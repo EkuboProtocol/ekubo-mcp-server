@@ -79,6 +79,40 @@ async function fetchArtifact(url: string) {
   return worker.fetch(new Request(url), env, context);
 }
 
+describe("factual guidance contracts", () => {
+  it("allows alternate routing, lock-preserving allocations and optional checks without weakening handoff", async () => {
+    const initialized = await rpc("/mcp", "initialize", {
+      protocolVersion: "2025-11-25", capabilities: {},
+      clientInfo: { name: "guidance-test", version: "1" },
+    });
+    const instructions = initialized.body.result.instructions as string;
+    expect(instructions).toContain("does not require exclusive routing");
+    expect(instructions).toContain("Pass each envelope unchanged");
+    expect(instructions).toContain("execution_hold=true");
+    const tools = await listTools("/mcp");
+    const tool = (name: string) => tools.find((entry) => entry.name === name)!;
+    expect(tool("list_tokens").description).toContain("not a choice on the user's behalf");
+    expect(tool("get_stonx_allocation_recommendation").description).toContain("default preserves existing locks");
+    expect(tool("get_stonx_allocation_recommendation").description).not.toContain("strategy=compact_max_lock");
+    expect(tool("prepare_ve33_stake").description).toContain("explicit shorter duration");
+    expect(tool("prepare_ve33_claim_fees").description).not.toContain("always safe");
+    expect(tool("get_quotes_with_plans").inputSchema.properties.slippage_bps.description).toContain("no server default");
+    for (const [uri, phrases] of [
+      ["ekubo://docs/agent-workflow", ["Re-quoting is supported", "checks are optional", "Re-simulation is supported", "not a server default"]],
+      ["ekubo://docs/ve33-workflow", ["defaults to preserve_existing_locks", "User-selected targets are also supported"]],
+      ["ekubo://docs/execution-plan", ["Reconcile uncertain broadcasts", "new simulation", "integrity"]],
+    ] as const) {
+      const result = await rpc("/mcp", "resources/read", { uri });
+      const text = result.body.result.contents.map((entry: Json) => entry.text).join("\n");
+      for (const phrase of phrases) expect(text).toContain(phrase);
+    }
+    const deployment = await callTool("/mcp", "decode_pool_config", {
+      config: "0x" + "0".repeat(64),
+    });
+    expect(deployment.isError).not.toBe(true);
+  });
+});
+
 describe("MEVCapture v2.1 retirement", () => {
   const core = "0x00000000000014aA86C5d3c41765bb24e11bd701";
   const extension = "0x51f831c23fa4051862881Ef8EfC0c3C37905Ce49";
