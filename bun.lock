@@ -8,7 +8,7 @@
         "@ekubo/sdk": "0.0.10",
         "@ekubo/yul-router-sdk": "0.8.0",
         "@modelcontextprotocol/server": "2.4.0",
-        "@morpho-org/morpho-sdk": "9.7.0",
+        "@morpho-org/morpho-sdk": "9.8.0",
         "@uniswap/sdk-core": "7.22.0",
         "@uniswap/v3-sdk": "3.31.11",
         "@uniswap/v4-sdk": "2.4.7",
@@ -362,11 +362,11 @@
 
     "@morpho-org/blue-sdk": ["@morpho-org/blue-sdk@8.3.0", "", { "dependencies": { "@noble/hashes": "^2.4.0" }, "peerDependencies": { "@morpho-org/morpho-ts": "^4.0.0", "viem": "^2.0.0" } }, "sha512-4SlH5aoznytfvVJqDgn4iOm9rYYBy7mYeIxAG7jQU3FbrMquOZHxbJYESN9XUY5ObXhALj+Fq40ST7WilIv9Kg=="],
 
-    "@morpho-org/blue-sdk-viem": ["@morpho-org/blue-sdk-viem@7.4.0", "", { "peerDependencies": { "@morpho-org/blue-sdk": "^8.1.0", "@morpho-org/morpho-ts": "^3.0.0 || ^4.0.0", "viem": "^2.0.0" } }, "sha512-d76EyhEbEvxjEbMDu0fQNnAtwtyDW/gSTZZckhN1AhuwVSzqsVK9Mk4q5HxypB4DC2aVCYGefT5TGa/aqe50Zg=="],
+    "@morpho-org/blue-sdk-viem": ["@morpho-org/blue-sdk-viem@7.5.1", "", { "peerDependencies": { "@morpho-org/blue-sdk": "^8.1.0", "@morpho-org/morpho-ts": "^3.0.0 || ^4.0.0", "viem": "^2.0.0" } }, "sha512-2kj5dlIdpkpZnD2QHPC1DI5nLpXmp2uRuzvxHV/mpvgVZf4jrBUTniM3o8iEDrHK9VJbAN35/XbJJnD7cZijCg=="],
 
     "@morpho-org/midnight-sdk": ["@morpho-org/midnight-sdk@2.6.0", "", { "peerDependencies": { "@morpho-org/morpho-ts": "^2.8.0 || ^3.0.0 || ^4.0.0", "viem": "^2.0.0" } }, "sha512-COCLlBQygwK9VZ3CaOhnMIDyYjOsug+1T58mP2bgAPJXh0zhpTQeXvxs1picqV2ocQyzQWu6sE/y5rge3614+w=="],
 
-    "@morpho-org/morpho-sdk": ["@morpho-org/morpho-sdk@9.7.0", "", { "dependencies": { "@morpho-org/blue-sdk": "^8.2.3", "@morpho-org/blue-sdk-viem": "^7.4.0", "@morpho-org/midnight-sdk": "^2.5.1", "@morpho-org/morpho-ts": "^4.3.1", "@noble/curves": "1.9.1" }, "peerDependencies": { "viem": "^2.0.0" } }, "sha512-SYgA/ZzN7fqPPblGAIbHw+sMwmxe2HJsc/TAAIsbkKsVf4syeS5LZcxF3C962ZXWUeYXQIU5VMHuhKlt2dSpeA=="],
+    "@morpho-org/morpho-sdk": ["@morpho-org/morpho-sdk@9.8.0", "", { "dependencies": { "@morpho-org/blue-sdk": "^8.3.0", "@morpho-org/blue-sdk-viem": "^7.5.0", "@morpho-org/midnight-sdk": "^2.6.0", "@morpho-org/morpho-ts": "^4.4.0", "@noble/curves": "1.9.1" }, "peerDependencies": { "viem": "^2.0.0" } }, "sha512-Yfwh7YvzeGAOZJB8i1fdPsOswBeXz9jLhvOeDYL2yvycianT7wAdJ2x6ZJ1p9gwf+ux5H1PJSMrk1keM0vaQ1Q=="],
 
     "@morpho-org/morpho-ts": ["@morpho-org/morpho-ts@4.4.0", "", { "dependencies": { "@noble/hashes": "^2.4.0" } }, "sha512-LqAtojCFOmj2grZoMdh4jhyKsLKPViSjMJwKXG+XCtIi4ZmML98HN0DpDbu2ioVXsziyDM0f1J0Gogt0JItKnQ=="],
 
