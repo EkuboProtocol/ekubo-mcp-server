@@ -200,6 +200,17 @@
           ]
         },
         {
+          "address": "0x07c44da0848960bff894f17584db8b2f60b2409e",
+          "symbol": "JPM",
+          "provenance": [
+            {
+              "source": "issuer-registry",
+              "ref": "https://api.robinhood.com/rhj/assets sha256:72d345fcd2d2acce4f77f4bbab5107d717074b5f567c21f734706705fd205b96",
+              "observed_at": "2026-11-21T20:58:58Z"
+            }
+          ]
+        },
+        {
           "address": "0x0b5fb4031cae9163db10b169ee72685f0edc8545",
           "symbol": "TTD",
           "provenance": [
@@ -766,6 +777,17 @@
           ]
         },
         {
+          "address": "0x2fdaa4604f10f4ae7f66fa48a174bcd25b1ece20",
+          "symbol": "MCD",
+          "provenance": [
+            {
+              "source": "issuer-registry",
+              "ref": "https://api.robinhood.com/rhj/assets sha256:72d345fcd2d2acce4f77f4bbab5107d717074b5f567c21f734706705fd205b96",
+              "observed_at": "2026-11-21T20:58:58Z"
+            }
+          ]
+        },
+        {
           "address": "0x3139d77ace0cbaa5bdfd38bd1f1911a794af0b0e",
           "symbol": "ABCL",
           "provenance": [
@@ -1259,6 +1281,17 @@
               "source": "v1-list",
               "ref": "EkuboProtocol/ekubo-mcp-server@d71a6d9:src/token-restrictions.ts RHC_STOCK_TOKEN_ADDRESSES",
               "observed_at": "2026-10-06T12:10:00Z"
+            }
+          ]
+        },
+        {
+          "address": "0x501b1b3b79750313ad2c4cccd08586c4c17d7283",
+          "symbol": "DIS",
+          "provenance": [
+            {
+              "source": "issuer-registry",
+              "ref": "https://api.robinhood.com/rhj/assets sha256:72d345fcd2d2acce4f77f4bbab5107d717074b5f567c21f734706705fd205b96",
+              "observed_at": "2026-11-21T20:58:58Z"
             }
           ]
         },
@@ -1872,6 +1905,17 @@
           ]
         },
         {
+          "address": "0x80e10255a83b257f5a8674d363f547842aa53b8e",
+          "symbol": "TTEQ",
+          "provenance": [
+            {
+              "source": "issuer-registry",
+              "ref": "https://api.robinhood.com/rhj/assets sha256:72d345fcd2d2acce4f77f4bbab5107d717074b5f567c21f734706705fd205b96",
+              "observed_at": "2026-11-21T20:58:58Z"
+            }
+          ]
+        },
+        {
           "address": "0x822cc93ffd030293e9842c30bbd678f530701867",
           "symbol": "BE",
           "provenance": [
@@ -2289,6 +2333,17 @@
           ]
         },
         {
+          "address": "0x9a7842eded60b0fe1e03eec342c82a397c821ed0",
+          "symbol": "BMNR",
+          "provenance": [
+            {
+              "source": "issuer-registry",
+              "ref": "https://api.robinhood.com/rhj/assets sha256:72d345fcd2d2acce4f77f4bbab5107d717074b5f567c21f734706705fd205b96",
+              "observed_at": "2026-11-21T20:58:58Z"
+            }
+          ]
+        },
+        {
           "address": "0x9ab02ead789b6903c3c44d0ed32f9c707cdf12fd",
           "symbol": "PWR",
           "provenance": [
@@ -2322,6 +2377,17 @@
               "source": "v1-list",
               "ref": "EkuboProtocol/ekubo-mcp-server@d71a6d9:src/token-restrictions.ts RHC_STOCK_TOKEN_ADDRESSES",
               "observed_at": "2026-10-06T12:10:00Z"
+            }
+          ]
+        },
+        {
+          "address": "0x9bff87700337babf5099e99f322f888dafb1d551",
+          "symbol": "V",
+          "provenance": [
+            {
+              "source": "issuer-registry",
+              "ref": "https://api.robinhood.com/rhj/assets sha256:72d345fcd2d2acce4f77f4bbab5107d717074b5f567c21f734706705fd205b96",
+              "observed_at": "2026-11-21T20:58:58Z"
             }
           ]
         },
@@ -2412,6 +2478,17 @@
               "source": "v1-list",
               "ref": "EkuboProtocol/ekubo-mcp-server@d71a6d9:src/token-restrictions.ts RHC_STOCK_TOKEN_ADDRESSES",
               "observed_at": "2026-10-06T12:10:00Z"
+            }
+          ]
+        },
+        {
+          "address": "0xa45abdc77918f7b9199b022eee400c0bc5712bd2",
+          "symbol": "PYPL",
+          "provenance": [
+            {
+              "source": "issuer-registry",
+              "ref": "https://api.robinhood.com/rhj/assets sha256:72d345fcd2d2acce4f77f4bbab5107d717074b5f567c21f734706705fd205b96",
+              "observed_at": "2026-11-21T20:58:58Z"
             }
           ]
         },
@@ -2819,6 +2896,17 @@
           ]
         },
         {
+          "address": "0xbbb6c29bcc3a1028a2b54310df73f4f7a3bcb373",
+          "symbol": "ANT",
+          "provenance": [
+            {
+              "source": "issuer-registry",
+              "ref": "https://api.robinhood.com/rhj/assets sha256:72d345fcd2d2acce4f77f4bbab5107d717074b5f567c21f734706705fd205b96",
+              "observed_at": "2026-11-21T20:58:58Z"
+            }
+          ]
+        },
+        {
           "address": "0xbbd09f72b025360fee5c928053dca6248d35be54",
           "symbol": "ON",
           "provenance": [
@@ -2831,6 +2919,28 @@
               "source": "issuer-registry",
               "ref": "https://api.robinhood.com/rhj/assets sha256:ae51218019c2f7533f9a959f5c75d25b8461bfd5c288c277b1aa98277bc979ac",
               "observed_at": "2026-10-06T12:10:00Z"
+            }
+          ]
+        },
+        {
+          "address": "0xbd335aa5a1693f0121a5c0ef18a080e9958da78b",
+          "symbol": "UBER",
+          "provenance": [
+            {
+              "source": "issuer-registry",
+              "ref": "https://api.robinhood.com/rhj/assets sha256:72d345fcd2d2acce4f77f4bbab5107d717074b5f567c21f734706705fd205b96",
+              "observed_at": "2026-11-21T20:58:58Z"
+            }
+          ]
+        },
+        {
+          "address": "0xbdfa7a06458aa26b8e736e0fc87ad37c3bb8ac2e",
+          "symbol": "GDX",
+          "provenance": [
+            {
+              "source": "issuer-registry",
+              "ref": "https://api.robinhood.com/rhj/assets sha256:72d345fcd2d2acce4f77f4bbab5107d717074b5f567c21f734706705fd205b96",
+              "observed_at": "2026-11-21T20:58:58Z"
             }
           ]
         },
@@ -3333,6 +3443,17 @@
               "source": "v1-list",
               "ref": "EkuboProtocol/ekubo-mcp-server@d71a6d9:src/token-restrictions.ts RHC_STOCK_TOKEN_ADDRESSES",
               "observed_at": "2026-10-06T12:10:00Z"
+            }
+          ]
+        },
+        {
+          "address": "0xe674c5c071821f48bb2d12cadb83617eff438f9e",
+          "symbol": "ZETA",
+          "provenance": [
+            {
+              "source": "issuer-registry",
+              "ref": "https://api.robinhood.com/rhj/assets sha256:72d345fcd2d2acce4f77f4bbab5107d717074b5f567c21f734706705fd205b96",
+              "observed_at": "2026-11-21T20:58:58Z"
             }
           ]
         },
