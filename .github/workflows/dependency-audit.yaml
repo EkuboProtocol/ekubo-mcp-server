@@ -42,7 +42,12 @@ jobs:
       # These advisories are all in the Hardhat toolchain that
       # @uniswap/v3-sdk > @uniswap/swap-router-contracts > hardhat-watcher pulls in.
       # None of it is in the Worker bundle and nothing here runs Hardhat; each fix
-      # is a major version of a Hardhat/solc/mocha dependency. Triage: EKU-569.
+      # is a major version of a Hardhat/solc/mocha dependency.
+      # The undici and @fastify/busboy IDs are for hardhat's undici 5.29.0 (the
+      # last 5.x) and its @fastify/busboy 2.x; the fixes are undici 6.29.1 and
+      # busboy 3.2.1. bun audit also prints wrangler > miniflare for them because
+      # it groups paths by package name, but miniflare resolves undici 7.x, which
+      # is outside both ranges and has no busboy dependency (see bun.lock).
       # The summary above still lists them. Remove an ID when
       # @uniswap/swap-router-contracts drops hardhat-watcher, or when the package
       # appears anywhere outside that path.
@@ -59,4 +64,7 @@ jobs:
             GHSA-vxpw-j846-p89q
             GHSA-ph9p-34f9-6g65
             GHSA-5c6j-r48x-rmvq
+            GHSA-2m5v-pch6-74hx
+            GHSA-qrxm-fqhp-jwvm
+            GHSA-x8mw-p69m-v3mx
         run: bun audit --audit-level=high $(printf -- '--ignore=%s ' $IGNORED)
