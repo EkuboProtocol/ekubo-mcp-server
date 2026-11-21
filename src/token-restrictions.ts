@@ -47,7 +47,7 @@ export const JURISDICTION_POLICY_VERSION = policy.policy_version;
  * file.
  */
 export const JURISDICTION_POLICY_DIGEST =
-  "842f18d157deb548290c9da6402bb89f00406f1a0f48ec3a84944ae4dada7a09";
+  "7de0c65b863fdf2a69d95f7a9a6509e36f19d846035a2a77b15b5fe059cc55ff";
 
 export type AssetClassification =
   | "rhj_stock_token"

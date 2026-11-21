@@ -53,7 +53,7 @@ const V2_COUNTRIES = [
  * the same digest; change all three together.
  */
 const POLICY_SHA256 =
-  "842f18d157deb548290c9da6402bb89f00406f1a0f48ec3a84944ae4dada7a09";
+  "7de0c65b863fdf2a69d95f7a9a6509e36f19d846035a2a77b15b5fe059cc55ff";
 
 /** The CLO EKU-853 §3 notice, copied from the decision, not from the source. */
 const CLO_NOTICE = "A quote, execution plan, simulation or wallet approval is not permission to trade. Robinhood Stock Tokens are tokenised debt securities subject to issuer restrictions and applicable law. Before requesting signatures or submitting approvals or trades, establish the user's relevant jurisdiction and eligibility, including location, residence or entity incorporation, US-person status under Regulation S, any person for whose account or benefit the transaction is made, and issuer Prohibited Investor restrictions. Never infer these facts from an agent or server IP. If required facts or asset-policy coverage are unknown, do not proceed. Only the user or an authorized representative of the actual investor may provide an explicit factual attestation; an agent must not attest on their behalf. A known prohibited fact cannot be overridden by attestation. An attestation is not a license, legal exemption or substitute for required screening. Keep the attestation client-side; do not send it to the quote API or MCP server. No blanket disposal exemption applies.";
@@ -61,6 +61,15 @@ const CLO_NOTICE = "A quote, execution plan, simulation or wallet approval is no
 /** artifacts/eku-853/v2-class-addresses.txt: the CLO-approved 200-address class. */
 const CLASS_ADDRESSES = readFileSync(
   new URL("./fixtures/jurisdiction-v2-class-addresses.txt", import.meta.url),
+  "utf8",
+).split("\n").filter(Boolean);
+
+/**
+ * Chain-4663 listings the issuer registry added after the CLO-approved class,
+ * classified monotonically by the default-tokens generator (no new legal call).
+ */
+const ISSUER_ADDITIONS = readFileSync(
+  new URL("./fixtures/jurisdiction-v2-issuer-additions-2026-11-21.txt", import.meta.url),
   "utf8",
 ).split("\n").filter(Boolean);
 
@@ -105,17 +114,18 @@ describe("jurisdiction policy v2 data", () => {
     }
   });
 
-  it("classifies exactly the 200 CLO-approved addresses as Stock Tokens", () => {
+  it("classifies exactly the 200 CLO-approved and 11 issuer-added addresses as Stock Tokens", () => {
     expect(CLASS_ADDRESSES).toHaveLength(200);
+    expect(ISSUER_ADDITIONS).toHaveLength(11);
     const policy = JSON.parse(
       readFileSync(new URL("../src/jurisdiction-policy.json", import.meta.url), "utf8"),
     ) as { chains: Record<string, { rhj_stock_token: { address: string }[] }> };
     expect(policy.chains[ROBINHOOD_CHAIN]!.rhj_stock_token.map((entry) => entry.address))
-      .toEqual([...CLASS_ADDRESSES].sort());
+      .toEqual([...CLASS_ADDRESSES, ...ISSUER_ADDITIONS].sort());
   });
 
   it("carries provenance on every class and non-class entry", () => {
-    for (const address of [...CLASS_ADDRESSES, NATIVE, WETH, USDG, STONX, EKUBO]) {
+    for (const address of [...CLASS_ADDRESSES, ...ISSUER_ADDITIONS, NATIVE, WETH, USDG, STONX, EKUBO]) {
       const { provenance } = classifyAsset(ROBINHOOD_CHAIN, address);
       expect(provenance.length).toBeGreaterThan(0);
       for (const entry of provenance) {
