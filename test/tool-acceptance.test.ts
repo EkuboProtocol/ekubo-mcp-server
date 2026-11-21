@@ -661,6 +661,64 @@ describe("tool discoverability", () => {
   });
 });
 
+describe("bounded input arrays", () => {
+  function unboundedArrays(schema: unknown, path: string, found: string[]) {
+    if (schema === null || typeof schema !== "object") return;
+    if (Array.isArray(schema)) {
+      schema.forEach((item, index) => unboundedArrays(item, `${path}[${index}]`, found));
+      return;
+    }
+    const node = schema as Json;
+    if (node.type === "array" && typeof node.maxItems !== "number") found.push(path);
+    for (const [key, value] of Object.entries(node)) {
+      unboundedArrays(value, key === "items" ? `${path}[]` : key === "properties" ? path : `${path}.${key}`, found);
+    }
+  }
+
+  // tools/list deliberately omits array maxima to save context (docs/MCP-CONTEXT.md);
+  // /tools publishes the full enforced input schema, so the bound is checked there.
+  async function enforcedCatalog(): Promise<Tool[]> {
+    const response = await worker.fetch(new Request("https://mcp.ekubo.org/tools"), env, context);
+    return ((await response.json()) as Json).tools;
+  }
+
+  it("caps the length of every array argument in every tool", async () => {
+    const tools = await enforcedCatalog();
+    expect(tools.length).toBe((await listTools("/mcp")).length);
+    const found: string[] = [];
+    for (const tool of tools) unboundedArrays(tool.inputSchema, tool.name, found);
+    expect(found).toEqual([]);
+  });
+
+  it("publishes the rewards claim proof cap", async () => {
+    const tool = (await enforcedCatalog()).find((entry) => entry.name === "prepare_rewards_claim")!;
+    expect(tool.inputSchema.properties.claims.items.properties.proof.maxItems).toBe(64);
+  });
+
+  it("rejects an oversized rewards claim proof with a short error before any upstream call", async () => {
+    const upstream = mockUpstream(() => {
+      throw new Error("invalid input must not reach an upstream");
+    });
+    const { body } = await rpc("/mcp/ekubo", "tools/call", {
+      name: "prepare_rewards_claim",
+      arguments: {
+        chain_id: "1",
+        sender: OWNER,
+        claims: [{
+          drop_address: RECIPIENT,
+          key: { owner: OWNER, token: USDC_BASE, root: `0x${"11".repeat(32)}` },
+          claim: { index: "0", account: OWNER, amount: "1" },
+          proof: Array.from({ length: 20_000 }, () => "x"),
+        }],
+      },
+    });
+    expect(upstream).not.toHaveBeenCalled();
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0].text).toContain("proof");
+    expect(JSON.stringify(body).length).toBeLessThan(1024);
+  });
+});
+
 describe("read journey: owner positions", () => {
   const position = (id: string) => ({
     id,

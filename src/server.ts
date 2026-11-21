@@ -1010,7 +1010,7 @@ const rewardsClaimSchema = z.object({
   drop_address: address,
   key: z.object({ owner: address, token: address, root: bytes32 }),
   claim: z.object({ index: uintString, account: address, amount }),
-  proof: z.array(bytes32),
+  proof: z.array(bytes32).max(64),
 });
 
 export const prepareRewardsClaimSchema = z.object({
