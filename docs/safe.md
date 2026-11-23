@@ -3,10 +3,40 @@
 Connect to `https://mcp.ekubo.org/mcp/safe`. This endpoint is separate from
 the root `/mcp` bundle. Discovery is available at `/tools?protocol=safe`.
 
-Supported contracts are Safe **1.3.0 and 1.4.1**, using the chain-bound
+Supported contracts are Safe **1.3.0, 1.4.1 and 1.5.0**, using the chain-bound
 `EIP712Domain(uint256 chainId,address verifyingContract)` domain. The caller
 provides the Safe address and chain; the server makes no RPC or Transaction
 Service requests and never signs or broadcasts.
+
+## Safe 1.5.0 differences
+
+Checked against the `@safe-global/safe-smart-account` 1.5.0 contracts:
+
+- **Unchanged:** the `EIP712Domain` and `SafeTx` type hashes, so `getTransactionHash`
+  and the `signing_digest` are the same as 1.4.1 for the same Safe, chain and
+  fields; `SafeMessage(bytes message)` hashing; `approveHash` and
+  `approvedHashes`; `execTransaction` arguments; and the owner-management
+  functions and their checks (`GS2xx` reverts keep the same codes).
+- **Signature checking:** 1.5.0 adds `checkSignatures(address executor,bytes32,bytes)`.
+  The legacy `checkSignatures(bytes32,bytes,bytes)` remains but ignores `data` and
+  uses `msg.sender` as executor. For 1.5.0 the execution validation read uses the
+  explicit overload with the sender as executor, so a prevalidated (`v=1`) entry
+  is checked against the sender even if the wallet ignores the read bundle's `from`.
+  1.5.0 verifies contract-owner entries with `isValidSignature(bytes32,bytes)`;
+  1.3.0 and 1.4.1 call the legacy `isValidSignature(bytes,bytes)` on owners.
+- **Fallback handler:** the 1.5.0 `CompatibilityFallbackHandler` (and
+  `ExtensibleFallbackHandler`) implement only `isValidSignature(bytes32,bytes)`.
+  The legacy raw-bytes overload is gone, so for 1.5.0
+  `prepare_safe_message_signature` accepts only a 32-byte `message` digest and
+  rejects other lengths before preparing a request. The handler checks signatures
+  with executor `0`, so a prevalidated entry counts only if approved onchain.
+- **Deployments:** canonical 1.5.0 addresses are Safe
+  `0xFf51A5898e281Db6DfC7855790607438dF2ca44b`, SafeL2
+  `0xEdd160fEBBD92E350D4D398fb636302fccd67C7e`, CompatibilityFallbackHandler
+  `0x3EfCBb83A4A7AfcB4F68D501E2c2203a38be77f4` and SafeProxyFactory
+  `0x14F2982D601c9458F93bd70B218933A6f8165e7b`. As for earlier versions, the
+  server does not check the singleton or handler address; `VERSION` is the
+  wallet-read version check.
 
 ## Tools
 
@@ -107,7 +137,7 @@ Checks requiring the full current owner list remain wallet-read preconditions.
 
 Run `bun test test/safe-signatures.test.ts` (also included in `bun test`).
 These tests run offline in EthereumJS's in-memory EVM. Pinned official npm
-artifacts supply the actual Safe 1.3.0 and 1.4.1 singleton, proxy, and
+artifacts supply the actual Safe 1.3.0, 1.4.1 and 1.5.0 singleton, proxy, and
 CompatibilityFallbackHandler creation bytecode. Each fixture deploys and sets
 up a fresh Safe, rather than mocking its signature verifier.
 
@@ -123,8 +153,10 @@ The contracts themselves verify:
 - Agreement with `getTransactionHash` and acceptance by `checkSignatures`.
 - Successful `execTransaction`, exact ETH delivery, nonce consumption and replay rejection.
 - Threshold enforcement and ascending owner-address signature ordering.
-- Both legacy `isValidSignature(bytes,bytes)` and modern
+- Both legacy `isValidSignature(bytes,bytes)` (1.3.0 and 1.4.1 only) and modern
   `isValidSignature(bytes32,bytes)` through the installed fallback handler.
+- Onchain `approveHash` from an owner, the read tool's version, owners,
+  threshold, nonce and `approvedHashes`, and execution with that approval.
 - Owner addition and threshold change via a signed Safe self-call.
 - Website-compatible preprocessing of text and application typed-data messages.
 - Prepared execution-validation reads, including executor-dependent prevalidated signatures.
