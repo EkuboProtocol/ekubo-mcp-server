@@ -9,6 +9,9 @@ import handler130 from "@gnosis.pm/safe-contracts/build/artifacts/contracts/hand
 import safe141 from "@safe-global/safe-contracts/build/artifacts/contracts/Safe.sol/Safe.json";
 import proxy141 from "@safe-global/safe-contracts/build/artifacts/contracts/proxies/SafeProxy.sol/SafeProxy.json";
 import handler141 from "@safe-global/safe-contracts/build/artifacts/contracts/handler/CompatibilityFallbackHandler.sol/CompatibilityFallbackHandler.json";
+import safe150 from "@safe-global/safe-smart-account/build/artifacts/contracts/Safe.sol/Safe.json";
+import proxy150 from "@safe-global/safe-smart-account/build/artifacts/contracts/proxies/SafeProxy.sol/SafeProxy.json";
+import handler150 from "@safe-global/safe-smart-account/build/artifacts/contracts/handler/CompatibilityFallbackHandler.sol/CompatibilityFallbackHandler.json";
 import { prepareSafeTransaction, safeTools } from "../src/safe.js";
 import { referenceWalletArtifacts, type ArtifactReference } from "../src/artifact-store.js";
 import type { Env } from "../src/core.js";
@@ -23,6 +26,8 @@ const abi = new Interface([
   "function VERSION() view returns (string)",
   "function nonce() view returns (uint256)",
   "function getThreshold() view returns (uint256)",
+  "function getOwners() view returns (address[])",
+  "function approvedHashes(address owner, bytes32 hash) view returns (uint256)",
   "function isOwner(address owner) view returns (bool)",
   "function getTransactionHash(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,uint256) view returns (bytes32)",
   "function checkSignatures(bytes32 dataHash,bytes data,bytes signatures) view",
@@ -32,7 +37,10 @@ const abi = new Interface([
 const versions = [
   { version: "1.3.0" as const, safe: safe130, proxy: proxy130, handler: handler130 },
   { version: "1.4.1" as const, safe: safe141, proxy: proxy141, handler: handler141 },
+  { version: "1.5.0" as const, safe: safe150, proxy: proxy150, handler: handler150 },
 ];
+// Safe 1.5.0's CompatibilityFallbackHandler drops the legacy isValidSignature(bytes,bytes) overload.
+const legacyMessageOverload = (version: string) => version !== "1.5.0";
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 type Request = ReturnType<typeof prepareSafeTransaction>["typed_data_signature_request"];
 
@@ -208,19 +216,30 @@ for (const contracts of versions) {
       await assertAccepted(f, digest, concat(signed.map((result) => result.signature)));
     });
 
-    it("accepts SafeMessage through the real fallback handler's two ERC-1271 overloads", async () => {
+    it("accepts SafeMessage through the real fallback handler's ERC-1271 overloads", async () => {
       const f = await fixture(contracts);
       const message = "0x1234abcd";
-      const stored = await artifact(prepare("prepare_safe_message_signature", { ...f, message }));
-      const signed = await signArtifact(stored.reference, stored.body);
-      const legacy = await checkedCall(f.vm, f.safe, abi.encodeFunctionData("isValidSignature(bytes,bytes)", [message, signed.signature]));
-      expect(abi.decodeFunctionResult("isValidSignature(bytes,bytes)", legacy)[0]).toBe("0x20c13b0b");
+      if (legacyMessageOverload(contracts.version)) {
+        const stored = await artifact(prepare("prepare_safe_message_signature", { ...f, message }));
+        const signed = await signArtifact(stored.reference, stored.body);
+        const legacy = await checkedCall(f.vm, f.safe, abi.encodeFunctionData("isValidSignature(bytes,bytes)", [message, signed.signature]));
+        expect(abi.decodeFunctionResult("isValidSignature(bytes,bytes)", legacy)[0]).toBe("0x20c13b0b");
+        expect((await call(f.vm, f.safe, abi.encodeFunctionData("isValidSignature(bytes,bytes)", ["0x1234abce", signed.signature]))).execResult.exceptionError).toBeDefined();
+      } else {
+        expect(() => prepare("prepare_safe_message_signature", { ...f, message })).toThrow("32-byte digest");
+        const digest = keccak256(message);
+        const stored = await artifact(prepare("prepare_safe_message_signature", { ...f, message: digest }));
+        const signed = await signArtifact(stored.reference, stored.body);
+        // The handler has no legacy overload, so raw-bytes verification is impossible on this version.
+        expect((await call(f.vm, f.safe, abi.encodeFunctionData("isValidSignature(bytes,bytes)", [message, signed.signature]))).execResult.exceptionError).toBeDefined();
+      }
       const dataHash = keccak256(toUtf8Bytes("An application's ERC-1271 digest"));
       const modern = await artifact(prepare("prepare_safe_message_signature", { ...f, message: dataHash }));
       const modernSigned = await signArtifact(modern.reference, modern.body);
       const result = await checkedCall(f.vm, f.safe, abi.encodeFunctionData("isValidSignature(bytes32,bytes)", [dataHash, modernSigned.signature]));
       expect(abi.decodeFunctionResult("isValidSignature(bytes32,bytes)", result)[0]).toBe("0x1626ba7e");
-      expect((await call(f.vm, f.safe, abi.encodeFunctionData("isValidSignature(bytes,bytes)", ["0x1234abce", signed.signature]))).execResult.exceptionError).toBeDefined();
+      const otherHash = keccak256(toUtf8Bytes("A different digest"));
+      expect((await call(f.vm, f.safe, abi.encodeFunctionData("isValidSignature(bytes32,bytes)", [otherHash, modernSigned.signature]))).execResult.exceptionError).toBeDefined();
     });
 
     it("executes an artifact-signed owner change as a Safe self-call", async () => {
@@ -254,9 +273,13 @@ for (const contracts of versions) {
         const result = await checkedCall(f.vm, f.safe, abi.encodeFunctionData("isValidSignature(bytes32,bytes)", [digest, signed.signature]));
         expect(abi.decodeFunctionResult("isValidSignature(bytes32,bytes)", result)[0]).toBe("0x1626ba7e");
       }
-      const raw = await artifact(prepare("prepare_safe_message_signature", { ...f, message: "0x68656c6c6f" }));
-      const rawSigned = await signArtifact(raw.reference, raw.body);
-      expect((await call(f.vm, f.safe, abi.encodeFunctionData("isValidSignature(bytes32,bytes)", [applicationDigests[0], rawSigned.signature]))).execResult.exceptionError).toBeDefined();
+      if (legacyMessageOverload(contracts.version)) {
+        const raw = await artifact(prepare("prepare_safe_message_signature", { ...f, message: "0x68656c6c6f" }));
+        const rawSigned = await signArtifact(raw.reference, raw.body);
+        expect((await call(f.vm, f.safe, abi.encodeFunctionData("isValidSignature(bytes32,bytes)", [applicationDigests[0], rawSigned.signature]))).execResult.exceptionError).toBeDefined();
+      } else {
+        expect(() => prepare("prepare_safe_message_signature", { ...f, message: "0x68656c6c6f" })).toThrow("32-byte digest");
+      }
     });
 
     it("checks prevalidated signatures in the supplied executor's call context", async () => {
@@ -268,7 +291,44 @@ for (const contracts of versions) {
       expect(prepared.read_calls.from).toBe(owner.address.toLowerCase());
       const check = prepared.read_calls.calls.find((read) => read.id === "check_signatures")!;
       expect((await call(f.vm, check.to, check.data, prepared.read_calls.from)).execResult.exceptionError).toBeUndefined();
-      expect((await call(f.vm, check.to, check.data, stranger.address)).execResult.exceptionError).toBeDefined();
+      // 1.5.0 binds the sender as an explicit executor argument, so the read no longer depends on the caller.
+      expect((await call(f.vm, check.to, check.data, stranger.address)).execResult.exceptionError === undefined).toBe(contracts.version === "1.5.0");
+      const strangerPrepared = prepare("prepare_safe_execution", { ...f, transaction: transaction(), sender: stranger.address, signatures }) as typeof prepared;
+      const strangerCheck = strangerPrepared.read_calls.calls.find((read) => read.id === "check_signatures")!;
+      expect((await call(f.vm, strangerCheck.to, strangerCheck.data, stranger.address)).execResult.exceptionError).toBeDefined();
+    });
+
+    it("reads live Safe state and approves an exact transaction hash onchain", async () => {
+      const f = await fixture(contracts, [owner.address, secondOwner.address], 2);
+      const tx = transaction();
+      const approval = prepare("prepare_safe_approve_hash", { ...f, sender: owner.address, transaction: tx }) as {
+        signing_digest: string; execution_plan: { ordered_steps: { transaction: { from: string; to: string; data: string } }[] };
+      };
+      const step = approval.execution_plan.ordered_steps[0].transaction;
+      expect(step.from).toBe(owner.address.toLowerCase());
+      expect((await call(f.vm, step.to, step.data, step.from)).execResult.exceptionError).toBeUndefined();
+      expect((await call(f.vm, step.to, step.data, stranger.address)).execResult.exceptionError).toBeDefined();
+
+      const reads = prepare("prepare_safe_reads", { ...f, owner: owner.address, transaction_hash: approval.signing_digest }) as {
+        read_calls: { calls: { id: string; to: string; data: string }[] };
+      };
+      const results: Record<string, string> = {};
+      for (const read of reads.read_calls.calls) results[read.id] = await checkedCall(f.vm, read.to, read.data);
+      expect(abi.decodeFunctionResult("VERSION", results.VERSION)[0]).toBe(contracts.version);
+      expect([...abi.decodeFunctionResult("getOwners", results.getOwners)[0]]).toEqual([owner.address, secondOwner.address]);
+      expect(abi.decodeFunctionResult("getThreshold", results.getThreshold)[0]).toBe(2n);
+      expect(abi.decodeFunctionResult("nonce", results.nonce)[0]).toBe(0n);
+      expect(abi.decodeFunctionResult("isOwner", results.is_owner)[0]).toBe(true);
+      expect(abi.decodeFunctionResult("approvedHashes", results.approved_hash)[0]).toBe(1n);
+
+      // One onchain approval plus one EIP-712 signature, ordered by owner address, meets the 2-of-2 threshold.
+      const stored = await artifact(prepareSafeTransaction({ ...f, signer: secondOwner.address, transaction: tx }));
+      const signed = await signArtifact(stored.reference, stored.body, secondOwner);
+      const prevalidated = concat([AbiCoder.defaultAbiCoder().encode(["address", "uint256"], [owner.address, 0]), "0x01"]);
+      const entries = [{ signer: owner.address.toLowerCase(), entry: prevalidated }, { signer: signed.signer, entry: signed.signature }]
+        .sort((a, b) => a.signer.localeCompare(b.signer));
+      const result = await checkedCall(f.vm, f.safe, await executionData(f, tx, concat(entries.map(({ entry }) => entry))));
+      expect(AbiCoder.defaultAbiCoder().decode(["bool"], result)[0]).toBe(true);
     });
   });
 }

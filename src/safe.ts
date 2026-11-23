@@ -10,7 +10,7 @@ const hash = z.string().regex(/^0x[0-9a-fA-F]{64}$/).transform((v) => v.toLowerC
 const base = z.object({
   chain_id: uint.refine((v) => BigInt(v) > 0n),
   safe: address.refine((v) => v !== zeroAddress),
-  safe_version: z.enum(["1.3.0", "1.4.1"]).describe("Verify VERSION through the wallet before preparation"),
+  safe_version: z.enum(["1.3.0", "1.4.1", "1.5.0"]).describe("Verify VERSION through the wallet before preparation"),
 });
 const signing = base.extend({
   signer: address.refine((v) => v !== zeroAddress).describe("Safe owner account expected to sign, not the Safe itself"),
@@ -23,7 +23,11 @@ export const safeTransactionSchema = z.strictObject({
   gasToken: address, refundReceiver: address, nonce: uint,
 });
 const transactionSigning = signing.extend({ transaction: safeTransactionSchema });
-const messageSigning = signing.extend({ message: bytes.describe("Exact SafeMessage.message bytes, wrapped without additional preprocessing. To match Safe Wallet for text, supply its EIP-191 hashMessage(text); for application typed data, supply its EIP-712 digest. For ERC-1271 isValidSignature(bytes32,bytes), supply that bytes32 digest directly.") });
+const messageSigning = signing.extend({ message: bytes.describe("Exact SafeMessage.message bytes, wrapped without additional preprocessing. To match Safe Wallet for text, supply its EIP-191 hashMessage(text); for application typed data, supply its EIP-712 digest. For ERC-1271 isValidSignature(bytes32,bytes), supply that bytes32 digest directly. Safe 1.5.0 accepts only a 32-byte digest.") })
+  .refine((input) => input.safe_version !== "1.5.0" || input.message.length === 66, {
+    path: ["message"],
+    message: "Safe 1.5.0 fallback handlers verify only isValidSignature(bytes32,bytes): supply the 32-byte digest (hashMessage(text), the application EIP-712 digest, or the verifier's bytes32 hash), not raw message bytes",
+  });
 export const SAFE_ABI = parseAbi([
   "function VERSION() view returns (string)",
   "function getOwners() view returns (address[])",
@@ -40,6 +44,10 @@ export const SAFE_ABI = parseAbi([
   "function swapOwner(address prevOwner,address oldOwner,address newOwner)",
   "function changeThreshold(uint256 _threshold)",
 ]);
+// Safe 1.5.0 adds an explicit-executor overload; its legacy (bytes32,bytes,bytes) form ignores `data` and uses msg.sender.
+const SAFE_150_ABI = parseAbi(["function checkSignatures(address executor,bytes32 dataHash,bytes signatures) view"]);
+const SAFE_150_MESSAGE_NOTE = " Safe 1.5.0 fallback handlers verify only isValidSignature(bytes32,bytes) and pass executor 0, so a prevalidated (v=1) entry counts only if approved onchain.";
+const SAFE_150_EXECUTION_NOTE = " For Safe 1.5.0, check_signatures uses checkSignatures(executor,dataHash,signatures) with the sender as executor, and contract-owner entries are verified with isValidSignature(bytes32,bytes).";
 const SAFE_TX = [
   { name: "to", type: "address" }, { name: "value", type: "uint256" },
   { name: "data", type: "bytes" }, { name: "operation", type: "uint8" },
@@ -52,8 +60,8 @@ type Transaction = z.output<typeof safeTransactionSchema>;
 function transactionArgs(tx: Transaction) {
   return [tx.to, BigInt(tx.value), tx.data, Number(tx.operation), BigInt(tx.safeTxGas), BigInt(tx.baseGas), BigInt(tx.gasPrice), tx.gasToken, tx.refundReceiver] as const;
 }
-function read(id: string, safe: Address, functionName: string, args: readonly unknown[] = []) {
-  return { id, to: safe, data: encodeFunctionData({ abi: SAFE_ABI as Abi, functionName, args }), decode: functionResultDecodePlan(SAFE_ABI, functionName) };
+function read(id: string, safe: Address, functionName: string, args: readonly unknown[] = [], abi: Abi = SAFE_ABI) {
+  return { id, to: safe, data: encodeFunctionData({ abi, functionName, args }), decode: functionResultDecodePlan(abi, functionName) };
 }
 function stateReads(input: Base, owner?: Address) {
   const calls = ["VERSION", "getOwners", "getThreshold", "nonce"].map((name) => read(name, input.safe, name));
@@ -95,7 +103,7 @@ function prepareSafeMessage(raw: z.input<typeof messageSigning>) {
   const input = messageSigning.parse(raw);
   return { ...signatureRequest(input, "SafeMessage", [{ name: "message", type: "bytes" }], { message: input.message }),
     read_calls: readCallsBundle({ chainId: input.chain_id, calls: stateReads(input, input.signer) }),
-    validation: "Input bytes are wrapped exactly, without application-message hashing. Match Safe Wallet by supplying hashMessage(text) or the application EIP-712 digest; for isValidSignature(bytes32,bytes), supply that digest. Verify Safe version and owner. SafeMessage has no nonce or expiration; confirm the intended ERC-1271 verifier and fallback handler. This is an owner signature for Safe aggregation, not itself a Safe contract signature.",
+    validation: "Input bytes are wrapped exactly, without application-message hashing. Match Safe Wallet by supplying hashMessage(text) or the application EIP-712 digest; for isValidSignature(bytes32,bytes), supply that digest. Verify Safe version and owner. SafeMessage has no nonce or expiration; confirm the intended ERC-1271 verifier and fallback handler. This is an owner signature for Safe aggregation, not itself a Safe contract signature." + (input.safe_version === "1.5.0" ? SAFE_150_MESSAGE_NOTE : ""),
   };
 }
 function execution(input: Base, sender: Address, data: Hex) {
@@ -129,7 +137,9 @@ function transactionValidation(input: z.output<typeof execute>) {
     calls: [
       ...stateReads(input),
       read("transaction_hash", input.safe, "getTransactionHash", [...transactionArgs(input.transaction), BigInt(input.transaction.nonce)]),
-      read("check_signatures", input.safe, "checkSignatures", [signing_digest, preimage, input.signatures]),
+      input.safe_version === "1.5.0"
+        ? read("check_signatures", input.safe, "checkSignatures", [input.sender, signing_digest, input.signatures], SAFE_150_ABI)
+        : read("check_signatures", input.safe, "checkSignatures", [signing_digest, preimage, input.signatures]),
     ],
   }) };
 }
@@ -138,7 +148,7 @@ function prepareExecute(raw: z.input<typeof execute>) {
   return { ...execution(input, input.sender, encodeFunctionData({ abi: SAFE_ABI, functionName: "execTransaction", args: [...transactionArgs(input.transaction), input.signatures] })),
     ...transactionValidation(input),
     expected_nonce: input.transaction.nonce,
-    validation: "Execute all validation reads from the supplied sender; require VERSION to match safe_version, transaction_hash to equal signing_digest, check_signatures to succeed, and the current nonce to equal expected_nonce. checkSignatures alone does not check nonce freshness. These are wallet preconditions, not constraints embedded in the execution plan. The complete Safe-format signature bundle is preserved verbatim. Simulate and require execTransaction success=true; a mined outer receipt alone is insufficient (ExecutionFailure can consume the nonce). The preparer has not executed these reads or verified live state.",
+    validation: "Execute all validation reads from the supplied sender; require VERSION to match safe_version, transaction_hash to equal signing_digest, check_signatures to succeed, and the current nonce to equal expected_nonce. checkSignatures alone does not check nonce freshness. These are wallet preconditions, not constraints embedded in the execution plan. The complete Safe-format signature bundle is preserved verbatim. Simulate and require execTransaction success=true; a mined outer receipt alone is insufficient (ExecutionFailure can consume the nonce). The preparer has not executed these reads or verified live state." + (input.safe_version === "1.5.0" ? SAFE_150_EXECUTION_NOTE : ""),
   };
 }
 const ownerAddress = address.refine((v) => v !== zeroAddress && BigInt(v) !== 1n, "owner cannot be zero or sentinel");

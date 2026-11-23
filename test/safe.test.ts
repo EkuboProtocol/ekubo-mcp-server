@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { decodeFunctionData, encodeAbiParameters, keccak256, parseAbiParameters, stringToHex, concatHex, zeroAddress } from "viem";
+import { decodeFunctionData, encodeAbiParameters, parseAbi, keccak256, parseAbiParameters, stringToHex, concatHex, zeroAddress } from "viem";
 import { prepareSafeTransaction, safeTools, SAFE_ABI } from "../src/safe.js";
 import { referenceWalletArtifacts } from "../src/artifact-store.js";
 import type { Env } from "../src/core.js";
@@ -88,8 +88,41 @@ describe("Safe preparation", () => {
     expect(result.execution_plan).toBeUndefined();
   });
 
+  it("uses Safe 1.5.0's explicit-executor checkSignatures and keeps the legacy read for earlier versions", () => {
+    const signatures = `0x${"11".repeat(65)}`;
+    const v150 = run("prepare_safe_execution", { ...input, safe_version: "1.5.0", sender: input.signer, signatures });
+    const v141 = run("prepare_safe_execution", { ...input, sender: input.signer, signatures });
+    expect(v150.signing_digest).toBe(v141.signing_digest);
+    const read = v150.read_calls.calls.find((call: { id: string }) => call.id === "check_signatures");
+    const abi = parseAbi(["function checkSignatures(address executor,bytes32 dataHash,bytes signatures) view"]);
+    expect(decodeFunctionData({ abi, data: read.data }).args as readonly string[]).toEqual([input.signer, v150.signing_digest, signatures]);
+    expect(read.decode.function_name).toBe("checkSignatures");
+    expect(v150.validation).toContain("checkSignatures(executor,dataHash,signatures)");
+    expect(v141.validation).not.toContain("1.5.0");
+    for (const version of ["1.3.0", "1.4.1"] as const) {
+      const legacy = run("prepare_safe_execution", { ...input, safe_version: version, sender: input.signer, signatures });
+      const legacyRead = legacy.read_calls.calls.find((call: { id: string }) => call.id === "check_signatures");
+      expect(decodeFunctionData({ abi: SAFE_ABI, data: legacyRead.data }).args[0]).toBe(legacy.signing_digest);
+    }
+  });
+
+  it("requires a 32-byte SafeMessage digest only for Safe 1.5.0", () => {
+    const digest = `0x${"ab".repeat(32)}`;
+    expect(() => run("prepare_safe_message_signature", { ...input, safe_version: "1.5.0", message: "0xabcd" })).toThrow("32-byte digest");
+    const v150 = run("prepare_safe_message_signature", { ...input, safe_version: "1.5.0", message: digest });
+    const v141 = run("prepare_safe_message_signature", { ...input, message: digest });
+    expect(v150.signing_digest).toBe(v141.signing_digest);
+    expect(v150.validation).toContain("isValidSignature(bytes32,bytes)");
+    expect(v141.validation).not.toContain("1.5.0");
+    for (const version of ["1.3.0", "1.4.1"] as const) {
+      expect(() => run("prepare_safe_message_signature", { ...input, safe_version: version, message: "0xabcd" })).not.toThrow();
+    }
+  });
+
   it("rejects unsupported versions, noncanonical integers, overflow and malformed bytes", () => {
-    expect(() => prepareSafeTransaction({ ...input, safe_version: "1.1.1" as any })).toThrow();
+    for (const safe_version of ["1.1.1", "1.4.0", "1.5", "1.6.0"]) {
+      expect(() => prepareSafeTransaction({ ...input, safe_version: safe_version as any })).toThrow();
+    }
     for (const nonce of ["01", "-1", (2n ** 256n).toString()]) {
       expect(() => prepareSafeTransaction({ ...input, transaction: { ...input.transaction, nonce } })).toThrow();
     }

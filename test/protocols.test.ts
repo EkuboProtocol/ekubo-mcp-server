@@ -482,6 +482,33 @@ describe("Safe endpoint isolation and handoff", () => {
   });
 });
 
+describe("Safe 1.5.0 through the MCP boundary", () => {
+  const args = { chain_id: "1", safe: "0x251b5afac28c2c5644496a0d36a91b82e6c65b4f", signer: "0x2222222222222222222222222222222222222222", safe_version: "1.5.0" };
+
+  it("lists 1.5.0 in every Safe tool schema and the server instructions", async () => {
+    const list = await mcpCall("/mcp/safe", "tools/list", 120, {}) as any;
+    const tools = list.result.tools.filter((tool: { name: string }) => tool.name.startsWith("prepare_safe_"));
+    expect(tools.length).toBe(6);
+    for (const tool of tools) expect(tool.inputSchema.properties.safe_version.enum).toEqual(["1.3.0", "1.4.1", "1.5.0"]);
+    const init = await mcpCall("/mcp/safe", "initialize", 121, { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } }) as any;
+    expect(init.result.instructions).toContain("Supported Safe versions are 1.3.0, 1.4.1 and 1.5.0.");
+  });
+
+  it("prepares 1.5.0 reads and signature requests and names the message argument for raw bytes", async () => {
+    const reads = await mcpCall("/mcp/safe", "tools/call", 122, { name: "prepare_safe_reads", arguments: { chain_id: args.chain_id, safe: args.safe, safe_version: "1.5.0" } }) as any;
+    expect(reads.result.isError).not.toBe(true);
+    expect(reads.result.structuredContent.read_calls_reference.artifact_type).toBe("read_calls");
+    const transaction = { to: args.safe, value: "0", data: "0x", operation: "0", safeTxGas: "0", baseGas: "0", gasPrice: "0", gasToken: "0x0000000000000000000000000000000000000000", refundReceiver: "0x0000000000000000000000000000000000000000", nonce: "0" };
+    const tx = await mcpCall("/mcp/safe", "tools/call", 123, { name: "prepare_safe_transaction_signature", arguments: { ...args, transaction } }) as any;
+    expect(tx.result.isError).not.toBe(true);
+    expect(tx.result.structuredContent.typed_data_signature_request_reference.artifact_type).toBe("typed_data_signature_request");
+    const raw = await mcpCall("/mcp/safe", "tools/call", 124, { name: "prepare_safe_message_signature", arguments: { ...args, message: "0x1234" } }) as any;
+    expect(raw.error !== undefined || raw.result?.isError === true).toBe(true);
+    expect(JSON.stringify(raw)).toContain("message");
+    expect(JSON.stringify(raw)).toContain("32-byte digest");
+  });
+});
+
 describe("Protocol facets of /mcp", () => {
   const facet = (slugs: string) => `/mcp?protocols=${slugs}`;
 
