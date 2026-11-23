@@ -1012,6 +1012,32 @@ describe("normalized quote gas estimates", () => {
   });
 });
 
+describe("token multiplier metadata through MCP", () => {
+  it("documents raw-token units and the on-chain multiplier reads in tools/list", async () => {
+    const tools = await listTools("/mcp/ekubo");
+    const getToken = tools.find((tool) => tool.name === "get_token")!;
+    expect(getToken.description).toContain("per raw token");
+    expect(getToken.description).toContain("usd_price ÷ multiplier");
+    expect(getToken.description).toContain("uiMultiplier()");
+    expect(getToken.outputSchema?.properties.token.properties.multiplier.type).toBe("string");
+    const fix = (await listTools("/mcp/ekubo-advanced")).find((tool) => tool.name === "prepare_fix_pool_price")!;
+    expect(fix.inputSchema.properties.target_price.description).toContain("per whole raw base token");
+    expect(fix.inputSchema.properties.target_price.description).toContain("multiplier not applied");
+  });
+
+  it("returns the upstream multiplier unchanged and defaults a missing one to 1", async () => {
+    mockUpstream(() =>
+      Response.json({ chain_id: "0x1237", address: NATIVE, symbol: "SNDK", decimals: 18, multiplier: "8", usd_price: 724.12 }),
+    );
+    const split = await callTool("/mcp/ekubo", "get_token", { chain_id: "4663", address: NATIVE });
+    expect(split.structuredContent!.token).toMatchObject({ multiplier: "8", usd_price: 724.12 });
+
+    mockUpstream(() => Response.json({ chain_id: "0x1", address: NATIVE, symbol: "ETH", decimals: 18 }));
+    const plain = await callTool("/mcp/ekubo", "get_token", { chain_id: "1", address: NATIVE });
+    expect(plain.structuredContent!.token).toMatchObject({ multiplier: "1" });
+  });
+});
+
 describe("upstream failures are structured and recoverable", () => {
   const tokenArgs = { chain_id: "1", address: NATIVE };
 

@@ -47,6 +47,10 @@ instructions budget grew by 550 characters (about 115 tokens) for the opening
 scope sentence, after agents read the handoff rules as a ban on the user's own
 cast/sncast work outside this server. Restrictive rules in this text are scoped
 to this server's tools and plans; do not write one as a blanket prohibition.
+Another: the `/mcp/ekubo` tools budget grew by 500 characters (about 85 tokens) so
+`get_token` and the token output schemas can say that amounts and `usd_price` are per
+raw token and how `multiplier` converts them to shares; without it an agent quotes a
+stock-split token's price or amount wrong by the split ratio.
 
 ## How the catalog is kept small
 

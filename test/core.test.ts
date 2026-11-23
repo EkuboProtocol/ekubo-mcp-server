@@ -83,9 +83,34 @@ describe("MCP service core", () => {
       `https://api.test/tokens/batch?id=1%3A${token0}&id=4663%3A${token1}`,
     );
     expect(result).toEqual([
-      { ...upstreamTokens[0], chain_id: "1" },
-      { ...upstreamTokens[1], chain_id: "4663" },
+      { ...upstreamTokens[0], chain_id: "1", multiplier: "1" },
+      { ...upstreamTokens[1], chain_id: "4663", multiplier: "1" },
     ]);
+  });
+
+  it("passes the token multiplier through unchanged and defaults it to 1", async () => {
+    const upstreamTokens = [
+      { chain_id: "0x1237", address: token1, symbol: "SNDK", decimals: 18, multiplier: "8", usd_price: 724.12 },
+      { chain_id: "0x1237", address: token0, symbol: "SOXX", decimals: 18, multiplier: "3.00135251463127788" },
+      { chain_id: "0x1", address: token0, symbol: "USDC", decimals: 6, multiplier: null },
+    ];
+    const fetcher = async (_input: RequestInfo | URL) => Response.json(upstreamTokens);
+
+    const result = await getTokens(
+      env,
+      {
+        tokens: [
+          { chainId: "4663", address: token1 },
+          { chainId: "4663", address: token0 },
+          { chainId: "1", address: token0 },
+        ],
+      },
+      fetcher as typeof fetch,
+    );
+
+    // Raw units: neither the price nor any amount is rescaled.
+    expect(result.map((token) => token.multiplier)).toEqual(["8", "3.00135251463127788", "1"]);
+    expect(result[0]!.usd_price).toBe(724.12);
   });
 
   it("rejects a malformed batch token response", async () => {
