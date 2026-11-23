@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { fakeArtifactStore } from "./fake-r2.js";
 import worker from "../src/index.js";
+import openapi from "../openapi.json";
 import { hostedToolCatalog, publicToolCatalog, serverInstructions } from "../src/server.js";
 import {
   ALL_PROTOCOLS,
@@ -550,6 +551,64 @@ describe("Protocol facets of /mcp", () => {
       );
       expect(response.status).toBe(400);
       expect(((await response.json()) as { error: { code: string } }).error.code).toBe("unknown_protocol");
+    }
+  });
+
+  it("rejects safe in protocols= with an error naming the separate /mcp/safe server", async () => {
+    for (const query of ["ekubo+ekubo-advanced+safe", "safe", "safe+ekubo", "ekubo,safe"]) {
+      const response = await worker.fetch(
+        new Request(`https://mcp.ekubo.org${facet(query)}`, {
+          method: "POST",
+          headers: mcpHeaders,
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+        }),
+        env,
+        context,
+      );
+      expect(response.status).toBe(400);
+      const { error } = (await response.json()) as { error: { code: string; message: string } };
+      expect(error.code).toBe("unknown_protocol");
+      expect(error.message).toBe(
+        "Safe cannot go in protocols=. Connect it as a separate MCP server at https://mcp.ekubo.org/mcp/safe and keep this connection without it.",
+      );
+    }
+    const tools = await worker.fetch(new Request("https://mcp.ekubo.org/tools?protocols=ekubo+safe"), env, context);
+    expect(tools.status).toBe(404);
+    expect(((await tools.json()) as { error: { message: string } }).error.message).toContain(
+      "https://mcp.ekubo.org/mcp/safe",
+    );
+  });
+
+  it("never offers safe as a protocols= value", async () => {
+    for (const slugs of [["ekubo", "ekubo-advanced"], ["ekubo", "uniswap"], ["aave", "lido"]]) {
+      const { instructions } = await serverInfo(facet(slugs.join("+")));
+      expect(instructions).toContain(
+        "Safe cannot go in protocols=; connect https://mcp.ekubo.org/mcp/safe as a separate MCP server.",
+      );
+      expect(instructions).not.toContain("add its slug to protocols= or connect https://mcp.ekubo.org/mcp/<protocol>;");
+    }
+    const root = (await (await worker.fetch(new Request("https://mcp.ekubo.org/"), env, context)).json()) as {
+      mcp_endpoints: { all: { protocols: string[] }; combined: { slugs: string[]; example: string; note: string } };
+    };
+    expect(root.mcp_endpoints.all.protocols).not.toContain("safe");
+    expect(root.mcp_endpoints.combined.slugs).toEqual(PROTOCOL_SLUGS.filter((slug) => slug !== "safe"));
+    expect(root.mcp_endpoints.combined.example).not.toContain("safe");
+    expect(root.mcp_endpoints.combined.note).toContain("Safe is not a protocols= value");
+    const llms = await (await worker.fetch(new Request("https://mcp.ekubo.org/llms.txt"), env, context)).text();
+    const combined = llms.split("\n").find((line) => line.startsWith("Combined endpoint:"))!;
+    expect(combined).toContain(`Allowed slugs, in this order: ${[...ALL_PROTOCOLS].join(", ")}.`);
+    expect(combined).toContain("Safe is not a protocols= value: connect https://mcp.ekubo.org/mcp/safe");
+    const parameters = [
+      ...(openapi.paths["/mcp"] as { parameters: { name: string; schema: { pattern: string } }[] }).parameters,
+      ...(openapi.paths["/tools"].get.parameters as { name: string; schema: { pattern?: string } }[]),
+    ].filter((parameter) => parameter.name === "protocols");
+    expect(parameters).toHaveLength(2);
+    for (const parameter of parameters) {
+      const pattern = new RegExp(parameter.schema.pattern!);
+      expect(pattern.test([...ALL_PROTOCOLS].join(" "))).toBe(true);
+      expect(pattern.test("ekubo ekubo-advanced")).toBe(true);
+      expect(pattern.test("ekubo ekubo-advanced safe")).toBe(false);
+      expect(pattern.test("safe")).toBe(false);
     }
   });
 

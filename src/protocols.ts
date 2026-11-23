@@ -275,7 +275,19 @@ export type FacetSelection =
   | { readonly protocols: ReadonlySet<ProtocolSlug> }
   | { readonly error: string };
 
-export function parseProtocolFacet(query: URLSearchParams): FacetSelection | null {
+/**
+ * Safe is never a `protocols=` value: it is served only at `/mcp/safe`, as a
+ * separate MCP server. Every text that explains `protocols=` must say so
+ * rather than invite "add its slug".
+ */
+export function safeFacetError(origin = ""): string {
+  return `Safe cannot go in ${FACET_QUERY_PARAMETER}=. Connect it as a separate MCP server at ${origin}${protocolMcpPath("safe")} and keep this connection without it.`;
+}
+
+export function parseProtocolFacet(
+  query: URLSearchParams,
+  origin = "",
+): FacetSelection | null {
   if (!query.has(FACET_QUERY_PARAMETER)) return null;
   const names = query
     .getAll(FACET_QUERY_PARAMETER)
@@ -291,7 +303,7 @@ export function parseProtocolFacet(query: URLSearchParams): FacetSelection | nul
   const protocols = new Set<ProtocolSlug>();
   for (const name of names) {
     if (name === "safe") {
-      return { error: "Safe is served only at /mcp/safe and cannot be combined with other protocols." };
+      return { error: safeFacetError(origin) };
     }
     const protocol = protocolBySlug(name);
     if (protocol === undefined) {
@@ -305,12 +317,13 @@ export function parseProtocolFacet(query: URLSearchParams): FacetSelection | nul
 export function matchMcpRoute(
   pathname: string,
   query: URLSearchParams = new URLSearchParams(),
+  origin = "",
 ):
   | { route: string; protocols: ReadonlySet<ProtocolSlug> }
   | { route: string; error: string }
   | null {
   if (pathname === ALL_PROTOCOLS_MCP_PATH) {
-    const facet = parseProtocolFacet(query);
+    const facet = parseProtocolFacet(query, origin);
     if (facet === null) {
       return { route: ALL_PROTOCOLS_MCP_PATH, protocols: ALL_PROTOCOLS };
     }

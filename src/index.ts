@@ -46,7 +46,7 @@ export default {
       if (rejection !== null) return rateLimited(rejection, null);
     }
 
-    const mcpRoute = matchMcpRoute(url.pathname, url.searchParams);
+    const mcpRoute = matchMcpRoute(url.pathname, url.searchParams, url.origin);
     if (mcpRoute !== null && "error" in mcpRoute) {
       return json({ error: { code: "unknown_protocol", message: mcpRoute.error } }, 400, {
         "cache-control": "no-store",
@@ -175,13 +175,14 @@ export default {
                 url: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}`,
                 protocols: [...ALL_PROTOCOLS],
                 tool_count: publicToolCatalog.length,
-                note: "Bundled protocols. Safe is available only at /mcp/safe.",
+                note: `Bundled protocols. Safe is not bundled: connect ${url.origin}${protocolMcpPath("safe")} as a separate MCP server.`,
               },
               combined: {
                 url_template: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}?protocols=<slug>+<slug>`,
+                slugs: canonicalProtocols(ALL_PROTOCOLS),
                 example: facetMcpUrl(url.origin, new Set(["ekubo", "ekubo-advanced"])),
                 tools_url_template: `${url.origin}/tools?protocols=<slug>+<slug>`,
-                note: "Union of the named protocols' tools and resources, with shared instructions stated once. Write slugs in by_protocol order. Safe cannot be combined.",
+                note: `Union of the named protocols' tools and resources, with shared instructions stated once. Use only the slugs listed here, in this order. Safe is not a protocols= value: connect ${url.origin}${protocolMcpPath("safe")} as a separate MCP server.`,
               },
               by_protocol: PROTOCOLS.map((protocol) => ({
                 protocol: protocol.slug,
@@ -411,7 +412,7 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 async function toolsDocument(url: URL) {
-  const selection = toolsSelection(url.searchParams);
+  const selection = toolsSelection(url.searchParams, url.origin);
   if ("error" in selection) {
     return json({ error: { code: "unknown_protocol", message: selection.error } }, 404);
   }
@@ -443,7 +444,7 @@ async function toolsDocument(url: URL) {
   );
 }
 
-function toolsSelection(query: URLSearchParams):
+function toolsSelection(query: URLSearchParams, origin: string):
   | { protocols: ReadonlySet<ProtocolSlug>; label: Record<string, unknown> }
   | { error: string } {
   const requested = query.get("protocol");
@@ -456,7 +457,7 @@ function toolsSelection(query: URLSearchParams):
     }
     return { protocols: new Set([protocol.slug]), label: { protocol: protocol.slug } };
   }
-  const facet = parseProtocolFacet(query);
+  const facet = parseProtocolFacet(query, origin);
   if (facet === null) return { protocols: ALL_PROTOCOLS, label: {} };
   if ("error" in facet) return facet;
   return { protocols: facet.protocols, label: { protocols: canonicalProtocols(facet.protocols) } };
@@ -708,7 +709,7 @@ ${PROTOCOLS.map(
   (protocol) =>
     `- ${protocol.slug}: ${origin}${protocolMcpPath(protocol.slug)} (${protocol.tools.length} tools, catalog at ${origin}/tools?protocol=${protocol.slug})`,
 ).join("\n")}
-Combined endpoint: ${origin}${ALL_PROTOCOLS_MCP_PATH}?protocols=<slug>+<slug> serves several protocols on one connection, with shared instructions stated once (catalog at ${origin}/tools?protocols=<slug>+<slug>). Write slugs in the order listed above; Safe cannot be combined.
+Combined endpoint: ${origin}${ALL_PROTOCOLS_MCP_PATH}?protocols=<slug>+<slug> serves several protocols on one connection, with shared instructions stated once (catalog at ${origin}/tools?protocols=<slug>+<slug>). Allowed slugs, in this order: ${canonicalProtocols(ALL_PROTOCOLS).join(", ")}. Safe is not a protocols= value: connect ${origin}${protocolMcpPath("safe")} as a separate MCP server.
 OpenAPI: ${origin}/openapi.json
 Canonical data API OpenAPI: https://prod-api.ekubo.org/openapi.json
 Aggregated quote resource: ekubo://docs/quoter-api
