@@ -79,8 +79,10 @@ may be separated by `+`, `,` or repeated parameters and appear in any order, but
 treats every distinct URL as a separate server with its own cached catalog, so
 one selection should have one URL. A facet naming every bundled protocol is
 `/mcp`, and one naming a single protocol is `/mcp/<slug>`. An unknown slug, an
-empty list or `safe` gets HTTP 400 before any MCP handling; Safe stays
-standalone.
+empty list or `safe` gets HTTP 400 before any MCP handling. `safe` is never a
+`protocols=` value: its error, the endpoint-scope paragraph, `/`, `/llms.txt`
+and `openapi.json` all say to connect `/mcp/safe` as a separate MCP server, and
+`test/protocols.test.ts` checks each of them.
 
 Filtering happens at the two registration choke points in `createEkuboServer`
 rather than at the call sites, and the instructions are composed from

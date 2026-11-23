@@ -4753,7 +4753,7 @@ function endpointScopeSection(
       protocols.has("ekubo") && !protocols.has("ekubo-advanced")
         ? ` Auctions, TWAMM orders, pool initialization or price fixes, oracle capacity, manual boosts, revenue buybacks, approval revocations, and pool-key enumeration and derivation are in ekubo-advanced.`
         : "";
-    return `Endpoint scope: ${facetMcpUrl(origin, protocols)} serves exactly ${joinList(titles, "and")}.${advanced} For another protocol, add its slug to protocols= or connect ${origin}/mcp/<protocol>; Safe is only at ${origin}${protocolMcpPath("safe")}. For a tool named above but not listed, tell the user which protocol to add rather than improvising its call.`;
+    return `Endpoint scope: ${facetMcpUrl(origin, protocols)} serves exactly ${joinList(titles, "and")}.${advanced} For another bundled protocol, add its slug to protocols= or connect ${origin}/mcp/<protocol>. Safe cannot go in protocols=; connect ${origin}${protocolMcpPath("safe")} as a separate MCP server. For a tool named above but not listed, tell the user which protocol to add rather than improvising its call.`;
   }
   const only = protocolBySlug([...protocols][0] as string);
   if (only === undefined) return null;
