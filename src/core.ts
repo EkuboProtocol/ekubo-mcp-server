@@ -375,8 +375,10 @@ export async function listTokens(
     "minVisibilityPriority",
     input.minVisibilityPriority.toString(),
   );
-  const tokens = normalizeResponseChainIds(
-    await fetchJson<Record<string, unknown>[]>(url.toString(), fetcher),
+  const tokens = withTokenMultipliers(
+    normalizeResponseChainIds(
+      await fetchJson<Record<string, unknown>[]>(url.toString(), fetcher),
+    ),
   );
   const normalizedQuery = input.search?.trim().toLowerCase() ?? "";
   return [...tokens].sort((left, right) => {
@@ -430,8 +432,10 @@ export async function getToken(
     `/tokens/${encodeURIComponent(input.chainId)}/${encodeURIComponent(input.address)}`,
     normalizedBase(env.EKUBO_API_URL),
   );
-  return normalizeResponseChainIds(
-    await fetchJson<Record<string, unknown>>(url.toString(), fetcher),
+  return withTokenMultiplier(
+    normalizeResponseChainIds(
+      await fetchJson<Record<string, unknown>>(url.toString(), fetcher),
+    ),
   );
 }
 
@@ -451,7 +455,30 @@ export async function getTokens(
       "Batch token response must be an array of objects",
     );
   }
-  return normalizeResponseChainIds(tokens);
+  return withTokenMultipliers(normalizeResponseChainIds(tokens));
+}
+
+/** Display scale for tokens with no on-chain UI multiplier. */
+export const DEFAULT_TOKEN_MULTIPLIER = "1";
+
+/** How agents turn raw token amounts and prices into share units. */
+export const TOKEN_MULTIPLIER_NOTE =
+  "Amount ÷ 10^decimals is in raw-token units and usd_price is per raw token. multiplier (exact decimal string, default \"1\") is the display scale, e.g. shares after a stock split or dividend: share units = raw-token units × multiplier; per-share price = usd_price ÷ multiplier. It is cached display metadata and this server never applies it, so before acting on a share price read uiMultiplier(), newUIMultiplier() and effectiveAt() on the token yourself (18-decimal values; newUIMultiplier applies from effectiveAt).";
+
+/**
+ * Pass the API's `multiplier` through unchanged and fill the documented
+ * default when an upstream token object omits it. The server never applies it:
+ * amounts and prices stay per raw token.
+ */
+function withTokenMultiplier<T>(token: T): T {
+  if (!isRecord(token) || (token.multiplier !== undefined && token.multiplier !== null)) {
+    return token;
+  }
+  return { ...token, multiplier: DEFAULT_TOKEN_MULTIPLIER } as T;
+}
+
+function withTokenMultipliers<T>(tokens: T[]): T[] {
+  return Array.isArray(tokens) ? tokens.map(withTokenMultiplier) : tokens;
 }
 
 export async function getOwnedVe33Tokens(

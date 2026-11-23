@@ -42,6 +42,7 @@ import {
   prepareSwap,
   type QuoteSource,
   ServiceError,
+  TOKEN_MULTIPLIER_NOTE,
   tokenListEntries,
 } from "./core.js";
 import {
@@ -870,6 +871,9 @@ export const prepareFixPoolPriceSchema = z.object({
     .regex(
       /^(?:(?:0|[1-9][0-9]*)(?:\.[0-9]+)?|\.[0-9]+)$/,
       "must be a decimal price",
+    )
+    .describe(
+      "Quote per whole raw base token (decimals only, multiplier not applied); convert a share price first: × base ÷ quote multiplier",
     ),
   pending_current_sqrt_ratio: uintString.optional(),
   quote_result: z
@@ -2018,7 +2022,7 @@ export const publicToolCatalog = [
     name: "get_token",
     title: "Get an Ekubo token",
     description:
-      "Fetch canonical token metadata for an exact chain and address.",
+      "Fetch canonical token metadata for an exact chain and address. Amounts and usd_price are per raw token; multiplier is cached share scale (shares = raw × multiplier, share price = usd_price ÷ multiplier). Read uiMultiplier(), newUIMultiplier(), effectiveAt() on-chain before acting.",
     inputSchema: z.toJSONSchema(getTokenSchema),
   },
   {
@@ -4775,7 +4779,7 @@ const SERVER_INSTRUCTIONS = serverInstructions(ALL_PROTOCOLS);
 const AGENT_WORKFLOW = `# Safe Ekubo swap and bridge workflow
 
 1. Search the token list when resolving a name or symbol. For exact identifiers, use get_token for one chain/address pair or get_tokens for up to 1,000 pairs in one batch. Show the chosen chains and addresses to the user.
-2. Convert the user amount to base units without floating-point arithmetic.
+2. Convert the user amount to base units without floating-point arithmetic. Tools take raw-token amounts: for a token with multiplier other than "1", a share amount is raw-token units × multiplier, so divide a share amount by the on-chain multiplier before scaling by 10^decimals.
 3. Set destination_chain_id explicitly for a bridge. Raw addresses and eip155:<chain>:<address> token IDs are accepted.
 4. Request an exact-input or exact-output quote. For plans pass sender and exactly one of whole slippage_bps or exact-input max_output_loss in output-token base units; omit all three for indicative quotes. Honor explicit initial/revised numeric tolerance exactly. A gas-sized budget is an optional heuristic when the user has not specified a bound, not a server default: convert to output base units rounding down for max_output_loss, or use whole bps approximately 10,000 * gas value / notional. Represent a positive sub-bps budget with max_output_loss rather than silently changing it to 0 or 1 bps. The tool supplies no tolerance default. Ekubo subtracts the absolute budget exactly. 0x floors it to whole ppm using a baseline quote, requests new provider calldata, and verifies final minBuyAmount; below-1-ppm positive budgets fail explicitly. Cross-chain absolute budgets are unsupported. Inspect every quote; the tool does not select a source. Compare amount_out plus native_fee. Track LayerZero delivery by provider_quote_id and origin transaction hash, LI.FI by origin transaction hash and origin_chain_id, using get_value_transfer_status until settled. unavailable_sources lists provider failures; execution_unavailable lists plan failures.
 5. Each option already includes execution.execution_plan_reference. Re-quoting is supported and creates new terms; it is required after expiry, revert or changed inputs. Any replacement requires its own validation, simulation and authorization.
@@ -4795,7 +4799,7 @@ For a detail view, call \`get_position\` with the owner, chain, positions manage
 - NFT metadata, including its salt and mint transaction;
 - position history events used for fee/reward APR;
 - active incentive campaigns and indexed earned rewards;
-- pool, reward, and STONX token metadata with \`decimals\` and \`usd_price\`;
+- pool, reward, and STONX token metadata with \`decimals\`, \`multiplier\` and \`usd_price\`;
 - the pending onchain state query used by the interface.
 
 ## Execute the current-state query
@@ -4826,7 +4830,9 @@ TWAMM positions prepend \`lockAndExecuteVirtualOrders\`. Ve33 positions prepend 
 
 ## USD values and historical APR
 
-For each raw amount, divide by \`10^token.decimals\`, multiply by the matching \`token.usd_price\`, and sum token0 and token1. Current principal USD uses \`principal0\` and \`principal1\`; current fee USD uses \`fees0\` and \`fees1\`. Missing prices make USD values unavailable.
+For each raw amount, divide by \`10^token.decimals\`, multiply by the matching \`token.usd_price\`, and sum token0 and token1. Current principal USD uses \`principal0\` and \`principal1\`; current fee USD uses \`fees0\` and \`fees1\`. Missing prices make USD values unavailable. USD totals are the same in raw-token and share units.
+
+${TOKEN_MULTIPLIER_NOTE}
 
 To reproduce all-time APR, find the latest \`update\` event in \`position_history\` and replay \`current_state_query.aggregate_call\` (its to/data are kept inline by \`get_position\` for exactly this purpose) at event block + 1. For 1-day or 7-day APR, resolve the block closest to pending timestamp minus the interval, then replay at that block. Reuse the identical aggregate \`to\` and \`data\`; replace only the executed JSON-RPC block parameter with a hexadecimal block quantity. Decode locally and retain each historical raw result. Add any \`collect_fees\` amounts (or \`claim_rewards\` for Ve33) since the start snapshot, value them using the current token prices as the interface does, divide earnings by current principal USD, and annualize by elapsed seconds. Do not report APR when liquidity changed between snapshots or required price/history data is unavailable.
 

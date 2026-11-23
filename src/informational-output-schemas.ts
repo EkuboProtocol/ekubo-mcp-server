@@ -4,7 +4,10 @@ import { z } from "zod";
 // Never infer a complete upstream contract from a single response sample.
 const record = z.record(z.string(), z.unknown());
 const uint = z.string().regex(/^(0|[1-9][0-9]*)$/);
-const token = z.looseObject({ chain_id: z.string().optional() });
+const token = z.looseObject({
+  chain_id: z.string().optional(),
+  multiplier: z.string().optional(),
+});
 const tokens = z.looseObject({ tokens: z.array(token) });
 const deployment = {
   protocol: z.string(),

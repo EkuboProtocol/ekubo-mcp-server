@@ -24,7 +24,7 @@ import {
   poolKeyIndexContract,
   positionsV3Address,
 } from "./contracts.js";
-import { type Env, getTokens, ServiceError } from "./core.js";
+import { type Env, getTokens, ServiceError, TOKEN_MULTIPLIER_NOTE } from "./core.js";
 import {
   buildPositionStateReadPlan,
   type IndexedPosition,
@@ -256,7 +256,7 @@ export async function getPositionsByOwner(
     },
     tokens,
     token_metadata_note:
-      "Canonical token metadata and current USD prices used by the Ekubo interface. Join by canonical chain_id and numeric address; usd_price may be null.",
+      `Canonical token metadata and current USD prices used by the Ekubo interface. Join by canonical chain_id and numeric address; usd_price may be null. ${TOKEN_MULTIPLIER_NOTE}`,
     current_state_note:
       "Indexed liquidity and pool_state are discovery snapshots. For fresh pending state, pass each current_state_reads entry's read_calls_reference unchanged as wallet_batch_eth_call's reference argument, as a variable from this result in the same code block (const ref = result.current_state_reads[0].read_calls_reference; reference: ref), never retyping url, bytes or integrity. Each position's current_state.state_call_id is the join key to results[].id in the wallet's response; require every inner call to succeed, retain raw return data, and compare the decoded owner with expected_owner before using pending principal, fees or Ve33 rewards.",
     pagination: response.pagination,
