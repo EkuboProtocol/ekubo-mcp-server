@@ -6,6 +6,7 @@ import {
 } from "./mcp-catalog.js";
 import { uniswapTools, uniswapCatalog } from "./uniswap/tools.js";
 import { safeTools, safeCatalog } from "./safe.js";
+import { xIdentityHandlers, xIdentityTools } from "./x-identity.js";
 import { informationalOutputSchemas } from "./informational-output-schemas.js";
 import {
   McpServer,
@@ -2719,6 +2720,26 @@ export function createEkuboServer(
       };
     });
   }) as typeof server.registerTool;
+
+  // Wallet to X links stay off the shared catalog until the feature launches:
+  // listed only where EKUBO_IDENTITY_API_URL is set and the endpoint serves
+  // the ekubo protocol.
+  if (env.EKUBO_IDENTITY_API_URL && protocols.has("ekubo")) {
+    for (const tool of xIdentityTools) {
+      const config = {
+        title: tool.title,
+        description: tool.description,
+        inputSchema: tool.schema,
+        annotations: tool.annotations,
+      };
+      listedTools.set(tool.name, config as unknown as RegisteredToolConfig);
+      registerWithPlanReferences(tool.name, config, async (input: unknown) =>
+        toolResult(() =>
+          xIdentityHandlers[tool.name](env, tool.schema.parse(input) as never),
+        ),
+      );
+    }
+  }
 
   // The same filter for resources, at the same kind of choke point. A
   // `/mcp/sky` client must not be offered ekubo://skills/use-morpho or the

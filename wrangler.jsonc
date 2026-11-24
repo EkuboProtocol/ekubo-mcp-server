@@ -54,7 +54,11 @@
     // rather than set in the dashboard because a variable added there lands
     // on a new version that a deploy does not necessarily promote, so the
     // running code can silently keep quoting without it.
-    "LI_FI_INTEGRATOR": "ekubo-wallet"
+    "LI_FI_INTEGRATOR": "ekubo-wallet",
+    // Base URL of the API serving /v1/identity (wallet to X links). Empty
+    // keeps start_x_link, get_x_link, complete_x_link and lookup_x_identities
+    // out of the catalog; set it when the feature launches (EKU-3113).
+    "EKUBO_IDENTITY_API_URL": ""
   },
   "r2_buckets": [
     {
