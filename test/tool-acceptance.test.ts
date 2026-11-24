@@ -19,7 +19,6 @@ const env = {
   ACROSS_INTEGRATOR_ID: "unused",
   LAYER_ZERO_API_KEY: "unused",
   LI_FI_API_KEY: "unused",
-  DUNE_API_KEY: "unused",
   ALLOWED_ORIGINS: "https://client.test",
 };
 const context = {} as ExecutionContext;
@@ -92,14 +91,13 @@ describe("factual guidance contracts", () => {
     const tools = await listTools("/mcp");
     const tool = (name: string) => tools.find((entry) => entry.name === name)!;
     expect(tool("list_tokens").description).toContain("not a choice on the user's behalf");
-    expect(tool("get_stonx_allocation_recommendation").description).toContain("default preserves existing locks");
-    expect(tool("get_stonx_allocation_recommendation").description).not.toContain("strategy=compact_max_lock");
+    expect(tools.some((entry) => entry.name === "get_stonx_allocation_recommendation")).toBe(false);
     expect(tool("prepare_ve33_stake").description).toContain("explicit shorter duration");
     expect(tool("prepare_ve33_claim_fees").description).not.toContain("always safe");
     expect(tool("get_quotes_with_plans").inputSchema.properties.slippage_bps.description).toContain("no server default");
     for (const [uri, phrases] of [
       ["ekubo://docs/agent-workflow", ["Re-quoting is supported", "checks are optional", "Re-simulation is supported", "not a server default"]],
-      ["ekubo://docs/ve33-workflow", ["defaults to preserve_existing_locks", "User-selected targets are also supported"]],
+      ["ekubo://docs/ve33-workflow", ["defaults to preserve_existing_locks", "Targets are user-selected"]],
       ["ekubo://docs/execution-plan", ["Reconcile uncertain broadcasts", "new simulation", "integrity"]],
     ] as const) {
       const result = await rpc("/mcp", "resources/read", { uri });

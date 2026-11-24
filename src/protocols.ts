@@ -40,7 +40,6 @@ const EKUBO_TOOLS = [
   "prepare_ve33_claim_all_fees",
   "prepare_ve33_clear_vote",
   "get_ve33_allocations",
-  "get_stonx_allocation_recommendation",
   "prepare_ve33_reallocation",
   "get_positions_by_owner",
   "get_pool",

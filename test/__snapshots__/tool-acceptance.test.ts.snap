@@ -3,12 +3,12 @@
 exports[`Google Connected Apps wire contract pins registration-relevant tools and instructions for each Ekubo facet 1`] = `
 {
   "/mcp/ekubo": {
-    "count": 34,
-    "sha256": "b3537b74b9c2ee88abaca8b0ccbe9bfea56be865a646b8dcaf29ff52ef5b1327",
+    "count": 33,
+    "sha256": "36cd3a880b80a353a9536246f989b3a25373ee6b616171e8569d44c96c99a9f5",
   },
   "/mcp/ekubo-advanced": {
     "count": 16,
-    "sha256": "b73c0ff49ab0474169c19dd772fbeeaa46e9bd7e04a6a76c1d369b389bafa65b",
+    "sha256": "872167526e9bddcf6866ea357630c4102c147bcfc4ca7a77bfce8ffa5c69207a",
   },
 }
 `;

@@ -30,7 +30,6 @@ function envFor(overrides: Partial<Env> = {}): Env {
     LAYER_ZERO_API_KEY: "",
     LI_FI_API_KEY: "lifi-test-key",
     LI_FI_API_URL: "https://lifi.test/v1",
-    DUNE_API_KEY: "unused",
   } as Env & typeof overrides;
 }
 

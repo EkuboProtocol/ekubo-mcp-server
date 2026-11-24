@@ -28,7 +28,7 @@ const store = fakeArtifactStore();
 const env = {
   ARTIFACT_STORE: store, EKUBO_API_URL: "https://api.test", EKUBO_QUOTER_URL: "https://quoter.test",
   ZERO_X_API_KEY: "unused", ACROSS_API_KEY: "unused", ACROSS_INTEGRATOR_ID: "unused",
-  LAYER_ZERO_API_KEY: "unused", LI_FI_API_KEY: "unused", DUNE_API_KEY: "unused",
+  LAYER_ZERO_API_KEY: "unused", LI_FI_API_KEY: "unused",
 };
 const context = {} as ExecutionContext;
 type Json = Record<string, any>;

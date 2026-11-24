@@ -358,7 +358,6 @@ describe("ve(3,3) call generation", () => {
         ACROSS_INTEGRATOR_ID: "unused",
         LAYER_ZERO_API_KEY: "unused",
         LI_FI_API_KEY: "unused",
-        DUNE_API_KEY: "unused",
       },
       { chainId: "4663", veToken, sender },
       (async (input: RequestInfo | URL) => {
@@ -454,7 +453,6 @@ describe("ve(3,3) call generation", () => {
         ACROSS_INTEGRATOR_ID: "unused",
         LAYER_ZERO_API_KEY: "unused",
         LI_FI_API_KEY: "unused",
-        DUNE_API_KEY: "unused",
       },
       {
         phase: "stake",
@@ -534,7 +532,6 @@ describe("ve(3,3) call generation", () => {
       ACROSS_INTEGRATOR_ID: "unused",
       LAYER_ZERO_API_KEY: "unused",
       LI_FI_API_KEY: "unused",
-      DUNE_API_KEY: "unused",
     };
 
     const claimed = await prepareVe33Reinvest(

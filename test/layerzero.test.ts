@@ -32,7 +32,6 @@ function envFor(host: string): Env {
     LAYER_ZERO_API_KEY: "layerzero-test-key",
     LI_FI_API_KEY: "",
     LAYER_ZERO_API_URL: `https://${host}/v1`,
-    DUNE_API_KEY: "unused",
   };
 }
 

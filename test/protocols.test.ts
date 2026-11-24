@@ -28,7 +28,6 @@ const env = {
   ACROSS_INTEGRATOR_ID: "test-integrator",
   LAYER_ZERO_API_KEY: "unused",
   LI_FI_API_KEY: "unused",
-  DUNE_API_KEY: "recommendation-test-key",
   ALLOWED_ORIGINS: "https://mcp.ekubo.org",
 };
 const context = {} as unknown as ExecutionContext;
@@ -234,7 +233,6 @@ describe("Ekubo core and advanced endpoints", () => {
       "prepare_lp_position_earnings_claim",
       "get_liquidity_opportunities",
       "prepare_ve33_reallocation",
-      "get_stonx_allocation_recommendation",
       "prepare_transfers",
       "prepare_wrap_unwrap",
       "prepare_rewards_claim",

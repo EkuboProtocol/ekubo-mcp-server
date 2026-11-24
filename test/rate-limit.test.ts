@@ -23,7 +23,6 @@ const baseEnv = {
   ACROSS_INTEGRATOR_ID: "test-integrator",
   LAYER_ZERO_API_KEY: "unused",
   LI_FI_API_KEY: "unused",
-  DUNE_API_KEY: "recommendation-test-key",
 } satisfies Env;
 
 function fakeLimiter(limit: number) {
@@ -130,9 +129,6 @@ describe("tool cost", () => {
     expect(toolCost("get_quotes_with_plans")).toBeGreaterThan(
       toolCost("get_token") * 5,
     );
-    expect(
-      toolCost("get_stonx_allocation_recommendation"),
-    ).toBeGreaterThan(toolCost("get_quotes_with_plans"));
   });
 
   it("charges a bulk read above a single read", () => {
@@ -215,7 +211,7 @@ describe("pricing an MCP body", () => {
   });
 
   it("refuses a short batch that is expensive rather than under-charging it", () => {
-    const expensive = "get_stonx_allocation_recommendation";
+    const expensive = "get_quotes_with_plans";
     const perCall = toolCost(expensive);
     const count = Math.floor(MAX_UNITS_PER_REQUEST / perCall) + 1;
     expect(count).toBeLessThanOrEqual(MAX_BATCH_LENGTH);
@@ -494,7 +490,7 @@ describe("Worker admission control", () => {
   it("refuses an over-ceiling batch instead of serving it under-charged", async () => {
     const tools = fakeLimiter(1_000);
     const env = { ...baseEnv, RATE_LIMITER_TOOLS: tools.binding } satisfies Env;
-    const expensive = "get_stonx_allocation_recommendation";
+    const expensive = "get_quotes_with_plans";
     const count =
       Math.floor(MAX_UNITS_PER_REQUEST / toolCost(expensive)) + 1;
 

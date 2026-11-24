@@ -20,7 +20,7 @@
  *   they cost us. This is the budget that bounds scraping and upstream load.
  * - `RATE_LIMITER_METERED` (60s) is a separate, much smaller ceiling on the
  *   tools that spend metered third-party credit — 0x, Across, LayerZero,
- *   LI.FI, and Dune. It is deliberately not the same budget as the unit one: a caller must not be
+ *   and LI.FI. It is deliberately not the same budget as the unit one: a caller must not be
  *   able to reach the invoice by first proving they are under the aggregate
  *   limit, and cheap local calls must not consume the headroom that guards
  *   paid providers.
@@ -60,7 +60,6 @@ export const MAX_BATCH_LENGTH = 20;
 const METERED_TOOLS = new Set([
   "get_quotes_with_plans",
   "get_value_transfer_status",
-  "get_stonx_allocation_recommendation",
 ]);
 
 /**
@@ -99,7 +98,6 @@ const TOOL_COST: Record<string, number> = {
   get_liquidity_opportunities: 4,
 
   get_quotes_with_plans: 10,
-  get_stonx_allocation_recommendation: 20,
   get_value_transfer_status: 2,
 
   prepare_ve33_reinvest: 8,
@@ -279,7 +277,7 @@ export async function enforceToolRate(
       scope: "metered_providers",
       retryAfterSeconds: SUSTAINED_WINDOW_SECONDS,
       message:
-        "Quota for quote and recommendation providers is exhausted for this minute. Reuse the quote you already hold, or wait for Retry-After.",
+        "Quota for quote providers is exhausted for this minute. Reuse the quote you already hold, or wait for Retry-After.",
     };
   }
   if (!unitsOk) {

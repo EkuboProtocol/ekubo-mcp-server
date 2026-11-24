@@ -16,7 +16,6 @@ const env = {
   LI_FI_API_KEY: "",
   ACROSS_API_KEY: "across-test-key",
   ACROSS_INTEGRATOR_ID: "test-integrator",
-  DUNE_API_KEY: "unused",
   ALLOWED_ORIGINS: "https://mcp.ekubo.org",
 };
 const context = {} as unknown as ExecutionContext;

@@ -53,7 +53,6 @@ const env: Env = {
   ACROSS_INTEGRATOR_ID: "unused",
   LAYER_ZERO_API_KEY: "unused",
   LI_FI_API_KEY: "unused",
-  DUNE_API_KEY: "unused",
 };
 
 describe("MCP service core", () => {
