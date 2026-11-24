@@ -207,6 +207,7 @@ describe("MoonPay sell", () => {
       refundWalletAddress: owner.address,
       externalTransactionId: id,
       redirectURL: "https://mcp.ekubo.org/offramp/moonpay/done",
+      allowedIpAddress: createHmac("sha256", MP_SECRET_LIVE).update("203.0.113.42").digest("base64"),
     });
     const signature = location.searchParams.get("signature")!;
     location.searchParams.delete("signature");

@@ -103,7 +103,7 @@ const PROVIDERS: Record<string, Provider> = {
       const { external_transaction_id: id, ...rest } = params;
       const parsed = moonPaySellCheckoutSchema.safeParse(rest);
       if (!parsed.success || id === undefined || !/^[0-9a-f-]{36}$/.test(id)) return null;
-      return (keys, _ip, origin) => moonPaySellWidgetUrl(keys, { ...parsed.data, external_transaction_id: id }, origin);
+      return (keys, ip, origin) => moonPaySellWidgetUrl(keys, { ...parsed.data, external_transaction_id: id }, ip, origin);
     },
   },
   [COINBASE_SELL_REDIRECT_PATH]: {

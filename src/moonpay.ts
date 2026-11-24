@@ -290,10 +290,14 @@ export async function createMoonPaySellLink(
   };
 }
 
-/** The signed MoonPay sell widget URL for a redirect request. */
+/**
+ * The signed MoonPay sell widget URL for a redirect request, bound to the
+ * browser's IP like buy links (MoonPay rejects the signature without it).
+ */
 export async function moonPaySellWidgetUrl(
   keys: MoonPayKeys,
   input: z.output<typeof moonPaySellCheckoutSchema> & { external_transaction_id: string },
+  ip: string | null,
   origin: string,
 ): Promise<string> {
   const { publishable, secret, mode } = moonPayKeys(keys);
@@ -307,7 +311,7 @@ export async function moonPaySellWidgetUrl(
     externalTransactionId: input.external_transaction_id,
     redirectURL: `${new URL(origin).origin}${MOONPAY_SELL_DONE_PATH}`,
   });
-  return signedWidgetUrl(MOONPAY_WIDGET_HOSTS.sell[mode], secret, query, null);
+  return signedWidgetUrl(MOONPAY_WIDGET_HOSTS.sell[mode], secret, query, ip);
 }
 
 export const getMoonPaySellTransactionSchema = z.strictObject({
