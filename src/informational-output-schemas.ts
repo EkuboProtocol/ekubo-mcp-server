@@ -57,19 +57,6 @@ export const informationalOutputSchemas: Readonly<Record<string, z.ZodObject>> =
     execution_history: z.array(record),
     polling: z.looseObject({ settled: z.boolean(), instruction: z.string() }),
   }),
-  get_stonx_allocation_recommendation: z.looseObject({
-    schema_version: z.literal("1"),
-    recommendation_id: z.string(),
-    snapshot_at: z.string(),
-    chain_id: z.string(),
-    execution_ready: z.boolean(),
-    recommendations: z.array(record),
-    targets: z.array(z.looseObject({
-      pool_key_id: z.string(),
-      swap_fee: uint,
-      weight_bps: z.number().int(),
-    })),
-  }),
   get_pool_liquidity: z.looseObject({
     chain_id: z.string(),
     core_address: z.string(),

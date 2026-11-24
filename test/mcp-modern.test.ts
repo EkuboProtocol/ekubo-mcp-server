@@ -12,7 +12,6 @@ const env = {
   ACROSS_INTEGRATOR_ID: "unused",
   LAYER_ZERO_API_KEY: "unused",
   LI_FI_API_KEY: "unused",
-  DUNE_API_KEY: "unused",
   ALLOWED_ORIGINS: "https://client.test",
 };
 const context = {} as ExecutionContext;

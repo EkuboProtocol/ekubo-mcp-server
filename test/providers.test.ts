@@ -35,7 +35,6 @@ const env: Env = {
   ACROSS_API_URL: "https://across.test",
   LAYER_ZERO_API_KEY: "unused",
   LI_FI_API_KEY: "unused",
-  DUNE_API_KEY: "unused",
 };
 
 describe("aggregated quote providers", () => {

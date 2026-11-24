@@ -40,8 +40,7 @@
       "ACROSS_API_KEY",
       "ACROSS_INTEGRATOR_ID",
       "LAYER_ZERO_API_KEY",
-      "LI_FI_API_KEY",
-      "DUNE_API_KEY"
+      "LI_FI_API_KEY"
     ]
   },
   "vars": {
@@ -116,7 +115,7 @@
     {
       "name": "RATE_LIMITER_METERED",
       "namespace_id": "1004",
-      // Calls that spend 0x, Across, or Dune credit. Small and separate on
+      // Calls that spend 0x, Across, LayerZero, or LI.FI credit. Small and separate on
       // purpose: this is the budget that maps to an invoice, and no amount of
       // cheap traffic should be able to buy headroom in it.
       "simple": { "limit": 20, "period": 60 }

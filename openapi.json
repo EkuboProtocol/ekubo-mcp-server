@@ -399,7 +399,7 @@
   "components": {
     "responses": {
       "RateLimited": {
-        "description": "Per-caller rate limit exceeded. Limits apply per IPv4 address or IPv6 /64 over four budgets: requests per few seconds, requests per minute, weighted tool cost per minute, and calls per minute to tools that buy quotes or recommendations from a third party. Honor Retry-After rather than retrying on a fixed interval.",
+        "description": "Per-caller rate limit exceeded. Limits apply per IPv4 address or IPv6 /64 over four budgets: requests per few seconds, requests per minute, weighted tool cost per minute, and calls per minute to tools that buy quotes from a third party. Honor Retry-After rather than retrying on a fixed interval.",
         "headers": {
           "Retry-After": {
             "description": "Seconds to wait before retrying.",

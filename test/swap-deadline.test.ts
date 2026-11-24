@@ -57,7 +57,6 @@ const env: Env = {
   ACROSS_INTEGRATOR_ID: "unused",
   LAYER_ZERO_API_KEY: "unused",
   LI_FI_API_KEY: "unused",
-  DUNE_API_KEY: "unused",
 };
 
 const THRESHOLD_END = 1 + 1 + 20 + 20 + 16;

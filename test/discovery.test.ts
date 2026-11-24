@@ -12,7 +12,6 @@ import {
 import worker from "../src/index.js";
 import {
   getTokensSchema,
-  getStonxAllocationRecommendationSchema,
   getVe33AllocationsSchema,
   prepareVe33ExtendSchema,
   prepareVe33ReinvestSchema,
@@ -45,7 +44,6 @@ const env = {
   ACROSS_INTEGRATOR_ID: "test-integrator",
   LAYER_ZERO_API_KEY: "unused",
   LI_FI_API_KEY: "unused",
-  DUNE_API_KEY: "recommendation-test-key",
   ALLOWED_ORIGINS: "https://mcp.ekubo.org",
 };
 const context = {} as unknown as ExecutionContext;
@@ -265,7 +263,6 @@ describe("Worker discovery", () => {
       "prepare_ve33_claim_all_fees",
       "prepare_ve33_clear_vote",
       "get_ve33_allocations",
-      "get_stonx_allocation_recommendation",
       "prepare_ve33_reallocation",
       "get_positions_by_owner",
       "get_pool",
@@ -541,9 +538,6 @@ describe("Worker discovery", () => {
     expect(
       prepareVe33ExtendSchema.shape.current_pool_key.safeParse(null).success,
     ).toBe(false);
-    expect(getStonxAllocationRecommendationSchema.safeParse({}).success).toBe(
-      true,
-    );
     expect(
       prepareVe33StakeSchema.safeParse({
         chain_id: "4663",
@@ -694,7 +688,6 @@ describe("Worker discovery", () => {
       publicToolCatalog.find((tool) => tool.name === name)!.description;
     for (const [name, rule] of [
       ["get_quotes_with_plans", "All/max: exact wallet balance"],
-      ["get_stonx_allocation_recommendation", "default preserves existing locks"],
       ["prepare_ve33_reallocation", "pass its exact state_id"],
       ["prepare_ve33_reinvest", "never a pre-existing balance"],
       ["prepare_ve33_extend", "max_duration=true must be the user's explicit choice"],

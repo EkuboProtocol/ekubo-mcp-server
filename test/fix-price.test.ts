@@ -24,7 +24,6 @@ const env = {
   ACROSS_INTEGRATOR_ID: "unused",
   LAYER_ZERO_API_KEY: "unused",
   LI_FI_API_KEY: "unused",
-  DUNE_API_KEY: "unused",
 } satisfies Env;
 
 const core = "0x00000000000014aA86C5d3c41765bb24e11bd701";

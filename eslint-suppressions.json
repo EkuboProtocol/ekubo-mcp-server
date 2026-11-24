@@ -49,11 +49,6 @@
       "count": 1
     }
   },
-  "src/recommendations.ts": {
-    "complexity": {
-      "count": 2
-    }
-  },
   "src/server.ts": {
     "complexity": {
       "count": 2

@@ -8,7 +8,7 @@ const versionSource = await readFile(
 const expectedServerVersion = sourceConstant("MCP_SERVER_VERSION");
 const expectedCatalogRevision = sourceConstant("MCP_TOOL_CATALOG_REVISION");
 const smokeNonce = `${Date.now()}-${Math.random()}`;
-const privateRecommendationSourcePattern = /dune|8187907|api\.dune/i;
+const duneSourcePattern = /dune|8187907|api\.dune/i;
 
 if (origin === undefined) {
   throw new Error(
@@ -56,7 +56,6 @@ const expectedTools = [
   "prepare_ve33_claim_all_fees",
   "prepare_ve33_clear_vote",
   "get_ve33_allocations",
-  "get_stonx_allocation_recommendation",
   "prepare_ve33_reallocation",
   "get_positions_by_owner",
   "get_pool",
@@ -159,8 +158,8 @@ assert(
   "HTTP tool catalog does not match the expected toolset",
 );
 assert(
-  !privateRecommendationSourcePattern.test(JSON.stringify(catalog)),
-  "HTTP discovery exposes the private recommendation source",
+  !duneSourcePattern.test(JSON.stringify(catalog)),
+  "HTTP discovery still mentions Dune",
 );
 
 const initialized = await mcpRequest(1, "initialize", {
@@ -185,8 +184,8 @@ assert(
   "MCP instructions are missing the tool catalog revision",
 );
 assert(
-  !privateRecommendationSourcePattern.test(JSON.stringify(initialized)),
-  "MCP initialization exposes the private recommendation source",
+  !duneSourcePattern.test(JSON.stringify(initialized)),
+  "MCP initialization still mentions Dune",
 );
 
 const listed = await mcpRequest(2, "tools/list", {});
@@ -202,8 +201,8 @@ assert(
   "MCP tools/list still repeats per-tool catalog revision metadata",
 );
 assert(
-  !privateRecommendationSourcePattern.test(JSON.stringify(listed)),
-  "MCP tools/list exposes the private recommendation source",
+  !duneSourcePattern.test(JSON.stringify(listed)),
+  "MCP tools/list still mentions Dune",
 );
 
 const resources = await mcpRequest(3, "resources/list", {});
@@ -261,42 +260,15 @@ assert(
   "Robinhood Chain VeToken resource is missing",
 );
 
-const recommendationCall = await mcpRequest(6, "tools/call", {
-  name: "get_stonx_allocation_recommendation",
-  arguments: {},
+const allocationsCall = await mcpRequest(6, "tools/call", {
+  name: "get_ve33_allocations",
+  arguments: { owner: "0x0000000000000000000000000000000000000001" },
 });
-const recommendation = recommendationCall.result?.structuredContent;
+const allocations = allocationsCall.result?.structuredContent;
 assert(
-  recommendation?.execution_ready === true,
-  "recommendation is not executable",
-);
-assert(
-  typeof recommendation?.snapshot_age_seconds === "number" &&
-    recommendation.snapshot_age_seconds <=
-      2 * recommendation.snapshot_refresh_after_seconds,
-  "recommendation snapshot is stale; its daily refresh is failing",
-);
-assert(
-  recommendation?.target_total_weight_bps === 10_000,
-  "recommendation targets do not total 10,000 bps",
-);
-assert(
-  Array.isArray(recommendation?.targets) && recommendation.targets.length > 0,
-  "recommendation has no executable targets",
-);
-assert(
-  recommendation?.safe_execution_workflow
-    ?.every_current_vote_is_claimed_before_it_is_cleared_or_moved === true,
-  "recommendation is missing the fee-preservation invariant",
-);
-assert(
-  recommendation?.targets?.length <= 25 &&
-    recommendation?.safe_execution_workflow?.compact_max_lock_strategy === true,
-  "recommendation is missing the compact 25-NFT strategy",
-);
-assert(
-  !privateRecommendationSourcePattern.test(JSON.stringify(recommendationCall)),
-  "recommendation result exposes the private recommendation source",
+  allocationsCall.result?.isError !== true &&
+    typeof allocations?.state_id === "string",
+  "get_ve33_allocations did not return a state_id",
 );
 
 const listTokensCall = await mcpRequest(7, "tools/call", {

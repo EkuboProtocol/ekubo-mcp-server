@@ -108,7 +108,6 @@ import {
   prepareRevenueBuybacks,
   prepareRewardsClaim,
 } from "./claims.js";
-import { getStonxAllocationRecommendation } from "./recommendations.js";
 import {
   getLiquidityOpportunities,
   type LiquidityOpportunityType,
@@ -186,9 +185,6 @@ import { classifyAsset, withJurisdiction } from "./token-restrictions.js";
 export const ROBINHOOD_STONX_CHAIN_ID = "4663";
 export const ROBINHOOD_STONX_VE_TOKEN = getAddress(
   "0x9d7008E169D040B6c0140eb92E7cA82B12643497",
-);
-export const ROBINHOOD_STONX_VE33 = getAddress(
-  "0xD18685a514E59b06d59824e16Db07e73345d9953",
 );
 
 function isPositiveBigInt(value: string | number): boolean {
@@ -1349,91 +1345,6 @@ const ve33EmissionStateSchema = catalogSummary(
   "{current_timestamp, current_emission_rate, total_remaining_emissions}: decimal strings decoded locally from getEmissionState (rate is Q32) via local_read_requirement; omit on the first call",
 ).optional();
 
-const decimalVoteWeight = z
-  .string()
-  .regex(/^(?:0|[1-9][0-9]{0,77})$/, "must be a decimal integer string");
-
-export const getStonxAllocationRecommendationSchema = z.object({
-  voter: z
-    .object({
-      vote_weight: decimalVoteWeight.describe(
-        "Total applied vote weight from get_ve33_allocations",
-      ),
-      pools: z
-        .array(
-          z.object({
-            pool_key_id: z
-              .string()
-              .regex(/^(?:0|[1-9][0-9]*)$/)
-              .describe("Ve33 pool_key_id"),
-            lp_share: z
-              .number()
-              .finite()
-              .min(0)
-              .max(1)
-              .describe("Voter's share of the pool's emission-earning liquidity"),
-            current_vote_weight: decimalVoteWeight
-              .optional()
-              .describe("Defaults to 0"),
-          }),
-        )
-        .max(200)
-        .refine(
-          (pools) => new Set(pools.map((pool) => pool.pool_key_id)).size === pools.length,
-          { message: "pools must not repeat a pool_key_id" },
-        ),
-    })
-    .optional()
-    .describe(
-      "With ve33_emission_state, makes targets voter-optimal",
-    ),
-  ve33_emission_state: ve33EmissionStateSchema,
-  prune_low_efficiency: z
-    .boolean()
-    .default(false)
-    .describe(
-      "Withhold prune candidates and redistribute their weight",
-    ),
-  max_emission_share_per_fee_share: z
-    .number()
-    .finite()
-    .min(1)
-    .max(100)
-    .optional()
-    .describe(
-      "Prune above this emission share / retained fee share; default 3",
-    ),
-});
-
-function stonxRecommendationOptions(
-  input: z.infer<typeof getStonxAllocationRecommendationSchema>,
-) {
-  const state = input.ve33_emission_state;
-  return {
-    pruneLowEfficiency: input.prune_low_efficiency,
-    maxEmissionSharePerFeeShare: input.max_emission_share_per_fee_share,
-    ve33EmissionState:
-      state === undefined
-        ? undefined
-        : {
-            currentTimestamp: state.current_timestamp,
-            currentEmissionRate: state.current_emission_rate,
-            totalRemainingEmissions: state.total_remaining_emissions,
-          },
-    voter:
-      input.voter === undefined
-        ? undefined
-        : {
-            voteWeight: input.voter.vote_weight,
-            pools: input.voter.pools.map((pool) => ({
-              poolKeyId: pool.pool_key_id,
-              lpShare: pool.lp_share,
-              currentVoteWeight: pool.current_vote_weight,
-            })),
-          },
-  };
-}
-
 export const getLiquidityOpportunitiesSchema = z.object({
   chain_id: chainId
     .optional()
@@ -2109,13 +2020,6 @@ export const publicToolCatalog = [
     description:
       "Use for requests such as 'show all my Ekubo STONX allocations'. The production Ekubo ve(3,3) deployment is the STONX voting system, so pass only owner to select its production chain and canonical VeToken automatically. Returns every pool, selected swap fee, NFT, applied vote weight, totals, state_id, and an onchain_validation request explicitly marked not_executed until the client runs its eth_call. Pass chain_id and ve_token together only for another deployment.",
     inputSchema: z.toJSONSchema(getVe33AllocationsSchema),
-  },
-  {
-    name: "get_stonx_allocation_recommendation",
-    title: "Get suggested STONX allocations",
-    description:
-      "Return provider-neutral STONX targets with emissions_efficiency per pool (exactly 10,000 bps, at most 25 Ve33 pools). Daily snapshot; age: snapshot_age_seconds. voter with ve33_emission_state makes targets voter-optimal and keeps the neutral plan as provider_targets; without the emission state, execution_ready is false and local_read_requirement says what to read. The tool constructs no transaction. To apply it, require execution_ready=true, then pass its targets and the connected wallet's state_id from get_ve33_allocations to prepare_ve33_reallocation. The default preserves existing locks; optional compact_max_lock extends locks and burns merged NFTs.",
-    inputSchema: z.toJSONSchema(getStonxAllocationRecommendationSchema),
   },
   {
     name: "prepare_ve33_reallocation",
@@ -3209,28 +3113,6 @@ export function createEkuboServer(
               : canonicalChainId(input.chain_id),
           veToken: (input.ve_token ?? ROBINHOOD_STONX_VE_TOKEN) as Address,
           owner: input.owner as Address,
-        }),
-      ),
-  );
-
-  server.registerTool(
-    catalogEntry("get_stonx_allocation_recommendation").name,
-    {
-      title: catalogEntry("get_stonx_allocation_recommendation").title,
-      description: catalogEntry("get_stonx_allocation_recommendation").description,
-      inputSchema: getStonxAllocationRecommendationSchema,
-      annotations: toolAnnotations("get_stonx_allocation_recommendation"),
-      ...(toolOutputSchema("get_stonx_allocation_recommendation") === undefined
-        ? {}
-        : { outputSchema: toolOutputSchema("get_stonx_allocation_recommendation") }),
-    },
-    async (input) =>
-      toolResult(() =>
-        getStonxAllocationRecommendation(env, {
-          chainId: ROBINHOOD_STONX_CHAIN_ID,
-          veToken: ROBINHOOD_STONX_VE_TOKEN,
-          ve33: ROBINHOOD_STONX_VE33,
-          options: stonxRecommendationOptions(input),
         }),
       ),
   );
@@ -5047,7 +4929,7 @@ const VE33_WORKFLOW = `# Ekubo ve(3,3) call workflow
 - For claim-all, use prepare_ve33_claim_all_fees to discover the owner's indexed active votes and obtain one atomic batch of decodable VeToken steps plus ownerOf/voteState validation calldata. Revalidate those calls through the user's provider before signing.
 - For any vote reorganization, first use get_ve33_allocations and show the complete allocation plus state_id. Pass that exact state_id and target weight_bps values totaling 10,000 to prepare_ve33_reallocation.
 - preserve_existing_locks allocates every distinct expiry cohort proportionally across every target so pool weights decay together; it may require more voting NFTs than target pools and does not guarantee a 25-NFT portfolio.
-- get_stonx_allocation_recommendation supplies optional suggested targets. Applying them requires execution_ready=true and target_total_weight_bps=10,000, with at most 25 targets. prepare_ve33_reallocation defaults to preserve_existing_locks; compact_max_lock is optional and extends locks and burns merged NFTs. User-selected targets are also supported through the same state-validated preparation.
+- Targets are user-selected through the same state-validated preparation: at most 25 pools, totaling 10,000 weight_bps. prepare_ve33_reallocation defaults to preserve_existing_locks; compact_max_lock is optional and extends locks and burns merged NFTs.
 - compact_max_lock selects one surviving active NFT, claims its fees and extends it to the maximum four-year duration, then fee-safely claims and merges every other active NFT into it, splits once per additional target, and applies exactly one NFT vote per target. Never detach or reorder those calls.
 - Compound merges burn their source NFT IDs after moving the stake. Pass every burned ID, the survivor, the lock extension, final NFT count, decoded calls, and complete plan to the wallet. Unvoted NFTs remain outside the reallocation scope; withdrawals and direct burn calldata remain forbidden.
 - Raw VeToken vote, clearVote, extendStake*, and full-source mergeStakes calls can discard pending voter fees. Prefer the fee-preserving tools or compound claim methods. To remove a vote without moving it elsewhere, use prepare_ve33_clear_vote: it claims each stake's current pool immediately before clearing it, and its required current_pool_key makes a stale key revert the batch instead of silently discarding fees. The stake, its lock end, and its ownership survive a clear; the pool does not keep the weight, and a pool with no remaining vote weight charges a zero extension fee. Never call burn on a stake-bearing NFT; it can orphan the underlying stake. Withdraw only an expired stake, claim its active-pool fees first, and verify the recipient.

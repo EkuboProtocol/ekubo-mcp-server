@@ -4,8 +4,7 @@ The official agent interface for Ekubo Protocol transactions. This repository
 deploys a stateless, public MCP server on Cloudflare Workers. It discovers
 tokens, compares Ekubo and 0x liquidity for same-chain EVM swaps, prepares and
 tracks Across, LayerZero, and LI.FI any-to-any bridges, and constructs unsigned VeToken calls for ve(3,3)
-vote and fee workflows. It also publishes provider-neutral STONX allocation
-recommendations resolved to initialized Robinhood Ve33 pools, enumerates
+vote and fee workflows. It enumerates
 indexed LP positions by owner, reproduces the interface's indexed/API/USD/RPC
 position-data pipeline, discovers pair-level position candidates, prepares
 unsigned LP deposits, withdrawals, and earnings claims, and exposes exact pool
@@ -168,21 +167,6 @@ additional upstream fields.
   `onchain_validation` request, explicitly marked `not_executed` until its
   `eth_call` is run. An explicit chain and VeToken pair remains available for
   another deployment such as testnet.
-- `get_stonx_allocation_recommendation` — return the current
-  provider-neutral recommendation plus an exact 10,000-bps executable target
-  list capped at 25 initialized canonical Ve33 pools. Snapshots older than one
-  day trigger a refresh that is awaited for up to 20 seconds; stale, failed, or
-  timed-out refreshes fail closed instead of returning an executable plan.
-  Each recommendation reports an `emissions_efficiency` KPI: emissions per
-  dollar of voter fees the pool still generates one epoch (7 days) later, plus
-  the rate-free `emission_share_per_retained_fee_share`; pools above the
-  threshold (default 3) or with votes but no retained fees are prune
-  candidates, and `prune_low_efficiency=true` withholds them. Passing `voter`
-  (vote weight and LP share per pool) with the locally decoded
-  `ve33_emission_state` returns voter-optimal `targets` that also value the
-  emissions redirected to the voter's own pools (Mazett 2024), with the
-  neutral plan kept as `provider_targets`. The 25-target, 10,000-bps contract
-  is unchanged
 - `prepare_ve33_reallocation` — resolve target `pool_key_id` values and
   compile up to 25 basis-point targets into one fee-preserving atomic VeToken
   multicall. `preserve_existing_locks` apportions each expiry cohort across
@@ -667,23 +651,12 @@ it is cleared or moved, even when its current claimable amounts are zero.
 Unvoted NFTs are left untouched and direct burn or withdrawal calls remain
 forbidden.
 
-“Update my STONX allocations to the suggested allocations” is a three-tool
-workflow. First call `get_stonx_allocation_recommendation` and require
-`execution_ready=true`, at most 25 targets, and
-`target_total_weight_bps=10000`. Then fetch and
-validate the wallet's complete current allocation as above. Finally pass its
-exact `state_id`, the recommendation's `targets`, and
-an optional strategy to `prepare_ve33_reallocation`. Its default
-`preserve_existing_locks` keeps lock expiries; `compact_max_lock` extends locks
-and burns merged source NFTs and is not implied by accepting suggested weights. Recommendation rows that do not yet have an
-initialized canonical pool are reported separately; their weight is
-redistributed along with weight below the 25-target priority cutoff without
-exceeding any selected row's allocation cap. The recommendation tool
-constructs no transaction. Each recommendation response reports `snapshot_at`,
-`snapshot_refreshed_on_request`, and `snapshot_max_age_seconds`. A completed
-snapshot older than 86,400 seconds triggers a provider refresh; the request
-waits for that execution and returns no plan if the execution fails or does not
-complete within 20 seconds.
+“Update my STONX allocations” is a two-tool workflow. Fetch and validate the
+wallet's complete current allocation as above, then pass its exact `state_id`,
+the user's chosen targets (at most 25, totaling 10,000 bps), and an optional
+strategy to `prepare_ve33_reallocation`. Its default `preserve_existing_locks`
+keeps lock expiries; `compact_max_lock` extends locks and burns merged source
+NFTs and must be the user's explicit choice.
 
 The first-phase claims are also atomic stale-state guards: if an indexed active
 vote now points at another pool or is no longer owned by the sender, its claim
@@ -732,13 +705,6 @@ The deployment also uses five Worker secrets:
 - `ACROSS_INTEGRATOR_ID`
 - `LAYER_ZERO_API_KEY`
 - `LI_FI_API_KEY`
-- `DUNE_API_KEY` (internal allocation-recommendation data access; never
-  returned or identified by the public MCP surface). The recommendation runs
-  the query in `src/stonx-recommendation-sql.ts` through Dune's SQL execution
-  endpoint, so it depends on no saved query or materialized view in any Dune
-  account. The last good snapshot is kept in the `ARTIFACT_STORE` bucket under
-  `recommendation/`, which the bucket's one-day expiry rule must not cover
-  (that rule is scoped to `artifact/`).
 
 They are declared as required runtime secrets in `wrangler.jsonc`, so a deploy
 fails rather than silently publishing disabled provider tools when a binding is
@@ -911,11 +877,11 @@ any two of them at once. `src/rate-limit.ts` holds the cost table.
 | `RATE_LIMITER_BURST` | 10s | 120 requests | A flood, visible within ten seconds rather than after a minute of it |
 | `RATE_LIMITER` | 60s | 300 requests | Sustained request volume across every route |
 | `RATE_LIMITER_TOOLS` | 60s | 120 units | Weighted tool cost: scraping and upstream load |
-| `RATE_LIMITER_METERED` | 60s | 20 calls | Calls that spend 0x, Across, LayerZero, LI.FI, or Dune credit |
+| `RATE_LIMITER_METERED` | 60s | 20 calls | Calls that spend 0x, Across, LayerZero, or LI.FI credit |
 
 The unit scale is anchored at 1 = one ordinary `prod-api` read. A bulk or
 fan-out read costs 3–4, a preparation that writes an artifact costs 3, a quote
-comparison costs 10, and a STONX recommendation costs 20; `derive_pool_id`
+comparison costs 10; `derive_pool_id`
 and `decode_pool_config` touch nothing and cost nothing. A tool with no
 entry in the table is charged 3 if it is a preparation and 2 otherwise, so a
 tool added later without a deliberate price is over-charged rather than free.
@@ -961,7 +927,7 @@ tool with arguments that fail schema validation draws its full price and never
 reaches a provider: 16 calls to `prepare_ve33_reinvest` (8 units each)
 crossed the 120-unit budget and returned the `tool_units` rejection with no
 upstream request made. Do not burst-test `RATE_LIMITER_METERED` the same way —
-those calls spend real 0x and Dune credit.
+those calls spend real 0x, Across, LayerZero, and LI.FI credit.
 
 Requests are also capped at 262,144 bytes (HTTP 413), 20 JSON-RPC messages, and
 40 tool units (both HTTP 400), so one request cannot carry an unbounded number
