@@ -44,7 +44,8 @@ type OptionalBindings =
   | "RATE_LIMITER_TOOLS"
   | "RATE_LIMITER_METERED"
   | "LI_FI_INTEGRATOR"
-  | "EKUBO_IDENTITY_API_URL";
+  | "EKUBO_IDENTITY_API_URL"
+  | "ONRAMP_MODE";
 
 export type Env = Omit<Cloudflare.Env, OptionalBindings> &
   Partial<Pick<Cloudflare.Env, OptionalBindings>> & {

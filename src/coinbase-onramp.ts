@@ -2,16 +2,17 @@ import { getAddress } from "viem";
 import { z } from "zod";
 import { ServiceError } from "./core.js";
 import { ownershipProofFields, ownershipStep, type OnrampProofEnv } from "./onramp-proof.js";
+import { rampMode, type RampMode, type RampModeEnv } from "./ramp-mode.js";
 
 export const COINBASE_ONRAMP_HOST = "api.cdp.coinbase.com";
 export const COINBASE_ONRAMP_PATH = "/platform/v2/onramp/sessions";
 
-const NETWORKS = ["base", "ethereum", "arbitrum", "optimism"] as const;
-const NETWORK_CHAIN_IDS: Record<(typeof NETWORKS)[number], number> = { base: 8453, ethereum: 1, arbitrum: 42161, optimism: 10 };
-const ASSETS = ["ETH", "USDC"] as const;
-const FIAT_CURRENCIES = ["USD", "EUR", "GBP", "CAD"] as const;
+export const NETWORKS = ["base", "ethereum", "arbitrum", "optimism"] as const;
+export const NETWORK_CHAIN_IDS: Record<(typeof NETWORKS)[number], number> = { base: 8453, ethereum: 1, arbitrum: 42161, optimism: 10 };
+export const ASSETS = ["ETH", "USDC"] as const;
+export const FIAT_CURRENCIES = ["USD", "EUR", "GBP", "CAD"] as const;
 
-export type CoinbaseKeys = {
+export type CoinbaseKeys = RampModeEnv & {
   COINBASE_CDP_API_KEY_ID?: string;
   COINBASE_CDP_API_KEY_SECRET?: string;
 };
@@ -48,6 +49,7 @@ export async function createCoinbaseOnrampLink(
   origin: string,
 ) {
   await coinbaseKey(keys);
+  const mode = rampMode(keys);
   const destinationAddress = getAddress(input.wallet_address);
   const query = new URLSearchParams({
     wallet_address: destinationAddress,
@@ -70,7 +72,7 @@ export async function createCoinbaseOnrampLink(
   });
   return {
     provider: "coinbase",
-    environment: "sandbox",
+    environment: mode,
     ...step,
     request: {
       wallet_address: destinationAddress,
@@ -82,14 +84,15 @@ export async function createCoinbaseOnrampLink(
     ...(step.status === "verified"
       ? {
           user_handoff:
-            "Show checkout_url to the user to open in a browser before link_expires_at. The page offers Apple Pay without a Coinbase account (US only; the user enters email and phone on the page, never in chat) or continuing with a Coinbase account. Coinbase collects identity and payment; this server never sees card details or funds. Sandbox sessions move no real money.",
+            "Show checkout_url to the user to open in a browser before link_expires_at. The page offers Apple Pay without a Coinbase account (US only; the user enters email and phone on the page, never in chat) or continuing with a Coinbase account. Coinbase collects identity and payment and sends the crypto to wallet_address; this server never sees card details or funds." +
+            (mode === "sandbox" ? " Sandbox sessions move no real money." : " This is a real purchase: the user pays Coinbase real money."),
         }
       : {}),
-    real_payment: "Not available. This endpoint only creates Coinbase sandbox sessions.",
+    real_payment: mode === "live",
   };
 }
 
-/** Creates a Coinbase sandbox session for a redirect request and returns its checkout URL. */
+/** Creates a Coinbase session for a redirect request and returns its checkout URL. */
 export async function createCoinbaseSession(
   keys: CoinbaseKeys,
   input: z.output<typeof coinbaseCheckoutSchema>,
@@ -97,15 +100,13 @@ export async function createCoinbaseSession(
   fetcher: typeof fetch = fetch,
 ): Promise<string> {
   const { keyId, signingKey } = await coinbaseKey(keys);
-  // Coinbase runs a session as a test with no real funds when partnerUserRef
-  // starts with "sandbox-"; this server never creates any other kind.
   const body = {
     destinationAddress: getAddress(input.wallet_address),
     destinationNetwork: input.network,
     purchaseCurrency: input.asset,
     paymentCurrency: input.payment_currency,
     ...(input.payment_amount === undefined ? {} : { paymentAmount: input.payment_amount }),
-    partnerUserRef: `sandbox-${crypto.randomUUID()}`,
+    partnerUserRef: partnerUserRef(rampMode(keys)),
     ...(ip === null ? {} : { clientIp: ip }),
   };
   const parsed = await coinbasePost(keys, COINBASE_ONRAMP_PATH, body, fetcher, keyId, signingKey);
@@ -114,6 +115,15 @@ export async function createCoinbaseSession(
     throw new ServiceError("invalid_upstream_response", "Coinbase returned no checkout URL; retry once, then report it");
   }
   return url;
+}
+
+/**
+ * A fresh per-checkout reference. Coinbase runs anything whose partnerUserRef
+ * starts with "sandbox-" as a test with no real funds, so sandbox mode always
+ * uses that prefix and live mode never does.
+ */
+export function partnerUserRef(mode: RampMode): string {
+  return mode === "live" ? crypto.randomUUID() : `sandbox-${crypto.randomUUID()}`;
 }
 
 /**
@@ -142,7 +152,7 @@ export async function coinbasePost(
   return parsed;
 }
 
-async function responseJson(response: Response): Promise<unknown> {
+export async function responseJson(response: Response): Promise<unknown> {
   const raw = await response.text();
   try {
     return JSON.parse(raw) as unknown;
@@ -153,7 +163,7 @@ async function responseJson(response: Response): Promise<unknown> {
   }
 }
 
-function coinbaseError(status: number, parsed: unknown): ServiceError {
+export function coinbaseError(status: number, parsed: unknown): ServiceError {
   const error = (parsed ?? {}) as { errorType?: unknown; errorMessage?: unknown; correlationId?: unknown };
   const clientError = status === 400 || status === 404 || status === 429;
   const [code, message] =
@@ -170,20 +180,20 @@ function coinbaseError(status: number, parsed: unknown): ServiceError {
   });
 }
 
-async function coinbaseKey(keys: CoinbaseKeys) {
+export async function coinbaseKey(keys: CoinbaseKeys) {
   const keyId = keys.COINBASE_CDP_API_KEY_ID;
   const secret = keys.COINBASE_CDP_API_KEY_SECRET;
   if (!keyId || !secret) {
     throw new ServiceError(
       "coinbase_not_configured",
-      "Coinbase checkout is not configured on this server. Do not retry; tell the user card purchases are not available here yet.",
+      "Coinbase checkout is not configured on this server. Do not retry; tell the user Coinbase checkout is not available here yet.",
     );
   }
   const raw = decodeBase64(secret);
   if (raw?.length !== 64) {
     throw new ServiceError(
       "coinbase_key_unsupported",
-      "This server's Coinbase key is not an Ed25519 key. Do not retry; tell the user card purchases are not available here yet.",
+      "This server's Coinbase key is not an Ed25519 key. Do not retry; tell the user Coinbase checkout is not available here yet.",
     );
   }
   const signingKey = await crypto.subtle.importKey(

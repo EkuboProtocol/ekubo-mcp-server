@@ -6,7 +6,9 @@ import {
   coinbaseCheckoutSchema,
   coinbasePost,
   type CoinbaseKeys,
+  partnerUserRef,
 } from "./coinbase-onramp.js";
+import { rampMode, type RampMode } from "./ramp-mode.js";
 import { failureCode, ServiceError } from "./core.js";
 import { checkSignedLink, type OnrampProofEnv } from "./onramp-proof.js";
 import { enforceToolRate, rateLimitActor, type RateLimitBindings } from "./rate-limit.js";
@@ -30,12 +32,14 @@ const ORDERS_PATH = "/platform/v2/onramp/orders";
 const PAYMENT_ORIGIN = "https://pay.coinbase.com";
 const MAX_BODY_BYTES = 4096;
 
-// Sandbox only: codes go to Coinbase's sandbox destinations (+1000...,
-// @sandbox.test), which send no real SMS or email and accept 000000, so this
-// page can never message real people. Orders validate the phone as a real US
-// number, so the buyer enters one and the code goes to its sandbox twin.
+// In sandbox, codes go to Coinbase's sandbox destinations (+1000...,
+// @sandbox.test), which send no real SMS or email and accept 000000, so a
+// sandbox page can never message real people. Orders validate the phone as a
+// real US number, so the buyer enters one and the code goes to its sandbox
+// twin. In live mode Coinbase texts and emails the buyer's own contacts.
 const US_PHONE = /^\+1[2-9]\d{2}[2-9]\d{6}$/;
 const SANDBOX_EMAIL = /^[A-Za-z0-9._%+-]{1,64}@sandbox\.test$/;
+const EMAIL = /^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,63}$/;
 const VERIFICATION_ID = /^onramp_verification_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const linkField = z.string().min(1).max(1024);
@@ -52,7 +56,7 @@ const confirmSchema = z.strictObject({
 const orderSchema = z.strictObject({
   link: linkField,
   phone: z.string().regex(US_PHONE),
-  email: z.string().regex(SANDBOX_EMAIL),
+  email: z.string().max(254).regex(EMAIL),
   sms_verification_id: z.string().regex(VERIFICATION_ID),
   email_verification_id: z.string().regex(VERIFICATION_ID),
   agreement_accepted: z.literal(true),
@@ -121,7 +125,7 @@ type Handler = (keys: Keys, body: unknown, checkout: Checkout, request: Request,
 const API_HANDLERS: Record<string, Handler> = {
   async [GUEST_PATHS.verify](keys, body, _checkout, _request, fetcher) {
     const input = verifySchema.parse(body);
-    const destination = sandboxDestination(input.channel, input.destination);
+    const destination = contactDestination(rampMode(keys), input.channel, input.destination);
     const result = (await coinbasePost(keys, VERIFICATIONS_PATH, { channel: input.channel, destination }, fetcher)) as {
       verificationId?: unknown;
       otpExpiresAt?: unknown;
@@ -140,11 +144,8 @@ const API_HANDLERS: Record<string, Handler> = {
 
   async [GUEST_PATHS.order](keys, body, checkout, request, fetcher) {
     const input = orderSchema.parse(body);
-    if (checkout.payment_currency !== "USD") {
-      throw new ServiceError("coinbase_guest_currency_unsupported", "Guest checkout pays in USD only");
-    }
-    const paymentAmount = checkout.payment_amount ?? input.payment_amount;
-    if (paymentAmount === undefined) throw new ServiceError("coinbase_amount_required", "Enter an amount in USD");
+    const mode = rampMode(keys);
+    const paymentAmount = guestOrderAmount(mode, input, checkout);
     const now = new Date().toISOString();
     const ip = clientIp(request);
     const result = (await coinbasePost(
@@ -157,9 +158,7 @@ const API_HANDLERS: Record<string, Handler> = {
         paymentMethod: "GUEST_CHECKOUT_APPLE_PAY",
         destinationAddress: getAddress(checkout.wallet_address),
         destinationNetwork: checkout.network,
-        // Coinbase treats any partnerUserRef starting "sandbox-" as a test with
-        // no real funds; this server creates no other kind.
-        partnerUserRef: `sandbox-${crypto.randomUUID()}`,
+        partnerUserRef: partnerUserRef(mode),
         email: input.email,
         phoneNumber: input.phone,
         emailVerificationId: input.email_verification_id,
@@ -181,6 +180,29 @@ const API_HANDLERS: Record<string, Handler> = {
     };
   },
 };
+
+/** Validates a guest order against the checkout link and returns the USD amount to charge. */
+function guestOrderAmount(mode: RampMode, input: z.output<typeof orderSchema>, checkout: Checkout): string {
+  if (mode === "sandbox" && !SANDBOX_EMAIL.test(input.email)) {
+    throw new ServiceError("coinbase_sandbox_contact_required", "Sandbox checkout needs an email address ending @sandbox.test");
+  }
+  if (checkout.payment_currency !== "USD") {
+    throw new ServiceError("coinbase_guest_currency_unsupported", "Guest checkout pays in USD only");
+  }
+  const paymentAmount = checkout.payment_amount ?? input.payment_amount;
+  if (paymentAmount === undefined) throw new ServiceError("coinbase_amount_required", "Enter an amount in USD");
+  return paymentAmount;
+}
+
+function contactDestination(mode: RampMode, channel: "sms" | "email", destination: string): string {
+  return mode === "live" ? liveDestination(channel, destination) : sandboxDestination(channel, destination);
+}
+
+function liveDestination(channel: "sms" | "email", destination: string): string {
+  const valid = channel === "sms" ? US_PHONE.test(destination) : destination.length <= 254 && EMAIL.test(destination);
+  if (valid) return destination;
+  throw new ServiceError("coinbase_contact_invalid", "Enter a US mobile number in +1 format and a valid email address");
+}
 
 function sandboxDestination(channel: "sms" | "email", destination: string): string {
   if (channel === "sms" && US_PHONE.test(destination)) return `+1000${destination.slice(-7)}`;
@@ -215,7 +237,7 @@ async function checkoutPage(url: URL, keys: Keys): Promise<Response> {
     });
   }
   const nonce = base64(crypto.getRandomValues(new Uint8Array(16)));
-  return new Response(pageHtml(parsed.data, url.search.slice(1), nonce), {
+  return new Response(pageHtml(parsed.data, url.search.slice(1), nonce, rampMode(keys)), {
     headers: {
       ...noStore(),
       "content-type": "text/html; charset=utf-8",
@@ -236,7 +258,7 @@ async function checkoutPage(url: URL, keys: Keys): Promise<Response> {
   });
 }
 
-function pageHtml(checkout: Checkout, link: string, nonce: string): string {
+function pageHtml(checkout: Checkout, link: string, nonce: string, mode: RampMode): string {
   const address = getAddress(checkout.wallet_address);
   const usd = checkout.payment_currency === "USD";
   const amount = checkout.payment_amount;
@@ -254,7 +276,7 @@ iframe{width:100%;height:28rem;border:0}[hidden]{display:none}
 </style></head><body>
 <h1>Buy ${escapeHtml(checkout.asset)} on ${escapeHtml(checkout.network)}</h1>
 <p>Delivered to <span class="address">${escapeHtml(address)}</span>${amount === undefined ? "" : ` for ${escapeHtml(amount)} ${escapeHtml(checkout.payment_currency)}`}.</p>
-<p class="note"><strong>Sandbox:</strong> no real money moves. Enter any US mobile number (no text is sent), an email ending @sandbox.test and the code 000000 for both.</p>
+${mode === "sandbox" ? '<p class="note"><strong>Sandbox:</strong> no real money moves. Enter any US mobile number (no text is sent), an email ending @sandbox.test and the code 000000 for both.</p>' : ""}
 ${
   usd
     ? `<section id="guest"><h2>Apple Pay, no account needed</h2><p class="note">US residents with a US mobile number only. Coinbase processes the payment.</p>

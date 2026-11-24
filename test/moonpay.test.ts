@@ -67,7 +67,7 @@ afterEach(() => {
 describe("MoonPay sandbox endpoint", () => {
   it("lists only the buy-link tool and stays out of /mcp", async () => {
     const own = await mcp("/mcp/moonpay", "tools/list", {});
-    expect(own.json.result.tools!.map((tool) => tool.name)).toEqual(["create_moonpay_buy_link"]);
+    expect(own.json.result.tools!.map((tool) => tool.name)).toEqual(["create_moonpay_buy_link", "create_moonpay_sell_link", "get_moonpay_sell_transaction"]);
     const bundled = await mcp("/mcp", "tools/list", {});
     expect(bundled.json.result.tools!.some((tool) => tool.name.includes("moonpay"))).toBe(false);
     for (const query of ["protocols=moonpay", "protocols=ekubo+moonpay"]) {
@@ -163,7 +163,7 @@ describe("MoonPay sandbox endpoint", () => {
     const live = await open(good, {}, { ...sandboxEnv, MOONPAY_PUBLISHABLE_KEY: "pk_live_fixture", MOONPAY_SECRET_KEY: "sk_live_x" });
     expect(live.status).toBe(502);
     const body = await live.text();
-    expect(body).toContain("moonpay_live_keys_refused");
+    expect(body).toContain("moonpay_keys_mismatch");
     expect(body).not.toContain("fixture");
   });
 
@@ -187,11 +187,11 @@ describe("MoonPay sandbox endpoint", () => {
     expect(unconfigured.json.result.structuredContent.error.code).toBe("moonpay_not_configured");
     const live = { ...baseEnv, MOONPAY_PUBLISHABLE_KEY: "pk_live_fixture", MOONPAY_SECRET_KEY: "sk_live_fixture-secret" };
     const refused = await buy({ wallet_address: wallet, currency_code: "eth" }, live);
-    expect(refused.json.result.structuredContent.error.code).toBe("moonpay_live_keys_refused");
+    expect(refused.json.result.structuredContent.error.code).toBe("moonpay_keys_mismatch");
     expect(JSON.stringify(refused.json)).not.toContain("fixture");
     const mixed = { ...sandboxEnv, MOONPAY_SECRET_KEY: "sk_live_fixture-secret" };
     expect((await buy({ wallet_address: wallet, currency_code: "eth" }, mixed)).json.result.structuredContent.error.code).toBe(
-      "moonpay_live_keys_refused",
+      "moonpay_keys_mismatch",
     );
   });
 });

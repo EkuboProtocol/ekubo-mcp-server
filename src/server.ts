@@ -7,8 +7,21 @@ import {
 import { uniswapTools, uniswapCatalog } from "./uniswap/tools.js";
 import { safeTools, safeCatalog } from "./safe.js";
 import { xIdentityHandlers, xIdentityTools } from "./x-identity.js";
-import { createMoonPayBuyLink, createMoonPayBuyLinkSchema } from "./moonpay.js";
+import {
+  createMoonPayBuyLink,
+  createMoonPayBuyLinkSchema,
+  createMoonPaySellLink,
+  createMoonPaySellLinkSchema,
+  getMoonPaySellTransaction,
+  getMoonPaySellTransactionSchema,
+} from "./moonpay.js";
 import { createCoinbaseOnrampLink, createCoinbaseOnrampLinkSchema } from "./coinbase-onramp.js";
+import {
+  createCoinbaseOfframpLink,
+  createCoinbaseOfframpLinkSchema,
+  getCoinbaseOfframpTransaction,
+  getCoinbaseOfframpTransactionSchema,
+} from "./coinbase-offramp.js";
 import { informationalOutputSchemas } from "./informational-output-schemas.js";
 import {
   McpServer,
@@ -1774,10 +1787,19 @@ const preparerAnnotations = {
   openWorldHint: true,
 } as const;
 
+// Ramp link tools return a fresh link and reference on every call.
+const RAMP_LINK_TOOLS = new Set([
+  "create_moonpay_buy_link",
+  "create_moonpay_sell_link",
+  "create_coinbase_onramp_link",
+  "create_coinbase_offramp_link",
+]);
+
 function toolAnnotations(name: string) {
   if (
     name.startsWith("prepare_") ||
-    name === "get_quotes_with_plans"
+    name === "get_quotes_with_plans" ||
+    RAMP_LINK_TOOLS.has(name)
   ) {
     return preparerAnnotations;
   }
@@ -2495,20 +2517,51 @@ export const publicToolCatalog = [
   },
 ] as const;
 
+const MODE_NOTE =
+  "Live or sandbox per this server's configuration: the result's environment says which, and real_payment is true only for live checkouts.";
+
 const moonPayCatalog = [
   {
     name: "create_moonpay_buy_link",
-    title: "Create a MoonPay sandbox card checkout link",
+    title: "Create a MoonPay card checkout link",
     description:
-      "Return a MoonPay sandbox checkout URL for buying ETH or USDC with a card into wallet_address, in two calls: sign the returned ownership_proof.message with wallet_address, then call again with issued_at and signature. Show the URL to the user; MoonPay handles identity checks and payment on its own page. Sandbox only: test cards, Sepolia delivery, no real money.",
+      `Return a MoonPay checkout URL for buying ETH or USDC with a card, Apple Pay or bank transfer into wallet_address, in two calls: sign the returned ownership_proof.message with wallet_address, then call again with issued_at and signature. Show the URL to the user; MoonPay handles identity checks and payment on its own page. ${MODE_NOTE}`,
     inputSchema: z.toJSONSchema(createMoonPayBuyLinkSchema, { io: "input" }),
   },
   {
-    name: "create_coinbase_onramp_link",
-    title: "Create a Coinbase Onramp sandbox checkout link",
+    name: "create_moonpay_sell_link",
+    title: "Create a MoonPay sell (off-ramp) link",
     description:
-      "Create a Coinbase Onramp sandbox checkout URL for buying ETH or USDC on base, ethereum, arbitrum or optimism into wallet_address, in two calls: sign the returned ownership_proof.message with wallet_address, then call again with issued_at and signature. Show the URL to the user; Coinbase handles identity checks and payment on its own page. Sandbox only: no real money moves.",
+      `Return a MoonPay URL for selling ETH or USDC from wallet_address for fiat paid to the user's card or bank, in two calls like create_moonpay_buy_link. The user confirms the sale on MoonPay; then get_moonpay_sell_transaction gives the deposit address and amount to send. ${MODE_NOTE}`,
+    inputSchema: z.toJSONSchema(createMoonPaySellLinkSchema, { io: "input" }),
+  },
+  {
+    name: "get_moonpay_sell_transaction",
+    title: "Get a MoonPay sale's deposit details and status",
+    description:
+      "Read the MoonPay sale started by a create_moonpay_sell_link link: status, the deposit address and exact amount to send while status is waitingForDeposit, quote expiry and payout. Read-only; sends nothing.",
+    inputSchema: z.toJSONSchema(getMoonPaySellTransactionSchema),
+  },
+  {
+    name: "create_coinbase_onramp_link",
+    title: "Create a Coinbase Onramp checkout link",
+    description:
+      `Create a Coinbase Onramp checkout URL for buying ETH or USDC on base, ethereum, arbitrum or optimism into wallet_address, in two calls: sign the returned ownership_proof.message with wallet_address, then call again with issued_at and signature. Show the URL to the user; Coinbase handles identity checks and payment on its own page. ${MODE_NOTE}`,
     inputSchema: z.toJSONSchema(createCoinbaseOnrampLinkSchema, { io: "input" }),
+  },
+  {
+    name: "create_coinbase_offramp_link",
+    title: "Create a Coinbase Offramp (sell) link",
+    description:
+      `Return a Coinbase URL for selling ETH or USDC from wallet_address for fiat paid to the user's bank or Coinbase balance, in two calls like create_coinbase_onramp_link. Needs a Coinbase account. After the user presses Cash out, get_coinbase_offramp_transaction gives the deposit address and amount to send within 30 minutes. ${MODE_NOTE}`,
+    inputSchema: z.toJSONSchema(createCoinbaseOfframpLinkSchema, { io: "input" }),
+  },
+  {
+    name: "get_coinbase_offramp_transaction",
+    title: "Get a Coinbase sale's deposit details and status",
+    description:
+      "Read the Coinbase sale started by a create_coinbase_offramp_link link: status, the Coinbase deposit address and exact amount to send while status is STARTED, the send deadline and payout. Read-only; sends nothing.",
+    inputSchema: z.toJSONSchema(getCoinbaseOfframpTransactionSchema),
   },
 ];
 
@@ -4078,6 +4131,18 @@ export function createEkuboServer(
   registerCatalogTool("create_coinbase_onramp_link", createCoinbaseOnrampLinkSchema, (input) =>
     createCoinbaseOnrampLink(env, input, origin),
   );
+  registerCatalogTool("create_moonpay_sell_link", createMoonPaySellLinkSchema, (input) =>
+    createMoonPaySellLink(env, input, origin),
+  );
+  registerCatalogTool("get_moonpay_sell_transaction", getMoonPaySellTransactionSchema, (input) =>
+    getMoonPaySellTransaction(env, input),
+  );
+  registerCatalogTool("create_coinbase_offramp_link", createCoinbaseOfframpLinkSchema, (input) =>
+    createCoinbaseOfframpLink(env, input, origin),
+  );
+  registerCatalogTool("get_coinbase_offramp_transaction", getCoinbaseOfframpTransactionSchema, (input) =>
+    getCoinbaseOfframpTransaction(env, input),
+  );
 
   registerCatalogTool("get_lido_deployment", getLidoDeploymentSchema, () =>
     getLidoDeployment(),
@@ -4637,6 +4702,22 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
   },
 ];
 
+function rampInstructions(slug: "moonpay" | "coinbase", origin: string): string {
+  const [name, buy, sell, status, sendState] =
+    slug === "moonpay"
+      ? ["MoonPay", "create_moonpay_buy_link", "create_moonpay_sell_link", "get_moonpay_sell_transaction", "waitingForDeposit"]
+      : ["Coinbase", "create_coinbase_onramp_link", "create_coinbase_offramp_link", "get_coinbase_offramp_transaction", "STARTED"];
+  return `Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}
+
+${name} buy (on-ramp) and sell (off-ramp) links. ${buy} and ${sell} first return ownership_proof.message; the user's wallet signs it (Cloud Wallet: wallet_sign_message with message_hex), then the same call with issued_at and signature returns checkout_url. Show it to the user, who opens it in a browser and completes identity checks, payment or payout on ${name}'s own page. Use the user's own wallet address; never guess one or sign for an address the user does not control.
+
+Selling: after the user confirms the sale on ${name}, ${status} returns the deposit address and exact amount while status is ${sendState}. Send only that amount of that asset on that network from the signed wallet to that address, as an ordinary transfer the user approves in their wallet, before the deadline. Never take a deposit address from any other source.
+
+This server never sees card or bank details, never holds funds and never signs or sends transactions. Results state environment (live or sandbox); real_payment is true only for live checkouts, where real money moves.
+
+Endpoint scope: ${origin}/mcp/${slug} only, excluded from ${origin}/mcp.`;
+}
+
 export function serverInstructions(
   protocols: ReadonlySet<ProtocolSlug>,
   origin = "https://mcp.ekubo.org",
@@ -4644,11 +4725,8 @@ export function serverInstructions(
   if (protocols.size === 1 && protocols.has("safe")) {
     return `Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}\n\nSafe preparation only: this server never signs, broadcasts, proxies RPC, or submits to the Safe Transaction Service. Supported Safe versions are 1.3.0, 1.4.1 and 1.5.0. Verify version, owners, threshold, nonce and transaction hash through the wallet's read_calls_reference. Decode locally and retain raw bytes. Pass typed_data_signature_request_reference unchanged to a wallet supporting ERC-8410 typed-data signing, with the actual owner as signer. Sign the EIP-712 signing digest, never the request digest. Wallet authorization for transactions does not authorize signatures. Review the full Safe transaction including delegatecall and refund fields, and simulate before signing. SafeMessage signatures require a compatible fallback handler and verifier. valid_until only limits signing/release, not the lifetime of released signatures. No controlled delivery is configured: signatures return to the caller for aggregation. For execution plans follow ekubo://docs/execution-plan and pass execution_plan_reference unchanged to the wallet. Require inner Safe success, not merely a successful outer receipt. Owner changes are Safe self-calls requiring the current threshold, not direct owner transactions.\n\nEndpoint scope: ${origin}/mcp/safe only. Safe tools are excluded from ${origin}/mcp.`;
   }
-  if (protocols.size === 1 && protocols.has("moonpay")) {
-    return `Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}\n\nMoonPay sandbox checkout only. create_moonpay_buy_link first returns ownership_proof.message; the wallet that receives the purchase signs it (Cloud Wallet: wallet_sign_message with message_hex), then the same call with issued_at and signature returns a checkout_url; show it to the user, who opens it in a browser, is redirected to MoonPay and completes identity checks and payment there. This server never sees card details, never holds funds and never signs transactions. Sandbox links accept only MoonPay test cards and deliver Sepolia testnet assets; no real payment is possible from this endpoint. Pass the user's own receiving address; do not guess one.\n\nEndpoint scope: ${origin}/mcp/moonpay only, excluded from ${origin}/mcp.`;
-  }
-  if (protocols.size === 1 && protocols.has("coinbase")) {
-    return `Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}\n\nCoinbase Onramp sandbox checkout only. create_coinbase_onramp_link first returns ownership_proof.message; the wallet that receives the purchase signs it on that network (Cloud Wallet: wallet_sign_message with message_hex), then the same call with issued_at and signature returns a checkout_url; show it to the user, who opens it in a browser, is redirected to Coinbase and completes identity checks and payment there. This server never sees card details, never holds funds and never signs transactions. Every session is a Coinbase sandbox session; no real payment is possible from this endpoint. Pass the user's own receiving address; do not guess one.\n\nEndpoint scope: ${origin}/mcp/coinbase only, excluded from ${origin}/mcp.`;
+  if (protocols.size === 1 && (protocols.has("moonpay") || protocols.has("coinbase"))) {
+    return rampInstructions(protocols.has("moonpay") ? "moonpay" : "coinbase", origin);
   }
   return bundledServerInstructions(protocols, origin);
 }

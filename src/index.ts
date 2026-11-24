@@ -43,15 +43,25 @@ export default {
     const url = new URL(request.url);
     const actor = rateLimitActor(request);
 
+    // Browser-facing checkout pages never allow cross-origin reads, including
+    // their rate-limit and error responses (Coinbase forbids wildcard CORS on
+    // the integration).
+    const rampPage = /^\/(onramp|offramp)\//.test(url.pathname);
     if (request.method !== "OPTIONS") {
       const rejection = await enforceRequestRate(env, actor);
-      if (rejection !== null) return rateLimited(rejection, null);
+      if (rejection !== null) return rampPage ? withoutCors(rateLimited(rejection, null)) : rateLimited(rejection, null);
     }
 
     const guest = await coinbaseGuest(request, env);
     if (guest !== null) return guest;
     const onramp = await onrampRedirect(request, env);
     if (onramp !== null) return onramp;
+    if (rampPage) {
+      return new Response("Not found\n", {
+        status: 404,
+        headers: { "cache-control": "no-store", "content-type": "text/plain; charset=utf-8", "x-robots-tag": "noindex" },
+      });
+    }
 
     const mcpRoute = matchMcpRoute(url.pathname, url.searchParams, url.origin);
     if (mcpRoute !== null && "error" in mcpRoute) {
@@ -189,7 +199,7 @@ export default {
                 slugs: canonicalProtocols(ALL_PROTOCOLS),
                 example: facetMcpUrl(url.origin, new Set(["ekubo", "ekubo-advanced"])),
                 tools_url_template: `${url.origin}/tools?protocols=<slug>+<slug>`,
-                note: `Union of the named protocols' tools and resources, with shared instructions stated once. Use only the slugs listed here, in this order. Safe, MoonPay and Coinbase are not protocols= values: connect each at its own ${url.origin}/mcp/<slug> as a separate MCP server.`,
+                note: `Union of the named protocols' tools and resources, with shared instructions stated once. Use only the slugs listed here, in this order. Safe is not a protocols= value: connect ${url.origin}${protocolMcpPath("safe")} as a separate MCP server. MoonPay and Coinbase are likewise separate servers at ${url.origin}${protocolMcpPath("moonpay")} and ${url.origin}${protocolMcpPath("coinbase")}.`,
               },
               by_protocol: PROTOCOLS.map((protocol) => ({
                 protocol: protocol.slug,
@@ -555,6 +565,14 @@ function bodyTooLarge() {
   );
 }
 
+function withoutCors(response: Response): Response {
+  const headers = new Headers(response.headers);
+  for (const name of [...headers.keys()]) {
+    if (name.startsWith("access-control-")) headers.delete(name);
+  }
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 function rateLimited(
   rejection: RateLimitRejection,
   id: string | number | null,
@@ -715,7 +733,7 @@ ${PROTOCOLS.map(
   (protocol) =>
     `- ${protocol.slug}: ${origin}${protocolMcpPath(protocol.slug)} (${protocol.tools.length} tools, catalog at ${origin}/tools?protocol=${protocol.slug})`,
 ).join("\n")}
-Combined endpoint: ${origin}${ALL_PROTOCOLS_MCP_PATH}?protocols=<slug>+<slug> serves several protocols on one connection, with shared instructions stated once (catalog at ${origin}/tools?protocols=<slug>+<slug>). Allowed slugs, in this order: ${canonicalProtocols(ALL_PROTOCOLS).join(", ")}. Safe, MoonPay and Coinbase are not protocols= values: connect each at its own ${origin}/mcp/<slug> as a separate MCP server.
+Combined endpoint: ${origin}${ALL_PROTOCOLS_MCP_PATH}?protocols=<slug>+<slug> serves several protocols on one connection, with shared instructions stated once (catalog at ${origin}/tools?protocols=<slug>+<slug>). Allowed slugs, in this order: ${canonicalProtocols(ALL_PROTOCOLS).join(", ")}. Safe is not a protocols= value: connect ${origin}${protocolMcpPath("safe")} as a separate MCP server. MoonPay and Coinbase are likewise separate servers at ${origin}${protocolMcpPath("moonpay")} and ${origin}${protocolMcpPath("coinbase")}.
 OpenAPI: ${origin}/openapi.json
 Canonical data API OpenAPI: https://prod-api.ekubo.org/openapi.json
 Aggregated quote resource: ekubo://docs/quoter-api

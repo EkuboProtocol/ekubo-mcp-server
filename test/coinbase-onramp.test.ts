@@ -80,7 +80,7 @@ afterEach(() => {
 describe("Coinbase Onramp sandbox endpoint", () => {
   it("lists only the onramp tool and stays out of /mcp", async () => {
     const own = await mcp("tools/list", {});
-    expect(own.result.tools!.map((tool) => tool.name)).toEqual(["create_coinbase_onramp_link"]);
+    expect(own.result.tools!.map((tool) => tool.name)).toEqual(["create_coinbase_onramp_link", "create_coinbase_offramp_link", "get_coinbase_offramp_transaction"]);
     const bundled = await mcp("tools/list", {}, configured, "/mcp");
     expect(bundled.result.tools!.some((tool) => tool.name.includes("coinbase"))).toBe(false);
     for (const query of ["protocols=coinbase", "protocols=ekubo+coinbase"]) {

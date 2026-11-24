@@ -39,9 +39,13 @@ export const ownershipProofFields = {
 export type OwnershipRequest = {
   provider: string;
   providerName: string;
+  /** "buy" (default): the wallet receives the purchase; "sell": the wallet sends the crypto being sold. */
+  side?: "buy" | "sell";
   redirectPath: string;
   /** Canonical query of the redirect link, without expires or proof. */
   query: URLSearchParams;
+  /** Parameters added to the issued link only, not to the signed message (for example a fresh transaction reference). */
+  linkExtras?: Record<string, string>;
   address: Address;
   chainId: number;
   summary: string;
@@ -107,9 +111,19 @@ export async function ownershipStep(
   const expires = Math.floor(now / 1000) + LINK_TTL_SECONDS;
   return {
     status: "verified" as const,
-    checkout_url: await signedLink(secret, origin, request.redirectPath, request.query, expires),
+    checkout_url: await signedLink(
+      secret,
+      origin,
+      request.redirectPath,
+      linkQuery(request),
+      expires,
+    ),
     link_expires_at: new Date(expires * 1000).toISOString(),
   };
+}
+
+function linkQuery(request: OwnershipRequest): URLSearchParams {
+  return new URLSearchParams([...request.query, ...Object.entries(request.linkExtras ?? {})]);
 }
 
 export async function ownershipMessage(origin: string, request: OwnershipRequest, issuedAt: string): Promise<string> {
@@ -118,7 +132,10 @@ export async function ownershipMessage(origin: string, request: OwnershipRequest
   return createSiweMessage({
     domain: url.host,
     address: request.address,
-    statement: `Confirm that this wallet receives the ${request.providerName} purchase: ${request.summary}. Signing moves no funds and approves nothing.`,
+    statement:
+      request.side === "sell"
+        ? `Confirm that this wallet sells through ${request.providerName}: ${request.summary}. Signing moves no funds and approves nothing.`
+        : `Confirm that this wallet receives the ${request.providerName} purchase: ${request.summary}. Signing moves no funds and approves nothing.`,
     uri: url.origin,
     version: "1",
     chainId: request.chainId,
