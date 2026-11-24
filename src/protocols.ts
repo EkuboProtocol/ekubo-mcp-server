@@ -12,9 +12,14 @@ export const PROTOCOL_SLUGS = [
   "sky",
   "uniswap",
   "safe",
+  "moonpay",
+  "coinbase",
 ] as const;
 
 export type ProtocolSlug = (typeof PROTOCOL_SLUGS)[number];
+
+/** Served only at their own /mcp/<slug>; never bundled into /mcp or combinable in a facet. */
+export const STANDALONE_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(["safe", "moonpay", "coinbase"]);
 
 export type ProtocolDescriptor = {
   readonly slug: ProtocolSlug;
@@ -195,9 +200,23 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
     skill: null,
     tools: safeTools.map((tool) => tool.name),
   },
+  {
+    slug: "moonpay",
+    title: "MoonPay (sandbox)",
+    description: "Signed MoonPay sandbox checkout links to buy ETH or USDC with a card; test mode only, no real payments; separate endpoint only, excluded from /mcp",
+    skill: null,
+    tools: ["create_moonpay_buy_link"],
+  },
+  {
+    slug: "coinbase",
+    title: "Coinbase Onramp (sandbox)",
+    description: "Coinbase Onramp sandbox checkout links to buy ETH or USDC with Apple Pay (US, no account) or a Coinbase account, after the receiving wallet signs; no real payments; separate endpoint only, excluded from /mcp",
+    skill: null,
+    tools: ["create_coinbase_onramp_link"],
+  },
 ];
 
-export const ALL_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(PROTOCOL_SLUGS.filter((slug) => slug !== "safe"));
+export const ALL_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(PROTOCOL_SLUGS.filter((slug) => !STANDALONE_PROTOCOLS.has(slug)));
 
 const TOOL_PROTOCOLS: ReadonlyMap<string, ProtocolSlug> = new Map(
   PROTOCOLS.flatMap((protocol) =>
@@ -305,6 +324,9 @@ export function parseProtocolFacet(
       return { error: safeFacetError(origin) };
     }
     const protocol = protocolBySlug(name);
+    if (protocol !== undefined && STANDALONE_PROTOCOLS.has(protocol.slug)) {
+      return { error: `${protocol.title} cannot go in ${FACET_QUERY_PARAMETER}=. Connect it as a separate MCP server at ${origin}${protocolMcpPath(protocol.slug)}.` };
+    }
     if (protocol === undefined) {
       return { error: `Unknown protocol. Known protocols: ${bundled}.` };
     }
