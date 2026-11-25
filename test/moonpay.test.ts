@@ -65,14 +65,17 @@ afterEach(() => {
 });
 
 describe("MoonPay sandbox endpoint", () => {
-  it("lists only the buy-link tool and stays out of /mcp", async () => {
+  it("serves its tools on /mcp/moonpay and in the /mcp bundle", async () => {
     const own = await mcp("/mcp/moonpay", "tools/list", {});
     expect(own.json.result.tools!.map((tool) => tool.name)).toEqual(["create_moonpay_buy_link", "create_moonpay_sell_link", "get_moonpay_sell_transaction"]);
     const bundled = await mcp("/mcp", "tools/list", {});
-    expect(bundled.json.result.tools!.some((tool) => tool.name.includes("moonpay"))).toBe(false);
+    expect(bundled.json.result.tools!.filter((tool) => tool.name.includes("moonpay")).map((tool) => tool.name)).toEqual(["create_moonpay_buy_link", "create_moonpay_sell_link", "get_moonpay_sell_transaction"]);
     for (const query of ["protocols=moonpay", "protocols=ekubo+moonpay"]) {
-      expect(parseProtocolFacet(new URLSearchParams(query))).toHaveProperty("error");
+      expect(parseProtocolFacet(new URLSearchParams(query))).not.toHaveProperty("error");
     }
+    const viaBundle = await mcp("/mcp", "tools/call", { name: "create_moonpay_buy_link", arguments: { wallet_address: wallet, currency_code: "eth" } });
+    expect(viaBundle.json.result.isError).toBeFalsy();
+    expect(viaBundle.json.result.structuredContent.status).toBe("signature_required");
   });
 
   it("asks wallet_address to sign before returning a link, then links to this server without keys", async () => {

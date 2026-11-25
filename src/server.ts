@@ -1935,9 +1935,26 @@ export function toolOutputSchema(name: string) {
           .nullish(),
       });
     default:
-      return informationalOutputSchemas[name];
+      return namedOutputSchemas[name];
   }
 }
+
+const rampLinkOutputSchema = z.looseObject({
+  ownership_proof: z.looseObject({ message: z.string() }).optional(),
+  checkout_url: z.string().optional(),
+  environment: z.string().optional(),
+  real_payment: z.boolean().optional(),
+});
+const rampStatusOutputSchema = z.looseObject({ status: z.string().nullish() });
+const rampOutputSchemas: Record<string, z.ZodType | undefined> = {
+  create_moonpay_buy_link: rampLinkOutputSchema,
+  create_moonpay_sell_link: rampLinkOutputSchema,
+  create_coinbase_onramp_link: rampLinkOutputSchema,
+  create_coinbase_offramp_link: rampLinkOutputSchema,
+  get_moonpay_sell_transaction: rampStatusOutputSchema,
+  get_coinbase_offramp_transaction: rampStatusOutputSchema,
+};
+const namedOutputSchemas: Record<string, z.ZodType | undefined> = { ...informationalOutputSchemas, ...rampOutputSchemas };
 
 export const publicToolCatalog = [
   {
@@ -2566,6 +2583,8 @@ const moonPayCatalog = [
 ];
 
 export const hostedToolCatalog = [...publicToolCatalog, ...safeCatalog, ...moonPayCatalog];
+/** Tools served by the bundled /mcp endpoint, in its tools/list order. */
+export const bundledToolCatalog = [...publicToolCatalog, ...moonPayCatalog];
 export const publicToolCatalogWithOutputs = hostedToolCatalog.map((entry) => {
   const outputSchema = toolOutputSchema(entry.name);
   return {
@@ -4125,25 +4144,6 @@ export function createEkuboServer(
   for (const tool of [...uniswapTools, ...safeTools]) {
     registerCatalogTool(tool.name, tool.schema, tool.handler);
   }
-  registerCatalogTool("create_moonpay_buy_link", createMoonPayBuyLinkSchema, (input) =>
-    createMoonPayBuyLink(env, input, origin),
-  );
-  registerCatalogTool("create_coinbase_onramp_link", createCoinbaseOnrampLinkSchema, (input) =>
-    createCoinbaseOnrampLink(env, input, origin),
-  );
-  registerCatalogTool("create_moonpay_sell_link", createMoonPaySellLinkSchema, (input) =>
-    createMoonPaySellLink(env, input, origin),
-  );
-  registerCatalogTool("get_moonpay_sell_transaction", getMoonPaySellTransactionSchema, (input) =>
-    getMoonPaySellTransaction(env, input),
-  );
-  registerCatalogTool("create_coinbase_offramp_link", createCoinbaseOfframpLinkSchema, (input) =>
-    createCoinbaseOfframpLink(env, input, origin),
-  );
-  registerCatalogTool("get_coinbase_offramp_transaction", getCoinbaseOfframpTransactionSchema, (input) =>
-    getCoinbaseOfframpTransaction(env, input),
-  );
-
   registerCatalogTool("get_lido_deployment", getLidoDeploymentSchema, () =>
     getLidoDeployment(),
   );
@@ -4189,6 +4189,24 @@ export function createEkuboServer(
         sender: input.sender,
         requestId: input.request_id,
       }),
+  );
+  registerCatalogTool("create_moonpay_buy_link", createMoonPayBuyLinkSchema, (input) =>
+    createMoonPayBuyLink(env, input, origin),
+  );
+  registerCatalogTool("create_moonpay_sell_link", createMoonPaySellLinkSchema, (input) =>
+    createMoonPaySellLink(env, input, origin),
+  );
+  registerCatalogTool("get_moonpay_sell_transaction", getMoonPaySellTransactionSchema, (input) =>
+    getMoonPaySellTransaction(env, input),
+  );
+  registerCatalogTool("create_coinbase_onramp_link", createCoinbaseOnrampLinkSchema, (input) =>
+    createCoinbaseOnrampLink(env, input, origin),
+  );
+  registerCatalogTool("create_coinbase_offramp_link", createCoinbaseOfframpLinkSchema, (input) =>
+    createCoinbaseOfframpLink(env, input, origin),
+  );
+  registerCatalogTool("get_coinbase_offramp_transaction", getCoinbaseOfframpTransactionSchema, (input) =>
+    getCoinbaseOfframpTransaction(env, input),
   );
 
   server.registerResource(
@@ -4697,25 +4715,37 @@ const INSTRUCTION_SECTIONS: readonly InstructionSection[] = [
     text: `Merkl rewards: fetch https://api.merkl.xyz/v4/users/{address}/rewards/summary yourself (public, no key) and pass each token's exact amount and proofs to prepare_merkl_claim, which derives the root they imply and refuses a batch spanning two roots. Run the returned read bundle and require getMerkleRoot() to equal the derived root before authorizing; on a mismatch re-fetch and prepare again, never resend. amount is cumulative, so claimable is amount minus claimed; pending is not claimable. prepare_merkl_claim covers Merkl campaigns on any protocol; prepare_rewards_claim covers Ekubo's own incentive drops, and they are not interchangeable.`,
   },
   {
+    protocols: ["moonpay", "coinbase"],
+    text: rampSection,
+  },
+  {
     protocols: ["aerodrome"],
     text: `Aerodrome is Base-only with no data API: its Sugar lens contracts are the data pipeline. Call prepare_aerodrome_sugar_reads for the dataset you need, run the bundle through the user's wallet/RPC, and pass the pool, gauge, fee, and bribe addresses it returns straight to the prepare_aerodrome_* tools; this server cannot derive them, and a claim naming the wrong one succeeds while transferring nothing. Velodrome's SDKs carry Optimism addresses and a drifted position struct, so cross-check against get_aerodrome_deployment. A veNFT votes once per weekly epoch (a second attempt reverts with AlreadyVotedOrDeposited), a vote replaces the whole allocation, and staking an LP token in a gauge trades its trading fees for AERO emissions. Swaps stay with get_quotes_with_plans; prepare_aerodrome_gauge_claim collects an LP's emissions and prepare_aerodrome_incentive_claim a voter's fees and bribes, and they are not interchangeable.`,
   },
 ];
 
+const RAMPS = {
+  moonpay: ["MoonPay", "create_moonpay_buy_link", "create_moonpay_sell_link", "get_moonpay_sell_transaction", "waitingForDeposit"],
+  coinbase: ["Coinbase", "create_coinbase_onramp_link", "create_coinbase_offramp_link", "get_coinbase_offramp_transaction", "STARTED"],
+} as const;
+
+function rampSection(protocols: ReadonlySet<ProtocolSlug>): string | null {
+  const selected = (["moonpay", "coinbase"] as const).filter((slug) => protocols.has(slug)).map((slug) => RAMPS[slug]);
+  if (selected.length === 0) return null;
+  const names = joinList(selected.map(([name]) => name), "and");
+  const buy = joinList(selected.flatMap(([, buyTool, sellTool]) => [buyTool, sellTool]), "and");
+  const status = selected
+    .map(([name, , , statusTool, sendState]) => `${statusTool} (${name}) returns the deposit address and exact amount while status is ${sendState}`)
+    .join("; ");
+  return `Buying and selling crypto for fiat (${names}): ${buy} first return ownership_proof.message for the user's own wallet to sign (Cloud Wallet: wallet_sign_message with message_hex); the same call with issued_at and signature returns checkout_url, which the user opens to finish identity checks and payment or payout on the provider's page. Never guess an address or sign for one the user does not control. Selling: after the user confirms the sale, ${status}; send exactly that, from the signed wallet, as an ordinary transfer the user approves, before the deadline, and never to an address from any other source. This server never sees card or bank details or holds funds; real_payment is true only for live checkouts.`;
+}
+
 function rampInstructions(slug: "moonpay" | "coinbase", origin: string): string {
-  const [name, buy, sell, status, sendState] =
-    slug === "moonpay"
-      ? ["MoonPay", "create_moonpay_buy_link", "create_moonpay_sell_link", "get_moonpay_sell_transaction", "waitingForDeposit"]
-      : ["Coinbase", "create_coinbase_onramp_link", "create_coinbase_offramp_link", "get_coinbase_offramp_transaction", "STARTED"];
   return `Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}
 
-${name} buy (on-ramp) and sell (off-ramp) links. ${buy} and ${sell} first return ownership_proof.message; the user's wallet signs it (Cloud Wallet: wallet_sign_message with message_hex), then the same call with issued_at and signature returns checkout_url. Show it to the user, who opens it in a browser and completes identity checks, payment or payout on ${name}'s own page. Use the user's own wallet address; never guess one or sign for an address the user does not control.
+${rampSection(new Set([slug]))}
 
-Selling: after the user confirms the sale on ${name}, ${status} returns the deposit address and exact amount while status is ${sendState}. Send only that amount of that asset on that network from the signed wallet to that address, as an ordinary transfer the user approves in their wallet, before the deadline. Never take a deposit address from any other source.
-
-This server never sees card or bank details, never holds funds and never signs or sends transactions. Results state environment (live or sandbox); real_payment is true only for live checkouts, where real money moves.
-
-Endpoint scope: ${origin}/mcp/${slug} only, excluded from ${origin}/mcp.`;
+Endpoint scope: ${origin}/mcp/${slug} has only ${RAMPS[slug][0]} tools; ${origin}${ALL_PROTOCOLS_MCP_PATH} also includes them alongside the other protocols.`;
 }
 
 export function serverInstructions(

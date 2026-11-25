@@ -102,7 +102,7 @@ afterEach(() => {
 });
 
 describe("ramp endpoints list buy and sell tools", () => {
-  it("serves buy, sell and sale-status tools on each provider endpoint only", async () => {
+  it("serves buy, sell and sale-status tools on each provider endpoint and in /mcp", async () => {
     expect(await list("/mcp/moonpay")).toEqual(["create_moonpay_buy_link", "create_moonpay_sell_link", "get_moonpay_sell_transaction"]);
     expect(await list("/mcp/coinbase")).toEqual([
       "create_coinbase_onramp_link",
@@ -110,7 +110,7 @@ describe("ramp endpoints list buy and sell tools", () => {
       "get_coinbase_offramp_transaction",
     ]);
     const bundled = await list("/mcp");
-    expect(bundled.some((tool) => tool.includes("moonpay") || tool.includes("coinbase"))).toBe(false);
+    expect(bundled.filter((tool) => tool.includes("moonpay") || tool.includes("coinbase"))).toHaveLength(6);
   });
 });
 

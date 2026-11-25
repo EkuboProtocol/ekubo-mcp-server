@@ -4,4 +4,4 @@ export const MCP_SERVER_VERSION = "0.57.0";
 // It is exposed in HTTP discovery and in the server instructions so clients
 // and smoke tests can detect a cached catalog independently of the
 // application version.
-export const MCP_TOOL_CATALOG_REVISION = "2026-11-24.moonpay-coinbase-ramps";
+export const MCP_TOOL_CATALOG_REVISION = "2026-11-25.ramps-in-default-bundle";

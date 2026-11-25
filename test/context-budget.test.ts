@@ -50,7 +50,7 @@ type Budget = {
 };
 
 const ENDPOINTS: Record<string, Budget> = {
-  "/mcp": { instructions: 7_950, tools: 133_000, tool: 5_200, resources: 4_200 },
+  "/mcp": { instructions: 9_000, tools: 139_500, tool: 5_200, resources: 4_200 },
   "/mcp/ekubo": { instructions: 5_250, tools: 54_500, tool: 5_200, resources: 1_900 },
   "/mcp/ekubo-advanced": { instructions: 4_650, tools: 20_000, tool: 2_000, resources: 900 },
   "/mcp/aave": { instructions: 4_750, tools: 8_500, tool: 1_500, resources: 300 },
@@ -61,8 +61,8 @@ const ENDPOINTS: Record<string, Budget> = {
   "/mcp/sky": { instructions: 4_750, tools: 3_800, tool: 1_100, resources: 750 },
   "/mcp/uniswap": { instructions: 4_250, tools: 19_500, tool: 1_900, resources: 300 },
   "/mcp/safe": { instructions: 1_400, tools: 11_000, tool: 2_450, resources: 300 },
-  "/mcp/moonpay": { instructions: 1_350, tools: 4_600, tool: 1_950, resources: 300 },
-  "/mcp/coinbase": { instructions: 1_350, tools: 4_200, tool: 1_800, resources: 300 },
+  "/mcp/moonpay": { instructions: 1_350, tools: 5_100, tool: 2_200, resources: 300 },
+  "/mcp/coinbase": { instructions: 1_350, tools: 4_700, tool: 2_050, resources: 300 },
 };
 
 const FACETS: Record<string, Budget> = {

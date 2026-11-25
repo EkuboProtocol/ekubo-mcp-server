@@ -16,6 +16,7 @@ import {
 } from "./rate-limit.js";
 import {
   createEkuboServer,
+  bundledToolCatalog,
   publicToolCatalog,
   publicToolCatalogWithOutputs,
   serverInstructions,
@@ -183,7 +184,7 @@ export default {
               "Primary non-browser, public, unauthenticated, non-custodial tools for onchain swaps, STONX allocations, and signer-neutral Ekubo, Aave, Morpho, Sky, and Lido transaction preparation workflows",
             version: MCP_SERVER_VERSION,
             tool_catalog_revision: MCP_TOOL_CATALOG_REVISION,
-            tool_count: publicToolCatalog.length,
+            tool_count: bundledToolCatalog.length,
             mcp_endpoint: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}`,
             mcp_transport: "streamable-http",
             authentication: "none",
@@ -191,15 +192,15 @@ export default {
               all: {
                 url: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}`,
                 protocols: [...ALL_PROTOCOLS],
-                tool_count: publicToolCatalog.length,
-                note: `Bundled protocols. Safe, MoonPay and Coinbase are not bundled: connect ${url.origin}${protocolMcpPath("safe")}, ${url.origin}${protocolMcpPath("moonpay")} or ${url.origin}${protocolMcpPath("coinbase")} as separate MCP servers.`,
+                tool_count: bundledToolCatalog.length,
+                note: `Bundled protocols. Safe is not bundled: connect ${url.origin}${protocolMcpPath("safe")} as a separate MCP server.`,
               },
               combined: {
                 url_template: `${url.origin}${ALL_PROTOCOLS_MCP_PATH}?protocols=<slug>+<slug>`,
                 slugs: canonicalProtocols(ALL_PROTOCOLS),
                 example: facetMcpUrl(url.origin, new Set(["ekubo", "ekubo-advanced"])),
                 tools_url_template: `${url.origin}/tools?protocols=<slug>+<slug>`,
-                note: `Union of the named protocols' tools and resources, with shared instructions stated once. Use only the slugs listed here, in this order. Safe is not a protocols= value: connect ${url.origin}${protocolMcpPath("safe")} as a separate MCP server. MoonPay and Coinbase are likewise separate servers at ${url.origin}${protocolMcpPath("moonpay")} and ${url.origin}${protocolMcpPath("coinbase")}.`,
+                note: `Union of the named protocols' tools and resources, with shared instructions stated once. Use only the slugs listed here, in this order. Safe is not a protocols= value: connect ${url.origin}${protocolMcpPath("safe")} as a separate MCP server.`,
               },
               by_protocol: PROTOCOLS.map((protocol) => ({
                 protocol: protocol.slug,
@@ -728,12 +729,12 @@ Authentication: none
 Server version: ${MCP_SERVER_VERSION}
 Tool catalog revision: ${MCP_TOOL_CATALOG_REVISION}
 Tool catalog: ${origin}/tools
-Per-protocol endpoints (each serves one protocol's tools; ${origin}${ALL_PROTOCOLS_MCP_PATH} bundles all except Safe, MoonPay and Coinbase, available only at /mcp/safe, /mcp/moonpay and /mcp/coinbase):
+Per-protocol endpoints (each serves one protocol's tools; ${origin}${ALL_PROTOCOLS_MCP_PATH} bundles all except Safe, available only at /mcp/safe):
 ${PROTOCOLS.map(
   (protocol) =>
     `- ${protocol.slug}: ${origin}${protocolMcpPath(protocol.slug)} (${protocol.tools.length} tools, catalog at ${origin}/tools?protocol=${protocol.slug})`,
 ).join("\n")}
-Combined endpoint: ${origin}${ALL_PROTOCOLS_MCP_PATH}?protocols=<slug>+<slug> serves several protocols on one connection, with shared instructions stated once (catalog at ${origin}/tools?protocols=<slug>+<slug>). Allowed slugs, in this order: ${canonicalProtocols(ALL_PROTOCOLS).join(", ")}. Safe is not a protocols= value: connect ${origin}${protocolMcpPath("safe")} as a separate MCP server. MoonPay and Coinbase are likewise separate servers at ${origin}${protocolMcpPath("moonpay")} and ${origin}${protocolMcpPath("coinbase")}.
+Combined endpoint: ${origin}${ALL_PROTOCOLS_MCP_PATH}?protocols=<slug>+<slug> serves several protocols on one connection, with shared instructions stated once (catalog at ${origin}/tools?protocols=<slug>+<slug>). Allowed slugs, in this order: ${canonicalProtocols(ALL_PROTOCOLS).join(", ")}. Safe is not a protocols= value: connect ${origin}${protocolMcpPath("safe")} as a separate MCP server.
 OpenAPI: ${origin}/openapi.json
 Canonical data API OpenAPI: https://prod-api.ekubo.org/openapi.json
 Aggregated quote resource: ekubo://docs/quoter-api

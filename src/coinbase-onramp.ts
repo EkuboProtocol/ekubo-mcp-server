@@ -29,7 +29,7 @@ export const coinbaseCheckoutSchema = z.strictObject({
     .string()
     .regex(/^[1-9][0-9]{0,5}(\.[0-9]{1,2})?$/)
     .optional()
-    .describe("Fiat amount to pre-fill including fees, e.g. 50 or 49.99. Omit to let the user choose"),
+    .describe("Fiat amount to pre-fill including fees, in major units (e.g. 50 or 49.99), not base units. Omit to let the user choose"),
 });
 
 export const createCoinbaseOnrampLinkSchema = coinbaseCheckoutSchema.extend(ownershipProofFields);
