@@ -60,6 +60,8 @@ export const MAX_BATCH_LENGTH = 20;
 const METERED_TOOLS = new Set([
   "get_quotes_with_plans",
   "get_value_transfer_status",
+  "get_moonpay_sell_transaction",
+  "get_coinbase_offramp_transaction",
 ]);
 
 /**

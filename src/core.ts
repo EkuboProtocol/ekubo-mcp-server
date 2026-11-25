@@ -44,7 +44,8 @@ type OptionalBindings =
   | "RATE_LIMITER_TOOLS"
   | "RATE_LIMITER_METERED"
   | "LI_FI_INTEGRATOR"
-  | "EKUBO_IDENTITY_API_URL";
+  | "EKUBO_IDENTITY_API_URL"
+  | "ONRAMP_MODE";
 
 export type Env = Omit<Cloudflare.Env, OptionalBindings> &
   Partial<Pick<Cloudflare.Env, OptionalBindings>> & {
@@ -54,6 +55,12 @@ export type Env = Omit<Cloudflare.Env, OptionalBindings> &
     LI_FI_API_URL?: string;
     ALLOWED_HOSTNAMES?: string;
     ALLOWED_ORIGINS?: string;
+    MOONPAY_PUBLISHABLE_KEY?: string;
+    MOONPAY_SECRET_KEY?: string;
+    COINBASE_CDP_API_KEY_ID?: string;
+    COINBASE_CDP_API_KEY_SECRET?: string;
+    ONRAMP_LINK_SECRET?: string;
+    ONRAMP_RPC_URLS?: string;
   };
 
 export type QuoteSource = "ekubo" | "0x" | "across" | "layerzero" | "lifi";

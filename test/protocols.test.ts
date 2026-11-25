@@ -589,7 +589,7 @@ describe("Protocol facets of /mcp", () => {
       mcp_endpoints: { all: { protocols: string[] }; combined: { slugs: string[]; example: string; note: string } };
     };
     expect(root.mcp_endpoints.all.protocols).not.toContain("safe");
-    expect(root.mcp_endpoints.combined.slugs).toEqual(PROTOCOL_SLUGS.filter((slug) => slug !== "safe"));
+    expect(root.mcp_endpoints.combined.slugs).toEqual([...ALL_PROTOCOLS]);
     expect(root.mcp_endpoints.combined.example).not.toContain("safe");
     expect(root.mcp_endpoints.combined.note).toContain("Safe is not a protocols= value");
     const llms = await (await worker.fetch(new Request("https://mcp.ekubo.org/llms.txt"), env, context)).text();

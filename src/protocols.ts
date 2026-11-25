@@ -12,9 +12,14 @@ export const PROTOCOL_SLUGS = [
   "sky",
   "uniswap",
   "safe",
+  "moonpay",
+  "coinbase",
 ] as const;
 
 export type ProtocolSlug = (typeof PROTOCOL_SLUGS)[number];
+
+/** Served only at their own /mcp/<slug>; never bundled into /mcp or combinable in a facet. */
+export const STANDALONE_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(["safe", "moonpay", "coinbase"]);
 
 export type ProtocolDescriptor = {
   readonly slug: ProtocolSlug;
@@ -195,9 +200,23 @@ export const PROTOCOLS: readonly ProtocolDescriptor[] = [
     skill: null,
     tools: safeTools.map((tool) => tool.name),
   },
+  {
+    slug: "moonpay",
+    title: "MoonPay",
+    description: "MoonPay links to buy ETH or USDC with a card, Apple Pay or bank transfer, or sell them for fiat, after the wallet signs; separate endpoint only, excluded from /mcp",
+    skill: null,
+    tools: ["create_moonpay_buy_link", "create_moonpay_sell_link", "get_moonpay_sell_transaction"],
+  },
+  {
+    slug: "coinbase",
+    title: "Coinbase Onramp & Offramp",
+    description: "Coinbase links to buy ETH or USDC with Apple Pay (US, no account) or a Coinbase account, or sell them to a bank or Coinbase balance, after the wallet signs; separate endpoint only, excluded from /mcp",
+    skill: null,
+    tools: ["create_coinbase_onramp_link", "create_coinbase_offramp_link", "get_coinbase_offramp_transaction"],
+  },
 ];
 
-export const ALL_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(PROTOCOL_SLUGS.filter((slug) => slug !== "safe"));
+export const ALL_PROTOCOLS: ReadonlySet<ProtocolSlug> = new Set(PROTOCOL_SLUGS.filter((slug) => !STANDALONE_PROTOCOLS.has(slug)));
 
 const TOOL_PROTOCOLS: ReadonlyMap<string, ProtocolSlug> = new Map(
   PROTOCOLS.flatMap((protocol) =>
@@ -283,6 +302,13 @@ export function safeFacetError(origin = ""): string {
   return `Safe cannot go in ${FACET_QUERY_PARAMETER}=. Connect it as a separate MCP server at ${origin}${protocolMcpPath("safe")} and keep this connection without it.`;
 }
 
+function standaloneFacetError(name: string, origin: string): string | null {
+  if (name === "safe") return safeFacetError(origin);
+  const protocol = protocolBySlug(name);
+  if (protocol === undefined || !STANDALONE_PROTOCOLS.has(protocol.slug)) return null;
+  return `${protocol.title} cannot go in ${FACET_QUERY_PARAMETER}=. Connect it as a separate MCP server at ${origin}${protocolMcpPath(protocol.slug)}.`;
+}
+
 export function parseProtocolFacet(
   query: URLSearchParams,
   origin = "",
@@ -301,9 +327,8 @@ export function parseProtocolFacet(
   }
   const protocols = new Set<ProtocolSlug>();
   for (const name of names) {
-    if (name === "safe") {
-      return { error: safeFacetError(origin) };
-    }
+    const standalone = standaloneFacetError(name, origin);
+    if (standalone !== null) return { error: standalone };
     const protocol = protocolBySlug(name);
     if (protocol === undefined) {
       return { error: `Unknown protocol. Known protocols: ${bundled}.` };

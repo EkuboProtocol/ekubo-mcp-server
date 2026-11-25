@@ -61,6 +61,8 @@ const ENDPOINTS: Record<string, Budget> = {
   "/mcp/sky": { instructions: 4_750, tools: 3_800, tool: 1_100, resources: 750 },
   "/mcp/uniswap": { instructions: 4_250, tools: 19_500, tool: 1_900, resources: 300 },
   "/mcp/safe": { instructions: 1_400, tools: 11_000, tool: 2_450, resources: 300 },
+  "/mcp/moonpay": { instructions: 1_350, tools: 4_600, tool: 1_950, resources: 300 },
+  "/mcp/coinbase": { instructions: 1_350, tools: 4_200, tool: 1_800, resources: 300 },
 };
 
 const FACETS: Record<string, Budget> = {

@@ -57,7 +57,12 @@
     // Base URL of the API serving /v1/identity (wallet to X links). Empty
     // keeps start_x_link, get_x_link, complete_x_link and lookup_x_identities
     // out of the catalog; set it when the feature launches (EKU-3113).
-    "EKUBO_IDENTITY_API_URL": ""
+    "EKUBO_IDENTITY_API_URL": "",
+    // "live" makes /mcp/moonpay and /mcp/coinbase issue real checkouts; any
+    // other value is sandbox. Live MoonPay needs pk_live_/sk_live_ keys and
+    // refuses test keys (and the reverse), so the mode and the MOONPAY_*,
+    // COINBASE_CDP_API_KEY_* and ONRAMP_LINK_SECRET secrets change together.
+    "ONRAMP_MODE": "live"
   },
   "r2_buckets": [
     {
