@@ -38,7 +38,7 @@ export const coinbaseSellCheckoutSchema = z.strictObject({
     .regex(/^(0|[1-9][0-9]{0,8})(\.[0-9]{1,18})?$/)
     .refine((value) => Number(value) > 0, "must be positive")
     .optional()
-    .describe("Amount of the asset to sell in whole units, e.g. 0.05 or 100. Omit to let the user choose on Coinbase"),
+    .describe("Amount of the asset to sell in whole units, e.g. 0.05 or 100, not base units or wei. Omit to let the user choose on Coinbase"),
 });
 
 export const createCoinbaseOfframpLinkSchema = coinbaseSellCheckoutSchema.extend(ownershipProofFields);

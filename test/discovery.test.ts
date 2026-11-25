@@ -19,6 +19,7 @@ import {
   prepareVe33StakeSchema,
   prepareVe33VoteSchema,
   prepareSwapSchema,
+  bundledToolCatalog,
   publicToolCatalog,
   ROBINHOOD_STONX_CHAIN_ID,
   ROBINHOOD_STONX_VE_TOKEN,
@@ -154,7 +155,7 @@ describe("Worker discovery", () => {
     expect(metadata.description).not.toContain("read-only agent tools");
     expect(metadata.version).toBe(MCP_SERVER_VERSION);
     expect(metadata.tool_catalog_revision).toBe(MCP_TOOL_CATALOG_REVISION);
-    expect(metadata.tool_count).toBe(publicToolCatalog.length);
+    expect(metadata.tool_count).toBe(bundledToolCatalog.length);
     expect(metadata.authentication).toBe("none");
     expect(metadata.lp_position_workflow_resource).toBe(
       "ekubo://docs/lp-position-workflow",
@@ -246,7 +247,7 @@ describe("Worker discovery", () => {
     };
     expect(catalog.server_version).toBe(MCP_SERVER_VERSION);
     expect(catalog.catalog_revision).toBe(MCP_TOOL_CATALOG_REVISION);
-    expect(catalog.tool_count).toBe(publicToolCatalog.length);
+    expect(catalog.tool_count).toBe(bundledToolCatalog.length);
     expect(catalog.tools.map((tool) => tool.name)).toEqual([
       "list_tokens",
       "export_tokens",
@@ -331,6 +332,12 @@ describe("Worker discovery", () => {
       "prepare_lido_unwrap",
       "prepare_lido_withdrawal_request",
       "prepare_lido_withdrawal_claim",
+      "create_moonpay_buy_link",
+      "create_moonpay_sell_link",
+      "get_moonpay_sell_transaction",
+      "create_coinbase_onramp_link",
+      "create_coinbase_offramp_link",
+      "get_coinbase_offramp_transaction",
     ]);
     expect(
       catalog.tools.every((tool) => !tool.name.startsWith("ekubo_")),
@@ -724,7 +731,7 @@ describe("Worker discovery", () => {
       };
     };
     expect(listResult.result.tools.map((tool) => tool.name)).toEqual(
-      publicToolCatalog.map((tool) => tool.name),
+      bundledToolCatalog.map((tool) => tool.name),
     );
     expect(
       listResult.result.tools.every(

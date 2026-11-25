@@ -52,7 +52,7 @@ export const moonPayCheckoutSchema = z.strictObject({
     .string()
     .regex(/^[1-9][0-9]{0,5}$/)
     .optional()
-    .describe("Whole fiat amount to pre-fill, 1 to 999999; MoonPay enforces its own minimum and maximum. Omit to let the user choose"),
+    .describe("Whole fiat amount to pre-fill in major units (50 means $50, not base units), 1 to 999999; MoonPay enforces its own minimum and maximum. Omit to let the user choose"),
 });
 
 export const createMoonPayBuyLinkSchema = moonPayCheckoutSchema.extend(ownershipProofFields);
@@ -222,7 +222,7 @@ export const moonPaySellCheckoutSchema = z.strictObject({
     .regex(/^(0|[1-9][0-9]{0,8})(\.[0-9]{1,18})?$/)
     .refine((value) => Number(value) > 0, "must be positive")
     .optional()
-    .describe("Amount of crypto to sell in whole units, e.g. 0.05 or 100; MoonPay enforces its own minimum and maximum. Omit to let the user choose"),
+    .describe("Amount of crypto to sell in whole units, e.g. 0.05 or 100, not base units or wei; MoonPay enforces its own minimum and maximum. Omit to let the user choose"),
   quote_currency_code: z
     .enum(FIAT_CURRENCIES)
     .default("usd")

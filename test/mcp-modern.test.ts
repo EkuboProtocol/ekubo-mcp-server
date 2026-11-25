@@ -1,6 +1,6 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import worker from "../src/index.js";
-import { publicToolCatalog } from "../src/server.js";
+import { bundledToolCatalog } from "../src/server.js";
 import { fakeArtifactStore } from "./fake-r2.js";
 
 const env = {
@@ -72,7 +72,7 @@ describe("MCP 2026-07-28", () => {
     expect(full.map((t: { name: string }) => t.name)).toEqual(
       (await rpc("tools/list")).body.result.tools.map((t: { name: string }) => t.name),
     );
-    expect(full).toHaveLength(publicToolCatalog.length);
+    expect(full).toHaveLength(bundledToolCatalog.length);
     for (const tool of full) expect(tool.outputSchema?.type).toBe("object");
     const lido = (await rpc("tools/list", {}, "/mcp/lido")).body.result.tools;
     expect(lido.length).toBeLessThan(full.length);
@@ -94,7 +94,7 @@ describe("MCP 2026-07-28", () => {
 
   it("preserves legacy result shapes", async () => {
     const { body } = await rpc("tools/list", {}, "/mcp", false);
-    expect(body.result.tools).toHaveLength(publicToolCatalog.length);
+    expect(body.result.tools).toHaveLength(bundledToolCatalog.length);
     expect(body.result.ttlMs).toBeUndefined();
     expect(body.result.cacheScope).toBeUndefined();
     expect(body.result.resultType).toBeUndefined();

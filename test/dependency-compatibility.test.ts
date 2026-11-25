@@ -89,7 +89,7 @@ describe("dependency compatibility against the pre-update source fixtures", () =
       expect(v4Tools).toHaveLength(v4Names.size);
       expect(hash(v4Tools)).toBe(v4Golden.catalog_hash);
       const allNames = catalog.body.result.tools.map((tool: Json) => tool.name);
-      expect(allNames.join(" ")).not.toMatch(/launchpad|moonpay|coinbase_onramp/);
+      expect(allNames.join(" ")).not.toMatch(/launchpad/);
     });
 
     it(`${version} keeps the public catalog unchanged without echoing caller-supplied auth headers`, async () => {

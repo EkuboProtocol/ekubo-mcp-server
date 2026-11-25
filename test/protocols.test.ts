@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { fakeArtifactStore } from "./fake-r2.js";
 import worker from "../src/index.js";
 import openapi from "../openapi.json";
-import { hostedToolCatalog, publicToolCatalog, serverInstructions } from "../src/server.js";
+import { bundledToolCatalog, hostedToolCatalog, publicToolCatalog, serverInstructions } from "../src/server.js";
 import {
   ALL_PROTOCOLS,
   ALL_PROTOCOLS_MCP_PATH,
@@ -147,7 +147,7 @@ describe("Protocol partition", () => {
 describe("Per-protocol MCP endpoints", () => {
   it("keeps /mcp serving the whole catalog", async () => {
     expect(await listedTools("/mcp")).toEqual(
-      publicToolCatalog.map((tool) => tool.name),
+      bundledToolCatalog.map((tool) => tool.name),
     );
   });
 
@@ -337,7 +337,7 @@ describe("Per-protocol discovery documents", () => {
     expect(document.mcp_endpoint).toBe("https://mcp.ekubo.org/mcp");
     expect(document.mcp_endpoints.all.url).toBe("https://mcp.ekubo.org/mcp");
     expect(document.mcp_endpoints.all.tool_count).toBe(
-      publicToolCatalog.length,
+      bundledToolCatalog.length,
     );
     expect(document.mcp_endpoints.all.protocols).toEqual([...ALL_PROTOCOLS]);
     expect(

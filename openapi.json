@@ -141,7 +141,7 @@
             "description": "Return only the tools served by /mcp?protocols=<slug>+<slug>. Allowed slugs: ekubo, ekubo-advanced, aave, aerodrome, lido, merkl, morpho, sky, uniswap. Safe is not a protocols value; use protocol=safe for the /mcp/safe catalog. An unknown slug, an empty list or safe is a 404.",
             "schema": {
               "type": "string",
-              "pattern": "^(ekubo|ekubo-advanced|aave|aerodrome|lido|merkl|morpho|sky|uniswap)([+, ](ekubo|ekubo-advanced|aave|aerodrome|lido|merkl|morpho|sky|uniswap))*$"
+              "pattern": "^(ekubo|ekubo-advanced|aave|aerodrome|lido|merkl|morpho|sky|uniswap|moonpay|coinbase)([+, ](ekubo|ekubo-advanced|aave|aerodrome|lido|merkl|morpho|sky|uniswap|moonpay|coinbase))*$"
             },
             "example": "ekubo+ekubo-advanced"
           }
@@ -304,7 +304,7 @@
           "description": "Serve only the named bundled protocols on one connection, slugs joined by + (for example ekubo+ekubo-advanced). Allowed slugs: ekubo, ekubo-advanced, aave, aerodrome, lido, merkl, morpho, sky, uniswap. Safe is not a protocols value: connect /mcp/safe as a separate MCP server. An unknown slug, an empty list or safe is an HTTP 400 unknown_protocol error before any MCP handling.",
           "schema": {
             "type": "string",
-            "pattern": "^(ekubo|ekubo-advanced|aave|aerodrome|lido|merkl|morpho|sky|uniswap)([+, ](ekubo|ekubo-advanced|aave|aerodrome|lido|merkl|morpho|sky|uniswap))*$"
+            "pattern": "^(ekubo|ekubo-advanced|aave|aerodrome|lido|merkl|morpho|sky|uniswap|moonpay|coinbase)([+, ](ekubo|ekubo-advanced|aave|aerodrome|lido|merkl|morpho|sky|uniswap|moonpay|coinbase))*$"
           },
           "example": "ekubo+ekubo-advanced"
         }
