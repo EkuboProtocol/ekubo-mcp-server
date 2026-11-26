@@ -8,7 +8,7 @@
         "@ekubo/sdk": "0.0.10",
         "@ekubo/yul-router-sdk": "0.8.0",
         "@modelcontextprotocol/server": "2.4.0",
-        "@morpho-org/morpho-sdk": "10.0.1",
+        "@morpho-org/morpho-sdk": "10.0.2",
         "@uniswap/sdk-core": "7.22.0",
         "@uniswap/v3-sdk": "3.31.11",
         "@uniswap/v4-sdk": "2.4.7",
@@ -369,7 +369,7 @@
 
     "@morpho-org/midnight-sdk": ["@morpho-org/midnight-sdk@2.7.0", "", { "peerDependencies": { "@morpho-org/morpho-ts": "^2.8.0 || ^3.0.0 || ^4.0.0", "viem": "^2.0.0" } }, "sha512-I6jwmTIy4SQyacG1qKBif+uAMwr/H2vFDNxxR9h3zp8oteKc71Z7y3WrG3OmTfnHvzjHE0/w9vj5reRkbEA14g=="],
 
-    "@morpho-org/morpho-sdk": ["@morpho-org/morpho-sdk@10.0.1", "", { "dependencies": { "@morpho-org/blue-sdk": "^8.4.0", "@morpho-org/blue-sdk-viem": "^7.5.1", "@morpho-org/midnight-sdk": "^2.7.0", "@morpho-org/morpho-ts": "^4.5.0", "@noble/curves": "1.9.1" }, "peerDependencies": { "viem": "^2.0.0" } }, "sha512-Wsgf1qgZ7QOdVjKkLGqcFv2XIfti1+lCHx/c+27G+2TA1uWwi+V8nj0xXmBIQaXpEhpE2sJXj30STeKfJ5hLXg=="],
+    "@morpho-org/morpho-sdk": ["@morpho-org/morpho-sdk@10.0.2", "", { "dependencies": { "@morpho-org/blue-sdk": "^8.4.0", "@morpho-org/blue-sdk-viem": "^7.5.1", "@morpho-org/midnight-sdk": "^2.7.0", "@morpho-org/morpho-ts": "^4.5.0", "@noble/curves": "1.9.1" }, "peerDependencies": { "viem": "^2.0.0" } }, "sha512-qqM6itJA9ln/GkMRm4zT9aZZShukiUXGCm19d+gn2TeiXMWJEbbf0eVY/Ydzu+nYoS++PYx2J0a/5dlEjnipJQ=="],
 
     "@morpho-org/morpho-ts": ["@morpho-org/morpho-ts@4.5.0", "", { "dependencies": { "@noble/hashes": "^2.4.0" } }, "sha512-WOrum6A6ZdWn86Wi6xO3POFrjaAyKIpxhJPa/+05iQBSpbBVFpmmLYT22hx+3o3N/7G45efXq+KAou8VDZH+GQ=="],
 
