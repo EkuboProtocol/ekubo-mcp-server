@@ -38,7 +38,7 @@
     "@safe-global/safe-contracts": "1.4.1",
     "@safe-global/safe-smart-account": "1.5.0",
     "ethers": "6.17.0",
-    "@cloudflare/workers-types": "5.20261124.1",
+    "@cloudflare/workers-types": "5.20261125.1",
     "@types/bun": "1.4.5",
     "@typescript-eslint/parser": "8.74.0",
     "eslint": "10.15.0",
